@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javelin.local/schemas/output-v1.schema.json",
+  "title": "Javelin command success v1",
+  "type": "object",
+  "required": ["schema_version", "ok", "result"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "ok": { "const": true },
+    "result": {}
+  },
+  "additionalProperties": false
+}

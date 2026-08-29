@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javelin.local/schemas/provenance-v1.schema.json",
+  "title": "Javelin normalized provenance event v1",
+  "type": "object",
+  "required": ["schema", "event_id", "session_id", "timestamp", "actor", "type", "payload"],
+  "properties": {
+    "schema": { "const": "javelin.provenance.v1" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "layer_id": { "type": ["string", "null"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "model": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "type": {
+      "enum": ["prompt", "response", "tool-call", "tool-result", "file-read", "file-write", "subagent", "token", "error", "lifecycle"]
+    },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}
