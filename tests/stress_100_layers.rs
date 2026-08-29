@@ -6,7 +6,9 @@ use std::thread;
 use std::time::Instant;
 
 fn binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_javelin"))
+    std::env::var_os("JAVELIN_TEST_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_javelin")))
 }
 
 fn command(world: &Path, args: Vec<String>) -> Output {
@@ -120,20 +122,27 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
                         name.clone(),
                         "--idempotency-key".into(),
                         format!("stress-{name}"),
+                        "--json".into(),
                     ],
                 );
-                assert!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                started.elapsed().as_millis()
+                (name, started.elapsed().as_millis(), output)
             })
         })
         .collect::<Vec<_>>();
-    let publish_ms = publish_workers
+    let publish_results = publish_workers
         .into_iter()
         .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    for (name, _, output) in &publish_results {
+        assert!(
+            output.status.success(),
+            "Publish {name} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let publish_ms = publish_results
+        .into_iter()
+        .map(|(_, duration, _)| duration)
         .collect::<Vec<_>>();
 
     let current: Value =
