@@ -1,0 +1,85 @@
+name: Release packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release --target '${{ matrix.target }}'
+      - name: Assemble archive
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"javelin","version":"\([^"]*\)".*/\1/p')
+          name="javelin-$version-${{ matrix.target }}"
+          mkdir -p "dist/$name/completions"
+          cp "target/${{ matrix.target }}/release/javelin" "dist/$name/javelin"
+          cp LICENSE README.md CHANGELOG.md "dist/$name/"
+          for shell in bash elvish fish powershell zsh; do
+            "dist/$name/javelin" completions "$shell" > "dist/$name/completions/javelin.$shell"
+          done
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          shasum -a 256 "dist/$name.tar.gz" > "dist/$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: javelin-${{ matrix.target }}
+          path: dist/*
+
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --release
+      - name: Assemble archive
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          $name = "javelin-$version-x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force "dist/$name/completions" | Out-Null
+          Copy-Item target/release/javelin.exe "dist/$name/javelin.exe"
+          Copy-Item LICENSE,README.md,CHANGELOG.md "dist/$name/"
+          foreach ($shell in 'bash','elvish','fish','powershell','zsh') {
+            & "dist/$name/javelin.exe" completions $shell | Out-File -Encoding utf8 "dist/$name/completions/javelin.$shell"
+          }
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/$name.zip").Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: javelin-x86_64-pc-windows-msvc
+          path: dist/*
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unix, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: release/*
