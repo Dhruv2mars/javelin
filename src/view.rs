@@ -1,0 +1,525 @@
+use crate::config::IgnorePolicy;
+use crate::error::{Context, JavelinError, Result};
+use crate::model::{Change, ChangeKind, EntryKind, Tree, TreeEntry, ViewMarker};
+use crate::objects::ObjectStore;
+use crate::paths::{safe_join, validate_relative};
+use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+#[derive(Debug, Default)]
+pub struct ScanResult {
+    pub tree: Tree,
+    pub ignored: Vec<(String, String)>,
+}
+
+pub fn scan_view(view: &Path, objects: &ObjectStore) -> Result<ScanResult> {
+    let policy = IgnorePolicy::load(view)?;
+    let mut entries = Vec::new();
+    let mut ignored = Vec::new();
+    let walker = WalkDir::new(view)
+        .follow_links(false)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            name != ".javelin" && name != ".git" && name != ".javelin-view"
+        });
+    for item in walker {
+        let item = item.jctx("SCAN_IO", format!("cannot scan {}", view.display()))?;
+        if item.depth() == 0 {
+            continue;
+        }
+        let relative = item
+            .path()
+            .strip_prefix(view)
+            .map_err(|_| JavelinError::corruption("scanner escaped managed view"))?;
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| JavelinError::unsupported("non-UTF-8 paths are unsupported"))?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        validate_relative(&relative)?;
+        let metadata =
+            fs::symlink_metadata(item.path()).jctx("SCAN_IO", format!("cannot stat {relative}"))?;
+        let is_directory = metadata.file_type().is_dir();
+        if let Some((is_ignored, rule)) = policy.decision(&relative, is_directory) {
+            if is_ignored {
+                ignored.push((relative, rule.to_string()));
+                continue;
+            }
+        }
+        let kind = if metadata.file_type().is_symlink() {
+            EntryKind::Symlink
+        } else if metadata.is_dir() {
+            EntryKind::Directory
+        } else if metadata.is_file() {
+            EntryKind::File
+        } else {
+            return Err(JavelinError::unsupported(format!(
+                "unsupported filesystem entry {relative}"
+            )));
+        };
+        let object_id = match kind {
+            EntryKind::File => Some(objects.put_blob_file(item.path())?),
+            EntryKind::Symlink => Some(objects.put_blob(&symlink_target_bytes(item.path())?)?),
+            EntryKind::Directory => None,
+        };
+        entries.push(TreeEntry {
+            path: relative,
+            kind,
+            object_id,
+            executable: is_executable(&metadata),
+        });
+    }
+    entries.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
+    detect_case_collisions(&entries)?;
+    Ok(ScanResult {
+        tree: Tree { entries },
+        ignored,
+    })
+}
+
+fn detect_case_collisions(entries: &[TreeEntry]) -> Result<()> {
+    let mut folded = HashMap::<String, &str>::new();
+    for entry in entries {
+        let key = entry.path.to_lowercase();
+        if let Some(previous) = folded.insert(key, &entry.path)
+            && previous != entry.path
+        {
+            return Err(JavelinError::unsupported(format!(
+                "case-fold collision between {previous:?} and {:?}",
+                entry.path
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    Ok(fs::read_link(path)
+        .jctx("SCAN_IO", format!("cannot read symlink {}", path.display()))?
+        .as_os_str()
+        .as_bytes()
+        .to_vec())
+}
+
+#[cfg(not(unix))]
+fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
+    Ok(fs::read_link(path)
+        .jctx("SCAN_IO", format!("cannot read symlink {}", path.display()))?
+        .to_string_lossy()
+        .as_bytes()
+        .to_vec())
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+pub fn materialize_tree(
+    tree: &Tree,
+    destination: &Path,
+    objects: &ObjectStore,
+    marker: Option<&ViewMarker>,
+) -> Result<&'static str> {
+    fs::create_dir_all(destination).jctx(
+        "VIEW_IO",
+        format!("cannot create view {}", destination.display()),
+    )?;
+    clear_view(destination)?;
+    if let Some(marker) = marker {
+        let marker_bytes = serde_json::to_vec(marker).map_err(|error| {
+            JavelinError::corruption(format!("cannot encode view marker: {error}"))
+        })?;
+        atomic_write(&destination.join(".javelin-view"), &marker_bytes, false)?;
+    }
+
+    let mut backend = "copy";
+    for entry in &tree.entries {
+        let path = safe_join(destination, &entry.path)?;
+        match entry.kind {
+            EntryKind::Directory => {
+                fs::create_dir_all(&path)
+                    .jctx("VIEW_IO", format!("cannot create directory {}", entry.path))?;
+            }
+            EntryKind::File => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx(
+                        "VIEW_IO",
+                        format!("cannot create parent for {}", entry.path),
+                    )?;
+                }
+                let object_id = entry.object_id.as_deref().ok_or_else(|| {
+                    JavelinError::corruption(format!("file {} has no blob", entry.path))
+                })?;
+                let bytes = objects.read_blob(object_id)?;
+                let cache = destination
+                    .parent()
+                    .unwrap_or(destination)
+                    .join(format!(".javelin-materialize-source-{}", ulid::Ulid::new()));
+                atomic_write(&cache, &bytes, entry.executable)?;
+                if clone_or_copy(&cache, &path)? {
+                    backend = "copy_on_write";
+                }
+                fs::remove_file(&cache).jctx("VIEW_IO", "cannot remove materialization source")?;
+                set_executable(&path, entry.executable)?;
+            }
+            EntryKind::Symlink => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx(
+                        "VIEW_IO",
+                        format!("cannot create parent for {}", entry.path),
+                    )?;
+                }
+                let object_id = entry.object_id.as_deref().ok_or_else(|| {
+                    JavelinError::corruption(format!("symlink {} has no target", entry.path))
+                })?;
+                create_symlink(&objects.read_blob(object_id)?, &path)?;
+            }
+        }
+    }
+    Ok(backend)
+}
+
+pub fn materialize_tree_from_cache(
+    tree: &Tree,
+    root_id: &str,
+    metadata: &Path,
+    destination: &Path,
+    objects: &ObjectStore,
+    marker: Option<&ViewMarker>,
+) -> Result<&'static str> {
+    let cache = ensure_root_cache(tree, root_id, metadata, objects)?;
+    fs::create_dir_all(destination).jctx(
+        "VIEW_IO",
+        format!("cannot create view {}", destination.display()),
+    )?;
+    clear_view(destination)?;
+    if let Some(marker) = marker {
+        let marker_bytes = serde_json::to_vec(marker).map_err(|error| {
+            JavelinError::corruption(format!("cannot encode view marker: {error}"))
+        })?;
+        atomic_write(&destination.join(".javelin-view"), &marker_bytes, false)?;
+    }
+    let mut backend = "copy";
+    for entry in &tree.entries {
+        let path = safe_join(destination, &entry.path)?;
+        match entry.kind {
+            EntryKind::Directory => {
+                fs::create_dir_all(&path)
+                    .jctx("VIEW_IO", format!("cannot create directory {}", entry.path))?;
+            }
+            EntryKind::File => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx(
+                        "VIEW_IO",
+                        format!("cannot create parent for {}", entry.path),
+                    )?;
+                }
+                let source = safe_join(&cache, &entry.path)?;
+                if clone_or_copy(&source, &path)? {
+                    backend = "copy_on_write";
+                }
+                set_writable_mode(&path, entry.executable)?;
+            }
+            EntryKind::Symlink => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx(
+                        "VIEW_IO",
+                        format!("cannot create parent for {}", entry.path),
+                    )?;
+                }
+                let object_id = entry.object_id.as_deref().ok_or_else(|| {
+                    JavelinError::corruption(format!("symlink {} has no target", entry.path))
+                })?;
+                create_symlink(&objects.read_blob(object_id)?, &path)?;
+            }
+        }
+    }
+    Ok(backend)
+}
+
+pub fn ensure_root_cache(
+    tree: &Tree,
+    root_id: &str,
+    metadata: &Path,
+    objects: &ObjectStore,
+) -> Result<PathBuf> {
+    let materialized = metadata.join("materialized");
+    fs::create_dir_all(&materialized).jctx("VIEW_IO", "cannot create root cache directory")?;
+    let target = materialized.join(root_id);
+    if target.join(".complete").is_file() {
+        return Ok(target);
+    }
+    let temp = metadata
+        .join("temp")
+        .join(format!("materialized-{}", ulid::Ulid::new()));
+    fs::create_dir_all(&temp).jctx("VIEW_IO", "cannot create temporary root cache")?;
+    for entry in &tree.entries {
+        let path = safe_join(&temp, &entry.path)?;
+        match entry.kind {
+            EntryKind::Directory => {
+                fs::create_dir_all(&path)
+                    .jctx("VIEW_IO", format!("cannot cache directory {}", entry.path))?;
+            }
+            EntryKind::File => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create cache parent")?;
+                }
+                let object_id = entry.object_id.as_deref().ok_or_else(|| {
+                    JavelinError::corruption(format!("file {} has no blob", entry.path))
+                })?;
+                write_cache_file(&path, &objects.read_blob(object_id)?, entry.executable)?;
+            }
+            EntryKind::Symlink => {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create cache parent")?;
+                }
+                let object_id = entry.object_id.as_deref().ok_or_else(|| {
+                    JavelinError::corruption(format!("symlink {} has no target", entry.path))
+                })?;
+                create_symlink(&objects.read_blob(object_id)?, &path)?;
+            }
+        }
+    }
+    File::create(temp.join(".complete")).jctx("VIEW_IO", "cannot complete root cache")?;
+    match fs::rename(&temp, &target) {
+        Ok(()) => {}
+        Err(_) if target.join(".complete").is_file() => {
+            fs::remove_dir_all(&temp).jctx("VIEW_IO", "cannot remove raced root cache")?;
+        }
+        Err(error) => {
+            return Err(JavelinError::new(7, "VIEW_IO", "cannot install root cache")
+                .details(serde_json::json!({"cause": error.to_string()})));
+        }
+    }
+    Ok(target)
+}
+
+fn write_cache_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
+    let mut file = File::create(path).jctx("VIEW_IO", "cannot create cached file")?;
+    file.write_all(bytes)
+        .jctx("VIEW_IO", "cannot write cached file")?;
+    set_cache_mode(path, executable)
+}
+
+fn clear_view(view: &Path) -> Result<()> {
+    for item in fs::read_dir(view).jctx("VIEW_IO", format!("cannot list {}", view.display()))? {
+        let item = item.jctx("VIEW_IO", "cannot read view entry")?;
+        let path = item.path();
+        let name = item.file_name();
+        if name == ".javelin" {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path).jctx("VIEW_IO", "cannot stat view entry")?;
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            fs::remove_dir_all(&path)
+                .jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+        } else {
+            fs::remove_file(&path).jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn atomic_write(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| JavelinError::corruption("write path has no parent"))?;
+    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create write parent")?;
+    let temp = parent.join(format!(".javelin-write-{}.tmp", ulid::Ulid::new()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp)
+        .jctx("VIEW_IO", format!("cannot create {}", temp.display()))?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .jctx("VIEW_IO", format!("cannot write {}", path.display()))?;
+    set_executable(&temp, executable)?;
+    fs::rename(&temp, path).jctx("VIEW_IO", format!("cannot install {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_cache_mode(path: &Path, executable: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if executable { 0o555 } else { 0o444 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).jctx(
+        "VIEW_IO",
+        format!("cannot protect cached file {}", path.display()),
+    )
+}
+
+#[cfg(not(unix))]
+fn set_cache_mode(path: &Path, _executable: bool) -> Result<()> {
+    let mut permissions = fs::metadata(path)
+        .jctx("VIEW_IO", "cannot stat cached file")?
+        .permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions).jctx("VIEW_IO", "cannot protect cached file")
+}
+
+#[cfg(unix)]
+fn set_writable_mode(path: &Path, executable: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).jctx(
+        "VIEW_IO",
+        format!("cannot set view mode on {}", path.display()),
+    )
+}
+
+#[cfg(not(unix))]
+fn set_writable_mode(path: &Path, _executable: bool) -> Result<()> {
+    let mut permissions = fs::metadata(path)
+        .jctx("VIEW_IO", "cannot stat materialized file")?
+        .permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions).jctx("VIEW_IO", "cannot make view file writable")
+}
+
+#[cfg(target_os = "macos")]
+fn clone_or_copy(source: &Path, destination: &Path) -> Result<bool> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {
+        fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32)
+        -> libc::c_int;
+    }
+    let source_c = CString::new(source.as_os_str().as_bytes())
+        .map_err(|_| JavelinError::unsupported("NUL in materialization path"))?;
+    let destination_c = CString::new(destination.as_os_str().as_bytes())
+        .map_err(|_| JavelinError::unsupported("NUL in materialization path"))?;
+    let cloned = unsafe { clonefile(source_c.as_ptr(), destination_c.as_ptr(), 0) } == 0;
+    if cloned {
+        return Ok(true);
+    }
+    fs::copy(source, destination)
+        .jctx("VIEW_IO", format!("cannot copy {}", destination.display()))?;
+    Ok(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clone_or_copy(source: &Path, destination: &Path) -> Result<bool> {
+    fs::copy(source, destination)
+        .jctx("VIEW_IO", format!("cannot copy {}", destination.display()))?;
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &[u8], path: &Path) -> Result<()> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    std::os::unix::fs::symlink(OsStr::from_bytes(target), path).jctx(
+        "VIEW_IO",
+        format!("cannot create symlink {}", path.display()),
+    )
+}
+
+#[cfg(windows)]
+fn create_symlink(target: &[u8], path: &Path) -> Result<()> {
+    let target = String::from_utf8(target.to_vec())
+        .map_err(|_| JavelinError::unsupported("non-UTF-8 symlink target on Windows"))?;
+    std::os::windows::fs::symlink_file(target, path).jctx(
+        "VIEW_IO",
+        format!("cannot create symlink {}", path.display()),
+    )
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path, executable: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)
+        .jctx("VIEW_IO", format!("cannot stat {}", path.display()))?
+        .permissions();
+    let mut mode = permissions.mode();
+    if executable {
+        mode |= 0o111;
+    } else {
+        mode &= !0o111;
+    }
+    permissions.set_mode(mode);
+    fs::set_permissions(path, permissions)
+        .jctx("VIEW_IO", format!("cannot set mode on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path, _executable: bool) -> Result<()> {
+    Ok(())
+}
+
+pub fn diff_trees(old: &Tree, new: &Tree) -> Vec<Change> {
+    let old = old.map();
+    let new = new.map();
+    let mut paths = old.keys().chain(new.keys()).cloned().collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let before = old.get(&path).cloned();
+            let after = new.get(&path).cloned();
+            if before == after {
+                return None;
+            }
+            let change = match (&before, &after) {
+                (None, Some(_)) => ChangeKind::Add,
+                (Some(_), None) => ChangeKind::Delete,
+                (Some(left), Some(right)) if left.kind != right.kind => ChangeKind::Type,
+                (Some(left), Some(right))
+                    if left.object_id == right.object_id && left.executable != right.executable =>
+                {
+                    ChangeKind::Mode
+                }
+                _ => ChangeKind::Modify,
+            };
+            Some(Change {
+                path,
+                change,
+                old: before,
+                new: after,
+            })
+        })
+        .collect()
+}
+
+pub fn apply_entries(base: &Tree, updates: BTreeMap<String, Option<TreeEntry>>) -> Tree {
+    let mut map = base.map();
+    for (path, entry) in updates {
+        if let Some(entry) = entry {
+            map.insert(path, entry);
+        } else {
+            map.remove(&path);
+        }
+    }
+    Tree::from_map(map)
+}
+
+pub fn write_marker(path: &Path, marker: &ViewMarker) -> Result<()> {
+    let bytes = serde_json::to_vec(marker)
+        .map_err(|error| JavelinError::corruption(format!("cannot encode view marker: {error}")))?;
+    let mut file =
+        File::create(path.join(".javelin-view")).jctx("VIEW_IO", "cannot create view marker")?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .jctx("VIEW_IO", "cannot write view marker")
+}
+
+pub fn managed_cache_path(metadata: &Path, root_id: &str) -> PathBuf {
+    metadata.join("materialized").join(root_id)
+}
