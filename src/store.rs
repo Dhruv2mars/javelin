@@ -2,7 +2,7 @@ use crate::error::{Context, JavelinError, Result};
 use crate::model::{Checkpoint, Layer, Tree, TreeEntry, WorldVersion};
 use crate::objects::{ObjectKind, ObjectStore};
 use chrono::Utc;
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -110,6 +110,14 @@ impl Store {
     }
 
     fn recover_startup(&mut self) -> Result<()> {
+        let monitor_pid = self.metadata.join("monitor/pid");
+        if fs::read_to_string(&monitor_pid)
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .is_some_and(startup_process_alive)
+        {
+            return Ok(());
+        }
         let timestamp = now();
         self.conn
             .execute(
@@ -228,14 +236,13 @@ impl Store {
         }
 
         let ready = self.metadata.join("monitor/ready");
-        let pid_file = self.metadata.join("monitor/pid");
-        let monitor_alive = fs::read_to_string(&pid_file)
+        let monitor_alive = fs::read_to_string(&monitor_pid)
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
             .is_some_and(startup_process_alive);
         if !monitor_alive {
             let _ = fs::remove_file(ready);
-            let _ = fs::remove_file(pid_file);
+            let _ = fs::remove_file(monitor_pid);
         }
         Ok(())
     }
@@ -677,7 +684,7 @@ impl Store {
         crate::fault::hit("before_db_transaction");
         let tx = self
             .conn
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .jctx("STORE_TX", "cannot begin Publish acceptance")?;
         let previous_target_ref = if layer.target_kind == "world" {
             tx.query_row("SELECT current_version FROM world LIMIT 1", [], |row| {

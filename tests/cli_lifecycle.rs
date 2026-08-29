@@ -511,6 +511,13 @@ fn required_failure_blocks_while_informational_failure_is_recorded() {
 #[test]
 fn startup_recovery_removes_abandoned_temp_and_dead_queue_entry() {
     let (_temp, world) = init();
+    let pid: i32 = fs::read_to_string(world.join(".javelin/monitor/pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+    thread::sleep(Duration::from_millis(100));
     let abandoned = world.join(".javelin/temp/abandoned.tmp");
     fs::write(&abandoned, b"partial").unwrap();
     let database = world.join(".javelin/store.sqlite3");
