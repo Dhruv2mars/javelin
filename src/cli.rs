@@ -21,6 +21,10 @@ pub enum Command {
         path: Option<PathBuf>,
     },
     Version,
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     Status {
         #[arg(long)]
         ignored: bool,

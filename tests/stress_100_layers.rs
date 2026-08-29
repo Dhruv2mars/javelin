@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
+use std::time::Instant;
 
 fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_javelin"))
@@ -29,6 +30,7 @@ fn success(world: &Path, args: &[&str]) -> String {
 
 #[test]
 fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
+    let overall_started = Instant::now();
     let temp = tempfile::tempdir().unwrap();
     let world = temp.path().join("world");
     let initialized = Command::new(binary())
@@ -39,7 +41,9 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
     assert!(initialized.status.success());
 
     let mut layers = Vec::new();
+    let mut create_ms = Vec::new();
     for index in 0..100 {
+        let started = Instant::now();
         let name = format!("layer-{index:03}");
         let path = success(&world, &["layer", "create", &name, "--from", "world"]);
         for file in 0..4 {
@@ -50,6 +54,7 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
             .unwrap();
         }
         layers.push(name);
+        create_ms.push(started.elapsed().as_millis());
     }
 
     let checkpoint_workers = layers
@@ -58,6 +63,7 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
             let name = name.clone();
             let world = world.clone();
             thread::spawn(move || {
+                let started = Instant::now();
                 let output = Command::new(binary())
                     .arg("--project")
                     .arg(world.join(".javelin/views").join(name))
@@ -69,12 +75,14 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
                     "{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
+                started.elapsed().as_millis()
             })
         })
         .collect::<Vec<_>>();
-    for worker in checkpoint_workers {
-        worker.join().unwrap();
-    }
+    let checkpoint_ms = checkpoint_workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
 
     let refresh_workers = layers
         .iter()
@@ -82,18 +90,21 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
             let name = name.clone();
             let world = world.clone();
             thread::spawn(move || {
+                let started = Instant::now();
                 let output = command(&world, vec!["refresh".into(), name]);
                 assert!(
                     output.status.success(),
                     "{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
+                started.elapsed().as_millis()
             })
         })
         .collect::<Vec<_>>();
-    for worker in refresh_workers {
-        worker.join().unwrap();
-    }
+    let refresh_ms = refresh_workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
 
     let publish_workers = layers
         .iter()
@@ -101,6 +112,7 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
             let name = name.clone();
             let world = world.clone();
             thread::spawn(move || {
+                let started = Instant::now();
                 let output = command(
                     &world,
                     vec![
@@ -115,12 +127,14 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
                     "{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
+                started.elapsed().as_millis()
             })
         })
         .collect::<Vec<_>>();
-    for worker in publish_workers {
-        worker.join().unwrap();
-    }
+    let publish_ms = publish_workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
 
     let current: Value =
         serde_json::from_str(&success(&world, &["world", "current", "--json"])).unwrap();
@@ -131,4 +145,32 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
         402
     );
     success(&world, &["fsck"]);
+    eprintln!(
+        "STRESS_RESULT {}",
+        serde_json::json!({
+            "layers": 100,
+            "files_per_layer": 4,
+            "world_version": "v101",
+            "total_ms": overall_started.elapsed().as_millis(),
+            "create": percentiles(&create_ms),
+            "checkpoint_concurrent": percentiles(&checkpoint_ms),
+            "refresh_concurrent": percentiles(&refresh_ms),
+            "publish_concurrent": percentiles(&publish_ms),
+        })
+    );
+}
+
+fn percentiles(values: &[u128]) -> Value {
+    let mut values = values.to_vec();
+    values.sort_unstable();
+    let at = |percent: usize| {
+        let index = ((values.len() * percent).div_ceil(100)).saturating_sub(1);
+        values[index]
+    };
+    serde_json::json!({
+        "p50_ms": at(50),
+        "p95_ms": at(95),
+        "p99_ms": at(99),
+        "max_ms": *values.last().unwrap(),
+    })
 }

@@ -1,11 +1,15 @@
 use crate::cli::*;
-use crate::config::{Config, DEFAULT_CONFIG, DEFAULT_IGNORE, WorldRule};
+use crate::config::{Config, DEFAULT_CONFIG, DEFAULT_IGNORE, IgnorePolicy, WorldRule};
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{EntryKind, Layer, Tree, TreeEntry, ViewMarker};
 use crate::objects::ObjectKind;
 use crate::paths::{ProjectContext, discover};
 use crate::store::{ConflictInput, NewLayer, Store, ValidationRecord, now};
-use crate::view::{apply_entries, diff_trees, materialize_tree_from_cache, scan_view};
+use crate::view::{
+    apply_entries, diff_trees, invalidate_root_cache, materialize_tree_from_cache, scan_view,
+    scan_view_with_policy,
+};
+use clap::CommandFactory;
 use fs2::FileExt;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -28,6 +32,11 @@ pub fn execute(cli: Cli) -> Result<()> {
             &json!({"version": crate::VERSION}),
             format!("javelin {}", crate::VERSION),
         ),
+        Command::Completions { shell } => {
+            let mut command = Cli::command();
+            clap_complete::generate(shell, &mut command, "javelin", &mut std::io::stdout());
+            Ok(())
+        }
         Command::Status { ignored } => with_store(cli.project, |context, mut store| {
             status(context, &mut store, ignored, json_output)
         }),
@@ -64,9 +73,11 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Fsck => with_store(cli.project, |_context, mut store| {
             fsck(&mut store, json_output)
         }),
-        Command::Repair { view } => with_store(cli.project, |_context, mut store| {
-            repair(&mut store, view.as_deref(), json_output)
-        }),
+        Command::Repair { view } => {
+            with_store_without_monitor(cli.project, |_context, mut store| {
+                repair(&mut store, view.as_deref(), json_output)
+            })
+        }
         Command::Doctor => with_store(cli.project, |_context, store| doctor(&store, json_output)),
         Command::Refresh { layer } => with_store(cli.project, |context, mut store| {
             crate::commands::refresh(context, &mut store, layer.as_deref(), json_output)
@@ -141,6 +152,15 @@ fn with_store(
     let context = discover(project.as_deref())?;
     let store = Store::open(&context.root)?;
     start_monitor(&store)?;
+    action(&context, store)
+}
+
+fn with_store_without_monitor(
+    project: Option<PathBuf>,
+    action: impl FnOnce(&ProjectContext, Store) -> Result<()>,
+) -> Result<()> {
+    let context = discover(project.as_deref())?;
+    let store = Store::open(&context.root)?;
     action(&context, store)
 }
 
@@ -223,7 +243,8 @@ fn reconcile(store: &mut Store, layer: &Layer, reason: &str) -> Result<crate::mo
     let reconcile_lock = open_reconcile_lock(store)?;
     acquire_publish_lock(&reconcile_lock)?;
     let view = Path::new(&layer.view_path);
-    let scan = scan_view(view, &store.objects)?;
+    let policy = tracking_policy(store, layer)?;
+    let scan = scan_view_with_policy(view, &store.objects, &policy)?;
     let root_tree = store.objects.put_tree(&scan.tree)?;
     store.register_object(
         &root_tree,
@@ -233,6 +254,23 @@ fn reconcile(store: &mut Store, layer: &Layer, reason: &str) -> Result<crate::mo
     let result = store.append_checkpoint(&layer.id, &root_tree, &layer.synchronized_ref, reason);
     let _ = FileExt::unlock(&reconcile_lock);
     result
+}
+
+fn tracking_policy(store: &Store, layer: &Layer) -> Result<IgnorePolicy> {
+    let (_, _, synchronized) = store.tree_for_ref(&layer.synchronized_ref)?;
+    let text = if let Some(entry) = synchronized
+        .entries
+        .iter()
+        .find(|entry| entry.path == ".javelinignore" && entry.kind == EntryKind::File)
+    {
+        let bytes = store
+            .objects
+            .read_blob(entry.object_id.as_deref().unwrap_or(""))?;
+        String::from_utf8(bytes).map_err(|_| JavelinError::policy(".javelinignore is not UTF-8"))?
+    } else {
+        DEFAULT_IGNORE.to_string()
+    };
+    IgnorePolicy::parse(&text)
 }
 
 fn open_reconcile_lock(store: &Store) -> Result<File> {
@@ -277,7 +315,8 @@ fn status(
     let current = store.objects.read_tree(&checkpoint.root_tree)?;
     let changes = diff_trees(&base, &current);
     let ignored = if include_ignored {
-        scan_view(Path::new(&layer.view_path), &store.objects)?.ignored
+        let policy = tracking_policy(store, &layer)?;
+        scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)?.ignored
     } else {
         Vec::new()
     };
@@ -420,10 +459,13 @@ fn entry_text(
     if entry.kind != EntryKind::File {
         return Ok(Some(Err(())));
     }
-    let bytes = store
-        .objects
-        .read_blob(entry.object_id.as_deref().unwrap_or(""))?;
-    if bytes.len() > 1024 * 1024 || bytes.contains(&0) {
+    let object_id = entry.object_id.as_deref().unwrap_or("");
+    let (kind, length) = store.objects.info(object_id)?;
+    if kind != ObjectKind::Blob || length > 1024 * 1024 {
+        return Ok(Some(Err(())));
+    }
+    let bytes = store.objects.read_blob(object_id)?;
+    if bytes.contains(&0) {
         return Ok(Some(Err(())));
     }
     Ok(Some(String::from_utf8(bytes).map_err(|_| ())))
@@ -538,18 +580,31 @@ fn show(store: &Store, reference: &str, json_output: bool) -> Result<()> {
         .object_id
         .as_deref()
         .ok_or_else(|| JavelinError::corruption("path state has no object"))?;
-    let bytes = store.objects.read_blob(object_id)?;
     if json_output {
+        let (_, size) = store.objects.info(object_id)?;
+        let bytes_hex = if size <= 1024 * 1024 {
+            Some(hex(&store.objects.read_blob(object_id)?))
+        } else {
+            None
+        };
         emit(
             true,
-            &json!({"reference": resolved, "path": path, "entry": entry, "bytes_hex": hex(&bytes)}),
+            &json!({
+                "reference": resolved,
+                "path": path,
+                "entry": entry,
+                "size": size,
+                "bytes_hex": bytes_hex,
+                "content_omitted": bytes_hex.is_none(),
+            }),
             String::new(),
         )
     } else {
-        use std::io::Write as _;
-        std::io::stdout()
-            .write_all(&bytes)
-            .jctx("OUTPUT_IO", "cannot write path bytes")
+        let _ = store.objects.validate(object_id)?;
+        let stdout = std::io::stdout();
+        let mut lock = stdout.lock();
+        store.objects.write_blob_to_writer(object_id, &mut lock)?;
+        lock.flush().jctx("OUTPUT_IO", "cannot flush path bytes")
     }
 }
 
@@ -778,40 +833,134 @@ fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
             "SQLite integrity check failed: {integrity}"
         )));
     }
-    let mut checked = 0_u64;
-    let mut referenced = std::collections::BTreeSet::new();
+    let foreign_key_failure: Option<(String, i64)> = store
+        .conn
+        .query_row("PRAGMA foreign_key_check", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()
+        .jctx("STORE_QUERY", "cannot run SQLite foreign-key check")?;
+    if let Some((table, rowid)) = foreign_key_failure {
+        return Err(JavelinError::corruption(format!(
+            "foreign-key violation in {table} row {rowid}"
+        )));
+    }
+    let mut roots = BTreeSet::new();
+    let mut blob_references = BTreeSet::new();
     for version in store.world_history()? {
-        referenced.insert(version.root_tree);
+        roots.insert(version.root_tree);
     }
     for layer in store.layers(true)? {
         for checkpoint in store.checkpoint_history(&layer.id)? {
-            referenced.insert(checkpoint.root_tree);
+            roots.insert(checkpoint.root_tree);
         }
     }
-    let roots = referenced.clone();
-    for root in roots {
-        let (kind, _) = store.objects.validate(&root)?;
+    for root in &roots {
+        let (kind, _) = store.objects.validate(root)?;
         if kind != ObjectKind::Tree {
             return Err(JavelinError::corruption(format!(
                 "root reference {root} does not identify a tree"
             )));
         }
-        checked += 1;
-        let tree = store.objects.read_tree(&root)?;
+        let tree = store.objects.read_tree(root)?;
         for entry in tree.entries {
-            if let Some(object_id) = entry.object_id {
-                referenced.insert(object_id);
+            match entry.kind {
+                EntryKind::Directory if entry.object_id.is_some() || entry.executable => {
+                    return Err(JavelinError::corruption(format!(
+                        "directory {} has invalid portable metadata",
+                        entry.path
+                    )));
+                }
+                EntryKind::File | EntryKind::Symlink => {
+                    let object_id = entry.object_id.ok_or_else(|| {
+                        JavelinError::corruption(format!(
+                            "tracked path {} has no blob reference",
+                            entry.path
+                        ))
+                    })?;
+                    blob_references.insert(object_id);
+                }
+                EntryKind::Directory => {}
             }
         }
     }
-    for id in referenced {
-        let (kind, size) = store.objects.validate(&id)?;
-        store.register_object(&id, kind, size)?;
-        checked += 1;
+    for query in [
+        "SELECT stdout_object FROM validation_runs WHERE stdout_object IS NOT NULL",
+        "SELECT stderr_object FROM validation_runs WHERE stderr_object IS NOT NULL",
+        "SELECT object_id FROM provenance_attachments WHERE object_id IS NOT NULL",
+    ] {
+        let mut statement = store
+            .conn
+            .prepare(query)
+            .jctx("STORE_QUERY", "cannot prepare referenced-object check")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .jctx("STORE_QUERY", "cannot read referenced objects")?;
+        for row in rows {
+            blob_references.insert(row.jctx("STORE_QUERY", "cannot decode object reference")?);
+        }
     }
+    for conflict in store.conflicts(None, true)? {
+        for entry in [
+            conflict.base_entry,
+            conflict.target_entry,
+            conflict.private_entry,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(object_id) = entry.object_id {
+                blob_references.insert(object_id);
+            }
+        }
+    }
+    for id in &blob_references {
+        let (kind, size) = store.objects.validate(id)?;
+        if kind != ObjectKind::Blob {
+            return Err(JavelinError::corruption(format!(
+                "blob reference {id} identifies a tree"
+            )));
+        }
+        store.register_object(id, kind, size)?;
+    }
+    let all_objects = store.objects.all_ids()?;
+    for id in &all_objects {
+        let _ = store.objects.validate(id)?;
+    }
+    let mut statement = store
+        .conn
+        .prepare("SELECT id, kind, uncompressed_size FROM object_metadata")
+        .jctx("STORE_QUERY", "cannot prepare object metadata check")?;
+    let metadata = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .jctx("STORE_QUERY", "cannot read object metadata")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .jctx("STORE_QUERY", "cannot decode object metadata")?;
+    for (id, expected_kind, expected_size) in metadata {
+        let (kind, size) = store.objects.validate(&id)?;
+        if format!("{kind:?}").to_lowercase() != expected_kind || size as i64 != expected_size {
+            return Err(JavelinError::corruption(format!(
+                "object metadata mismatch for {id}"
+            )));
+        }
+    }
+    let checked = all_objects.len();
     emit(
         json_output,
-        &json!({"valid": true, "objects_checked": checked}),
+        &json!({
+            "valid": true,
+            "objects_checked": checked,
+            "root_references": roots.len(),
+            "blob_references": blob_references.len(),
+            "sqlite_integrity": "ok",
+            "foreign_keys": "ok",
+        }),
         format!("Store valid: {checked} object references checked"),
     )
 }
@@ -823,14 +972,13 @@ fn repair(store: &mut Store, requested: Option<&str>, json_output: bool) -> Resu
         store.layers(false)?
     };
     let mut repaired = Vec::new();
-    for mut layer in layers {
-        if Path::new(&layer.view_path).exists() && !store.view_stale(&layer.id)? {
-            let _ = reconcile(store, &layer, "repair-reconcile")?;
-            layer = store.layer(&layer.id)?;
-        }
+    for layer in layers {
+        let reconcile_lock = open_reconcile_lock(store)?;
+        acquire_publish_lock(&reconcile_lock)?;
         let head = store.layer_head(&layer)?;
         let tree = store.objects.read_tree(&head.root_tree)?;
         store.mark_view(&layer.id, &head.id, true, "materializing")?;
+        invalidate_root_cache(&store.metadata, &head.root_tree)?;
         let marker = (layer.id != "local").then(|| ViewMarker {
             format: 1,
             project: store.root.to_string_lossy().into_owned(),
@@ -845,6 +993,7 @@ fn repair(store: &mut Store, requested: Option<&str>, json_output: bool) -> Resu
             marker.as_ref(),
         )?;
         store.mark_view(&layer.id, &head.id, false, backend)?;
+        FileExt::unlock(&reconcile_lock).jctx("RECONCILE_LOCK", "cannot release repair lock")?;
         repaired.push(json!({"layer": layer.name, "checkpoint": head.id, "backend": backend}));
     }
     store.append_event(
@@ -1065,6 +1214,26 @@ fn integrate_trees(
             result.insert(path, entry);
         }
     }
+    let mut folded = BTreeMap::<String, String>::new();
+    let mut case_paths = BTreeSet::new();
+    for path in result.keys() {
+        let key = path.to_lowercase();
+        if let Some(previous) = folded.insert(key, path.clone())
+            && previous != *path
+        {
+            case_paths.insert(previous);
+            case_paths.insert(path.clone());
+        }
+    }
+    for path in case_paths {
+        conflicts.push((
+            path.clone(),
+            "case".to_string(),
+            base_map.get(&path).cloned(),
+            target_map.get(&path).cloned(),
+            private_map.get(&path).cloned(),
+        ));
+    }
     Ok((Tree::from_map(result), conflicts))
 }
 
@@ -1085,22 +1254,21 @@ fn try_text_integration(
     {
         return Ok(None);
     }
-    let base_bytes = store
-        .objects
-        .read_blob(base.object_id.as_deref().unwrap_or(""))?;
-    let target_bytes = store
-        .objects
-        .read_blob(target.object_id.as_deref().unwrap_or(""))?;
-    let private_bytes = store
-        .objects
-        .read_blob(private.object_id.as_deref().unwrap_or(""))?;
-    if [base_bytes.len(), target_bytes.len(), private_bytes.len()]
-        .into_iter()
-        .any(|length| length > 1024 * 1024)
-        || base_bytes.contains(&0)
-        || target_bytes.contains(&0)
-        || private_bytes.contains(&0)
-    {
+    let ids = [
+        base.object_id.as_deref().unwrap_or(""),
+        target.object_id.as_deref().unwrap_or(""),
+        private.object_id.as_deref().unwrap_or(""),
+    ];
+    for id in ids {
+        let (kind, length) = store.objects.info(id)?;
+        if kind != ObjectKind::Blob || length > 1024 * 1024 {
+            return Ok(None);
+        }
+    }
+    let base_bytes = store.objects.read_blob(ids[0])?;
+    let target_bytes = store.objects.read_blob(ids[1])?;
+    let private_bytes = store.objects.read_blob(ids[2])?;
+    if base_bytes.contains(&0) || target_bytes.contains(&0) || private_bytes.contains(&0) {
         return Ok(None);
     }
     let (Ok(base_text), Ok(private_text), Ok(target_text)) = (
@@ -1318,6 +1486,7 @@ fn run_rule(
                 required: rule.required,
                 exit_code: 124,
                 duration_ms: start.elapsed().as_millis() as i64,
+                environment_json: validation_environment(candidate_dir),
                 stdout_object,
                 stderr_object,
                 candidate_root: candidate_root.to_string(),
@@ -1343,12 +1512,23 @@ fn run_rule(
         required: rule.required,
         exit_code: status.code().unwrap_or(128),
         duration_ms: start.elapsed().as_millis() as i64,
+        environment_json: validation_environment(candidate_dir),
         stdout_object,
         stderr_object,
         candidate_root: candidate_root.to_string(),
         policy_hash: policy_hash.to_string(),
         created_at: now(),
     })
+}
+
+fn validation_environment(candidate_dir: &Path) -> String {
+    json!({
+        "os": std::env::consts::OS,
+        "architecture": std::env::consts::ARCH,
+        "candidate_cwd": candidate_dir,
+        "path_configured": std::env::var_os("PATH").is_some(),
+    })
+    .to_string()
 }
 
 fn publish(
@@ -1359,11 +1539,25 @@ fn publish(
     json_output: bool,
 ) -> Result<()> {
     if let Some(key) = key
-        && let Some((contribution, resulting_ref)) = store.contribution_by_key(key)?
+        && let Some((contribution, resulting_ref, layer_id, source_checkpoint)) =
+            store.contribution_details_by_key(key)?
     {
+        let layer = store.layer(&layer_id)?;
+        let source = store.checkpoint(&source_checkpoint)?;
+        let recovered = store.append_checkpoint(
+            &layer.id,
+            &source.root_tree,
+            &resulting_ref,
+            &format!("recover Publish Contribution {contribution}"),
+        )?;
         return emit(
             json_output,
-            &json!({"idempotent": true, "contribution_id": contribution, "resulting_target_ref": resulting_ref}),
+            &json!({
+                "idempotent": true,
+                "contribution_id": contribution,
+                "resulting_target_ref": resulting_ref,
+                "source_checkpoint": recovered,
+            }),
             format!("Contribution {contribution} already accepted as {resulting_ref}"),
         );
     }
@@ -1586,7 +1780,8 @@ fn conflict(
             let remaining_before = store.conflicts(Some(&layer.id), false)?.len();
             let synchronize = remaining_before == 1;
             let resolved_tree = if r#use == "edited" {
-                scan_view(Path::new(&layer.view_path), &store.objects)?.tree
+                let policy = tracking_policy(store, &layer)?;
+                scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)?.tree
             } else {
                 let selected = match r#use.as_str() {
                     "base" => record.base_entry.clone(),
@@ -1710,15 +1905,38 @@ fn discard(
             children.len()
         )));
     }
-    if reparent.is_some() {
-        return Err(JavelinError::invalid(
-            "--reparent implementation requires an explicit future migration",
-        ));
+    if let Some(target) = reparent {
+        let (target_kind, target_id) = if target == "world" {
+            ("world", None)
+        } else if let Some(target_layer) = target.strip_prefix("layer:") {
+            let target_layer = store.layer(target_layer)?;
+            if target_layer.id == layer.id {
+                return Err(JavelinError::policy(
+                    "child Layers cannot be reparented to the Layer being discarded",
+                ));
+            }
+            ("layer", Some(target_layer.id))
+        } else {
+            return Err(JavelinError::invalid(
+                "--reparent must be world or layer:LAYER",
+            ));
+        };
+        if let Some(target_id) = target_id.as_deref() {
+            for child in &children {
+                if reparent_would_cycle(store, &child.id, target_id)? {
+                    return Err(JavelinError::policy(format!(
+                        "reparenting {} to {} would create a Layer cycle",
+                        child.name, target
+                    )));
+                }
+            }
+        }
+        for child in &children {
+            store.reparent_layer(&child.id, target_kind, target_id.as_deref())?;
+        }
     }
     if cascade {
-        for child in children {
-            discard_named(store, &child)?;
-        }
+        cascade_discard_children(store, &layer.id, purge)?;
     }
     discard_named(store, &layer)?;
     if purge {
@@ -1729,6 +1947,51 @@ fn discard(
         &json!({"layer_id": layer.id, "name": layer.name, "purged": purge}),
         format!("Discarded Private Layer {}", layer.name),
     )
+}
+
+fn cascade_discard_children(store: &mut Store, parent_id: &str, purge: bool) -> Result<()> {
+    let children = if purge {
+        store.all_children(parent_id)?
+    } else {
+        store.active_children(parent_id)?
+    };
+    for child in children {
+        cascade_discard_children(store, &child.id, purge)?;
+        if child.status != "discarded" {
+            discard_named(store, &child)?;
+        }
+        if purge {
+            let trash = store.metadata.join("trash").join(&child.id);
+            store.purge_layer(&child.id)?;
+            if trash.exists() {
+                fs::remove_dir_all(&trash)
+                    .jctx("DISCARD_IO", "cannot purge retained child view")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reparent_would_cycle(store: &Store, child_id: &str, target_id: &str) -> Result<bool> {
+    let mut current = Some(target_id.to_string());
+    let mut seen = BTreeSet::new();
+    while let Some(id) = current {
+        if id == child_id {
+            return Ok(true);
+        }
+        if !seen.insert(id.clone()) {
+            return Err(JavelinError::corruption(
+                "existing Private Layer target cycle",
+            ));
+        }
+        let layer = store.layer(&id)?;
+        current = if layer.target_kind == "layer" {
+            layer.target_id
+        } else {
+            None
+        };
+    }
+    Ok(false)
 }
 
 fn discard_named(store: &mut Store, layer: &Layer) -> Result<()> {
@@ -2160,6 +2423,44 @@ fn hook(
 }
 
 fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<()> {
+    let config = Config::load(&store.root)?;
+    let current_time = now();
+    let trace_cutoff = (chrono::Utc::now()
+        - chrono::Duration::days(config.retention.raw_trace_days as i64))
+    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let expired_provenance = store.expired_provenance_sessions(&trace_cutoff)?;
+    let mut expired_discarded = store.expired_discarded_layers(&current_time)?;
+    let mut claims_expired = 0;
+    let mut discarded_purged = Vec::new();
+    if !dry_run {
+        claims_expired = store.expire_claims(&current_time)?;
+        for session in &expired_provenance {
+            store.purge_provenance(session)?;
+        }
+        while !expired_discarded.is_empty() {
+            let current_batch = std::mem::take(&mut expired_discarded);
+            let mut remaining = Vec::new();
+            let mut progressed = false;
+            for layer_id in current_batch {
+                if store.all_children(&layer_id)?.is_empty() {
+                    let trash = store.metadata.join("trash").join(&layer_id);
+                    store.purge_layer(&layer_id)?;
+                    if trash.exists() {
+                        fs::remove_dir_all(&trash)
+                            .jctx("DISCARD_IO", "cannot purge expired retained view")?;
+                    }
+                    discarded_purged.push(layer_id);
+                    progressed = true;
+                } else {
+                    remaining.push(layer_id);
+                }
+            }
+            if !progressed {
+                break;
+            }
+            expired_discarded = remaining;
+        }
+    }
     let mut reachable = BTreeSet::new();
     for version in store.world_history()? {
         reachable.insert(version.root_tree);
@@ -2225,12 +2526,24 @@ fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<()> {
             "gc.completed",
             Some("world"),
             None,
-            &json!({"objects_removed": unreachable.len()}),
+            &json!({
+                "objects_removed": unreachable.len(),
+                "discarded_layers_purged": discarded_purged,
+                "provenance_sessions_purged": expired_provenance,
+                "claims_expired": claims_expired,
+            }),
         )?;
     }
     emit(
         json_output,
-        &json!({"dry_run": dry_run, "reachable": reachable.len(), "unreachable": unreachable}),
+        &json!({
+            "dry_run": dry_run,
+            "reachable": reachable.len(),
+            "unreachable": unreachable,
+            "expired_discarded_layers": if dry_run { expired_discarded } else { discarded_purged.clone() },
+            "expired_provenance_sessions": expired_provenance,
+            "claims_expired": claims_expired,
+        }),
         format!(
             "{} unreachable objects{}",
             unreachable.len(),
@@ -2244,6 +2557,9 @@ fn events(store: &Store, since: i64, follow: bool, jsonl: bool) -> Result<()> {
         let mut cursor = since;
         for event in &events {
             println!("{event}");
+            std::io::stdout()
+                .flush()
+                .jctx("OUTPUT_IO", "cannot flush event stream")?;
             cursor = event["cursor"].as_i64().unwrap_or(cursor);
         }
         if follow {
@@ -2251,6 +2567,9 @@ fn events(store: &Store, since: i64, follow: bool, jsonl: bool) -> Result<()> {
                 thread::sleep(Duration::from_millis(250));
                 for event in store.events_since(cursor)? {
                     println!("{event}");
+                    std::io::stdout()
+                        .flush()
+                        .jctx("OUTPUT_IO", "cannot flush event stream")?;
                     cursor = event["cursor"].as_i64().unwrap_or(cursor);
                 }
             }
@@ -2316,7 +2635,12 @@ fn monitor(store: &mut Store) -> Result<()> {
             if reconcile_lock.try_lock_exclusive().is_err() {
                 continue;
             }
-            if let Ok(scan) = scan_view(Path::new(&layer.view_path), &store.objects)
+            let Ok(policy) = tracking_policy(store, &layer) else {
+                let _ = FileExt::unlock(&reconcile_lock);
+                continue;
+            };
+            if let Ok(scan) =
+                scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)
                 && let Ok(root_tree) = store.objects.put_tree(&scan.tree)
                 && let Ok(head) = store.layer_head(&layer)
                 && head.root_tree != root_tree
@@ -2413,4 +2737,56 @@ fn create_claim(
     _seconds: u64,
 ) -> Result<String> {
     _store.create_claim(_layer_id, _resource, _seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(identity: &str) -> Option<TreeEntry> {
+        Some(TreeEntry {
+            path: "path".into(),
+            kind: EntryKind::Symlink,
+            object_id: Some(identity.repeat(64)),
+            executable: false,
+        })
+    }
+
+    fn tree(entry: Option<TreeEntry>) -> Tree {
+        Tree {
+            entries: entry.into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn path_state_integration_table_is_exhaustive() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = Store::create(temp.path()).unwrap();
+        let a = state("a");
+        let b = state("b");
+        let c = state("c");
+        let cases = [
+            (a.clone(), a.clone(), b.clone(), b.clone(), false),
+            (a.clone(), b.clone(), a.clone(), b.clone(), false),
+            (a.clone(), b.clone(), b.clone(), b.clone(), false),
+            (a.clone(), b.clone(), c.clone(), None, true),
+            (None, None, a.clone(), a.clone(), false),
+            (None, a.clone(), a.clone(), a.clone(), false),
+            (None, a.clone(), b.clone(), None, true),
+            (a.clone(), None, None, None, false),
+            (a.clone(), b.clone(), None, None, true),
+            (a.clone(), None, b.clone(), None, true),
+            (a.clone(), a.clone(), None, None, false),
+        ];
+        for (base, target, private, expected, conflict) in cases {
+            let (result, conflicts) =
+                integrate_trees(&mut store, &tree(base), &tree(target), &tree(private)).unwrap();
+            assert_eq!(
+                result.entries.into_iter().next(),
+                expected,
+                "wrong integrated path state"
+            );
+            assert_eq!(!conflicts.is_empty(), conflict, "wrong conflict decision");
+        }
+    }
 }

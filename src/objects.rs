@@ -161,26 +161,70 @@ impl ObjectStore {
     }
 
     pub fn validate(&self, id: &str) -> Result<(ObjectKind, u64)> {
-        let (kind, bytes) = self.read(id)?;
-        Ok((kind, bytes.len() as u64))
+        let (kind, expected_length, file) = self.open_object(id)?;
+        let mut decoder = zstd::stream::read::Decoder::new(file)
+            .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(kind.domain());
+        let mut length = 0_u64;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            let read = decoder
+                .read(&mut buffer)
+                .jctx("CORRUPT_OBJECT", format!("cannot read object {id}"))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            length += read as u64;
+        }
+        self.check_identity(id, expected_length, length, &hasher)?;
+        Ok((kind, length))
+    }
+
+    pub fn info(&self, id: &str) -> Result<(ObjectKind, u64)> {
+        let (kind, length, _file) = self.open_object(id)?;
+        Ok((kind, length))
+    }
+
+    pub fn write_blob_to_file(&self, id: &str, path: &Path) -> Result<u64> {
+        let output =
+            File::create(path).jctx("VIEW_IO", format!("cannot create {}", path.display()))?;
+        self.write_blob_to_writer(id, output)
+    }
+
+    pub fn write_blob_to_writer(&self, id: &str, mut output: impl Write) -> Result<u64> {
+        let (kind, expected_length, file) = self.open_object(id)?;
+        if kind != ObjectKind::Blob {
+            return Err(JavelinError::corruption(format!(
+                "object {id} is not a blob"
+            )));
+        }
+        let mut decoder = zstd::stream::read::Decoder::new(file)
+            .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(kind.domain());
+        let mut length = 0_u64;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            let read = decoder
+                .read(&mut buffer)
+                .jctx("CORRUPT_OBJECT", format!("cannot read object {id}"))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            output
+                .write_all(&buffer[..read])
+                .jctx("OUTPUT_IO", "cannot write object bytes")?;
+            length += read as u64;
+        }
+        self.check_identity(id, expected_length, length, &hasher)?;
+        Ok(length)
     }
 
     fn read(&self, id: &str) -> Result<(ObjectKind, Vec<u8>)> {
-        let path = self.object_path(id)?;
-        let mut file = File::open(&path).jctx(
-            "MISSING_OBJECT",
-            format!("missing object {id} at {}", path.display()),
-        )?;
-        let mut header = [0_u8; HEADER_LEN as usize];
-        file.read_exact(&mut header)
-            .jctx("CORRUPT_OBJECT", format!("truncated object {id}"))?;
-        if &header[..4] != MAGIC {
-            return Err(JavelinError::corruption(format!(
-                "invalid object header {id}"
-            )));
-        }
-        let kind = ObjectKind::from_byte(header[4])?;
-        let expected_length = u64::from_be_bytes(header[5..13].try_into().unwrap());
+        let (kind, expected_length, file) = self.open_object(id)?;
         let mut decoder = zstd::stream::read::Decoder::new(file)
             .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
         let mut bytes = Vec::new();
@@ -201,6 +245,45 @@ impl ObjectStore {
             )));
         }
         Ok((kind, bytes))
+    }
+
+    fn open_object(&self, id: &str) -> Result<(ObjectKind, u64, File)> {
+        let path = self.object_path(id)?;
+        let mut file = File::open(&path).jctx(
+            "MISSING_OBJECT",
+            format!("missing object {id} at {}", path.display()),
+        )?;
+        let mut header = [0_u8; HEADER_LEN as usize];
+        file.read_exact(&mut header)
+            .jctx("CORRUPT_OBJECT", format!("truncated object {id}"))?;
+        if &header[..4] != MAGIC {
+            return Err(JavelinError::corruption(format!(
+                "invalid object header {id}"
+            )));
+        }
+        let kind = ObjectKind::from_byte(header[4])?;
+        let expected_length = u64::from_be_bytes(header[5..13].try_into().unwrap());
+        Ok((kind, expected_length, file))
+    }
+
+    fn check_identity(
+        &self,
+        id: &str,
+        expected_length: u64,
+        actual_length: u64,
+        hasher: &blake3::Hasher,
+    ) -> Result<()> {
+        if actual_length != expected_length {
+            return Err(JavelinError::corruption(format!(
+                "object {id} length mismatch"
+            )));
+        }
+        if hasher.clone().finalize().to_hex().as_str() != id {
+            return Err(JavelinError::corruption(format!(
+                "object {id} content hash mismatch"
+            )));
+        }
+        Ok(())
     }
 
     pub fn all_ids(&self) -> Result<Vec<String>> {

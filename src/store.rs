@@ -4,7 +4,9 @@ use crate::objects::{ObjectKind, ObjectStore};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::json;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub struct Store {
     pub root: PathBuf,
@@ -36,6 +38,7 @@ pub struct ValidationRecord {
     pub required: bool,
     pub exit_code: i32,
     pub duration_ms: i64,
+    pub environment_json: String,
     pub stdout_object: Option<String>,
     pub stderr_object: Option<String>,
     pub candidate_root: String,
@@ -96,12 +99,145 @@ impl Store {
             .jctx("STORE_PRAGMA", "cannot set durable synchronization")?;
         migrate(&conn)?;
         let objects = ObjectStore::new(&metadata)?;
-        Ok(Self {
+        let mut store = Self {
             root: root.to_path_buf(),
             metadata,
             conn,
             objects,
-        })
+        };
+        store.recover_startup()?;
+        Ok(store)
+    }
+
+    fn recover_startup(&mut self) -> Result<()> {
+        let timestamp = now();
+        self.conn
+            .execute(
+                "UPDATE claims SET released_at = ?1
+                 WHERE released_at IS NULL AND expires_at <= ?1",
+                [&timestamp],
+            )
+            .jctx("STARTUP_RECOVERY", "cannot expire Claims")?;
+        self.conn
+            .execute(
+                "UPDATE layers SET status = 'active' WHERE status = 'publishing'",
+                [],
+            )
+            .jctx("STARTUP_RECOVERY", "cannot recover publishing Layers")?;
+        self.conn
+            .execute(
+                "UPDATE publish_attempts SET status = 'interrupted', updated_at = ?1
+                 WHERE status IN ('queued', 'running', 'publishing')",
+                [&timestamp],
+            )
+            .jctx("STARTUP_RECOVERY", "cannot recover Publish attempts")?;
+
+        let abandoned = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT request_id, pid FROM publish_queue")
+                .jctx("STARTUP_RECOVERY", "cannot inspect Publish queue")?;
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+                })
+                .jctx("STARTUP_RECOVERY", "cannot read Publish queue")?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .jctx("STARTUP_RECOVERY", "cannot decode Publish queue")?
+                .into_iter()
+                .filter_map(|(request_id, pid)| (!startup_process_alive(pid)).then_some(request_id))
+                .collect::<Vec<_>>()
+        };
+        for request_id in abandoned {
+            self.conn
+                .execute(
+                    "DELETE FROM publish_queue WHERE request_id = ?1",
+                    [&request_id],
+                )
+                .jctx(
+                    "STARTUP_RECOVERY",
+                    "cannot remove abandoned Publish request",
+                )?;
+        }
+
+        let views = {
+            let mut statement = self
+                .conn
+                .prepare(
+                    "SELECT l.id, l.view_path FROM layers l
+                     JOIN views v ON v.layer_id = l.id
+                     WHERE l.status != 'discarded' AND l.id != 'local'",
+                )
+                .jctx("STARTUP_RECOVERY", "cannot inspect Managed views")?;
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .jctx("STARTUP_RECOVERY", "cannot read Managed views")?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .jctx("STARTUP_RECOVERY", "cannot decode Managed views")?
+        };
+        for (layer_id, view_path) in views {
+            let marker = Path::new(&view_path).join(".javelin-view");
+            let valid = fs::read(&marker)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|value| {
+                    value
+                        .get("layer_id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_owned)
+                })
+                .is_some_and(|id| id == layer_id);
+            if !valid {
+                self.conn
+                    .execute(
+                        "UPDATE views SET stale = 1, backend = 'repair_required', updated_at = ?1
+                         WHERE layer_id = ?2",
+                        params![timestamp, layer_id],
+                    )
+                    .jctx("STARTUP_RECOVERY", "cannot mark stale Managed view")?;
+            }
+        }
+
+        let grace_seconds = std::env::var("JAVELIN_STARTUP_TEMP_GRACE_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(3600);
+        let temp = self.metadata.join("temp");
+        if temp.exists() {
+            for entry in fs::read_dir(&temp).jctx("STARTUP_RECOVERY", "cannot inspect temp data")? {
+                let entry = entry.jctx("STARTUP_RECOVERY", "cannot read temp entry")?;
+                let metadata = fs::symlink_metadata(entry.path())
+                    .jctx("STARTUP_RECOVERY", "cannot inspect temp entry")?;
+                let old = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age >= Duration::from_secs(grace_seconds));
+                if old {
+                    if metadata.file_type().is_dir() {
+                        fs::remove_dir_all(entry.path())
+                            .jctx("STARTUP_RECOVERY", "cannot remove abandoned temp directory")?;
+                    } else {
+                        fs::remove_file(entry.path())
+                            .jctx("STARTUP_RECOVERY", "cannot remove abandoned temp file")?;
+                    }
+                }
+            }
+        }
+
+        let ready = self.metadata.join("monitor/ready");
+        let pid_file = self.metadata.join("monitor/pid");
+        let monitor_alive = fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .is_some_and(startup_process_alive);
+        if !monitor_alive {
+            let _ = fs::remove_file(ready);
+            let _ = fs::remove_file(pid_file);
+        }
+        Ok(())
     }
 
     pub fn initialized(&self) -> Result<bool> {
@@ -507,6 +643,21 @@ impl Store {
             .jctx("STORE_QUERY", "cannot read idempotent Contribution")
     }
 
+    pub fn contribution_details_by_key(
+        &self,
+        key: &str,
+    ) -> Result<Option<(String, String, String, String)>> {
+        self.conn
+            .query_row(
+                "SELECT id, resulting_target_ref, source_layer, source_checkpoint
+                 FROM contributions WHERE idempotency_key = ?1",
+                [key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .jctx("STORE_QUERY", "cannot read idempotent Contribution details")
+    }
+
     pub fn accept_publish(
         &mut self,
         layer: &Layer,
@@ -895,8 +1046,9 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO validation_runs(id, rule_name, command_json, required, exit_code,
-                 duration_ms, stdout_object, stderr_object, candidate_root, policy_hash, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 duration_ms, environment_json, stdout_object, stderr_object, candidate_root,
+                 policy_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     record.id,
                     record.rule_name,
@@ -904,6 +1056,7 @@ impl Store {
                     record.required,
                     record.exit_code,
                     record.duration_ms,
+                    record.environment_json,
                     record.stdout_object,
                     record.stderr_object,
                     record.candidate_root,
@@ -1025,6 +1178,55 @@ impl Store {
             .jctx("STORE_QUERY", "cannot decode child Layers")
     }
 
+    pub fn all_children(&self, layer_id: &str) -> Result<Vec<Layer>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT id, name, origin_ref, synchronized_ref, head_checkpoint, target_kind,
+                 target_id, status, view_path, created_at FROM layers WHERE target_kind = 'layer'
+                 AND target_id = ?1 ORDER BY created_at",
+            )
+            .jctx("STORE_QUERY", "cannot prepare child Layer query")?;
+        let rows = statement
+            .query_map([layer_id], layer_from_row)
+            .jctx("STORE_QUERY", "cannot read child Layers")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .jctx("STORE_QUERY", "cannot decode child Layers")
+    }
+
+    pub fn reparent_layer(
+        &mut self,
+        layer_id: &str,
+        target_kind: &str,
+        target_id: Option<&str>,
+    ) -> Result<()> {
+        if target_kind != "world" && target_kind != "layer" {
+            return Err(JavelinError::invalid(
+                "reparent target must be World or Private Layer",
+            ));
+        }
+        if target_kind == "layer" && target_id == Some(layer_id) {
+            return Err(JavelinError::policy("Private Layer cannot target itself"));
+        }
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE layers SET target_kind = ?1, target_id = ?2 WHERE id = ?3",
+                params![target_kind, target_id, layer_id],
+            )
+            .jctx("STORE_WRITE", "cannot reparent Private Layer")?;
+        if changed != 1 {
+            return Err(JavelinError::invalid("unknown Private Layer"));
+        }
+        self.append_event(
+            "layer.reparented",
+            Some("layer"),
+            Some(layer_id),
+            &json!({"target_kind": target_kind, "target_id": target_id}),
+        )?;
+        Ok(())
+    }
+
     pub fn record_discard(&mut self, layer_id: &str, purge_after: &str) -> Result<()> {
         let now = now();
         let tx = self
@@ -1086,9 +1288,9 @@ impl Store {
                 "only an exact discarded named Layer can be purged",
             ));
         }
-        if !self.active_children(&layer.id)?.is_empty() {
+        if !self.all_children(&layer.id)?.is_empty() {
             return Err(JavelinError::policy(
-                "cannot purge a Layer with active child Layers",
+                "cannot purge a Layer with retained child Layers",
             ));
         }
         self.conn
@@ -1244,17 +1446,22 @@ impl Store {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT event_id, timestamp, event_type, payload_json FROM provenance_events
+                "SELECT event_id, layer_id, timestamp, actor_json, event_type, payload_json FROM provenance_events
                  WHERE session_id = ?1 ORDER BY timestamp, event_id",
             )
             .jctx("STORE_QUERY", "cannot prepare provenance event query")?;
         let events = statement
             .query_map([session_id], |row| {
-                let payload: String = row.get(3)?;
+                let actor: String = row.get(3)?;
+                let payload: String = row.get(5)?;
                 Ok(json!({
+                    "schema": "javelin.provenance.v1",
                     "event_id": row.get::<_, String>(0)?,
-                    "timestamp": row.get::<_, String>(1)?,
-                    "type": row.get::<_, String>(2)?,
+                    "session_id": session_id,
+                    "layer_id": row.get::<_, Option<String>>(1)?,
+                    "timestamp": row.get::<_, String>(2)?,
+                    "actor": serde_json::from_str::<serde_json::Value>(&actor).unwrap_or(json!({})),
+                    "type": row.get::<_, String>(4)?,
                     "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(json!({})),
                 }))
             })
@@ -1317,6 +1524,47 @@ impl Store {
         Ok(())
     }
 
+    pub fn expired_provenance_sessions(&self, cutoff: &str) -> Result<Vec<String>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT id FROM provenance_sessions WHERE started_at <= ?1 AND
+                 (EXISTS(SELECT 1 FROM provenance_events e WHERE e.session_id = provenance_sessions.id
+                  AND e.payload_json != '{\"purged\":true}') OR
+                  EXISTS(SELECT 1 FROM provenance_attachments a WHERE a.session_id = provenance_sessions.id
+                  AND a.purged = 0)) ORDER BY started_at",
+            )
+            .jctx("STORE_QUERY", "cannot prepare expired provenance query")?;
+        let rows = statement
+            .query_map([cutoff], |row| row.get(0))
+            .jctx("STORE_QUERY", "cannot read expired provenance sessions")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .jctx("STORE_QUERY", "cannot decode expired provenance sessions")
+    }
+
+    pub fn expired_discarded_layers(&self, cutoff: &str) -> Result<Vec<String>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT layer_id FROM discard_records WHERE purge_after <= ?1 ORDER BY purge_after",
+            )
+            .jctx("STORE_QUERY", "cannot prepare expired Discard query")?;
+        let rows = statement
+            .query_map([cutoff], |row| row.get(0))
+            .jctx("STORE_QUERY", "cannot read expired discarded Layers")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .jctx("STORE_QUERY", "cannot decode expired discarded Layers")
+    }
+
+    pub fn expire_claims(&mut self, cutoff: &str) -> Result<usize> {
+        self.conn
+            .execute(
+                "UPDATE claims SET released_at = ?1 WHERE released_at IS NULL AND expires_at <= ?1",
+                [cutoff],
+            )
+            .jctx("STORE_WRITE", "cannot expire Claims")
+    }
+
     pub fn create_claim(&mut self, layer_id: &str, resource: &str, seconds: u64) -> Result<String> {
         let layer = self.layer(layer_id)?;
         let id = ulid::Ulid::new().to_string();
@@ -1344,11 +1592,11 @@ impl Store {
             .prepare(
                 "SELECT c.id, c.layer_id, l.name, c.resource, c.kind, c.expires_at, c.released_at,
                  c.created_at FROM claims c JOIN layers l ON l.id = c.layer_id
-                 WHERE c.released_at IS NULL ORDER BY c.created_at",
+                 WHERE c.released_at IS NULL AND c.expires_at > ?1 ORDER BY c.created_at",
             )
             .jctx("STORE_QUERY", "cannot prepare Claim list")?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map([now()], |row| {
                 Ok(json!({
                     "id": row.get::<_, String>(0)?,
                     "layer_id": row.get::<_, String>(1)?,
@@ -1525,6 +1773,16 @@ pub fn now() -> String {
 }
 
 #[cfg(unix)]
+fn startup_process_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn startup_process_alive(_pid: u32) -> bool {
+    true
+}
+
+#[cfg(unix)]
 fn set_private_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
@@ -1650,6 +1908,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             required INTEGER NOT NULL,
             exit_code INTEGER NOT NULL,
             duration_ms INTEGER NOT NULL,
+            environment_json TEXT NOT NULL,
             stdout_object TEXT,
             stderr_object TEXT,
             candidate_root TEXT NOT NULL,
@@ -1734,5 +1993,38 @@ fn migrate(conn: &Connection) -> Result<()> {
         "#,
     )
     .jctx("MIGRATION_FAILED", "cannot migrate Javelin Store")?;
+    let has_environment = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(validation_runs)")
+            .jctx("MIGRATION_FAILED", "cannot inspect validation schema")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .jctx("MIGRATION_FAILED", "cannot read validation schema")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .jctx("MIGRATION_FAILED", "cannot decode validation schema")?;
+        columns.iter().any(|column| column == "environment_json")
+    };
+    if !has_environment {
+        conn.execute_batch(
+            r#"
+            BEGIN IMMEDIATE;
+            ALTER TABLE validation_runs ADD COLUMN environment_json TEXT NOT NULL DEFAULT '{}';
+            INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+            VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+            COMMIT;
+            "#,
+        )
+        .jctx(
+            "MIGRATION_FAILED",
+            "cannot migrate validation environment schema",
+        )?;
+    } else {
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+             VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            [],
+        )
+        .jctx("MIGRATION_FAILED", "cannot record schema migration 2")?;
+    }
     Ok(())
 }

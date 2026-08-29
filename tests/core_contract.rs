@@ -2,6 +2,8 @@ use javelin::config::IgnorePolicy;
 use javelin::model::{EntryKind, Tree, TreeEntry};
 use javelin::objects::{ObjectStore, decode_tree, encode_tree};
 use javelin::paths::validate_relative;
+use javelin::view::materialize_tree;
+use std::fs;
 
 #[test]
 fn tree_encoding_is_deterministic_and_round_trips() {
@@ -70,4 +72,39 @@ fn ignore_policy_supports_reinclusion_and_exact_secrets() {
     assert!(policy.ignored("node_modules/pkg/index.js", false));
     assert!(policy.ignored("debug.log", false));
     assert!(!policy.ignored("important.log", false));
+}
+
+#[cfg(unix)]
+#[test]
+fn crafted_symlink_parent_cannot_escape_materialization() {
+    let temp = tempfile::tempdir().unwrap();
+    let metadata = temp.path().join(".javelin");
+    let objects = ObjectStore::new(&metadata).unwrap();
+    let link = objects.put_blob(b"../outside").unwrap();
+    let payload = objects.put_blob(b"must stay contained").unwrap();
+    let tree = Tree {
+        entries: vec![
+            TreeEntry {
+                path: "escape".into(),
+                kind: EntryKind::Symlink,
+                object_id: Some(link),
+                executable: false,
+            },
+            TreeEntry {
+                path: "escape/written.txt".into(),
+                kind: EntryKind::File,
+                object_id: Some(payload),
+                executable: false,
+            },
+        ],
+    };
+    let destination = temp.path().join("view");
+    assert!(materialize_tree(&tree, &destination, &objects, None).is_err());
+    assert!(!temp.path().join("outside/written.txt").exists());
+    assert!(
+        fs::symlink_metadata(destination.join("escape"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }

@@ -130,6 +130,45 @@ fn conflict_preserves_base_target_private_and_exit_code() {
 }
 
 #[test]
+fn refresh_reports_case_fold_collision_as_conflict() {
+    let (_temp, world) = init();
+    let upper = output_text(in_world(
+        &world,
+        &["layer", "create", "upper", "--from", "world"],
+    ));
+    let lower = output_text(in_world(
+        &world,
+        &["layer", "create", "lower", "--from", "world"],
+    ));
+    fs::write(Path::new(&upper).join("Name.txt"), b"upper\n").unwrap();
+    fs::write(Path::new(&lower).join("name.txt"), b"lower\n").unwrap();
+    in_world(&world, &["publish", "upper", "--idempotency-key", "upper"]);
+    let failed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "lower",
+            "--idempotency-key",
+            "lower",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(4));
+    let conflicts: Value =
+        serde_json::from_slice(&in_world(&world, &["conflict", "list", "lower", "--json"]).stdout)
+            .unwrap();
+    assert!(
+        conflicts["result"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|conflict| conflict["type"] == "case")
+    );
+}
+
+#[test]
 fn monitor_records_stable_writes_without_explicit_checkpoint() {
     let (_temp, world) = init();
     fs::write(world.join("automatic.txt"), b"captured\n").unwrap();
@@ -150,6 +189,100 @@ fn monitor_records_stable_writes_without_explicit_checkpoint() {
         assert!(started.elapsed() < Duration::from_secs(5));
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+#[test]
+fn ignore_policy_change_cannot_hide_or_include_files_in_same_contribution() {
+    let (_temp, world) = init();
+    let policy_path = world.join(".javelinignore");
+    let policy = fs::read_to_string(&policy_path)
+        .unwrap()
+        .lines()
+        .filter(|line| *line != ".env")
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&policy_path, format!("{policy}\n")).unwrap();
+    fs::write(world.join(".env"), b"TRACK_AFTER_POLICY_ACCEPTS=1\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "policy-first"]);
+    let absent = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "show", "v2:.env"])
+        .output()
+        .unwrap();
+    assert_eq!(absent.status.code(), Some(2));
+    in_world(&world, &["publish", "--idempotency-key", "file-second"]);
+    assert_eq!(
+        output_text(in_world(&world, &["show", "v3:.env"])),
+        "TRACK_AFTER_POLICY_ACCEPTS=1"
+    );
+}
+
+#[test]
+fn parent_discard_requires_explicit_reparent_and_preserves_child() {
+    let (_temp, world) = init();
+    in_world(&world, &["layer", "create", "parent", "--from", "world"]);
+    in_world(
+        &world,
+        &[
+            "layer",
+            "create",
+            "child",
+            "--from",
+            "layer:parent",
+            "--target",
+            "layer:parent",
+        ],
+    );
+    let rejected = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "discard", "parent"])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(10));
+    in_world(&world, &["discard", "parent", "--reparent", "world"]);
+    let child: Value =
+        serde_json::from_slice(&in_world(&world, &["layer", "show", "child", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(child["result"]["layer"]["target_kind"], "world");
+    assert_eq!(child["result"]["layer"]["status"], "active");
+    in_world(&world, &["discarded", "recover", "parent"]);
+}
+
+#[test]
+fn repair_rebuilds_corrupted_view_and_root_cache_from_objects() {
+    let (_temp, world) = init();
+    let layer_path = output_text(in_world(
+        &world,
+        &["layer", "create", "repairable", "--from", "world"],
+    ));
+    fs::write(Path::new(&layer_path).join("safe.txt"), b"canonical\n").unwrap();
+    run(&["--project", &layer_path, "checkpoint", "--reason", "safe"]);
+    let shown: Value = serde_json::from_slice(
+        &in_world(&world, &["layer", "show", "repairable", "--json"]).stdout,
+    )
+    .unwrap();
+    let root = shown["result"]["head"]["root_tree"].as_str().unwrap();
+    in_world(&world, &["repair", "--view", "repairable"]);
+    let cached_file = world
+        .join(".javelin/materialized")
+        .join(root)
+        .join("safe.txt");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&cached_file, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        let mut cache_permissions = fs::metadata(&cached_file).unwrap().permissions();
+        cache_permissions.set_readonly(false);
+        fs::set_permissions(&cached_file, cache_permissions).unwrap();
+    }
+    fs::write(&cached_file, b"corrupt cache\n").unwrap();
+    fs::write(Path::new(&layer_path).join("safe.txt"), b"corrupt view\n").unwrap();
+    in_world(&world, &["repair", "--view", "repairable"]);
+    assert_eq!(
+        fs::read(Path::new(&layer_path).join("safe.txt")).unwrap(),
+        b"canonical\n"
+    );
 }
 
 #[cfg(unix)]
@@ -241,4 +374,270 @@ fn injected_publish_crashes_leave_one_repairable_world() {
                 .unwrap();
         assert_eq!(current["result"]["id"], "v3", "fault {point}");
     }
+}
+
+#[test]
+fn nested_child_publish_parent_publish_and_idempotent_retry_are_linear() {
+    let (_temp, world) = init();
+    let parent = output_text(in_world(
+        &world,
+        &["layer", "create", "feature", "--from", "world"],
+    ));
+    let child = output_text(in_world(
+        &world,
+        &[
+            "layer",
+            "create",
+            "api",
+            "--from",
+            "layer:feature",
+            "--target",
+            "layer:feature",
+        ],
+    ));
+    fs::write(Path::new(&child).join("api.ts"), b"export const api = 1;\n").unwrap();
+    in_world(
+        &world,
+        &["publish", "api", "--idempotency-key", "child-api"],
+    );
+    assert_eq!(
+        fs::read(Path::new(&parent).join("api.ts")).unwrap(),
+        b"export const api = 1;\n"
+    );
+    in_world(
+        &world,
+        &["publish", "feature", "--idempotency-key", "feature-world"],
+    );
+    in_world(
+        &world,
+        &["publish", "feature", "--idempotency-key", "feature-world"],
+    );
+    let history: Value =
+        serde_json::from_slice(&in_world(&world, &["world", "history", "--json"]).stdout).unwrap();
+    assert_eq!(history["result"]["versions"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        output_text(in_world(&world, &["show", "world:api.ts"])),
+        "export const api = 1;"
+    );
+}
+
+#[test]
+fn discard_preserves_world_and_supports_recover_and_exact_purge() {
+    let (_temp, world) = init();
+    fs::write(world.join("accepted.txt"), b"accepted\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "accepted"]);
+    let before: Value =
+        serde_json::from_slice(&in_world(&world, &["world", "current", "--json"]).stdout).unwrap();
+    let experiment = output_text(in_world(
+        &world,
+        &["layer", "create", "experiment", "--from", "world"],
+    ));
+    fs::write(Path::new(&experiment).join("accepted.txt"), b"tentative\n").unwrap();
+    in_world(&world, &["discard", "experiment"]);
+    let after: Value =
+        serde_json::from_slice(&in_world(&world, &["world", "current", "--json"]).stdout).unwrap();
+    assert_eq!(before["result"]["root_tree"], after["result"]["root_tree"]);
+    assert_eq!(
+        output_text(in_world(&world, &["show", "world:accepted.txt"])),
+        "accepted"
+    );
+    in_world(&world, &["discarded", "recover", "experiment"]);
+    assert_eq!(
+        fs::read(Path::new(&experiment).join("accepted.txt")).unwrap(),
+        b"tentative\n"
+    );
+    in_world(&world, &["discard", "experiment"]);
+    in_world(&world, &["discarded", "purge", "experiment"]);
+    let missing = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "layer",
+            "show",
+            "experiment",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn required_failure_blocks_while_informational_failure_is_recorded() {
+    let (_temp, world) = init();
+    let executable = binary().to_string_lossy().replace('\\', "\\\\");
+    let mut config = fs::read_to_string(world.join("javelin.toml")).unwrap();
+    config.push_str(&format!(
+        "\n[[verification.rule]]\nname = \"gate\"\ncommand = [\"{executable}\", \"not-a-command\"]\nrequired = true\ntimeout_seconds = 10\n"
+    ));
+    fs::write(world.join("javelin.toml"), config).unwrap();
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "--idempotency-key",
+            "bad-policy",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(5));
+    let current: Value =
+        serde_json::from_slice(&in_world(&world, &["world", "current", "--json"]).stdout).unwrap();
+    assert_eq!(current["result"]["id"], "v1");
+
+    let base = fs::read_to_string(world.join("javelin.toml")).unwrap();
+    let fixed = base
+        .replace(
+            "name = \"gate\"\ncommand = [",
+            "name = \"information\"\ncommand = [",
+        )
+        .replace("required = true", "required = false");
+    fs::write(world.join("javelin.toml"), fixed).unwrap();
+    let accepted: Value = serde_json::from_slice(
+        &in_world(
+            &world,
+            &["publish", "--idempotency-key", "informational", "--json"],
+        )
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(accepted["result"]["resulting_target_ref"], "v2");
+    assert_eq!(accepted["result"]["validations"][0]["exit_code"], 2);
+    assert_eq!(accepted["result"]["validations"][0]["required"], false);
+}
+
+#[cfg(unix)]
+#[test]
+fn startup_recovery_removes_abandoned_temp_and_dead_queue_entry() {
+    let (_temp, world) = init();
+    let abandoned = world.join(".javelin/temp/abandoned.tmp");
+    fs::write(&abandoned, b"partial").unwrap();
+    let database = world.join(".javelin/store.sqlite3");
+    let connection = rusqlite::Connection::open(database).unwrap();
+    connection
+        .execute(
+            "INSERT INTO publish_queue(request_id, target, pid, created_at)
+             VALUES ('dead-request', 'world', 2147483647, '2000-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    let recovered = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "doctor"])
+        .env("JAVELIN_STARTUP_TEMP_GRACE_SECONDS", "0")
+        .output()
+        .unwrap();
+    assert!(recovered.status.success());
+    assert!(!abandoned.exists());
+    let connection = rusqlite::Connection::open(world.join(".javelin/store.sqlite3")).unwrap();
+    let queued: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM publish_queue WHERE request_id = 'dead-request'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(queued, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn fsck_detects_corrupt_copied_store_without_damaging_original() {
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            let metadata = fs::symlink_metadata(&source_path).unwrap();
+            if metadata.file_type().is_dir() {
+                copy_tree(&source_path, &destination_path);
+            } else if metadata.file_type().is_symlink() {
+                std::os::unix::fs::symlink(fs::read_link(&source_path).unwrap(), destination_path)
+                    .unwrap();
+            } else {
+                fs::copy(source_path, destination_path).unwrap();
+            }
+        }
+    }
+
+    let (temp, world) = init();
+    fs::write(world.join("payload.txt"), b"canonical bytes\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "canonical"]);
+    let pid: i32 = fs::read_to_string(world.join(".javelin/monitor/pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+    thread::sleep(Duration::from_millis(100));
+    let connection = rusqlite::Connection::open(world.join(".javelin/store.sqlite3")).unwrap();
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    drop(connection);
+
+    let copied = temp.path().join("copied-world");
+    copy_tree(&world, &copied);
+    let objects = copied.join(".javelin/objects");
+    let object = fs::read_dir(&objects)
+        .unwrap()
+        .flat_map(|shard| fs::read_dir(shard.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .next()
+        .unwrap();
+    let mut bytes = fs::read(&object).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    fs::write(&object, bytes).unwrap();
+
+    let corrupted = Command::new(binary())
+        .args(["--project", copied.to_str().unwrap(), "fsck", "--json"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert_eq!(corrupted.status.code(), Some(7));
+    let error: Value = serde_json::from_slice(&corrupted.stderr).unwrap();
+    assert!(matches!(
+        error["error"]["code"].as_str(),
+        Some("STORAGE_CORRUPTION" | "CORRUPT_OBJECT")
+    ));
+    let original = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "fsck"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(original.status.success());
+}
+
+#[test]
+fn migration_from_schema_v1_adds_validation_environment() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("world");
+    fs::create_dir_all(&root).unwrap();
+    let store = javelin::store::Store::create(&root).unwrap();
+    drop(store);
+    let database = root.join(".javelin/store.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DELETE FROM schema_migrations WHERE version = 2;
+             ALTER TABLE validation_runs DROP COLUMN environment_json;",
+        )
+        .unwrap();
+    drop(connection);
+    let store = javelin::store::Store::open(&root).unwrap();
+    let has_environment: bool = store
+        .conn
+        .prepare("PRAGMA table_info(validation_runs)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .iter()
+        .any(|column| column == "environment_json");
+    assert!(has_environment);
 }

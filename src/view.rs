@@ -17,6 +17,14 @@ pub struct ScanResult {
 
 pub fn scan_view(view: &Path, objects: &ObjectStore) -> Result<ScanResult> {
     let policy = IgnorePolicy::load(view)?;
+    scan_view_with_policy(view, objects, &policy)
+}
+
+pub fn scan_view_with_policy(
+    view: &Path,
+    objects: &ObjectStore,
+    policy: &IgnorePolicy,
+) -> Result<ScanResult> {
     let mut entries = Vec::new();
     let mut ignored = Vec::new();
     let walker = WalkDir::new(view)
@@ -69,11 +77,12 @@ pub fn scan_view(view: &Path, objects: &ObjectStore) -> Result<ScanResult> {
             EntryKind::Symlink => Some(objects.put_blob(&symlink_target_bytes(item.path())?)?),
             EntryKind::Directory => None,
         };
+        let executable = kind == EntryKind::File && is_executable(&metadata);
         entries.push(TreeEntry {
             path: relative,
             kind,
             object_id,
-            executable: is_executable(&metadata),
+            executable,
         });
     }
     entries.sort_by(|left, right| left.path.as_bytes().cmp(right.path.as_bytes()));
@@ -283,7 +292,8 @@ pub fn ensure_root_cache(
                 let object_id = entry.object_id.as_deref().ok_or_else(|| {
                     JavelinError::corruption(format!("file {} has no blob", entry.path))
                 })?;
-                write_cache_file(&path, &objects.read_blob(object_id)?, entry.executable)?;
+                objects.write_blob_to_file(object_id, &path)?;
+                set_cache_mode(&path, entry.executable)?;
             }
             EntryKind::Symlink => {
                 if let Some(parent) = path.parent() {
@@ -310,11 +320,18 @@ pub fn ensure_root_cache(
     Ok(target)
 }
 
-fn write_cache_file(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
-    let mut file = File::create(path).jctx("VIEW_IO", "cannot create cached file")?;
-    file.write_all(bytes)
-        .jctx("VIEW_IO", "cannot write cached file")?;
-    set_cache_mode(path, executable)
+pub fn invalidate_root_cache(metadata: &Path, root_id: &str) -> Result<()> {
+    if root_id.len() != 64 || !root_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(JavelinError::corruption(format!(
+            "invalid root cache ID {root_id}"
+        )));
+    }
+    let path = metadata.join("materialized").join(root_id);
+    if path.exists() {
+        fs::remove_dir_all(&path)
+            .jctx("VIEW_IO", format!("cannot invalidate root cache {root_id}"))?;
+    }
+    Ok(())
 }
 
 fn clear_view(view: &Path) -> Result<()> {
