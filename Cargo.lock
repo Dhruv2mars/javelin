@@ -486,6 +486,7 @@ dependencies = [
  "ulid",
  "wait-timeout",
  "walkdir",
+ "windows-sys",
  "zstd",
 ]
 

@@ -2806,16 +2806,17 @@ fn start_monitor(store: &Store) -> Result<()> {
     }
     let _ = fs::remove_file(&ready_path);
     let executable = std::env::current_exe().jctx("MONITOR_IO", "cannot locate Javelin binary")?;
-    ProcessCommand::new(executable)
+    let mut command = ProcessCommand::new(executable);
+    command
         .arg("--project")
         .arg(&store.root)
         .arg("__monitor")
         .env("JAVELIN_MONITOR_CHILD", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .jctx("MONITOR_IO", "cannot start Monitor")?;
+        .stderr(Stdio::null());
+    configure_monitor_process(&mut command)?;
+    command.spawn().jctx("MONITOR_IO", "cannot start Monitor")?;
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(5) {
         if monitor_ready(&ready_path) {
@@ -2824,6 +2825,40 @@ fn start_monitor(store: &Store) -> Result<()> {
         thread::sleep(Duration::from_millis(25));
     }
     Err(JavelinError::busy("Monitor did not become ready within 5s"))
+}
+
+#[cfg(windows)]
+fn configure_monitor_process(command: &mut ProcessCommand) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::Foundation::{
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
+
+    for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(stream) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            continue;
+        }
+        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+            return Err(JavelinError::new(
+                7,
+                "MONITOR_IO",
+                "cannot prevent Monitor from inheriting command handles",
+            )
+            .details(json!({"cause": std::io::Error::last_os_error().to_string()})));
+        }
+    }
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn configure_monitor_process(_command: &mut ProcessCommand) -> Result<()> {
+    Ok(())
 }
 
 fn monitor_ready(path: &Path) -> bool {
