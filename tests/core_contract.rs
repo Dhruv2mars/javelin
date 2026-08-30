@@ -2,7 +2,9 @@ use javelin::config::IgnorePolicy;
 use javelin::model::{EntryKind, Tree, TreeEntry};
 use javelin::objects::{ObjectStore, decode_tree, encode_tree};
 use javelin::paths::validate_relative;
+#[cfg(unix)]
 use javelin::view::materialize_tree;
+#[cfg(unix)]
 use std::fs;
 
 #[test]
