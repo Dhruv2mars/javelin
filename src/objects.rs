@@ -324,10 +324,18 @@ impl ObjectStore {
     }
 }
 
+#[cfg(unix)]
 fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .jctx("OBJECT_IO", format!("cannot sync {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_path: &Path) -> Result<()> {
+    // Rust's standard library cannot open Windows directories for `sync_all`.
+    // The object file itself is synced before its atomic rename.
+    Ok(())
 }
 
 pub fn encode_tree(tree: &Tree) -> Result<Vec<u8>> {
