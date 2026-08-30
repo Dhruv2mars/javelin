@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
 #[derive(Debug, Default)]
@@ -91,6 +92,63 @@ pub fn scan_view_with_policy(
         tree: Tree { entries },
         ignored,
     })
+}
+
+pub fn view_stamp(view: &Path) -> Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    let walker = WalkDir::new(view)
+        .follow_links(false)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            name != ".javelin" && name != ".git" && name != ".javelin-view"
+        });
+    for item in walker {
+        let item = item.jctx("SCAN_IO", format!("cannot inspect {}", view.display()))?;
+        if item.depth() == 0 {
+            continue;
+        }
+        let relative = item
+            .path()
+            .strip_prefix(view)
+            .map_err(|_| JavelinError::corruption("stamp escaped Managed view"))?
+            .to_str()
+            .ok_or_else(|| JavelinError::unsupported("non-UTF-8 paths are unsupported"))?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        validate_relative(&relative)?;
+        let metadata =
+            fs::symlink_metadata(item.path()).jctx("SCAN_IO", format!("cannot stat {relative}"))?;
+        hasher.update(relative.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(&metadata.len().to_be_bytes());
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .unwrap_or_default();
+        hasher.update(&modified.as_secs().to_be_bytes());
+        hasher.update(&modified.subsec_nanos().to_be_bytes());
+        hasher.update(&[if metadata.file_type().is_symlink() {
+            3
+        } else if metadata.is_dir() {
+            2
+        } else {
+            1
+        }]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            hasher.update(&metadata.permissions().mode().to_be_bytes());
+        }
+        if metadata.file_type().is_symlink() {
+            hasher.update(&symlink_target_bytes(item.path())?);
+        }
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 fn detect_case_collisions(entries: &[TreeEntry]) -> Result<()> {

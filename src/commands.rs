@@ -7,14 +7,14 @@ use crate::paths::{ProjectContext, discover};
 use crate::store::{ConflictInput, NewLayer, Store, ValidationRecord, now};
 use crate::view::{
     apply_entries, diff_trees, invalidate_root_cache, materialize_tree_from_cache, scan_view,
-    scan_view_with_policy,
+    scan_view_with_policy, view_stamp,
 };
 use clap::CommandFactory;
 use fs2::FileExt;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -2617,6 +2617,8 @@ fn monitor(store: &mut Store) -> Result<()> {
     )?;
     store.append_event("monitor.ready", Some("world"), None, &json!({"pid": pid}))?;
     let debounce = Config::load(&store.root)?.checkpoint.debounce_ms.max(25);
+    let mut pending_stamps = HashMap::<String, String>::new();
+    let mut captured_stamps = HashMap::<String, String>::new();
     loop {
         if !store.metadata.exists() {
             break;
@@ -2629,20 +2631,43 @@ fn monitor(store: &mut Store) -> Result<()> {
             if !Path::new(&layer.view_path).exists() {
                 continue;
             }
+            let view = Path::new(&layer.view_path);
+            let Ok(stamp) = view_stamp(view) else {
+                continue;
+            };
+            if captured_stamps.get(&layer.id) == Some(&stamp) {
+                continue;
+            }
+            if pending_stamps.get(&layer.id) != Some(&stamp) {
+                pending_stamps.insert(layer.id.clone(), stamp);
+                continue;
+            }
+            let Ok(policy) = tracking_policy(store, &layer) else {
+                continue;
+            };
+            let Ok(scan) = scan_view_with_policy(view, &store.objects, &policy) else {
+                continue;
+            };
+            let Ok(stable_stamp) = view_stamp(view) else {
+                continue;
+            };
+            if stable_stamp != pending_stamps[&layer.id] {
+                pending_stamps.insert(layer.id.clone(), stable_stamp);
+                continue;
+            }
+            let Ok(root_tree) = store.objects.put_tree(&scan.tree) else {
+                continue;
+            };
             let Ok(reconcile_lock) = open_reconcile_lock(store) else {
                 continue;
             };
             if reconcile_lock.try_lock_exclusive().is_err() {
                 continue;
             }
-            let Ok(policy) = tracking_policy(store, &layer) else {
-                let _ = FileExt::unlock(&reconcile_lock);
-                continue;
-            };
-            if let Ok(scan) =
-                scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)
-                && let Ok(root_tree) = store.objects.put_tree(&scan.tree)
-                && let Ok(head) = store.layer_head(&layer)
+            let current = store.layer(&layer.id);
+            if let Ok(current) = current
+                && current.synchronized_ref == layer.synchronized_ref
+                && let Ok(head) = store.layer_head(&current)
                 && head.root_tree != root_tree
             {
                 let _ = store.register_object(
@@ -2653,13 +2678,15 @@ fn monitor(store: &mut Store) -> Result<()> {
                         .unwrap_or(0),
                 );
                 let _ = store.append_checkpoint(
-                    &layer.id,
+                    &current.id,
                     &root_tree,
-                    &layer.synchronized_ref,
+                    &current.synchronized_ref,
                     "automatic",
                 );
             }
             let _ = FileExt::unlock(&reconcile_lock);
+            captured_stamps.insert(layer.id.clone(), stable_stamp);
+            pending_stamps.remove(&layer.id);
         }
         thread::sleep(Duration::from_millis(debounce));
     }
