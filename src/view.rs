@@ -460,6 +460,10 @@ fn set_writable_mode(path: &Path, executable: bool) -> Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(
+    clippy::permissions_set_readonly_false,
+    reason = "this code only runs on platforms where readonly is a file attribute"
+)]
 fn set_writable_mode(path: &Path, _executable: bool) -> Result<()> {
     let mut permissions = fs::metadata(path)
         .jctx("VIEW_IO", "cannot stat materialized file")?
