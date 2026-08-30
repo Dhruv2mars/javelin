@@ -39,7 +39,10 @@ jobs:
             "dist/$name/javelin" completions "$shell" > "dist/$name/completions/javelin.$shell"
           done
           tar -C dist -czf "dist/$name.tar.gz" "$name"
-          shasum -a 256 "dist/$name.tar.gz" > "dist/$name.tar.gz.sha256"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+      - name: Verify archive checksum
+        working-directory: dist
+        run: shasum -a 256 -c ./*.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: javelin-${{ matrix.target }}
@@ -65,7 +68,20 @@ jobs:
           }
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "dist/$name.zip").Hash.ToLower()
-          "$hash  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
+          [System.IO.File]::WriteAllText(
+            "dist/$name.zip.sha256",
+            "$hash  $name.zip`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
+      - name: Verify archive checksum
+        shell: pwsh
+        working-directory: dist
+        run: |
+          $manifest = Get-ChildItem *.sha256 | Select-Object -First 1
+          $parts = (Get-Content -Raw $manifest).Trim().Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+          if ($parts.Count -ne 2) { throw "invalid checksum manifest: $manifest" }
+          $actual = (Get-FileHash -Algorithm SHA256 $parts[1]).Hash.ToLower()
+          if ($actual -ne $parts[0]) { throw "checksum mismatch: $($parts[1])" }
       - uses: actions/upload-artifact@v4
         with:
           name: javelin-x86_64-pc-windows-msvc
