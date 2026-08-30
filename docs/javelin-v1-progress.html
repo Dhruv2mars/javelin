@@ -44,7 +44,7 @@
     .warn { color: var(--amber); }
     .bad { color: var(--red); }
     .progress { height: 10px; margin: 14px 0 8px; overflow: hidden; background: #222831; border-radius: 99px; }
-    .progress > span { display: block; width: 95%; height: 100%; background: var(--green); border-radius: inherit; }
+    .progress > span { display: block; width: 98%; height: 100%; background: var(--green); border-radius: inherit; }
     ul, ol { margin: 0; padding-left: 20px; }
     li + li { margin-top: 9px; }
     .status-list { list-style: none; padding: 0; }
@@ -73,13 +73,13 @@
     <div class="eyebrow">Living delivery tracker</div>
     <h1>Javelin v1.0.0</h1>
     <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
-    <p class="updated">Snapshot: 30 August 2026, 19:39 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
+    <p class="updated">Snapshot: 30 August 2026, 19:45 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
 
     <section class="grid" aria-label="Delivery status">
       <article class="card">
-        <div class="metric good">95%</div>
+        <div class="metric good">98%</div>
         <div class="label">Contract gates proven</div>
-        <div class="progress" aria-label="95 percent complete"><span></span></div>
+        <div class="progress" aria-label="98 percent complete"><span></span></div>
         <div class="note">19 of 20 definition-of-done conditions have executable evidence. Final packaged proof remains.</div>
       </article>
       <article class="card">
@@ -100,8 +100,8 @@
 
       <article class="card wide callout">
         <h2>Current gate</h2>
-        <p><strong class="warn">Final packaged proof:</strong> the full native CI matrix is green on macOS, Ubuntu, and Windows Server 2025. The Windows Init/Monitor handle leak is fixed and its lifecycle regression now passes. Remaining work is release-archive validation, final packaged acceptance and stress, evidence refresh, and review.</p>
-        <p class="note">Local format, strict Clippy, and all 24 tests pass. CI run 33315914862 completed successfully across every native job.</p>
+        <p><strong class="warn">Final artifact revalidation:</strong> native CI, final macOS packaged acceptance, fake-Git proof, and final 100-Layer stress are green. Independent download audit caught non-portable checksum paths and Windows CRLF; both are fixed. The corrected three-platform package workflow is running now.</p>
+        <p class="note">Final stress reached World v101 in 24.29 seconds with no lost accepted changes. The final gate is corrected archive verification plus review.</p>
       </article>
 
       <article class="card half">
@@ -117,15 +117,14 @@
           <li class="done">100-Layer packaged stress and Bun/TypeScript dogfood</li>
           <li class="done">Native Ubuntu and macOS CI plus release packaging</li>
           <li class="done">Native Windows unit, core contract, and lifecycle CI</li>
+          <li class="done">Final macOS archive gauntlet and 100-Layer packaged stress</li>
         </ul>
       </article>
 
       <article class="card half">
         <h2>Remaining path</h2>
         <ol>
-          <li><strong>Build all release archives.</strong> Verify macOS, Linux, and Windows packages and checksums.</li>
-          <li><strong>Rerun final archive gauntlet.</strong> Clean install, fake failing Git, exact lifecycle evidence.</li>
-          <li><strong>Rerun stress after final code.</strong> 100 Layers and integrity checks.</li>
+          <li><strong>Revalidate corrected archives.</strong> macOS, Linux, and Windows manifests must verify after download.</li>
           <li><strong>Finish evidence and docs.</strong> Record final archive hashes and supported platforms.</li>
           <li><strong>Final review.</strong> Resolve findings; make draft PR release-ready.</li>
         </ol>
@@ -163,7 +162,7 @@
         <div class="links">
           <a href="https://github.com/Dhruv2mars/javelin">Repository</a>
           <a href="https://github.com/Dhruv2mars/javelin/pull/1">Draft PR #1</a>
-          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33315914862">Latest native CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33316370540">Latest release-package CI</a>
         </div>
         <p class="note" style="margin-top: 16px">This page uses one stable Postplan draft. It is regenerated and re-uploaded after each material milestone.</p>
       </article>
