@@ -247,6 +247,10 @@ fn parent_discard_requires_explicit_reparent_and_preserves_child() {
 }
 
 #[test]
+#[allow(
+    clippy::permissions_set_readonly_false,
+    reason = "the Windows test must clear the readonly file attribute before corrupting the cache"
+)]
 fn repair_rebuilds_corrupted_view_and_root_cache_from_objects() {
     let (_temp, world) = init();
     let layer_path = output_text(in_world(
