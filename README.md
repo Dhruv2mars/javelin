@@ -8,7 +8,7 @@ Javelin never launches agents. An editor, coding agent, or orchestrator asks Jav
 
 ## Release state
 
-Version `1.0.0` is under acceptance testing. The current source passes the core lifecycle, crash-boundary, installed-binary, and 100-Layer stress tests on Apple Silicon macOS. No public `v1.0.0` release has been published. Linux and Windows code paths remain unverified until native CI passes.
+Version `1.0.0` is under final acceptance testing. Native CI passes on Apple Silicon macOS, x86-64 Ubuntu, and x86-64 Windows Server 2025. Installed-binary acceptance passes on macOS and Ubuntu; packaged 100-Layer stress passes on Apple Silicon macOS. No public `v1.0.0` release has been published.
 
 ## Install from source
 
@@ -184,4 +184,3 @@ cargo test
 The installed-binary acceptance harness places a fake failing `git` executable first on `PATH` and requires zero invocations.
 
 Javelin is licensed under MIT.
-

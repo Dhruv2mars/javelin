@@ -44,7 +44,7 @@
     .warn { color: var(--amber); }
     .bad { color: var(--red); }
     .progress { height: 10px; margin: 14px 0 8px; overflow: hidden; background: #222831; border-radius: 99px; }
-    .progress > span { display: block; width: 90%; height: 100%; background: var(--green); border-radius: inherit; }
+    .progress > span { display: block; width: 95%; height: 100%; background: var(--green); border-radius: inherit; }
     ul, ol { margin: 0; padding-left: 20px; }
     li + li { margin-top: 9px; }
     .status-list { list-style: none; padding: 0; }
@@ -73,19 +73,19 @@
     <div class="eyebrow">Living delivery tracker</div>
     <h1>Javelin v1.0.0</h1>
     <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
-    <p class="updated">Snapshot: 30 August 2026, 15:50 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
+    <p class="updated">Snapshot: 30 August 2026, 19:39 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
 
     <section class="grid" aria-label="Delivery status">
       <article class="card">
-        <div class="metric good">90%</div>
+        <div class="metric good">95%</div>
         <div class="label">Contract gates proven</div>
-        <div class="progress" aria-label="90 percent complete"><span></span></div>
-        <div class="note">18 of 20 definition-of-done conditions have executable evidence. Two final gates remain.</div>
+        <div class="progress" aria-label="95 percent complete"><span></span></div>
+        <div class="note">19 of 20 definition-of-done conditions have executable evidence. Final packaged proof remains.</div>
       </article>
       <article class="card">
-        <div class="metric">14</div>
-        <div class="label">Feature-branch commits</div>
-        <div class="note">Small conventional commits. Draft PR remains unmerged.</div>
+        <div class="metric">3</div>
+        <div class="label">Native CI platforms</div>
+        <div class="note">macOS, Ubuntu, and Windows Server 2025 are green.</div>
       </article>
       <article class="card">
         <div class="metric">47</div>
@@ -99,9 +99,9 @@
       </article>
 
       <article class="card wide callout">
-        <h2>Current blocker</h2>
-        <p><strong class="warn">Windows Server 2025:</strong> native unit tests and the core contract pass, but the first lifecycle test hangs inside <code>javelin init</code>. Command tracing proves the hang occurs before Init returns, while the background Monitor is starting. macOS, Ubuntu, packaging, and installed-binary checks are green in the same CI matrix.</p>
-        <p class="note">Working diagnosis: Windows Monitor process readiness or process-handle behavior. This is now a narrow product defect, not an unknown test-suite hang.</p>
+        <h2>Current gate</h2>
+        <p><strong class="warn">Final packaged proof:</strong> the full native CI matrix is green on macOS, Ubuntu, and Windows Server 2025. The Windows Init/Monitor handle leak is fixed and its lifecycle regression now passes. Remaining work is release-archive validation, final packaged acceptance and stress, evidence refresh, and review.</p>
+        <p class="note">Local format, strict Clippy, and all 24 tests pass. CI run 33315914862 completed successfully across every native job.</p>
       </article>
 
       <article class="card half">
@@ -116,17 +116,17 @@
           <li class="done">Packaged macOS acceptance with fake failing Git on PATH</li>
           <li class="done">100-Layer packaged stress and Bun/TypeScript dogfood</li>
           <li class="done">Native Ubuntu and macOS CI plus release packaging</li>
+          <li class="done">Native Windows unit, core contract, and lifecycle CI</li>
         </ul>
       </article>
 
       <article class="card half">
         <h2>Remaining path</h2>
         <ol>
-          <li><strong>Fix Windows Init/Monitor.</strong> Add regression proof; remove temporary tracing.</li>
-          <li><strong>Pass the full native matrix.</strong> Windows lifecycle and packaged smoke must finish.</li>
-          <li><strong>Rebuild final archive.</strong> Verify checksum and rerun clean installed-binary gauntlet.</li>
-          <li><strong>Rerun stress after final code.</strong> 100 Layers, events, traces, and corruption checks.</li>
-          <li><strong>Refresh public docs and evidence.</strong> Add measured benchmark table and exact platform support.</li>
+          <li><strong>Build all release archives.</strong> Verify macOS, Linux, and Windows packages and checksums.</li>
+          <li><strong>Rerun final archive gauntlet.</strong> Clean install, fake failing Git, exact lifecycle evidence.</li>
+          <li><strong>Rerun stress after final code.</strong> 100 Layers and integrity checks.</li>
+          <li><strong>Finish evidence and docs.</strong> Record final archive hashes and supported platforms.</li>
           <li><strong>Final review.</strong> Resolve findings; make draft PR release-ready.</li>
         </ol>
       </article>
@@ -163,7 +163,7 @@
         <div class="links">
           <a href="https://github.com/Dhruv2mars/javelin">Repository</a>
           <a href="https://github.com/Dhruv2mars/javelin/pull/1">Draft PR #1</a>
-          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33305957869">Latest diagnostic CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33315914862">Latest native CI</a>
         </div>
         <p class="note" style="margin-top: 16px">This page uses one stable Postplan draft. It is regenerated and re-uploaded after each material milestone.</p>
       </article>
