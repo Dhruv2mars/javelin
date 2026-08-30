@@ -10,12 +10,7 @@ fn binary() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Output {
-    eprintln!("javelin-test command start: {args:?}");
     let output = Command::new(binary()).args(args).output().unwrap();
-    eprintln!(
-        "javelin-test command finish: {args:?} exit={:?}",
-        output.status.code()
-    );
     if !output.status.success() {
         panic!(
             "command failed ({:?}):\nstdout: {}\nstderr: {}",
