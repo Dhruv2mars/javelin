@@ -208,7 +208,10 @@ fn init(path: Option<PathBuf>, json_output: bool) -> Result<()> {
         ObjectKind::Tree,
         crate::objects::encode_tree(&scan.tree)?.len() as u64,
     )?;
-    let (world, _) = store.initialize_world(&root_tree)?;
+    let (world, local) = store.initialize_world(&root_tree)?;
+    let stamp = view_stamp(&root)?;
+    let head = store.layer_head(&local)?;
+    write_view_observation(&store, &local, &head, &stamp)?;
     start_monitor(&store)?;
     emit(
         json_output,
@@ -240,20 +243,97 @@ fn reconcile(store: &mut Store, layer: &Layer, reason: &str) -> Result<crate::mo
             layer.name
         )));
     }
+    let view = Path::new(&layer.view_path);
+    let stamp = view_stamp(view)?;
+    if let Some(checkpoint) = observed_checkpoint(store, layer, &stamp)? {
+        return Ok(checkpoint);
+    }
+
     let reconcile_lock = open_reconcile_lock(store)?;
     acquire_publish_lock(&reconcile_lock)?;
-    let view = Path::new(&layer.view_path);
-    let policy = tracking_policy(store, layer)?;
-    let scan = scan_view_with_policy(view, &store.objects, &policy)?;
-    let root_tree = store.objects.put_tree(&scan.tree)?;
-    store.register_object(
-        &root_tree,
-        ObjectKind::Tree,
-        crate::objects::encode_tree(&scan.tree)?.len() as u64,
-    )?;
-    let result = store.append_checkpoint(&layer.id, &root_tree, &layer.synchronized_ref, reason);
-    let _ = FileExt::unlock(&reconcile_lock);
-    result
+    let result = (|| {
+        let current = store.layer(&layer.id)?;
+        let stamp = view_stamp(view)?;
+        if let Some(checkpoint) = observed_checkpoint(store, &current, &stamp)? {
+            return Ok(checkpoint);
+        }
+        let policy = tracking_policy(store, &current)?;
+        let scan = scan_view_with_policy(view, &store.objects, &policy)?;
+        let stable_stamp = view_stamp(view)?;
+        if stable_stamp != stamp {
+            return Err(JavelinError::busy(
+                "Managed view changed during reconciliation; retry the command",
+            ));
+        }
+        let root_tree = store.objects.put_tree(&scan.tree)?;
+        store.register_object(
+            &root_tree,
+            ObjectKind::Tree,
+            crate::objects::encode_tree(&scan.tree)?.len() as u64,
+        )?;
+        let checkpoint =
+            store.append_checkpoint(&current.id, &root_tree, &current.synchronized_ref, reason)?;
+        write_view_observation(store, &current, &checkpoint, &stable_stamp)?;
+        Ok(checkpoint)
+    })();
+    let unlock = FileExt::unlock(&reconcile_lock)
+        .jctx("RECONCILE_LOCK", "cannot release reconciliation lock");
+    match (result, unlock) {
+        (Ok(checkpoint), Ok(())) => Ok(checkpoint),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn observed_checkpoint(
+    store: &Store,
+    layer: &Layer,
+    stamp: &str,
+) -> Result<Option<crate::model::Checkpoint>> {
+    let path = view_observation_path(store, layer);
+    let Ok(bytes) = fs::read(path) else {
+        return Ok(None);
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(None);
+    };
+    if value.get("schema").and_then(serde_json::Value::as_u64) != Some(1)
+        || value.get("layer_id").and_then(serde_json::Value::as_str) != Some(layer.id.as_str())
+        || value.get("stamp").and_then(serde_json::Value::as_str) != Some(stamp)
+    {
+        return Ok(None);
+    }
+    let head = store.layer_head(layer)?;
+    Ok((value
+        .get("checkpoint_id")
+        .and_then(serde_json::Value::as_str)
+        == Some(head.id.as_str()))
+    .then_some(head))
+}
+
+fn write_view_observation(
+    store: &Store,
+    layer: &Layer,
+    checkpoint: &crate::model::Checkpoint,
+    stamp: &str,
+) -> Result<()> {
+    write_monitor_state(
+        &view_observation_path(store, layer),
+        &json!({
+            "schema": 1,
+            "layer_id": layer.id,
+            "checkpoint_id": checkpoint.id,
+            "stamp": stamp,
+        })
+        .to_string(),
+    )
+}
+
+fn view_observation_path(store: &Store, layer: &Layer) -> PathBuf {
+    store
+        .metadata
+        .join("monitor")
+        .join(format!("view-{}.json", layer.id))
 }
 
 fn tracking_policy(store: &Store, layer: &Layer) -> Result<IgnorePolicy> {
@@ -2635,6 +2715,15 @@ fn monitor(store: &mut Store) -> Result<()> {
             let Ok(stamp) = view_stamp(view) else {
                 continue;
             };
+            if observed_checkpoint(store, &layer, &stamp)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                captured_stamps.insert(layer.id.clone(), stamp);
+                pending_stamps.remove(&layer.id);
+                continue;
+            }
             if captured_stamps.get(&layer.id) == Some(&stamp) {
                 continue;
             }
@@ -2664,29 +2753,40 @@ fn monitor(store: &mut Store) -> Result<()> {
             if reconcile_lock.try_lock_exclusive().is_err() {
                 continue;
             }
-            let current = store.layer(&layer.id);
-            if let Ok(current) = current
-                && current.synchronized_ref == layer.synchronized_ref
-                && let Ok(head) = store.layer_head(&current)
-                && head.root_tree != root_tree
-            {
-                let _ = store.register_object(
-                    &root_tree,
-                    ObjectKind::Tree,
-                    crate::objects::encode_tree(&scan.tree)
-                        .map(|bytes| bytes.len() as u64)
-                        .unwrap_or(0),
-                );
-                let _ = store.append_checkpoint(
-                    &current.id,
-                    &root_tree,
-                    &current.synchronized_ref,
-                    "automatic",
-                );
-            }
+            let checkpoint = store.layer(&layer.id).ok().and_then(|current| {
+                if current.synchronized_ref != layer.synchronized_ref {
+                    return None;
+                }
+                let head = store.layer_head(&current).ok()?;
+                if head.root_tree == root_tree {
+                    return Some((current, head));
+                }
+                store
+                    .register_object(
+                        &root_tree,
+                        ObjectKind::Tree,
+                        crate::objects::encode_tree(&scan.tree)
+                            .map(|bytes| bytes.len() as u64)
+                            .unwrap_or(0),
+                    )
+                    .ok()?;
+                let checkpoint = store
+                    .append_checkpoint(
+                        &current.id,
+                        &root_tree,
+                        &current.synchronized_ref,
+                        "automatic",
+                    )
+                    .ok()?;
+                Some((current, checkpoint))
+            });
             let _ = FileExt::unlock(&reconcile_lock);
-            captured_stamps.insert(layer.id.clone(), stable_stamp);
-            pending_stamps.remove(&layer.id);
+            if let Some((current, checkpoint)) = checkpoint
+                && write_view_observation(store, &current, &checkpoint, &stable_stamp).is_ok()
+            {
+                captured_stamps.insert(layer.id.clone(), stable_stamp);
+                pending_stamps.remove(&layer.id);
+            }
         }
         thread::sleep(Duration::from_millis(debounce));
     }

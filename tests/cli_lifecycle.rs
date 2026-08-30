@@ -58,6 +58,56 @@ fn init_is_idempotent_and_existing_content_is_world_v1() {
 }
 
 #[test]
+fn unchanged_status_uses_observation_and_dropped_events_still_reconcile() {
+    let temp = tempfile::tempdir().unwrap();
+    let world = temp.path().join("world");
+    fs::create_dir_all(&world).unwrap();
+    fs::write(world.join("tracked.txt"), b"before\n").unwrap();
+
+    let init = Command::new(binary())
+        .args(["init", world.to_str().unwrap()])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let baseline = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "status"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+
+    let unchanged = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "status"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .env("JAVELIN_FAULT_POINT", "before_object_temp_write")
+        .output()
+        .unwrap();
+    assert!(unchanged.status.success());
+
+    fs::write(world.join("tracked.txt"), b"after\n").unwrap();
+    let changed = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "status"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .env("JAVELIN_FAULT_POINT", "before_object_temp_write")
+        .output()
+        .unwrap();
+    assert_eq!(changed.status.code(), Some(86));
+
+    let reconciled = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "status"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert!(reconciled.status.success());
+    assert!(
+        String::from_utf8(reconciled.stdout)
+            .unwrap()
+            .contains("tracked.txt")
+    );
+}
+
+#[test]
 fn independent_layers_publish_without_lost_updates() {
     let (_temp, world) = init();
     fs::write(world.join("base.txt"), b"base\n").unwrap();
