@@ -40,14 +40,14 @@ The durable view observation makes unchanged `status` proportional to metadata i
 
 ## 100 concurrent Layers
 
-The packaged-binary stress fixture created 100 Layers, changed four files in each Layer, checkpointed and refreshed concurrently, then Published all work. It completed in 94.36 seconds with World `v101`, no lost accepted changes, and no integrity failure.
+The final packaged-binary stress fixture created 100 Layers, changed four files in each Layer, checkpointed and refreshed concurrently, then Published all work. It completed in 24.29 seconds with World `v101`, no lost accepted changes, and no integrity failure.
 
 | Operation | p50 | p95 | p99 | Max |
 | --- | ---: | ---: | ---: | ---: |
-| Layer create | 31 ms | 49 ms | 4,179 ms | 4,402 ms |
-| Concurrent checkpoint | 2,197 ms | 7,699 ms | 7,893 ms | 7,942 ms |
-| Concurrent refresh | 2,540 ms | 4,489 ms | 4,651 ms | 4,716 ms |
-| Concurrent Publish | 16,087 ms | 58,465 ms | 62,340 ms | 62,544 ms |
+| Layer create | 17 ms | 32 ms | 33 ms | 36 ms |
+| Concurrent checkpoint | 3,881 ms | 8,501 ms | 8,763 ms | 8,763 ms |
+| Concurrent refresh | 100 ms | 138 ms | 140 ms | 141 ms |
+| Concurrent Publish | 3,462 ms | 9,411 ms | 10,063 ms | 10,239 ms |
 
 Command:
 
@@ -56,7 +56,7 @@ JAVELIN_STRESS_BIN=dist/javelin-1.0.0-aarch64-apple-darwin/javelin \
   cargo test --locked --test stress_100_layers -- --nocapture
 ```
 
-Publish is the bottleneck because final admission is intentionally serialized per target. Layer creation has a high-tail outlier from concurrent root materialization and cache population. These measurements do not justify replacing SQLite or the filesystem object store.
+Publish is the bottleneck because final admission is intentionally serialized per target. These measurements do not justify replacing SQLite or the filesystem object store.
 
 ## Event and provenance fixtures
 
