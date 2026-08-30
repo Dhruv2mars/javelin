@@ -30,8 +30,9 @@ for shell in bash elvish fish powershell zsh; do
   target/release/javelin completions "$shell" > "dist/javelin-$version-$platform/completions/javelin.$shell"
 done
 
-archive="dist/javelin-$version-$platform.tar.gz"
+archive_name="javelin-$version-$platform.tar.gz"
+archive="dist/$archive_name"
 tar -C dist -czf "$archive" "javelin-$version-$platform"
-shasum -a 256 "$archive" > "$archive.sha256"
+(cd dist && shasum -a 256 "$archive_name" > "$archive_name.sha256")
 printf '%s\n' "$archive"
 printf '%s\n' "$archive.sha256"

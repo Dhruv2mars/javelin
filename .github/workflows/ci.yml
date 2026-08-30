@@ -44,7 +44,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: ./scripts/package-release.sh
-      - run: shasum -a 256 -c dist/*.sha256
+      - name: Verify package checksum
+        working-directory: dist
+        run: shasum -a 256 -c ./*.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: javelin-macos-package
