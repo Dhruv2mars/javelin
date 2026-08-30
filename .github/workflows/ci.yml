@@ -23,7 +23,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --locked
+      - name: Run tests
+        if: runner.os != 'Windows'
+        run: cargo test --locked
+      - name: Run Windows unit and core contract tests
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib --test core_contract
+      - name: Run Windows lifecycle tests serially
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        run: cargo test --locked --test cli_lifecycle -- --test-threads=1 --nocapture
       - name: Installed-binary acceptance
         if: runner.os != 'Windows'
         run: ./tests/acceptance/installed_binary.sh
