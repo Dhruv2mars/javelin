@@ -63,6 +63,30 @@ fn duplicate_objects_do_not_need_the_temp_directory() {
 }
 
 #[test]
+fn object_batch_installs_every_blob_at_commit() {
+    let temp = tempfile::tempdir().unwrap();
+    let metadata = temp.path().join(".javelin");
+    let objects = ObjectStore::new(&metadata).unwrap();
+    let mut batch = objects.batch();
+    let first = batch.put_blob(b"first").unwrap();
+    let second = batch.put_blob(b"second").unwrap();
+    let duplicate = batch.put_blob(b"first").unwrap();
+    assert_eq!(duplicate, first);
+    assert!(objects.read_blob(&first).is_err());
+
+    batch.commit().unwrap();
+
+    assert_eq!(objects.read_blob(&first).unwrap(), b"first");
+    assert_eq!(objects.read_blob(&second).unwrap(), b"second");
+    assert!(
+        fs::read_dir(metadata.join("temp"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
 fn unsafe_paths_are_rejected() {
     for path in [
         "../outside",

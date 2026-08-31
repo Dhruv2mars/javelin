@@ -1,7 +1,7 @@
 use crate::config::IgnorePolicy;
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{Change, ChangeKind, EntryKind, Tree, TreeEntry, ViewMarker};
-use crate::objects::ObjectStore;
+use crate::objects::{ObjectBatch, ObjectStore};
 use crate::paths::{safe_join, validate_relative};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -24,6 +24,17 @@ pub fn scan_view(view: &Path, objects: &ObjectStore) -> Result<ScanResult> {
 pub fn scan_view_with_policy(
     view: &Path,
     objects: &ObjectStore,
+    policy: &IgnorePolicy,
+) -> Result<ScanResult> {
+    let mut batch = objects.batch();
+    let scan = scan_view_into_batch(view, &mut batch, policy)?;
+    batch.commit()?;
+    Ok(scan)
+}
+
+fn scan_view_into_batch(
+    view: &Path,
+    objects: &mut ObjectBatch<'_>,
     policy: &IgnorePolicy,
 ) -> Result<ScanResult> {
     let mut entries = Vec::new();
