@@ -151,11 +151,13 @@ pub(super) fn integrate_trees(
         )? {
             Some(merged)
         } else {
-            let conflict_type = conflict_type(
+            let conflict_type = ConflictKind::classify(
                 base_entry.as_ref(),
                 target_entry.as_ref(),
                 private_entry.as_ref(),
-            );
+            )
+            .as_str()
+            .to_string();
             conflicts.push(ConflictInput {
                 path: path.clone(),
                 conflict_type,
@@ -183,7 +185,7 @@ pub(super) fn integrate_trees(
     for path in case_paths {
         conflicts.push(ConflictInput {
             path: path.clone(),
-            conflict_type: "case".to_string(),
+            conflict_type: ConflictKind::Case.as_str().to_string(),
             base: base_map.get(&path).cloned(),
             target: target_map.get(&path).cloned(),
             private: private_map.get(&path).cloned(),
@@ -216,7 +218,7 @@ fn try_text_integration(
     ];
     for id in ids {
         let (kind, length) = store.objects.info(id)?;
-        if kind != ObjectKind::Blob || length > 1024 * 1024 {
+        if kind != ObjectKind::Blob || length > TEXT_DIFF_LIMIT {
             return Ok(None);
         }
     }
@@ -246,25 +248,52 @@ fn try_text_integration(
     }))
 }
 
-fn conflict_type(
-    base: Option<&TreeEntry>,
-    target: Option<&TreeEntry>,
-    private: Option<&TreeEntry>,
-) -> String {
-    match (base, target, private) {
-        (None, Some(_), Some(_)) => "create_create",
-        (Some(_), None, Some(_)) => "delete_modify",
-        (Some(_), Some(_), None) => "modify_delete",
-        (Some(base), Some(target), Some(private))
-            if base.kind != target.kind || base.kind != private.kind =>
-        {
-            "type"
+enum ConflictKind {
+    Case,
+    CreateCreate,
+    DeleteModify,
+    ModifyDelete,
+    Type,
+    Mode,
+    ModifyModify,
+    PathState,
+}
+
+impl ConflictKind {
+    fn classify(
+        base: Option<&TreeEntry>,
+        target: Option<&TreeEntry>,
+        private: Option<&TreeEntry>,
+    ) -> Self {
+        match (base, target, private) {
+            (None, Some(_), Some(_)) => Self::CreateCreate,
+            (Some(_), None, Some(_)) => Self::DeleteModify,
+            (Some(_), Some(_), None) => Self::ModifyDelete,
+            (Some(base), Some(target), Some(private))
+                if base.kind != target.kind || base.kind != private.kind =>
+            {
+                Self::Type
+            }
+            (Some(_), Some(target), Some(private)) if target.executable != private.executable => {
+                Self::Mode
+            }
+            (Some(_), Some(_), Some(_)) => Self::ModifyModify,
+            _ => Self::PathState,
         }
-        (Some(_), Some(target), Some(private)) if target.executable != private.executable => "mode",
-        (Some(_), Some(_), Some(_)) => "modify_modify",
-        _ => "path_state",
     }
-    .to_string()
+
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Case => "case",
+            Self::CreateCreate => "create_create",
+            Self::DeleteModify => "delete_modify",
+            Self::ModifyDelete => "modify_delete",
+            Self::Type => "type",
+            Self::Mode => "mode",
+            Self::ModifyModify => "modify_modify",
+            Self::PathState => "path_state",
+        }
+    }
 }
 
 fn target_state(store: &Store, layer: &Layer) -> Result<(String, String, Tree)> {

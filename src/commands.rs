@@ -25,6 +25,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 
+const TEXT_DIFF_LIMIT: u64 = 1024 * 1024;
+
 mod claims;
 mod conflicts;
 mod discard;
@@ -571,7 +573,7 @@ fn entry_text(
     }
     let object_id = entry.object_id.as_deref().unwrap_or("");
     let (kind, length) = store.objects.info(object_id)?;
-    if kind != ObjectKind::Blob || length > 1024 * 1024 {
+    if kind != ObjectKind::Blob || length > TEXT_DIFF_LIMIT {
         return Ok(Some(Err(())));
     }
     let bytes = store.objects.read_blob(object_id)?;
@@ -692,7 +694,7 @@ fn show(store: &Store, reference: &str, json_output: bool) -> Result<()> {
         .ok_or_else(|| JavelinError::corruption("path state has no object"))?;
     if json_output {
         let (_, size) = store.objects.info(object_id)?;
-        let bytes_hex = if size <= 1024 * 1024 {
+        let bytes_hex = if size <= TEXT_DIFF_LIMIT {
             Some(hex(&store.objects.read_blob(object_id)?))
         } else {
             None
