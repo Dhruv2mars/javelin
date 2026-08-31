@@ -8,7 +8,7 @@ Current technical limits:
 - The Monitor uses debounced polling plus correctness scans, not an OS event API. Status and Publish can scale with tracked path count.
 - Layer creation materializes an ordinary directory. Native APFS clone semantics reduce physical copying, but creation is not constant time.
 - Linux and Windows use streamed copy in v1. Apple filesystems may use native clone-on-write materialization.
-- Dead Publish waiter cleanup uses Unix process liveness. Windows relies on timeout and restart recovery in v1.
+- Dead Publish waiter cleanup uses native process liveness on Unix and Windows. Access-denied Windows processes remain live until queue timeout.
 - Bounded automatic text integration handles UTF-8 regular files up to 1 MiB. Other divergent content becomes an explicit Conflict.
 - Non-UTF-8 paths are rejected.
 - Tracked portable metadata excludes timestamps, ownership, ACLs, extended attributes, devices, sockets, and process state.

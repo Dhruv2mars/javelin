@@ -47,6 +47,14 @@ pub struct ValidationRecord {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExistingContribution {
+    pub id: String,
+    pub resulting_target_ref: String,
+    pub source_layer: Option<String>,
+    pub source_checkpoint: Option<String>,
+}
+
 pub struct NewLayer<'a> {
     pub name: &'a str,
     pub origin_ref: &'a str,
@@ -651,16 +659,20 @@ impl Store {
             .jctx("STORE_QUERY", "cannot read idempotent Contribution")
     }
 
-    pub fn contribution_details_by_key(
-        &self,
-        key: &str,
-    ) -> Result<Option<(String, String, String, String)>> {
+    pub fn contribution_details_by_key(&self, key: &str) -> Result<Option<ExistingContribution>> {
         self.conn
             .query_row(
                 "SELECT id, resulting_target_ref, source_layer, source_checkpoint
                  FROM contributions WHERE idempotency_key = ?1",
                 [key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok(ExistingContribution {
+                        id: row.get(0)?,
+                        resulting_target_ref: row.get(1)?,
+                        source_layer: row.get(2)?,
+                        source_checkpoint: row.get(3)?,
+                    })
+                },
             )
             .optional()
             .jctx("STORE_QUERY", "cannot read idempotent Contribution details")
@@ -794,7 +806,11 @@ impl Store {
             ],
         )
         .map_err(|error| {
-            if error.to_string().contains("idempotency_key") {
+            if matches!(
+                error,
+                rusqlite::Error::SqliteFailure(ref failure, _)
+                    if failure.code == rusqlite::ErrorCode::ConstraintViolation
+            ) {
                 JavelinError::stale("duplicate Publish idempotency key")
             } else {
                 JavelinError::corruption(format!("cannot append Contribution: {error}"))
@@ -1301,10 +1317,23 @@ impl Store {
                 "cannot purge a Layer with retained child Layers",
             ));
         }
-        self.conn
-            .execute("DELETE FROM layers WHERE id = ?1", [&layer.id])
+        let tx = self
+            .conn
+            .transaction()
+            .jctx("STORE_TX", "cannot begin Layer purge")?;
+        tx.execute(
+            "UPDATE provenance_sessions SET layer_id = NULL WHERE layer_id = ?1",
+            [&layer.id],
+        )
+        .jctx("STORE_WRITE", "cannot detach Layer provenance sessions")?;
+        tx.execute(
+            "UPDATE provenance_events SET layer_id = NULL WHERE layer_id = ?1",
+            [&layer.id],
+        )
+        .jctx("STORE_WRITE", "cannot detach Layer provenance events")?;
+        tx.execute("DELETE FROM layers WHERE id = ?1", [&layer.id])
             .jctx("STORE_WRITE", "cannot purge Layer")?;
-        Ok(())
+        tx.commit().jctx("STORE_TX", "cannot commit Layer purge")
     }
 
     pub fn register_object(&mut self, id: &str, kind: ObjectKind, size: u64) -> Result<()> {
@@ -1480,13 +1509,18 @@ impl Store {
     }
 
     pub fn search_provenance(&self, query: &str) -> Result<Vec<serde_json::Value>> {
-        let pattern = format!("%{query}%");
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         let mut statement = self
             .conn
             .prepare(
                 "SELECT DISTINCT s.id, s.layer_id, s.actor_json, s.status, s.started_at
                  FROM provenance_sessions s LEFT JOIN provenance_events e ON e.session_id = s.id
-                 WHERE s.id LIKE ?1 OR s.actor_json LIKE ?1 OR e.payload_json LIKE ?1 OR e.event_type LIKE ?1
+                 WHERE s.id LIKE ?1 ESCAPE '\\' OR s.actor_json LIKE ?1 ESCAPE '\\'
+                    OR e.payload_json LIKE ?1 ESCAPE '\\' OR e.event_type LIKE ?1 ESCAPE '\\'
                  ORDER BY s.started_at",
             )
             .jctx("STORE_QUERY", "cannot prepare provenance search")?;
@@ -1841,8 +1875,8 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS contributions(
             id TEXT PRIMARY KEY,
             idempotency_key TEXT UNIQUE,
-            source_layer TEXT NOT NULL REFERENCES layers(id),
-            source_checkpoint TEXT NOT NULL REFERENCES layer_checkpoints(id),
+            source_layer TEXT REFERENCES layers(id) ON DELETE SET NULL,
+            source_checkpoint TEXT REFERENCES layer_checkpoints(id) ON DELETE SET NULL,
             target_kind TEXT NOT NULL,
             target_id TEXT,
             previous_target_ref TEXT NOT NULL,
@@ -2023,6 +2057,86 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )
         .jctx("MIGRATION_FAILED", "cannot record schema migration 2")?;
+    }
+    migrate_nullable_contribution_sources(conn)?;
+    Ok(())
+}
+
+fn migrate_nullable_contribution_sources(conn: &Connection) -> Result<()> {
+    let source_layer_required = {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(contributions)")
+            .jctx("MIGRATION_FAILED", "cannot inspect Contribution schema")?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+            })
+            .jctx("MIGRATION_FAILED", "cannot read Contribution schema")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .jctx("MIGRATION_FAILED", "cannot decode Contribution schema")?
+            .into_iter()
+            .find(|(name, _)| name == "source_layer")
+            .is_some_and(|(_, not_null)| not_null != 0)
+    };
+    if !source_layer_required {
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+             VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            [],
+        )
+        .jctx("MIGRATION_FAILED", "cannot record schema migration 3")?;
+        return Ok(());
+    }
+
+    conn.pragma_update(None, "foreign_keys", "OFF").jctx(
+        "MIGRATION_FAILED",
+        "cannot pause foreign keys for migration",
+    )?;
+    let migrated = conn.execute_batch(
+        r#"
+        BEGIN IMMEDIATE;
+        CREATE TABLE contributions_new(
+            id TEXT PRIMARY KEY,
+            idempotency_key TEXT UNIQUE,
+            source_layer TEXT REFERENCES layers(id) ON DELETE SET NULL,
+            source_checkpoint TEXT REFERENCES layer_checkpoints(id) ON DELETE SET NULL,
+            target_kind TEXT NOT NULL,
+            target_id TEXT,
+            previous_target_ref TEXT NOT NULL,
+            resulting_target_ref TEXT NOT NULL,
+            summary_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO contributions_new(
+            id, idempotency_key, source_layer, source_checkpoint, target_kind, target_id,
+            previous_target_ref, resulting_target_ref, summary_json, created_at
+        )
+        SELECT id, idempotency_key, source_layer, source_checkpoint, target_kind, target_id,
+               previous_target_ref, resulting_target_ref, summary_json, created_at
+        FROM contributions;
+        DROP TABLE contributions;
+        ALTER TABLE contributions_new RENAME TO contributions;
+        INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+        VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+        COMMIT;
+        "#,
+    );
+    conn.pragma_update(None, "foreign_keys", "ON").jctx(
+        "MIGRATION_FAILED",
+        "cannot restore foreign keys after migration",
+    )?;
+    migrated.jctx(
+        "MIGRATION_FAILED",
+        "cannot make Contribution source references purge-safe",
+    )?;
+    let violation: Option<String> = conn
+        .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
+        .optional()
+        .jctx("MIGRATION_FAILED", "cannot verify migrated foreign keys")?;
+    if let Some(table) = violation {
+        return Err(JavelinError::corruption(format!(
+            "foreign-key violation after schema migration in {table}"
+        )));
     }
     Ok(())
 }

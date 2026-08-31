@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod durability;
 pub mod error;
 pub mod fault;
 pub mod model;

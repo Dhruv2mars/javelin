@@ -1,8 +1,9 @@
 use crate::config::IgnorePolicy;
+use crate::durability::sync_dir;
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{Change, ChangeKind, EntryKind, Tree, TreeEntry, ViewMarker};
 use crate::objects::{ObjectBatch, ObjectStore};
-use crate::paths::{safe_join, validate_relative};
+use crate::paths::{is_reserved_path, safe_join, validate_relative};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -47,8 +48,7 @@ fn scan_view_into_batch(
             if entry.depth() == 0 {
                 return true;
             }
-            let name = entry.file_name().to_string_lossy();
-            name != ".javelin" && name != ".git" && name != ".javelin-view"
+            !is_reserved_path(&entry.file_name().to_string_lossy())
         });
     for item in walker {
         let item = item.jctx("SCAN_IO", format!("cannot scan {}", view.display()))?;
@@ -115,8 +115,7 @@ pub fn view_stamp(view: &Path) -> Result<String> {
             if entry.depth() == 0 {
                 return true;
             }
-            let name = entry.file_name().to_string_lossy();
-            name != ".javelin" && name != ".git" && name != ".javelin-view"
+            !is_reserved_path(&entry.file_name().to_string_lossy())
         });
     for item in walker {
         let item = item.jctx("SCAN_IO", format!("cannot inspect {}", view.display()))?;
@@ -214,63 +213,14 @@ pub fn materialize_tree(
     objects: &ObjectStore,
     marker: Option<&ViewMarker>,
 ) -> Result<&'static str> {
-    fs::create_dir_all(destination).jctx(
-        "VIEW_IO",
-        format!("cannot create view {}", destination.display()),
-    )?;
-    clear_view(destination)?;
-    if let Some(marker) = marker {
-        let marker_bytes = serde_json::to_vec(marker).map_err(|error| {
-            JavelinError::corruption(format!("cannot encode view marker: {error}"))
-        })?;
-        atomic_write(&destination.join(".javelin-view"), &marker_bytes, false)?;
-    }
-
-    let mut backend = "copy";
-    for entry in &tree.entries {
-        let path = safe_join(destination, &entry.path)?;
-        match entry.kind {
-            EntryKind::Directory => {
-                fs::create_dir_all(&path)
-                    .jctx("VIEW_IO", format!("cannot create directory {}", entry.path))?;
-            }
-            EntryKind::File => {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).jctx(
-                        "VIEW_IO",
-                        format!("cannot create parent for {}", entry.path),
-                    )?;
-                }
-                let object_id = entry.object_id.as_deref().ok_or_else(|| {
-                    JavelinError::corruption(format!("file {} has no blob", entry.path))
-                })?;
-                let bytes = objects.read_blob(object_id)?;
-                let cache = destination
-                    .parent()
-                    .unwrap_or(destination)
-                    .join(format!(".javelin-materialize-source-{}", ulid::Ulid::new()));
-                atomic_write(&cache, &bytes, entry.executable)?;
-                if clone_or_copy(&cache, &path)? {
-                    backend = "copy_on_write";
-                }
-                fs::remove_file(&cache).jctx("VIEW_IO", "cannot remove materialization source")?;
-                set_executable(&path, entry.executable)?;
-            }
-            EntryKind::Symlink => {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).jctx(
-                        "VIEW_IO",
-                        format!("cannot create parent for {}", entry.path),
-                    )?;
-                }
-                let object_id = entry.object_id.as_deref().ok_or_else(|| {
-                    JavelinError::corruption(format!("symlink {} has no target", entry.path))
-                })?;
-                create_symlink(&objects.read_blob(object_id)?, &path)?;
-            }
-        }
-    }
-    Ok(backend)
+    let parent = destination.parent().unwrap_or(destination);
+    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create materialization parent")?;
+    let snapshot = tempfile::Builder::new()
+        .prefix(".javelin-materialize-")
+        .tempdir_in(parent)
+        .jctx("VIEW_IO", "cannot create materialization snapshot")?;
+    populate_snapshot(tree, snapshot.path(), objects, false)?;
+    materialize_snapshot(tree, snapshot.path(), destination, objects, marker)
 }
 
 pub fn materialize_tree_from_cache(
@@ -282,6 +232,16 @@ pub fn materialize_tree_from_cache(
     marker: Option<&ViewMarker>,
 ) -> Result<&'static str> {
     let cache = ensure_root_cache(tree, root_id, metadata, objects)?;
+    materialize_snapshot(tree, &cache, destination, objects, marker)
+}
+
+fn materialize_snapshot(
+    tree: &Tree,
+    source: &Path,
+    destination: &Path,
+    objects: &ObjectStore,
+    marker: Option<&ViewMarker>,
+) -> Result<&'static str> {
     fs::create_dir_all(destination).jctx(
         "VIEW_IO",
         format!("cannot create view {}", destination.display()),
@@ -308,8 +268,8 @@ pub fn materialize_tree_from_cache(
                         format!("cannot create parent for {}", entry.path),
                     )?;
                 }
-                let source = safe_join(&cache, &entry.path)?;
-                if clone_or_copy(&source, &path)? {
+                let cached = safe_join(source, &entry.path)?;
+                if clone_or_copy(&cached, &path)? {
                     backend = "copy_on_write";
                 }
                 set_writable_mode(&path, entry.executable)?;
@@ -324,7 +284,12 @@ pub fn materialize_tree_from_cache(
                 let object_id = entry.object_id.as_deref().ok_or_else(|| {
                     JavelinError::corruption(format!("symlink {} has no target", entry.path))
                 })?;
-                create_symlink(&objects.read_blob(object_id)?, &path)?;
+                let target = objects.read_blob(object_id)?;
+                create_symlink(
+                    &target,
+                    &path,
+                    symlink_target_is_directory(tree, &entry.path, &target),
+                )?;
             }
         }
     }
@@ -347,8 +312,33 @@ pub fn ensure_root_cache(
         .join("temp")
         .join(format!("materialized-{}", ulid::Ulid::new()));
     fs::create_dir_all(&temp).jctx("VIEW_IO", "cannot create temporary root cache")?;
+    populate_snapshot(tree, &temp, objects, true)?;
+    let complete = temp.join(".complete");
+    File::create(&complete)
+        .and_then(|file| file.sync_all())
+        .jctx("VIEW_IO", "cannot complete root cache")?;
+    sync_dir(&temp)?;
+    match fs::rename(&temp, &target) {
+        Ok(()) => sync_dir(&materialized)?,
+        Err(_) if target.join(".complete").is_file() => {
+            fs::remove_dir_all(&temp).jctx("VIEW_IO", "cannot remove raced root cache")?;
+        }
+        Err(error) => {
+            return Err(JavelinError::new(7, "VIEW_IO", "cannot install root cache")
+                .details(serde_json::json!({"cause": error.to_string()})));
+        }
+    }
+    Ok(target)
+}
+
+fn populate_snapshot(
+    tree: &Tree,
+    destination: &Path,
+    objects: &ObjectStore,
+    protect_files: bool,
+) -> Result<()> {
     for entry in &tree.entries {
-        let path = safe_join(&temp, &entry.path)?;
+        let path = safe_join(destination, &entry.path)?;
         match entry.kind {
             EntryKind::Directory => {
                 fs::create_dir_all(&path)
@@ -362,7 +352,11 @@ pub fn ensure_root_cache(
                     JavelinError::corruption(format!("file {} has no blob", entry.path))
                 })?;
                 objects.write_blob_to_file(object_id, &path)?;
-                set_cache_mode(&path, entry.executable)?;
+                if protect_files {
+                    set_cache_mode(&path, entry.executable)?;
+                } else {
+                    set_executable(&path, entry.executable)?;
+                }
             }
             EntryKind::Symlink => {
                 if let Some(parent) = path.parent() {
@@ -371,22 +365,16 @@ pub fn ensure_root_cache(
                 let object_id = entry.object_id.as_deref().ok_or_else(|| {
                     JavelinError::corruption(format!("symlink {} has no target", entry.path))
                 })?;
-                create_symlink(&objects.read_blob(object_id)?, &path)?;
+                let link_target = objects.read_blob(object_id)?;
+                create_symlink(
+                    &link_target,
+                    &path,
+                    symlink_target_is_directory(tree, &entry.path, &link_target),
+                )?;
             }
         }
     }
-    File::create(temp.join(".complete")).jctx("VIEW_IO", "cannot complete root cache")?;
-    match fs::rename(&temp, &target) {
-        Ok(()) => {}
-        Err(_) if target.join(".complete").is_file() => {
-            fs::remove_dir_all(&temp).jctx("VIEW_IO", "cannot remove raced root cache")?;
-        }
-        Err(error) => {
-            return Err(JavelinError::new(7, "VIEW_IO", "cannot install root cache")
-                .details(serde_json::json!({"cause": error.to_string()})));
-        }
-    }
-    Ok(target)
+    Ok(())
 }
 
 pub fn invalidate_root_cache(metadata: &Path, root_id: &str) -> Result<()> {
@@ -438,6 +426,7 @@ fn atomic_write(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
         .jctx("VIEW_IO", format!("cannot write {}", path.display()))?;
     set_executable(&temp, executable)?;
     fs::rename(&temp, path).jctx("VIEW_IO", format!("cannot install {}", path.display()))?;
+    sync_dir(parent)?;
     Ok(())
 }
 
@@ -511,8 +500,44 @@ fn clone_or_copy(source: &Path, destination: &Path) -> Result<bool> {
     Ok(false)
 }
 
+fn symlink_target_is_directory(tree: &Tree, link_path: &str, target: &[u8]) -> bool {
+    let Ok(target) = std::str::from_utf8(target) else {
+        return false;
+    };
+    let mut resolved = Path::new(link_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for component in Path::new(target).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if resolved.pop().is_none() {
+                    return false;
+                }
+            }
+            std::path::Component::Normal(value) => {
+                let Some(value) = value.to_str() else {
+                    return false;
+                };
+                resolved.push(value.to_owned());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    let resolved = resolved.join("/");
+    tree.entries
+        .iter()
+        .any(|entry| entry.path == resolved && entry.kind == EntryKind::Directory)
+}
+
 #[cfg(unix)]
-fn create_symlink(target: &[u8], path: &Path) -> Result<()> {
+fn create_symlink(target: &[u8], path: &Path, _directory: bool) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     std::os::unix::fs::symlink(OsStr::from_bytes(target), path).jctx(
@@ -522,10 +547,15 @@ fn create_symlink(target: &[u8], path: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn create_symlink(target: &[u8], path: &Path) -> Result<()> {
+fn create_symlink(target: &[u8], path: &Path, directory: bool) -> Result<()> {
     let target = String::from_utf8(target.to_vec())
         .map_err(|_| JavelinError::unsupported("non-UTF-8 symlink target on Windows"))?;
-    std::os::windows::fs::symlink_file(target, path).jctx(
+    let result = if directory {
+        std::os::windows::fs::symlink_dir(target, path)
+    } else {
+        std::os::windows::fs::symlink_file(target, path)
+    };
+    result.jctx(
         "VIEW_IO",
         format!("cannot create symlink {}", path.display()),
     )
@@ -603,13 +633,36 @@ pub fn apply_entries(base: &Tree, updates: BTreeMap<String, Option<TreeEntry>>) 
 pub fn write_marker(path: &Path, marker: &ViewMarker) -> Result<()> {
     let bytes = serde_json::to_vec(marker)
         .map_err(|error| JavelinError::corruption(format!("cannot encode view marker: {error}")))?;
-    let mut file =
-        File::create(path.join(".javelin-view")).jctx("VIEW_IO", "cannot create view marker")?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .jctx("VIEW_IO", "cannot write view marker")
+    atomic_write(&path.join(".javelin-view"), &bytes, false)
 }
 
 pub fn managed_cache_path(metadata: &Path, root_id: &str) -> PathBuf {
     metadata.join("materialized").join(root_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symlink_kind_follows_portable_tree_target() {
+        let tree = Tree {
+            entries: vec![TreeEntry {
+                path: "assets".into(),
+                kind: EntryKind::Directory,
+                object_id: None,
+                executable: false,
+            }],
+        };
+        assert!(symlink_target_is_directory(
+            &tree,
+            "links/assets",
+            b"../assets"
+        ));
+        assert!(!symlink_target_is_directory(
+            &tree,
+            "links/file",
+            b"../missing"
+        ));
+    }
 }
