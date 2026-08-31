@@ -1,4 +1,5 @@
 use crate::error::{Context, Result};
+#[cfg(not(windows))]
 use std::fs::File;
 #[cfg(windows)]
 use std::fs::OpenOptions;
@@ -18,7 +19,7 @@ pub fn sync_dir(path: &Path) -> Result<()> {
 
     OpenOptions::new()
         .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS as i32)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
         .and_then(|directory| directory.sync_all())
         .jctx("DURABILITY_IO", format!("cannot sync {}", path.display()))
