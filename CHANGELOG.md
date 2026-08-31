@@ -8,5 +8,6 @@
 - Added versioned JSON and JSONL output, events, passive Claims, provenance sessions, attachments, redaction, search, purge, and path explanation.
 - Added `fsck`, `repair`, `doctor`, retention-aware `gc`, fault injection, installed-binary acceptance, and 100-Layer stress coverage.
 - Added APFS copy-on-write materialization from immutable root caches with streamed copy fallback.
+- Added hash-first object deduplication and durable scan batches, reducing measured 100,000-file initialization from 1,254.604 seconds to 58.712 seconds on the benchmark host.
 
 No public `v1.0.0` artifact has been released yet.
