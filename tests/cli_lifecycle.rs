@@ -915,6 +915,31 @@ fn discard_preserves_world_and_supports_recover_and_exact_purge() {
 }
 
 #[test]
+fn local_discard_preserves_reserved_and_ignored_content() {
+    let (_temp, world) = init();
+    fs::write(world.join("tracked.txt"), b"accepted\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "accepted"]);
+    fs::create_dir_all(world.join(".git")).unwrap();
+    fs::write(world.join(".git/config"), b"foreign metadata\n").unwrap();
+    fs::create_dir_all(world.join("node_modules/pkg")).unwrap();
+    fs::write(world.join("node_modules/pkg/cache"), b"ignored cache\n").unwrap();
+    fs::write(world.join("tracked.txt"), b"tentative\n").unwrap();
+
+    in_world(&world, &["discard"]);
+
+    assert_eq!(fs::read(world.join("tracked.txt")).unwrap(), b"accepted\n");
+    assert_eq!(
+        fs::read(world.join(".git/config")).unwrap(),
+        b"foreign metadata\n"
+    );
+    assert_eq!(
+        fs::read(world.join("node_modules/pkg/cache")).unwrap(),
+        b"ignored cache\n"
+    );
+    assert!(world.join(".javelin/store.sqlite3").is_file());
+}
+
+#[test]
 fn required_failure_blocks_while_informational_failure_is_recorded() {
     let (_temp, world) = init();
     let executable = binary().to_string_lossy().replace('\\', "\\\\");

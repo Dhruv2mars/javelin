@@ -258,7 +258,8 @@ fn materialize_snapshot(
         "VIEW_IO",
         format!("cannot create view {}", destination.display()),
     )?;
-    clear_view(destination)?;
+    let policy = IgnorePolicy::load(destination)?;
+    clear_view(destination, destination, &policy)?;
     if let Some(marker) = marker {
         let marker_bytes = serde_json::to_vec(marker).map_err(|error| {
             JavelinError::corruption(format!("cannot encode view marker: {error}"))
@@ -403,18 +404,31 @@ pub fn invalidate_root_cache(metadata: &Path, root_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn clear_view(view: &Path) -> Result<()> {
+fn clear_view(root: &Path, view: &Path, policy: &IgnorePolicy) -> Result<()> {
     for item in fs::read_dir(view).jctx("VIEW_IO", format!("cannot list {}", view.display()))? {
         let item = item.jctx("VIEW_IO", "cannot read view entry")?;
         let path = item.path();
-        let name = item.file_name();
-        if name == ".javelin" {
+        let metadata = fs::symlink_metadata(&path).jctx("VIEW_IO", "cannot stat view entry")?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| JavelinError::corruption("view cleanup escaped destination"))?
+            .to_str()
+            .ok_or_else(|| JavelinError::unsupported("non-UTF-8 paths are unsupported"))?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let directory = metadata.is_dir() && !metadata.file_type().is_symlink();
+        if is_reserved_path(&relative) || policy.ignored(&relative, directory) {
             continue;
         }
-        let metadata = fs::symlink_metadata(&path).jctx("VIEW_IO", "cannot stat view entry")?;
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            fs::remove_dir_all(&path)
-                .jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+        if directory {
+            clear_view(root, &path, policy)?;
+            let empty = fs::read_dir(&path)
+                .jctx("VIEW_IO", format!("cannot list {}", path.display()))?
+                .next()
+                .is_none();
+            if empty {
+                fs::remove_dir(&path)
+                    .jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+            }
         } else {
             fs::remove_file(&path).jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
         }
