@@ -255,6 +255,7 @@ fn init(path: Option<PathBuf>, json_output: bool) -> Result<()> {
     let mut store = Store::create(&root)?;
     let _object_lease = acquire_object_reference_lease(&store)?;
     let scan = scan_view(&root, &store.objects)?;
+    store.register_objects(&scan.objects)?;
     let root_tree = store.objects.put_tree(&scan.tree)?;
     store.register_object(
         &root_tree,
@@ -318,6 +319,7 @@ fn reconcile(store: &mut Store, layer: &Layer, reason: &str) -> Result<crate::mo
                 "Managed view changed during reconciliation; retry the command",
             ));
         }
+        store.register_objects(&scan.objects)?;
         let root_tree = store.objects.put_tree(&scan.tree)?;
         store.register_object(
             &root_tree,

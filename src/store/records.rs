@@ -68,9 +68,9 @@ pub(super) fn conflict_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Con
         layer_id: row.get(1)?,
         path: row.get(2)?,
         conflict_type: row.get(3)?,
-        base_entry: decode_optional(base),
-        target_entry: decode_optional(target),
-        private_entry: decode_optional(private),
+        base_entry: decode_optional(base, 4)?,
+        target_entry: decode_optional(target, 5)?,
+        private_entry: decode_optional(private, 6)?,
         target_ref: row.get(7)?,
         status: row.get(8)?,
         resolution: row.get(9)?,
@@ -89,8 +89,21 @@ pub(super) fn encode_optional(entry: &Option<TreeEntry>) -> Result<Option<String
         .transpose()
 }
 
-pub(super) fn decode_optional(value: Option<String>) -> Option<TreeEntry> {
-    value.and_then(|value| serde_json::from_str(&value).ok())
+pub(super) fn decode_optional(
+    value: Option<String>,
+    column: usize,
+) -> rusqlite::Result<Option<TreeEntry>> {
+    value
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    column,
+                    rusqlite::types::Type::Text,
+                    error.into(),
+                )
+            })
+        })
+        .transpose()
 }
 
 pub(super) fn append_event_tx(

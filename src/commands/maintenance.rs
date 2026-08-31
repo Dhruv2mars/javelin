@@ -32,13 +32,12 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
         }
     }
     for id in &reachability.blobs {
-        let (kind, size) = store.objects.validate(id)?;
+        let (kind, _) = store.objects.validate(id)?;
         if kind != ObjectKind::Blob {
             return Err(JavelinError::corruption(format!(
                 "blob reference {id} identifies a tree"
             )));
         }
-        store.register_object(id, kind, size)?;
     }
     let all_objects = store.objects.all_ids()?;
     for id in &all_objects {
@@ -59,7 +58,18 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
         .jctx("STORE_QUERY", "cannot read object metadata")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .jctx("STORE_QUERY", "cannot decode object metadata")?;
-    for (id, expected_kind, expected_size) in metadata {
+    let metadata = metadata
+        .into_iter()
+        .map(|(id, kind, size)| (id, (kind, size)))
+        .collect::<BTreeMap<_, _>>();
+    for id in &all_objects {
+        if !metadata.contains_key(id) {
+            return Err(JavelinError::corruption(format!(
+                "object metadata missing for {id}"
+            )));
+        }
+    }
+    for (id, (expected_kind, expected_size)) in metadata {
         let (kind, size) = store.objects.validate(&id)?;
         if format!("{kind:?}").to_lowercase() != expected_kind || size as i64 != expected_size {
             return Err(JavelinError::corruption(format!(
@@ -101,14 +111,20 @@ pub(super) fn repair(store: &mut Store, requested: Option<&str>, json_output: bo
             project: store.root.to_string_lossy().into_owned(),
             layer_id: layer.id.clone(),
         });
-        let backend = materialize_tree_from_cache(
+        let backend = match materialize_tree_from_cache(
             &tree,
             &head.root_tree,
             &store.metadata,
             Path::new(&layer.view_path),
             &store.objects,
             marker.as_ref(),
-        )?;
+        ) {
+            Ok(backend) => backend,
+            Err(error) => {
+                store.mark_view(&layer.id, &head.id, true, "repair_required")?;
+                return Err(error);
+            }
+        };
         store.mark_view(&layer.id, &head.id, false, backend)?;
         FileExt::unlock(&reconcile_lock).jctx("RECONCILE_LOCK", "cannot release repair lock")?;
         repaired.push(json!({"layer": layer.name, "checkpoint": head.id, "backend": backend}));

@@ -97,6 +97,9 @@ pub(super) fn monitor(store: &mut Store) -> Result<()> {
                 pending_stamps.insert(layer.id.clone(), stable_stamp);
                 continue;
             }
+            if store.register_objects(&scan.objects).is_err() {
+                continue;
+            }
             let Ok(root_tree) = store.objects.put_tree(&scan.tree) else {
                 continue;
             };

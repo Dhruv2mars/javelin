@@ -939,6 +939,36 @@ impl Store {
         Ok(())
     }
 
+    pub fn register_objects(&mut self, objects: &[(String, ObjectKind, u64)]) -> Result<()> {
+        if objects.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .conn
+            .transaction()
+            .jctx("STORE_TX", "cannot begin object metadata registration")?;
+        {
+            let mut statement = tx
+                .prepare(
+                    "INSERT OR IGNORE INTO object_metadata(id, kind, uncompressed_size, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .jctx("STORE_WRITE", "cannot prepare object metadata registration")?;
+            for (id, kind, size) in objects {
+                statement
+                    .execute(params![
+                        id,
+                        format!("{kind:?}").to_lowercase(),
+                        *size as i64,
+                        now()
+                    ])
+                    .jctx("STORE_WRITE", "cannot register object metadata")?;
+            }
+        }
+        tx.commit()
+            .jctx("STORE_TX", "cannot commit object metadata registration")
+    }
+
     pub fn expired_discarded_layers(&self, cutoff: &str) -> Result<Vec<String>> {
         let mut statement = self
             .conn

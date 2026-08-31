@@ -29,12 +29,8 @@ pub(super) fn run_validations(
     candidate: &Tree,
     candidate_root: &str,
 ) -> Result<Vec<ValidationRecord>> {
-    let (_, _, accepted_tree) = if let Ok(world) = store.current_world() {
-        let tree = store.objects.read_tree(&world.root_tree)?;
-        (world.id, world.root_tree, tree)
-    } else {
-        return Err(JavelinError::corruption("Current World unavailable"));
-    };
+    let world = store.current_world()?;
+    let accepted_tree = store.objects.read_tree(&world.root_tree)?;
     let (accepted_config, _) = config_from_tree(store, &accepted_tree)?;
     let (candidate_config, candidate_policy) = config_from_tree(store, candidate)?;
     let policy_hash = blake3::hash(candidate_policy.as_bytes())
@@ -87,9 +83,11 @@ fn config_from_tree(store: &Store, tree: &Tree) -> Result<(Config, String)> {
         .iter()
         .find(|entry| entry.path == "javelin.toml" && entry.kind == EntryKind::File)
         .ok_or_else(|| JavelinError::policy("candidate has no javelin.toml"))?;
-    let bytes = store
-        .objects
-        .read_blob(entry.object_id.as_deref().unwrap_or(""))?;
+    let object_id = entry
+        .object_id
+        .as_deref()
+        .ok_or_else(|| JavelinError::corruption("javelin.toml entry has no object ID"))?;
+    let bytes = store.objects.read_blob(object_id)?;
     let text =
         String::from_utf8(bytes).map_err(|_| JavelinError::policy("javelin.toml is not UTF-8"))?;
     Ok((Config::parse(&text)?, text))

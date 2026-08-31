@@ -2,7 +2,7 @@ use crate::config::IgnorePolicy;
 use crate::durability::sync_dir;
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{Change, ChangeKind, EntryKind, Tree, TreeEntry, ViewMarker};
-use crate::objects::{ObjectBatch, ObjectStore};
+use crate::objects::{ObjectBatch, ObjectKind, ObjectStore};
 use crate::paths::{is_reserved_path, safe_join, validate_relative};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 pub struct ScanResult {
     pub tree: Tree,
     pub ignored: Vec<(String, String)>,
+    pub objects: Vec<(String, ObjectKind, u64)>,
 }
 
 pub fn scan_view(view: &Path, objects: &ObjectStore) -> Result<ScanResult> {
@@ -40,6 +41,7 @@ fn scan_view_into_batch(
 ) -> Result<ScanResult> {
     let mut entries = Vec::new();
     let mut ignored = Vec::new();
+    let mut object_records = Vec::new();
     let walker = WalkDir::new(view)
         .follow_links(false)
         .sort_by_file_name()
@@ -85,8 +87,17 @@ fn scan_view_into_batch(
             )));
         };
         let object_id = match kind {
-            EntryKind::File => Some(objects.put_blob_file(item.path())?),
-            EntryKind::Symlink => Some(objects.put_blob(&symlink_target_bytes(item.path())?)?),
+            EntryKind::File => {
+                let id = objects.put_blob_file(item.path())?;
+                object_records.push((id.clone(), ObjectKind::Blob, metadata.len()));
+                Some(id)
+            }
+            EntryKind::Symlink => {
+                let target = symlink_target_bytes(item.path())?;
+                let id = objects.put_blob(&target)?;
+                object_records.push((id.clone(), ObjectKind::Blob, target.len() as u64));
+                Some(id)
+            }
             EntryKind::Directory => None,
         };
         let executable = kind == EntryKind::File && is_executable(&metadata);
@@ -102,6 +113,7 @@ fn scan_view_into_batch(
     Ok(ScanResult {
         tree: Tree { entries },
         ignored,
+        objects: object_records,
     })
 }
 

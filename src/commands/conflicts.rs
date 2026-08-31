@@ -53,7 +53,10 @@ pub(super) fn conflict(
             let synchronize = remaining_before == 1;
             let resolved_tree = if r#use == "edited" {
                 let policy = tracking_policy(store, &layer)?;
-                scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)?.tree
+                let scan =
+                    scan_view_with_policy(Path::new(&layer.view_path), &store.objects, &policy)?;
+                store.register_objects(&scan.objects)?;
+                scan.tree
             } else {
                 let selected = match r#use.as_str() {
                     "base" => record.base_entry.clone(),

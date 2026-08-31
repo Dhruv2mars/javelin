@@ -1072,6 +1072,148 @@ fn fsck_detects_corrupt_copied_store_without_damaging_original() {
 }
 
 #[test]
+fn fsck_reports_missing_object_metadata_without_repairing_it() {
+    let (_temp, world) = init();
+    fs::write(world.join("tracked.txt"), b"tracked\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "tracked"]);
+    let database = world.join(".javelin/store.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    let object_id: String = connection
+        .query_row(
+            "SELECT id FROM object_metadata WHERE kind = 'blob' ORDER BY id LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    connection
+        .execute("DELETE FROM object_metadata WHERE id = ?1", [&object_id])
+        .unwrap();
+    drop(connection);
+
+    let checked = Command::new(binary())
+        .args(["--project", world.to_str().unwrap(), "fsck"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert_eq!(checked.status.code(), Some(7));
+    let connection = rusqlite::Connection::open(database).unwrap();
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM object_metadata WHERE id = ?1",
+            [&object_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn corrupt_conflict_entry_is_reported_instead_of_treated_as_deletion() {
+    let (_temp, world) = init();
+    fs::write(world.join("shared.txt"), b"base\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "base"]);
+    let left = output_text(in_world(
+        &world,
+        &["layer", "create", "left-corrupt", "--from", "world"],
+    ));
+    let right = output_text(in_world(
+        &world,
+        &["layer", "create", "right-corrupt", "--from", "world"],
+    ));
+    fs::write(Path::new(&left).join("shared.txt"), b"left\n").unwrap();
+    fs::write(Path::new(&right).join("shared.txt"), b"right\n").unwrap();
+    in_world(
+        &world,
+        &[
+            "publish",
+            "left-corrupt",
+            "--idempotency-key",
+            "left-corrupt",
+        ],
+    );
+    let failed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "right-corrupt",
+            "--idempotency-key",
+            "right-corrupt",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(4));
+    let database = world.join(".javelin/store.sqlite3");
+    let connection = rusqlite::Connection::open(database).unwrap();
+    connection
+        .execute("UPDATE conflicts SET private_entry = '{'", [])
+        .unwrap();
+    drop(connection);
+
+    let listed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "conflict",
+            "list",
+            "right-corrupt",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(listed.status.code(), Some(7));
+}
+
+#[test]
+fn failed_repair_marks_view_as_repair_required() {
+    let (_temp, world) = init();
+    let layer = output_text(in_world(
+        &world,
+        &["layer", "create", "broken-view", "--from", "world"],
+    ));
+    fs::write(Path::new(&layer).join("payload.txt"), b"payload\n").unwrap();
+    in_world(Path::new(&layer), &["checkpoint"]);
+    let database = world.join(".javelin/store.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    let object_id: String = connection
+        .query_row(
+            "SELECT id FROM object_metadata WHERE kind = 'blob' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+    drop(connection);
+    if !object_id.is_empty() {
+        let object_path = world
+            .join(".javelin/objects")
+            .join(&object_id[..2])
+            .join(&object_id[2..]);
+        fs::remove_file(object_path).unwrap();
+    }
+    let repaired = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "repair",
+            "--view",
+            "broken-view",
+        ])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert_eq!(repaired.status.code(), Some(7));
+    let connection = rusqlite::Connection::open(database).unwrap();
+    let state: (i64, String) = connection
+        .query_row(
+            "SELECT stale, backend FROM views JOIN layers ON layers.id = views.layer_id
+             WHERE layers.name = 'broken-view'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(state, (1, "repair_required".to_string()));
+}
+
+#[test]
 fn migration_from_schema_v1_adds_validation_environment() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("world");
