@@ -10,21 +10,20 @@ pub(super) fn publish(
     if let Some(key) = key
         && let Some(existing) = store.contribution_details_by_key(key)?
     {
-        if let Some(source_layer) = &existing.source_layer {
-            let requested_layer = requested
-                .map(|name| store.layer(name))
-                .transpose()?
-                .unwrap_or(context_layer(context, store)?);
-            if requested_layer.id != *source_layer {
-                return Err(JavelinError::stale(
-                    "Publish idempotency key belongs to a different Private Layer",
-                ));
-            }
+        let source_layer = existing.source_layer.as_deref().ok_or_else(|| {
+            JavelinError::stale("Publish idempotency key belongs to a purged Private Layer")
+        })?;
+        let requested_layer = requested
+            .map(|name| store.layer(name))
+            .transpose()?
+            .unwrap_or(context_layer(context, store)?);
+        if requested_layer.id != source_layer {
+            return Err(JavelinError::stale(
+                "Publish idempotency key belongs to a different Private Layer",
+            ));
         }
-        let recovered = if let (Some(layer_id), Some(source_checkpoint)) =
-            (&existing.source_layer, &existing.source_checkpoint)
-        {
-            let layer = store.layer(layer_id)?;
+        let recovered = if let Some(source_checkpoint) = &existing.source_checkpoint {
+            let layer = store.layer(source_layer)?;
             let head = store.layer_head(&layer)?;
             let checkpoint = if head.synchronized_ref == existing.resulting_target_ref {
                 head

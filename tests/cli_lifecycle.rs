@@ -609,6 +609,29 @@ fn published_discarded_layer_can_be_purged_without_losing_contribution() {
         output_text(in_world(&world, &["show", "world:published.txt"])),
         "accepted"
     );
+
+    let replacement = output_text(in_world(
+        &world,
+        &["layer", "create", "replacement", "--from", "world"],
+    ));
+    fs::write(
+        Path::new(&replacement).join("replacement.txt"),
+        b"must not publish\n",
+    )
+    .unwrap();
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "replacement",
+            "--idempotency-key",
+            "published-layer",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(6));
+    assert!(!world.join("replacement.txt").exists());
 }
 
 #[test]
