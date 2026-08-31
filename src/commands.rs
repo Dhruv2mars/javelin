@@ -4,6 +4,7 @@ use crate::error::{Context, JavelinError, Result};
 use crate::model::{EntryKind, Layer, Tree, TreeEntry, ViewMarker};
 use crate::objects::ObjectKind;
 use crate::paths::{ProjectContext, discover};
+use crate::process::process_alive;
 use crate::store::{ConflictInput, NewLayer, Store, ValidationRecord, now};
 use crate::view::{
     apply_entries, diff_trees, invalidate_root_cache, materialize_tree_from_cache, scan_view,
@@ -2872,16 +2873,6 @@ fn monitor_ready(path: &Path) -> bool {
         return false;
     };
     process_alive(pid as u32)
-}
-
-#[cfg(unix)]
-fn process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-fn process_alive(_pid: u32) -> bool {
-    true
 }
 
 fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
