@@ -68,7 +68,30 @@ impl ObjectStore {
         self.put_reader(ObjectKind::Tree, Cursor::new(bytes))
     }
 
-    fn put_reader(&self, kind: ObjectKind, mut reader: impl Read) -> Result<String> {
+    fn put_reader(&self, kind: ObjectKind, mut reader: impl Read + Seek) -> Result<String> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(kind.domain());
+        let mut length = 0_u64;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .jctx("OBJECT_IO", "cannot read object input")?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            length += read as u64;
+        }
+        let id = hasher.finalize().to_hex().to_string();
+        let target = self.object_path(&id)?;
+        if target.exists() {
+            return Ok(id);
+        }
+        reader
+            .seek(SeekFrom::Start(0))
+            .jctx("OBJECT_IO", "cannot rewind object input")?;
+
         crate::fault::hit("before_object_temp_write");
         let temp_name = format!("object-{}.tmp", ulid::Ulid::new());
         let temp_path = self.temp.join(temp_name);
@@ -83,13 +106,9 @@ impl ObjectStore {
             .and_then(|_| file.write_all(&0_u64.to_be_bytes()))
             .jctx("OBJECT_IO", "cannot write object header")?;
 
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(kind.domain());
-        let mut length = 0_u64;
         {
             let mut encoder = zstd::stream::write::Encoder::new(&mut file, 3)
                 .jctx("OBJECT_IO", "cannot create zstd encoder")?;
-            let mut buffer = vec![0_u8; 1024 * 1024];
             loop {
                 let read = reader
                     .read(&mut buffer)
@@ -97,8 +116,6 @@ impl ObjectStore {
                 if read == 0 {
                     break;
                 }
-                hasher.update(&buffer[..read]);
-                length += read as u64;
                 encoder
                     .write_all(&buffer[..read])
                     .jctx("OBJECT_IO", "cannot compress object")?;
@@ -113,8 +130,6 @@ impl ObjectStore {
             .jctx("OBJECT_IO", "cannot finalize object")?;
         crate::fault::hit("after_object_fsync");
 
-        let id = hasher.finalize().to_hex().to_string();
-        let target = self.object_path(&id)?;
         if target.exists() {
             fs::remove_file(&temp_path).jctx("OBJECT_IO", "cannot remove duplicate temp object")?;
             return Ok(id);
