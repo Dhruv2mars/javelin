@@ -337,6 +337,9 @@ impl ObjectBatch<'_> {
             .and_then(|_| file.write_all(&[kind as u8]))
             .and_then(|_| file.write_all(&0_u64.to_be_bytes()))
             .jctx("OBJECT_IO", "cannot write object header")?;
+        let mut encoded_hasher = blake3::Hasher::new();
+        encoded_hasher.update(kind.domain());
+        let mut encoded_length = 0_u64;
         {
             let mut encoder = zstd::stream::write::Encoder::new(&mut file, 3)
                 .jctx("OBJECT_IO", "cannot create zstd encoder")?;
@@ -347,6 +350,8 @@ impl ObjectBatch<'_> {
                 if read == 0 {
                     break;
                 }
+                encoded_hasher.update(&buffer[..read]);
+                encoded_length += read as u64;
                 encoder
                     .write_all(&buffer[..read])
                     .jctx("OBJECT_IO", "cannot compress object")?;
@@ -354,6 +359,13 @@ impl ObjectBatch<'_> {
             encoder
                 .finish()
                 .jctx("OBJECT_IO", "cannot finish object compression")?;
+        }
+        if encoded_length != length || encoded_hasher.finalize().to_hex().as_str() != id {
+            drop(file);
+            fs::remove_file(&temp).jctx("OBJECT_IO", "cannot remove changed temporary object")?;
+            return Err(JavelinError::busy(
+                "object input changed during capture; retry the command",
+            ));
         }
         file.seek(SeekFrom::Start(5))
             .and_then(|_| file.write_all(&length.to_be_bytes()))
@@ -579,4 +591,53 @@ fn read_u16(reader: &mut impl Read) -> Result<u16> {
         .read_exact(&mut bytes)
         .jctx("CORRUPT_TREE", "truncated tree integer")?;
     Ok(u16::from_be_bytes(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    struct ChangingReader {
+        first: Cursor<Vec<u8>>,
+        second: Cursor<Vec<u8>>,
+        second_pass: bool,
+    }
+
+    impl Read for ChangingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.second_pass {
+                self.second.read(buffer)
+            } else {
+                self.first.read(buffer)
+            }
+        }
+    }
+
+    impl Seek for ChangingReader {
+        fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+            if position == SeekFrom::Start(0) {
+                self.second_pass = true;
+                self.second.seek(position)
+            } else if self.second_pass {
+                self.second.seek(position)
+            } else {
+                self.first.seek(position)
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_input_that_changes_between_hash_and_compression() {
+        let temp = tempfile::tempdir().unwrap();
+        let objects = ObjectStore::new(&temp.path().join(".javelin")).unwrap();
+        let mut batch = objects.batch();
+        let reader = ChangingReader {
+            first: Cursor::new(b"first pass".to_vec()),
+            second: Cursor::new(b"changed bytes".to_vec()),
+            second_pass: false,
+        };
+
+        assert!(batch.put_reader(ObjectKind::Blob, reader).is_err());
+    }
 }
