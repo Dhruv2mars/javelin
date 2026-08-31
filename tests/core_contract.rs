@@ -1,7 +1,9 @@
 use javelin::config::IgnorePolicy;
 use javelin::model::{EntryKind, Tree, TreeEntry};
+use javelin::objects::ObjectKind;
 use javelin::objects::{ObjectStore, decode_tree, encode_tree};
 use javelin::paths::validate_relative;
+use javelin::store::{NewLayer, Store};
 #[cfg(unix)]
 use javelin::view::materialize_tree;
 use std::fs;
@@ -113,6 +115,74 @@ fn ignore_policy_supports_reinclusion_and_exact_secrets() {
     assert!(policy.ignored("node_modules/pkg/index.js", false));
     assert!(policy.ignored("debug.log", false));
     assert!(!policy.ignored("important.log", false));
+}
+
+#[test]
+fn publish_idempotency_key_keeps_its_original_layer_owner() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("world");
+    fs::create_dir_all(&root).unwrap();
+    let mut store = Store::create(&root).unwrap();
+    let tree = Tree::default();
+    let root_tree = store.objects.put_tree(&tree).unwrap();
+    store
+        .register_object(
+            &root_tree,
+            ObjectKind::Tree,
+            encode_tree(&tree).unwrap().len() as u64,
+        )
+        .unwrap();
+    let (world, _) = store.initialize_world(&root_tree).unwrap();
+    let first_view = store.metadata.join("views/first");
+    let second_view = store.metadata.join("views/second");
+    let first = store
+        .create_layer(NewLayer {
+            name: "first",
+            origin_ref: &world.id,
+            synchronized_ref: &world.id,
+            root_tree: &root_tree,
+            target_kind: "world",
+            target_id: None,
+            view_path: &first_view,
+        })
+        .unwrap();
+    let second = store
+        .create_layer(NewLayer {
+            name: "second",
+            origin_ref: &world.id,
+            synchronized_ref: &world.id,
+            root_tree: &root_tree,
+            target_kind: "world",
+            target_id: None,
+            view_path: &second_view,
+        })
+        .unwrap();
+    let first_head = store.layer_head(&first).unwrap();
+    let second_head = store.layer_head(&second).unwrap();
+    store
+        .accept_publish(
+            &first,
+            &first_head,
+            &root_tree,
+            Some("shared-key"),
+            &[],
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+    let error = store
+        .accept_publish(
+            &second,
+            &second_head,
+            &root_tree,
+            Some("shared-key"),
+            &[],
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+
+    assert_eq!(error.exit_code, 6);
+    assert!(error.message.contains("different Private Layer"));
 }
 
 #[cfg(unix)]

@@ -41,9 +41,14 @@ impl Store {
         summary: &serde_json::Value,
     ) -> Result<(String, String)> {
         if let Some(key) = idempotency_key
-            && let Some(existing) = self.contribution_by_key(key)?
+            && let Some(existing) = self.contribution_details_by_key(key)?
         {
-            return Ok(existing);
+            if existing.source_layer.as_deref() != Some(layer.id.as_str()) {
+                return Err(JavelinError::stale(
+                    "Publish idempotency key belongs to a different Private Layer",
+                ));
+            }
+            return Ok((existing.id, existing.resulting_target_ref));
         }
         let contribution_id = ulid::Ulid::new().to_string();
         let now = now();
