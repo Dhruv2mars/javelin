@@ -111,7 +111,9 @@ printf 'damaged view\n' >"$feature_path/api.ts"
 test "$(cat "$feature_path/api.ts")" = 'export const api = 2;'
 
 current_before_restore="$("$javelin_bin" --project "$test_root/world" world current --json)"
-"$javelin_bin" --project "$test_root/world" world restore v7
+restore_version="$("$javelin_bin" --project "$test_root/world" world history | tail -n 2 | head -n 1 | cut -f1)"
+test -n "$restore_version"
+"$javelin_bin" --project "$test_root/world" world restore "$restore_version"
 "$javelin_bin" --project "$test_root/world" world current --json
 "$javelin_bin" --project "$test_root/world" world history --json
 "$javelin_bin" --project "$test_root/world" history --path shared.txt --json

@@ -33,6 +33,10 @@ done
 archive_name="javelin-$version-$platform.tar.gz"
 archive="dist/$archive_name"
 tar -C dist -czf "$archive" "javelin-$version-$platform"
-(cd dist && shasum -a 256 "$archive_name" > "$archive_name.sha256")
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd dist && sha256sum "$archive_name" > "$archive_name.sha256")
+else
+  (cd dist && shasum -a 256 "$archive_name" > "$archive_name.sha256")
+fi
 printf '%s\n' "$archive"
 printf '%s\n' "$archive.sha256"

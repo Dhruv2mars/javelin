@@ -108,7 +108,7 @@ async function traceProfile() {
     const session = run([
       "--project", root, "provenance", "begin", "--layer", "trace", "--actor", "benchmark",
     ]).stdout;
-    const attachment = join(root, ".javelin", "temp", "trace-1gb.jsonl");
+    const attachment = join(root, "trace-1gb.jsonl");
     const chunk = new Uint8Array(1024 * 1024);
     chunk.fill(32);
     chunk[chunk.length - 1] = 10;
