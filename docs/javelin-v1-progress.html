@@ -73,7 +73,7 @@
     <div class="eyebrow">Living delivery tracker</div>
     <h1>Javelin v1.0.0</h1>
     <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
-    <p class="updated">Snapshot: 31 August 2026, 08:07 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
+    <p class="updated">Snapshot: 31 August 2026, 08:19 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
 
     <section class="grid" aria-label="Delivery status">
       <article class="card">
@@ -100,8 +100,8 @@
 
       <article class="card wide callout">
         <h2>Current gate</h2>
-        <p><strong class="warn">Performance revalidation:</strong> the disk-wait regression is fixed locally without replacing SQLite. Hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 58.712 seconds while all 100,003 objects remained valid.</p>
-        <p class="note">The SQLite-per-file theory was disproved in source: scan paths register one root Tree, not every Blob. Remaining gate: push this correction, rerun native CI, package acceptance, stress, and review.</p>
+        <p><strong class="warn">Native CI revalidation:</strong> the disk-wait regression is fixed without replacing SQLite. Final-build hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 61.243 seconds while all 100,003 objects remained valid.</p>
+        <p class="note">Final local archive acceptance, checksum, fake-Git proof, 100-Layer stress, and exact final-build benchmark sweep are green. Remaining gate: native CI, downloaded-artifact audit, and review.</p>
       </article>
 
       <article class="card half">
@@ -118,15 +118,15 @@
           <li class="done">Native Ubuntu and macOS CI plus release packaging</li>
           <li class="done">Native Windows unit, core contract, and lifecycle CI</li>
           <li class="done">Final macOS archive gauntlet and 100-Layer packaged stress</li>
-          <li class="done">10.3x–23.2x faster packaged initialization with valid integrity</li>
+          <li class="done">12.5x–22.1x faster packaged initialization with valid integrity</li>
         </ul>
       </article>
 
       <article class="card half">
         <h2>Remaining path</h2>
         <ol>
-          <li><strong>Push the performance correction.</strong> Run macOS, Linux, and Windows CI and package checks.</li>
-          <li><strong>Rerun final acceptance.</strong> Installed archive gauntlet and 100-Layer stress after the durability change.</li>
+          <li><strong>Finish native CI.</strong> macOS, Linux, and Windows tests and package checks must be green at final head.</li>
+          <li><strong>Audit downloaded artifacts.</strong> Verify each final manifest outside the build workspace.</li>
           <li><strong>Final review.</strong> Resolve findings; make draft PR release-ready.</li>
         </ol>
       </article>
@@ -139,13 +139,13 @@
               <tr><th>Fixture</th><th>Init</th><th>Unchanged status</th><th>Layer create</th><th>fsck</th><th>Integrity</th></tr>
             </thead>
             <tbody>
-              <tr><td>1,000 files / 50 MiB</td><td>1.02 s</td><td>9.6 ms</td><td>0.36 s</td><td>0.31 s</td><td class="good">valid</td></tr>
-              <tr><td>25,000 files / 1 GiB</td><td>11.79 s</td><td>115.3 ms</td><td>9.49 s</td><td>11.65 s</td><td class="good">valid</td></tr>
-              <tr><td>100,000 files / 5 GiB</td><td>58.71 s</td><td>452.8 ms</td><td>43.93 s</td><td>69.04 s</td><td class="good">valid</td></tr>
+              <tr><td>1,000 files / 50 MiB</td><td>0.84 s</td><td>10.2 ms</td><td>0.39 s</td><td>0.33 s</td><td class="good">valid</td></tr>
+              <tr><td>25,000 files / 1 GiB</td><td>12.37 s</td><td>110.6 ms</td><td>9.13 s</td><td>11.83 s</td><td class="good">valid</td></tr>
+              <tr><td>100,000 files / 5 GiB</td><td>61.24 s</td><td>444.7 ms</td><td>44.70 s</td><td>68.55 s</td><td class="good">valid</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="note">Measured against the packaged Apple Silicon binary. Init improved 10.3x, 23.2x, and 21.4x respectively. One-file Checkpoint in the supplied 1,000-file repro completed in 80 ms.</p>
+        <p class="note">Measured against the final packaged Apple Silicon binary. Init improved 12.5x, 22.1x, and 20.5x respectively. One-file Checkpoint in the supplied 1,000-file repro completed in 80 ms.</p>
       </article>
 
       <article class="card half">
