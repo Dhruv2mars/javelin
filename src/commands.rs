@@ -43,11 +43,11 @@ use discard::{discard, discarded};
 use integration::integrate_trees;
 use integration::{refresh, refresh_layer};
 use maintenance::{doctor, fsck, hex, repair};
-use monitor::{monitor, start_monitor};
+use monitor::{monitor, start_monitor, write_monitor_state};
 use provenance::{explain, provenance};
 use publish::{acquire_publish_lock, publish};
 use reachability::collect_reachability;
-use retention::{events, gc, monitor_ready, write_monitor_state};
+use retention::{events, gc};
 use validation::{run_validations, verify};
 
 pub fn execute(cli: Cli) -> Result<()> {
@@ -817,7 +817,7 @@ fn layer(
             )?;
             store.mark_view(&created.id, &created.head_checkpoint, false, backend)?;
             for resource in claim {
-                create_claim(store, &created.id, &resource, 3600)?;
+                store.create_claim(&created.id, &resource, 3600)?;
             }
             emit(
                 json_output,
@@ -931,15 +931,6 @@ fn restore_world(
         &json!({"world_version": restored, "validations": validations, "policy_override": failed && accept_failing}),
         format!("Restored {} as {}", version, restored.id),
     )
-}
-
-fn create_claim(
-    _store: &mut Store,
-    _layer_id: &str,
-    _resource: &str,
-    _seconds: u64,
-) -> Result<String> {
-    _store.create_claim(_layer_id, _resource, _seconds)
 }
 
 #[cfg(test)]

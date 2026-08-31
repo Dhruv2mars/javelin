@@ -1,5 +1,31 @@
 use super::*;
 
+fn monitor_ready(path: &Path) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let Some(pid) = value.get("pid").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    process_alive(pid as u32)
+}
+
+pub(super) fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
+    let temp = path.with_extension(format!("tmp-{}", ulid::Ulid::new()));
+    let mut file = File::create(&temp).jctx("MONITOR_IO", "cannot create Monitor state")?;
+    file.write_all(value.as_bytes())
+        .and_then(|_| file.sync_all())
+        .jctx("MONITOR_IO", "cannot write Monitor state")?;
+    fs::rename(&temp, path).jctx("MONITOR_IO", "cannot install Monitor state")?;
+    sync_dir(
+        path.parent()
+            .ok_or_else(|| JavelinError::corruption("Monitor state path has no parent"))?,
+    )
+}
+
 pub(super) fn monitor(store: &mut Store) -> Result<()> {
     let lock_path = store.metadata.join("monitor/lock");
     let lock = OpenOptions::new()
