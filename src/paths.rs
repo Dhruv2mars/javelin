@@ -1,5 +1,6 @@
 use crate::error::{Context, JavelinError, Result};
 use crate::model::ViewMarker;
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -9,6 +10,15 @@ pub struct ProjectContext {
     pub metadata: PathBuf,
     pub layer_id: String,
     pub view: PathBuf,
+}
+
+pub fn is_reserved_path(path: &str) -> bool {
+    path.split('/').any(|component| {
+        matches!(
+            component,
+            ".javelin" | ".javelin-view" | ".git" | ".hg" | ".svn"
+        )
+    })
 }
 
 pub fn validate_relative(path: &str) -> Result<()> {
@@ -25,9 +35,7 @@ pub fn validate_relative(path: &str) -> Result<()> {
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
-        || path == ".javelin"
-        || path.starts_with(".javelin/")
-        || path == ".javelin-view"
+        || is_reserved_path(path)
     {
         return Err(JavelinError::unsupported(format!("unsafe path {path:?}")));
     }
@@ -62,9 +70,16 @@ pub fn discover(start: Option<&Path>) -> Result<ProjectContext> {
             let marker: ViewMarker = serde_json::from_slice(&bytes).map_err(|error| {
                 JavelinError::corruption(format!("invalid view marker: {error}"))
             })?;
+            if marker.format != 1 {
+                return Err(JavelinError::corruption(format!(
+                    "unsupported view marker format {}",
+                    marker.format
+                )));
+            }
             let root = PathBuf::from(marker.project)
                 .canonicalize()
                 .jctx("VIEW_MARKER", "view marker project does not exist")?;
+            validate_view_marker(&root, directory, &marker.layer_id)?;
             return Ok(ProjectContext {
                 metadata: root.join(".javelin"),
                 root,
@@ -82,6 +97,43 @@ pub fn discover(start: Option<&Path>) -> Result<ProjectContext> {
         }
     }
     Err(JavelinError::no_world(start_directory.display()))
+}
+
+fn validate_view_marker(root: &Path, directory: &Path, layer_id: &str) -> Result<()> {
+    let database = root.join(".javelin/store.sqlite3");
+    if !database.is_file() {
+        return Err(JavelinError::corruption(
+            "view marker project has no Javelin Store",
+        ));
+    }
+    let connection = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .jctx("VIEW_MARKER", "cannot verify view marker Store")?;
+    let registered: Option<String> = connection
+        .query_row(
+            "SELECT v.path FROM views v JOIN layers l ON l.id = v.layer_id
+             WHERE l.id = ?1 AND l.status != 'discarded'",
+            [layer_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .jctx("VIEW_MARKER", "cannot verify view marker Layer")?;
+    let Some(registered) = registered else {
+        return Err(JavelinError::corruption(
+            "view marker does not match an active registered Layer",
+        ));
+    };
+    let registered = PathBuf::from(registered)
+        .canonicalize()
+        .jctx("VIEW_MARKER", "registered Layer view does not exist")?;
+    if registered != directory {
+        return Err(JavelinError::corruption(
+            "view marker does not match its registered Layer path",
+        ));
+    }
+    Ok(())
 }
 
 pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf> {

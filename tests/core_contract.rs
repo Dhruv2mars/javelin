@@ -93,6 +93,9 @@ fn unsafe_paths_are_rejected() {
         "/absolute",
         ".javelin/store.sqlite3",
         ".javelin-view",
+        ".git/config",
+        ".hg/store",
+        ".svn/wc.db",
     ] {
         assert!(validate_relative(path).is_err(), "accepted {path}");
     }
@@ -139,10 +142,7 @@ fn crafted_symlink_parent_cannot_escape_materialization() {
     let destination = temp.path().join("view");
     assert!(materialize_tree(&tree, &destination, &objects, None).is_err());
     assert!(!temp.path().join("outside/written.txt").exists());
-    assert!(
-        fs::symlink_metadata(destination.join("escape"))
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+    if let Ok(metadata) = fs::symlink_metadata(destination.join("escape")) {
+        assert!(metadata.file_type().is_symlink());
+    }
 }

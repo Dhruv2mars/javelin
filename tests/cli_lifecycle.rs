@@ -476,6 +476,211 @@ fn nested_child_publish_parent_publish_and_idempotent_retry_are_linear() {
 }
 
 #[test]
+fn idempotent_child_publish_repairs_parent_view_after_commit_crash() {
+    let (_temp, world) = init();
+    let parent = output_text(in_world(
+        &world,
+        &["layer", "create", "parent", "--from", "world"],
+    ));
+    let child = output_text(in_world(
+        &world,
+        &[
+            "layer",
+            "create",
+            "child",
+            "--from",
+            "layer:parent",
+            "--target",
+            "layer:parent",
+        ],
+    ));
+    fs::write(Path::new(&child).join("child.txt"), b"accepted\n").unwrap();
+
+    let crashed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "child",
+            "--idempotency-key",
+            "child-crash-repair",
+        ])
+        .env("JAVELIN_FAULT_POINT", "after_db_commit_before_view_update")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(86));
+    assert!(!Path::new(&parent).join("child.txt").exists());
+
+    in_world(
+        &world,
+        &[
+            "publish",
+            "child",
+            "--idempotency-key",
+            "child-crash-repair",
+        ],
+    );
+    assert_eq!(
+        fs::read(Path::new(&parent).join("child.txt")).unwrap(),
+        b"accepted\n"
+    );
+}
+
+#[test]
+fn idempotency_key_cannot_alias_a_different_layer() {
+    let (_temp, world) = init();
+    let first = output_text(in_world(
+        &world,
+        &["layer", "create", "first", "--from", "world"],
+    ));
+    let second = output_text(in_world(
+        &world,
+        &["layer", "create", "second", "--from", "world"],
+    ));
+    fs::write(Path::new(&first).join("first.txt"), b"first\n").unwrap();
+    fs::write(Path::new(&second).join("second.txt"), b"second\n").unwrap();
+    in_world(
+        &world,
+        &["publish", "first", "--idempotency-key", "shared-key"],
+    );
+
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "second",
+            "--idempotency-key",
+            "shared-key",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(6));
+    let current: Value =
+        serde_json::from_slice(&in_world(&world, &["world", "current", "--json"]).stdout).unwrap();
+    assert_eq!(current["result"]["id"], "v2");
+}
+
+#[test]
+fn copied_view_marker_cannot_redirect_project_discovery() {
+    let (temp, world) = init();
+    let layer = output_text(in_world(
+        &world,
+        &["layer", "create", "real", "--from", "world"],
+    ));
+    let forged = temp.path().join("forged-view");
+    fs::create_dir_all(&forged).unwrap();
+    fs::copy(
+        Path::new(&layer).join(".javelin-view"),
+        forged.join(".javelin-view"),
+    )
+    .unwrap();
+
+    let rejected = Command::new(binary())
+        .args(["--project", forged.to_str().unwrap(), "status"])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(7));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("view marker does not match"));
+}
+
+#[test]
+fn published_discarded_layer_can_be_purged_without_losing_contribution() {
+    let (_temp, world) = init();
+    let layer = output_text(in_world(
+        &world,
+        &["layer", "create", "published", "--from", "world"],
+    ));
+    fs::write(Path::new(&layer).join("published.txt"), b"accepted\n").unwrap();
+    in_world(
+        &world,
+        &[
+            "publish",
+            "published",
+            "--idempotency-key",
+            "published-layer",
+        ],
+    );
+    in_world(&world, &["discard", "published"]);
+    in_world(&world, &["discarded", "purge", "published"]);
+    in_world(&world, &["fsck"]);
+    assert_eq!(
+        output_text(in_world(&world, &["show", "world:published.txt"])),
+        "accepted"
+    );
+}
+
+#[test]
+fn claim_prefix_matches_path_segments_only() {
+    let (_temp, world) = init();
+    in_world(
+        &world,
+        &[
+            "layer", "create", "prefix", "--from", "world", "--claim", "a/**",
+        ],
+    );
+    in_world(
+        &world,
+        &[
+            "layer", "create", "sibling", "--from", "world", "--claim", "a-b",
+        ],
+    );
+    let claims: Value =
+        serde_json::from_slice(&in_world(&world, &["claim", "list", "--json"]).stdout).unwrap();
+    assert!(claims["result"]["overlaps"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn provenance_search_treats_wildcards_as_literal_text() {
+    let (_temp, world) = init();
+    in_world(&world, &["provenance", "begin", "--actor", "percent%agent"]);
+    in_world(
+        &world,
+        &["provenance", "begin", "--actor", "ordinary-agent"],
+    );
+
+    let result: Value =
+        serde_json::from_slice(&in_world(&world, &["provenance", "search", "%", "--json"]).stdout)
+            .unwrap();
+    let sessions = result["result"]["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["actor"]["name"], "percent%agent");
+}
+
+#[cfg(unix)]
+#[test]
+fn candidate_timeout_change_is_not_deduplicated() {
+    let (_temp, world) = init();
+    let mut config = fs::read_to_string(world.join("javelin.toml")).unwrap();
+    config.push_str(
+        "\n[[verification.rule]]\nname = \"timeout-policy\"\ncommand = [\"sh\", \"-c\", \"sleep 2\"]\nrequired = true\ntimeout_seconds = 3\n",
+    );
+    fs::write(world.join("javelin.toml"), &config).unwrap();
+    in_world(
+        &world,
+        &["publish", "--idempotency-key", "timeout-policy-base"],
+    );
+
+    fs::write(
+        world.join("javelin.toml"),
+        config.replace("timeout_seconds = 3", "timeout_seconds = 1"),
+    )
+    .unwrap();
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "--idempotency-key",
+            "timeout-policy-candidate",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(5));
+}
+
+#[test]
 fn discard_preserves_world_and_supports_recover_and_exact_purge() {
     let (_temp, world) = init();
     fs::write(world.join("accepted.txt"), b"accepted\n").unwrap();

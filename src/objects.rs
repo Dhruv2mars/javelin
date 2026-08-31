@@ -1,3 +1,4 @@
+use crate::durability::sync_dir;
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{EntryKind, Tree, TreeEntry};
 use std::collections::HashSet;
@@ -479,20 +480,6 @@ fn sync_paths_in_parallel(paths: &[PathBuf], directories: bool) -> Result<()> {
         }
         Ok(())
     })
-}
-
-#[cfg(unix)]
-fn sync_dir(path: &Path) -> Result<()> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .jctx("OBJECT_IO", format!("cannot sync {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_dir(_path: &Path) -> Result<()> {
-    // Rust's standard library cannot open Windows directories for `sync_all`.
-    // The object file itself is synced before its atomic rename.
-    Ok(())
 }
 
 pub fn encode_tree(tree: &Tree) -> Result<Vec<u8>> {

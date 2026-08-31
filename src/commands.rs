@@ -1,5 +1,6 @@
 use crate::cli::*;
 use crate::config::{Config, DEFAULT_CONFIG, DEFAULT_IGNORE, IgnorePolicy, WorldRule};
+use crate::durability::sync_dir;
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{EntryKind, Layer, Tree, TreeEntry, ViewMarker};
 use crate::objects::ObjectKind;
@@ -1460,6 +1461,7 @@ fn run_validations(
             existing.name == rule.name
                 && existing.command == rule.command
                 && existing.required == rule.required
+                && existing.timeout_seconds == rule.timeout_seconds
         }) {
             rules.push(rule);
         }
@@ -1620,26 +1622,52 @@ fn publish(
     json_output: bool,
 ) -> Result<()> {
     if let Some(key) = key
-        && let Some((contribution, resulting_ref, layer_id, source_checkpoint)) =
-            store.contribution_details_by_key(key)?
+        && let Some(existing) = store.contribution_details_by_key(key)?
     {
-        let layer = store.layer(&layer_id)?;
-        let source = store.checkpoint(&source_checkpoint)?;
-        let recovered = store.append_checkpoint(
-            &layer.id,
-            &source.root_tree,
-            &resulting_ref,
-            &format!("recover Publish Contribution {contribution}"),
-        )?;
+        if let Some(source_layer) = &existing.source_layer {
+            let requested_layer = requested
+                .map(|name| store.layer(name))
+                .transpose()?
+                .unwrap_or(context_layer(context, store)?);
+            if requested_layer.id != *source_layer {
+                return Err(JavelinError::stale(
+                    "Publish idempotency key belongs to a different Private Layer",
+                ));
+            }
+        }
+        let recovered = if let (Some(layer_id), Some(source_checkpoint)) =
+            (&existing.source_layer, &existing.source_checkpoint)
+        {
+            let layer = store.layer(layer_id)?;
+            let head = store.layer_head(&layer)?;
+            let checkpoint = if head.synchronized_ref == existing.resulting_target_ref {
+                head
+            } else {
+                let source = store.checkpoint(source_checkpoint)?;
+                store.append_checkpoint(
+                    &layer.id,
+                    &source.root_tree,
+                    &existing.resulting_target_ref,
+                    &format!("recover Publish Contribution {}", existing.id),
+                )?
+            };
+            repair_layer_target_view(store, &layer)?;
+            Some(checkpoint.id)
+        } else {
+            None
+        };
         return emit(
             json_output,
             &json!({
                 "idempotent": true,
-                "contribution_id": contribution,
-                "resulting_target_ref": resulting_ref,
+                "contribution_id": existing.id,
+                "resulting_target_ref": existing.resulting_target_ref,
                 "source_checkpoint": recovered,
             }),
-            format!("Contribution {contribution} already accepted as {resulting_ref}"),
+            format!(
+                "Contribution {} already accepted as {}",
+                existing.id, existing.resulting_target_ref
+            ),
         );
     }
     let layer = requested
@@ -1736,6 +1764,35 @@ fn publish(
         }),
         format!("Published Contribution {contribution_id} as {resulting_ref}"),
     )
+}
+
+fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
+    if source.target_kind != "layer" {
+        return Ok(());
+    }
+    let parent_id = source
+        .target_id
+        .as_deref()
+        .ok_or_else(|| JavelinError::corruption("Layer target has no ID"))?;
+    let parent = store.layer(parent_id)?;
+    let parent_head = store.layer_head(&parent)?;
+    let tree = store.objects.read_tree(&parent_head.root_tree)?;
+    let marker = ViewMarker {
+        format: 1,
+        project: store.root.to_string_lossy().into_owned(),
+        layer_id: parent.id.clone(),
+    };
+    match materialize_tree_from_cache(
+        &tree,
+        &parent_head.root_tree,
+        &store.metadata,
+        Path::new(&parent.view_path),
+        &store.objects,
+        Some(&marker),
+    ) {
+        Ok(backend) => store.mark_view(&parent.id, &parent_head.id, false, backend),
+        Err(_) => store.mark_view(&parent.id, &parent_head.id, true, "repair_required"),
+    }
 }
 
 fn acquire_publish_lock(file: &File) -> Result<()> {
@@ -2087,6 +2144,17 @@ fn discard_named(store: &mut Store, layer: &Layer) -> Result<()> {
             fs::remove_dir_all(&trash).jctx("DISCARD_IO", "cannot replace retained trash view")?;
         }
         fs::rename(&view, &trash).jctx("DISCARD_IO", "cannot retain discarded Layer view")?;
+        sync_dir(
+            trash
+                .parent()
+                .ok_or_else(|| JavelinError::corruption("trash path has no parent"))?,
+        )?;
+        if view.parent() != trash.parent() {
+            sync_dir(
+                view.parent()
+                    .ok_or_else(|| JavelinError::corruption("view path has no parent"))?,
+            )?;
+        }
     }
     store.record_discard(&layer.id, &purge_after)
 }
@@ -2118,6 +2186,17 @@ fn discarded(store: &mut Store, command: DiscardedCommand, json_output: bool) ->
                     fs::create_dir_all(parent).jctx("DISCARD_IO", "cannot create view parent")?;
                 }
                 fs::rename(&trash, &view).jctx("DISCARD_IO", "cannot recover retained view")?;
+                sync_dir(
+                    view.parent()
+                        .ok_or_else(|| JavelinError::corruption("view path has no parent"))?,
+                )?;
+                if trash.parent() != view.parent() {
+                    sync_dir(
+                        trash
+                            .parent()
+                            .ok_or_else(|| JavelinError::corruption("trash path has no parent"))?,
+                    )?;
+                }
             } else {
                 let head = store.layer_head(&layer)?;
                 let tree = store.objects.read_tree(&head.root_tree)?;
@@ -2465,10 +2544,10 @@ fn claim_overlap(left: &str, right: &str) -> bool {
         || right == "**"
         || left
             .strip_suffix("/**")
-            .is_some_and(|prefix| right.starts_with(prefix))
+            .is_some_and(|prefix| right == prefix || right.starts_with(&format!("{prefix}/")))
         || right
             .strip_suffix("/**")
-            .is_some_and(|prefix| left.starts_with(prefix))
+            .is_some_and(|prefix| left == prefix || left.starts_with(&format!("{prefix}/")))
 }
 
 fn hook(
@@ -2881,7 +2960,11 @@ fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
     file.write_all(value.as_bytes())
         .and_then(|_| file.sync_all())
         .jctx("MONITOR_IO", "cannot write Monitor state")?;
-    fs::rename(&temp, path).jctx("MONITOR_IO", "cannot install Monitor state")
+    fs::rename(&temp, path).jctx("MONITOR_IO", "cannot install Monitor state")?;
+    sync_dir(
+        path.parent()
+            .ok_or_else(|| JavelinError::corruption("Monitor state path has no parent"))?,
+    )
 }
 fn create_claim(
     _store: &mut Store,

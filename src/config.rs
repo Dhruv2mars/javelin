@@ -1,4 +1,5 @@
 use crate::error::{Context, JavelinError, Result};
+use crate::paths::is_reserved_path;
 use globset::{GlobBuilder, GlobMatcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -206,12 +207,7 @@ impl IgnorePolicy {
     }
 
     pub fn decision(&self, path: &str, is_directory: bool) -> Option<(bool, &str)> {
-        if path == ".javelin"
-            || path.starts_with(".javelin/")
-            || path == ".javelin-view"
-            || path == ".git"
-            || path.starts_with(".git/")
-        {
+        if is_reserved_path(path) {
             return Some((true, "Javelin internal/VCS isolation"));
         }
         let mut result = None;
