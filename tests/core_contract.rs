@@ -4,7 +4,6 @@ use javelin::objects::{ObjectStore, decode_tree, encode_tree};
 use javelin::paths::validate_relative;
 #[cfg(unix)]
 use javelin::view::materialize_tree;
-#[cfg(unix)]
 use std::fs;
 
 #[test]
@@ -48,6 +47,19 @@ fn domain_separation_changes_blob_and_tree_identity() {
     assert_ne!(blob, tree);
     assert_eq!(objects.read_blob(&blob).unwrap(), b"\0\0\0\0");
     assert_eq!(objects.read_tree(&tree).unwrap(), Tree::default());
+}
+
+#[test]
+fn duplicate_objects_do_not_need_the_temp_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let metadata = temp.path().join(".javelin");
+    let objects = ObjectStore::new(&metadata).unwrap();
+    let first = objects.put_blob(b"same bytes").unwrap();
+    fs::remove_dir(metadata.join("temp")).unwrap();
+
+    let duplicate = objects.put_blob(b"same bytes").unwrap();
+
+    assert_eq!(duplicate, first);
 }
 
 #[test]
