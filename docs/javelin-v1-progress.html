@@ -44,7 +44,7 @@
     .warn { color: var(--amber); }
     .bad { color: var(--red); }
     .progress { height: 10px; margin: 14px 0 8px; overflow: hidden; background: #222831; border-radius: 99px; }
-    .progress > span { display: block; width: 98%; height: 100%; background: var(--green); border-radius: inherit; }
+    .progress > span { display: block; width: 100%; height: 100%; background: var(--green); border-radius: inherit; }
     ul, ol { margin: 0; padding-left: 20px; }
     li + li { margin-top: 9px; }
     .status-list { list-style: none; padding: 0; }
@@ -73,14 +73,14 @@
     <div class="eyebrow">Living delivery tracker</div>
     <h1>Javelin v1.0.0</h1>
     <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
-    <p class="updated">Snapshot: 31 August 2026, 08:19 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
+    <p class="updated">Snapshot: 31 August 2026, 08:27 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
 
     <section class="grid" aria-label="Delivery status">
       <article class="card">
-        <div class="metric good">98%</div>
+        <div class="metric good">100%</div>
         <div class="label">Contract gates proven</div>
-        <div class="progress" aria-label="98 percent complete"><span></span></div>
-        <div class="note">19 of 20 definition-of-done conditions have executable evidence. Final packaged proof remains.</div>
+        <div class="progress" aria-label="100 percent complete"><span></span></div>
+        <div class="note">All 20 definition-of-done conditions have direct executable evidence.</div>
       </article>
       <article class="card">
         <div class="metric">3</div>
@@ -88,7 +88,7 @@
         <div class="note">macOS, Ubuntu, and Windows Server 2025 are green.</div>
       </article>
       <article class="card">
-        <div class="metric">51</div>
+        <div class="metric">52</div>
         <div class="label">Changed files</div>
         <div class="note">Rust CLI, tests, packaging, docs, ADRs, and verification fixtures.</div>
       </article>
@@ -100,8 +100,8 @@
 
       <article class="card wide callout">
         <h2>Current gate</h2>
-        <p><strong class="warn">Native CI revalidation:</strong> the disk-wait regression is fixed without replacing SQLite. Final-build hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 61.243 seconds while all 100,003 objects remained valid.</p>
-        <p class="note">Final local archive acceptance, checksum, fake-Git proof, 100-Layer stress, and exact final-build benchmark sweep are green. Remaining gate: native CI, downloaded-artifact audit, and review.</p>
+        <p><strong class="good">Product contract complete:</strong> the disk-wait regression is fixed without replacing SQLite. Hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 61.243 seconds while all 100,003 objects remained valid.</p>
+        <p class="note">Final native CI, local archive acceptance, checksum, fake-Git proof, 100-Layer stress, and independent downloaded-artifact audit are green. Merge and public release require explicit approval.</p>
       </article>
 
       <article class="card half">
@@ -119,15 +119,16 @@
           <li class="done">Native Windows unit, core contract, and lifecycle CI</li>
           <li class="done">Final macOS archive gauntlet and 100-Layer packaged stress</li>
           <li class="done">12.5x–22.1x faster packaged initialization with valid integrity</li>
+          <li class="done">Dead Monitor recovery and writable durable flushes on Windows</li>
         </ul>
       </article>
 
       <article class="card half">
-        <h2>Remaining path</h2>
+        <h2>Approval and release path</h2>
         <ol>
-          <li><strong>Finish native CI.</strong> macOS, Linux, and Windows tests and package checks must be green at final head.</li>
-          <li><strong>Audit downloaded artifacts.</strong> Verify each final manifest outside the build workspace.</li>
-          <li><strong>Final review.</strong> Resolve findings; make draft PR release-ready.</li>
+          <li><strong>Human review.</strong> Review the clean draft PR and this evidence.</li>
+          <li><strong>Explicit approval.</strong> Authorize merge and public v1.0.0 publication separately.</li>
+          <li><strong>Release smoke.</strong> After approval, publish assets and verify a fresh public download.</li>
         </ol>
       </article>
 
@@ -163,13 +164,14 @@
         <div class="links">
           <a href="https://github.com/Dhruv2mars/javelin">Repository</a>
           <a href="https://github.com/Dhruv2mars/javelin/pull/1">Draft PR #1</a>
-          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33316370540">Latest release-package CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33352082822">Final native CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33352082853">Final release-package CI</a>
         </div>
         <p class="note" style="margin-top: 16px">This page uses one stable Postplan draft. It is regenerated and re-uploaded after each material milestone.</p>
       </article>
     </section>
 
-    <footer>Completion means all 20 frozen contract conditions pass using the packaged binary, native platform claims match CI evidence, docs match measured behavior, and the draft PR is review-clean. Public release remains a separate approval.</footer>
+    <footer>All 20 frozen contract conditions pass using the packaged binary, native platform claims match CI evidence, docs match measured behavior, and the draft PR is review-clean. Public release remains a separate approval.</footer>
   </main>
 </body>
 </html>
