@@ -6,6 +6,7 @@ pub mod fault;
 pub mod model;
 pub mod objects;
 pub mod paths;
+mod process;
 pub mod store;
 pub mod view;
 

@@ -1,6 +1,7 @@
 use crate::error::{Context, JavelinError, Result};
 use crate::model::{Checkpoint, Layer, Tree, TreeEntry, WorldVersion};
 use crate::objects::{ObjectKind, ObjectStore};
+use crate::process::process_alive;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::json;
@@ -114,7 +115,7 @@ impl Store {
         if fs::read_to_string(&monitor_pid)
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
-            .is_some_and(startup_process_alive)
+            .is_some_and(process_alive)
         {
             return Ok(());
         }
@@ -153,7 +154,7 @@ impl Store {
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .jctx("STARTUP_RECOVERY", "cannot decode Publish queue")?
                 .into_iter()
-                .filter_map(|(request_id, pid)| (!startup_process_alive(pid)).then_some(request_id))
+                .filter_map(|(request_id, pid)| (!process_alive(pid)).then_some(request_id))
                 .collect::<Vec<_>>()
         };
         for request_id in abandoned {
@@ -239,7 +240,7 @@ impl Store {
         let monitor_alive = fs::read_to_string(&monitor_pid)
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
-            .is_some_and(startup_process_alive);
+            .is_some_and(process_alive);
         if !monitor_alive {
             let _ = fs::remove_file(ready);
             let _ = fs::remove_file(monitor_pid);
@@ -1777,16 +1778,6 @@ fn append_event_conn(
 
 pub fn now() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-
-#[cfg(unix)]
-fn startup_process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-fn startup_process_alive(_pid: u32) -> bool {
-    true
 }
 
 #[cfg(unix)]
