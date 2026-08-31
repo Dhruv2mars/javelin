@@ -30,6 +30,8 @@ TreeId = BLAKE3("javelin:tree:v1\0" || canonical tree bytes)
 
 Object paths use the first two hexadecimal characters as shard directory and the remaining 62 as filename.
 
+Writers hash input before creating a temporary object. Existing content IDs and duplicates already staged in the same scan skip compression and durable writes. A scan stages new compressed objects, synchronizes their files concurrently, atomically renames them into place, then synchronizes every touched shard directory once. Creating a new shard also synchronizes the object-directory root. SQLite state can reference the resulting Tree only after this object batch is durable.
+
 ## Object file
 
 Every object file starts with:
@@ -103,4 +105,3 @@ Accepted World state, active Layer state, retained Discard state, validation out
 ## Compatibility
 
 Schema migrations are append-only and recorded in `schema_migrations`. Object and Tree domains contain explicit `v1` identifiers. Unknown config, marker, object, provenance, event, and JSON schema versions fail with diagnostics instead of guessing.
-
