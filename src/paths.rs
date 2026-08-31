@@ -14,10 +14,9 @@ pub struct ProjectContext {
 
 pub fn is_reserved_path(path: &str) -> bool {
     path.split('/').any(|component| {
-        matches!(
-            component,
-            ".javelin" | ".javelin-view" | ".git" | ".hg" | ".svn"
-        )
+        [".javelin", ".javelin-view", ".git", ".hg", ".svn"]
+            .iter()
+            .any(|reserved| component.eq_ignore_ascii_case(reserved))
     })
 }
 

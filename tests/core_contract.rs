@@ -1,4 +1,4 @@
-use javelin::config::IgnorePolicy;
+use javelin::config::{Config, IgnorePolicy};
 use javelin::model::{EntryKind, Tree, TreeEntry};
 use javelin::objects::ObjectKind;
 use javelin::objects::{ObjectStore, decode_tree, encode_tree};
@@ -98,12 +98,32 @@ fn unsafe_paths_are_rejected() {
         ".git/config",
         ".hg/store",
         ".svn/wc.db",
+        ".JAVELIN/store.sqlite3",
+        ".Git/config",
     ] {
         assert!(validate_relative(path).is_err(), "accepted {path}");
     }
     for path in ["src/main.rs", ".env.example", "empty"] {
         assert!(validate_relative(path).is_ok(), "rejected {path}");
     }
+}
+
+#[test]
+fn config_rejects_zero_timeouts_and_missing_ignore_uses_defaults() {
+    let invalid = r#"format = 1
+
+[[verification.rule]]
+name = "gate"
+command = ["true"]
+timeout_seconds = 0
+"#;
+    assert!(Config::parse(invalid).is_err());
+
+    let temp = tempfile::tempdir().unwrap();
+    let policy = IgnorePolicy::load(temp.path()).unwrap();
+    assert!(policy.ignored(".env", false));
+    fs::create_dir(temp.path().join(".javelinignore")).unwrap();
+    assert!(IgnorePolicy::load(temp.path()).is_err());
 }
 
 #[test]

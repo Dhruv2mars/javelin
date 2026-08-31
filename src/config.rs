@@ -3,7 +3,10 @@ use crate::paths::is_reserved_path;
 use globset::{GlobBuilder, GlobMatcher};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
+
+pub const PURGED_PROVENANCE_PAYLOAD: &str = "{\"purged\":true}";
 
 pub const DEFAULT_CONFIG: &str = r#"format = 1
 
@@ -143,9 +146,23 @@ impl Config {
                     "verification rules require a name and argv command",
                 ));
             }
+            if rule.timeout_seconds == 0 {
+                return Err(JavelinError::policy(
+                    "verification rule timeout_seconds must be greater than zero",
+                ));
+            }
         }
+        retention_duration(config.retention.discarded_days, "retention.discarded_days")?;
+        retention_duration(config.retention.raw_trace_days, "retention.raw_trace_days")?;
         Ok(config)
     }
+}
+
+pub fn retention_duration(days: u64, field: &str) -> Result<chrono::Duration> {
+    let days =
+        i64::try_from(days).map_err(|_| JavelinError::policy(format!("{field} is too large")))?;
+    chrono::Duration::try_days(days)
+        .ok_or_else(|| JavelinError::policy(format!("{field} is too large")))
 }
 
 #[derive(Debug)]
@@ -163,7 +180,19 @@ pub struct IgnorePolicy {
 
 impl IgnorePolicy {
     pub fn load(view: &Path) -> Result<Self> {
-        let text = fs::read_to_string(view.join(".javelinignore")).unwrap_or_default();
+        let path = view.join(".javelinignore");
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == ErrorKind::NotFound => DEFAULT_IGNORE.to_string(),
+            Err(error) => {
+                return Err(JavelinError::new(
+                    7,
+                    "CONFIG_IO",
+                    format!("cannot read {}", path.display()),
+                )
+                .details(serde_json::json!({"cause": error.to_string()})));
+            }
+        };
         Self::parse(&text)
     }
 

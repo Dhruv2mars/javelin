@@ -130,9 +130,13 @@ fn reparent_would_cycle(store: &Store, child_id: &str, target_id: &str) -> Resul
 
 fn discard_named(store: &mut Store, layer: &Layer) -> Result<()> {
     let config = Config::load(&store.root)?;
-    let purge_after = (chrono::Utc::now()
-        + chrono::Duration::days(config.retention.discarded_days as i64))
-    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let purge_after = chrono::Utc::now()
+        .checked_add_signed(crate::config::retention_duration(
+            config.retention.discarded_days,
+            "retention.discarded_days",
+        )?)
+        .ok_or_else(|| JavelinError::policy("retention.discarded_days is too large"))?
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let view = PathBuf::from(&layer.view_path);
     let trash = store.metadata.join("trash").join(&layer.id);
     if view.exists() {

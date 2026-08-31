@@ -1,5 +1,8 @@
 #[cfg(unix)]
 pub(crate) fn process_alive(pid: u32) -> bool {
+    if pid == 0 || pid > libc::pid_t::MAX as u32 {
+        return false;
+    }
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
@@ -11,6 +14,9 @@ pub(crate) fn process_alive(pid: u32) -> bool {
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
+    if pid == 0 {
+        return false;
+    }
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
         return false;
@@ -35,6 +41,13 @@ mod tests {
     #[test]
     fn current_process_is_alive() {
         assert!(process_alive(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn impossible_unix_process_is_not_alive() {
+        assert!(!process_alive(0));
+        assert!(!process_alive(u32::MAX));
     }
 
     #[cfg(windows)]

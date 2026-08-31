@@ -3,9 +3,13 @@ use super::*;
 pub(super) fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<()> {
     let config = Config::load(&store.root)?;
     let current_time = now();
-    let trace_cutoff = (chrono::Utc::now()
-        - chrono::Duration::days(config.retention.raw_trace_days as i64))
-    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let trace_cutoff = chrono::Utc::now()
+        .checked_sub_signed(crate::config::retention_duration(
+            config.retention.raw_trace_days,
+            "retention.raw_trace_days",
+        )?)
+        .ok_or_else(|| JavelinError::policy("retention.raw_trace_days is too large"))?
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let expired_provenance = store.expired_provenance_sessions(&trace_cutoff)?;
     let mut expired_discarded = store.expired_discarded_layers(&current_time)?;
     let mut claims_expired = 0;
