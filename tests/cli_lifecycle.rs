@@ -180,6 +180,120 @@ fn conflict_preserves_base_target_private_and_exit_code() {
 }
 
 #[test]
+fn resolving_a_conflict_twice_does_not_append_another_checkpoint() {
+    let (_temp, world) = init();
+    fs::write(world.join("shared.txt"), b"base\n").unwrap();
+    in_world(&world, &["publish", "--idempotency-key", "base"]);
+    let left = output_text(in_world(
+        &world,
+        &["layer", "create", "left", "--from", "world"],
+    ));
+    let right = output_text(in_world(
+        &world,
+        &["layer", "create", "right", "--from", "world"],
+    ));
+    fs::write(Path::new(&left).join("shared.txt"), b"left\n").unwrap();
+    fs::write(Path::new(&right).join("shared.txt"), b"right\n").unwrap();
+    in_world(&world, &["publish", "left", "--idempotency-key", "left"]);
+    let failed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "right",
+            "--idempotency-key",
+            "right",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(4));
+    let conflict_id = output_text(in_world(&world, &["conflict", "list", "right"]))
+        .split('\t')
+        .next()
+        .unwrap()
+        .to_string();
+    in_world(
+        &world,
+        &["conflict", "resolve", &conflict_id, "--use", "private"],
+    );
+    let before: Value = serde_json::from_slice(
+        &in_world(&world, &["history", "--layer", "right", "--json"]).stdout,
+    )
+    .unwrap();
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "conflict",
+            "resolve",
+            &conflict_id,
+            "--use",
+            "private",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(2));
+    let after: Value = serde_json::from_slice(
+        &in_world(&world, &["history", "--layer", "right", "--json"]).stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        before["result"]["checkpoints"],
+        after["result"]["checkpoints"]
+    );
+}
+
+#[test]
+fn diff_honors_every_path_filter() {
+    let (_temp, world) = init();
+    fs::write(world.join("first.txt"), b"first\n").unwrap();
+    fs::write(world.join("second.txt"), b"second\n").unwrap();
+    fs::write(world.join("third.txt"), b"third\n").unwrap();
+
+    let result: Value = serde_json::from_slice(
+        &in_world(&world, &["--json", "diff", "--", "first.txt", "second.txt"]).stdout,
+    )
+    .unwrap();
+    let paths = result["result"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|change| change["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["first.txt", "second.txt"]);
+}
+
+#[test]
+fn claims_use_restricted_path_grammar_and_plain_human_output() {
+    let (_temp, world) = init();
+    in_world(
+        &world,
+        &[
+            "layer", "create", "valid", "--from", "world", "--claim", "src/**",
+        ],
+    );
+    let listed = output_text(in_world(&world, &["claim", "list"]));
+    assert!(listed.contains("\tvalid\tsrc/**"));
+    assert!(!listed.contains('"'));
+
+    let rejected = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "layer",
+            "create",
+            "invalid",
+            "--from",
+            "world",
+            "--claim",
+            "src/*.rs",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(2));
+}
+
+#[test]
 fn refresh_reports_case_fold_collision_as_conflict() {
     let (_temp, world) = init();
     let upper = output_text(in_world(

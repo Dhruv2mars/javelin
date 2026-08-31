@@ -83,7 +83,7 @@ pub fn execute(cli: Cli) -> Result<()> {
                 &mut store,
                 from.as_deref(),
                 to.as_deref(),
-                path.first().map(String::as_str),
+                &path,
                 json_output,
             )
         }),
@@ -446,6 +446,17 @@ fn context_layer(context: &ProjectContext, store: &Store) -> Result<Layer> {
     store.layer(&context.layer_id)
 }
 
+fn selected_layer(
+    context: &ProjectContext,
+    store: &Store,
+    requested: Option<&str>,
+) -> Result<Layer> {
+    match requested {
+        Some(name) => store.layer(name),
+        None => context_layer(context, store),
+    }
+}
+
 fn checkpoint(
     context: &ProjectContext,
     store: &mut Store,
@@ -507,7 +518,7 @@ fn diff(
     store: &mut Store,
     from: Option<&str>,
     to: Option<&str>,
-    path_filter: Option<&str>,
+    path_filters: &[String],
     json_output: bool,
 ) -> Result<()> {
     let layer = context_layer(context, store)?;
@@ -517,9 +528,11 @@ fn diff(
     let (_, from_root, from_tree) = store.tree_for_ref(from)?;
     let (_, to_root, to_tree) = store.tree_for_ref(to)?;
     let mut changes = diff_trees(&from_tree, &to_tree);
-    if let Some(filter) = path_filter {
+    if !path_filters.is_empty() {
         changes.retain(|change| {
-            change.path == filter || change.path.starts_with(&format!("{filter}/"))
+            path_filters.iter().any(|filter| {
+                change.path == *filter || change.path.starts_with(&format!("{filter}/"))
+            })
         });
     }
     let renames = detected_renames(&changes);
@@ -866,6 +879,7 @@ fn layer(
             )?;
             store.mark_view(&created.id, &created.head_checkpoint, false, backend)?;
             for resource in claim {
+                claims::validate_claim_resource(&resource)?;
                 store.create_claim(&created.id, &resource, 3600)?;
             }
             emit(

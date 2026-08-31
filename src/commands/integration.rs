@@ -15,10 +15,7 @@ pub(super) fn refresh(
     requested: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
-    let layer = requested
-        .map(|name| store.layer(name))
-        .transpose()?
-        .unwrap_or(context_layer(context, store)?);
+    let layer = selected_layer(context, store, requested)?;
     let result = refresh_layer(store, &layer)?;
     emit(
         json_output,

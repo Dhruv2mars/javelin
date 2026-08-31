@@ -6,10 +6,7 @@ pub(super) fn verify(
     requested: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
-    let layer = requested
-        .map(|name| store.layer(name))
-        .transpose()?
-        .unwrap_or(context_layer(context, store)?);
+    let layer = selected_layer(context, store, requested)?;
     let refreshed = refresh_layer(store, &layer)?;
     let tree = store.objects.read_tree(&refreshed.checkpoint.root_tree)?;
     let validations = run_validations(store, &tree, &refreshed.checkpoint.root_tree)?;

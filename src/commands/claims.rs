@@ -19,7 +19,9 @@ pub(super) fn claim(store: &mut Store, command: ClaimCommand, json_output: bool)
                 .map(|claim| {
                     format!(
                         "{}\t{}\t{}",
-                        claim["id"], claim["layer_name"], claim["resource"]
+                        claim["id"].as_str().unwrap_or("unknown"),
+                        claim["layer_name"].as_str().unwrap_or("unknown"),
+                        claim["resource"].as_str().unwrap_or("unknown")
                     )
                 })
                 .collect::<Vec<_>>()
@@ -47,6 +49,19 @@ pub(super) fn claim(store: &mut Store, command: ClaimCommand, json_output: bool)
             )
         }
     }
+}
+
+pub(super) fn validate_claim_resource(resource: &str) -> Result<()> {
+    if resource == "**" {
+        return Ok(());
+    }
+    let path = resource.strip_suffix("/**").unwrap_or(resource);
+    if path.contains(['*', '?', '[', ']']) {
+        return Err(JavelinError::invalid(
+            "Claim must be an exact path, **, or an exact path ending in /**",
+        ));
+    }
+    crate::paths::validate_relative(path)
 }
 
 fn claim_overlap(left: &str, right: &str) -> bool {

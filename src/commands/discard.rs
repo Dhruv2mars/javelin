@@ -9,17 +9,14 @@ pub(super) fn discard(
     purge: bool,
     json_output: bool,
 ) -> Result<()> {
-    let layer = requested
-        .map(|name| store.layer(name))
-        .transpose()?
-        .unwrap_or(context_layer(context, store)?);
+    let layer = selected_layer(context, store, requested)?;
     if layer.id == "local" {
         let world = store.current_world()?;
         let tree = store.objects.read_tree(&world.root_tree)?;
         let checkpoint =
             store.append_checkpoint(&layer.id, &world.root_tree, &world.id, "discard")?;
         store.mark_view(&layer.id, &checkpoint.id, true, "materializing")?;
-        materialize_tree_from_cache(
+        let backend = materialize_tree_from_cache(
             &tree,
             &world.root_tree,
             &store.metadata,
@@ -27,6 +24,7 @@ pub(super) fn discard(
             &store.objects,
             None,
         )?;
+        store.mark_view(&layer.id, &checkpoint.id, false, backend)?;
         return emit(
             json_output,
             &json!({"layer": "local", "checkpoint": checkpoint, "world_version": world.id}),

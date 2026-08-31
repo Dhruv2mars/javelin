@@ -13,10 +13,7 @@ pub(super) fn publish(
         let source_layer = existing.source_layer.as_deref().ok_or_else(|| {
             JavelinError::stale("Publish idempotency key belongs to a purged Private Layer")
         })?;
-        let requested_layer = requested
-            .map(|name| store.layer(name))
-            .transpose()?
-            .unwrap_or(context_layer(context, store)?);
+        let requested_layer = selected_layer(context, store, requested)?;
         if requested_layer.id != source_layer {
             return Err(JavelinError::stale(
                 "Publish idempotency key belongs to a different Private Layer",
@@ -55,10 +52,7 @@ pub(super) fn publish(
             ),
         );
     }
-    let layer = requested
-        .map(|name| store.layer(name))
-        .transpose()?
-        .unwrap_or(context_layer(context, store)?);
+    let layer = selected_layer(context, store, requested)?;
     crate::fault::hit("before_publish_lease");
     let lock_name = if layer.target_kind == TargetKind::World {
         "world".to_string()

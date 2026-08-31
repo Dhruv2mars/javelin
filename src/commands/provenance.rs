@@ -13,10 +13,7 @@ pub(super) fn provenance(
             kind,
             model,
         } => {
-            let layer = layer
-                .map(|name| store.layer(&name))
-                .transpose()?
-                .unwrap_or(context_layer(context, store)?);
+            let layer = selected_layer(context, store, layer.as_deref())?;
             let actor = json!({
                 "kind": kind.unwrap_or_else(|| "agent".to_string()),
                 "name": actor,

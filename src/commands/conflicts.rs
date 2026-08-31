@@ -41,6 +41,11 @@ pub(super) fn conflict(
         }
         ConflictCommand::Resolve { id, r#use } => {
             let record = store.conflict(&id)?;
+            if record.status != "open" {
+                return Err(JavelinError::invalid(format!(
+                    "Conflict {id} is already resolved"
+                )));
+            }
             let layer = store.layer(&record.layer_id)?;
             let head = store.layer_head(&layer)?;
             let head_tree = store.objects.read_tree(&head.root_tree)?;
