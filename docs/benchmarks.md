@@ -21,9 +21,9 @@ Each fixture generated deterministic binary files, initialized World `v1`, ran u
 
 | Fixture | Init | Unchanged status | Layer create | `fsck` | Objects checked | Integrity |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| 1,000 files / 50 MiB | 1.018 s | 9.6 ms | 0.360 s | 0.308 s | 1,003 | valid |
-| 25,000 files / 1 GiB | 11.793 s | 115.3 ms | 9.486 s | 11.646 s | 25,003 | valid |
-| 100,000 files / 5 GiB | 58.712 s | 452.8 ms | 43.928 s | 69.035 s | 100,003 | valid |
+| 1,000 files / 50 MiB | 0.839 s | 10.2 ms | 0.388 s | 0.332 s | 1,003 | valid |
+| 25,000 files / 1 GiB | 12.366 s | 110.6 ms | 9.130 s | 11.827 s | 25,003 | valid |
+| 100,000 files / 5 GiB | 61.243 s | 444.7 ms | 44.701 s | 68.554 s | 100,003 | valid |
 
 Commands:
 
@@ -46,22 +46,22 @@ SQLite was not committing once per scanned file: normal scan and Checkpoint path
 
 | Fixture | Original init | Corrected init | Speedup |
 | --- | ---: | ---: | ---: |
-| 1,000 files / 50 MiB | 10.484 s | 1.018 s | 10.3x |
-| 25,000 files / 1 GiB | 273.027 s | 11.793 s | 23.2x |
-| 100,000 files / 5 GiB | 1,254.604 s | 58.712 s | 21.4x |
+| 1,000 files / 50 MiB | 10.484 s | 0.839 s | 12.5x |
+| 25,000 files / 1 GiB | 273.027 s | 12.366 s | 22.1x |
+| 100,000 files / 5 GiB | 1,254.604 s | 61.243 s | 20.5x |
 
-The supplied `/tmp/jvl-perf/loop.sh` also improved from 10.29 seconds to 0.74 seconds for 1,000 random 4 KiB files. Touching one file and explicitly checkpointing that 1,000-file World completed in 80 ms.
+The supplied `/tmp/jvl-perf/loop.sh` also improved from 10.29 seconds to a 0.63-second median across three final-build runs for 1,000 random 4 KiB files. Touching one file and explicitly checkpointing that 1,000-file World completed in 80 ms.
 
 ## 100 concurrent Layers
 
-The final packaged-binary stress fixture created 100 Layers, changed four files in each Layer, checkpointed and refreshed concurrently, then Published all work. It completed in 24.29 seconds with World `v101`, no lost accepted changes, and no integrity failure.
+The final packaged-binary stress fixture created 100 Layers, changed four files in each Layer, checkpointed and refreshed concurrently, then Published all work. It completed in 17.83 seconds with World `v101`, no lost accepted changes, and no integrity failure.
 
 | Operation | p50 | p95 | p99 | Max |
 | --- | ---: | ---: | ---: | ---: |
-| Layer create | 17 ms | 32 ms | 33 ms | 36 ms |
-| Concurrent checkpoint | 3,881 ms | 8,501 ms | 8,763 ms | 8,763 ms |
-| Concurrent refresh | 100 ms | 138 ms | 140 ms | 141 ms |
-| Concurrent Publish | 3,462 ms | 9,411 ms | 10,063 ms | 10,239 ms |
+| Layer create | 18 ms | 33 ms | 44 ms | 135 ms |
+| Concurrent checkpoint | 1,385 ms | 2,575 ms | 2,649 ms | 2,682 ms |
+| Concurrent refresh | 91 ms | 131 ms | 146 ms | 161 ms |
+| Concurrent Publish | 3,336 ms | 8,981 ms | 9,589 ms | 9,737 ms |
 
 Command:
 
