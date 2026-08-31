@@ -152,7 +152,7 @@ pub fn execute(cli: Cli) -> Result<()> {
             since,
             follow,
             jsonl,
-        } => with_store(cli.project, |_context, store| {
+        } => with_store_read(cli.project, |_context, store| {
             events(&store, since, follow, jsonl || json_output)
         }),
         Command::Provenance(args) => with_store(cli.project, |context, mut store| {
@@ -167,10 +167,10 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Hook(args) => with_store(cli.project, |context, mut store| {
             hook(context, &mut store, args.command, json_output)
         }),
-        Command::Gc { dry_run } => with_store(cli.project, |_context, mut store| {
+        Command::Gc { dry_run } => with_store_gc(cli.project, |_context, mut store| {
             gc(&mut store, dry_run, json_output)
         }),
-        Command::Monitor => with_store(cli.project, |_context, mut store| monitor(&mut store)),
+        Command::Monitor => with_store_read(cli.project, |_context, mut store| monitor(&mut store)),
     }
 }
 
@@ -181,6 +181,28 @@ fn with_store(
     let context = discover(project.as_deref())?;
     let store = Store::open(&context.root)?;
     start_monitor(&store)?;
+    let _object_lease = acquire_object_reference_lease(&store)?;
+    action(&context, store)
+}
+
+fn with_store_read(
+    project: Option<PathBuf>,
+    action: impl FnOnce(&ProjectContext, Store) -> Result<()>,
+) -> Result<()> {
+    let context = discover(project.as_deref())?;
+    let store = Store::open(&context.root)?;
+    start_monitor(&store)?;
+    action(&context, store)
+}
+
+fn with_store_gc(
+    project: Option<PathBuf>,
+    action: impl FnOnce(&ProjectContext, Store) -> Result<()>,
+) -> Result<()> {
+    let context = discover(project.as_deref())?;
+    let store = Store::open(&context.root)?;
+    start_monitor(&store)?;
+    let _object_lease = acquire_object_gc_lease(&store)?;
     action(&context, store)
 }
 
@@ -190,6 +212,7 @@ fn with_store_without_monitor(
 ) -> Result<()> {
     let context = discover(project.as_deref())?;
     let store = Store::open(&context.root)?;
+    let _object_lease = acquire_object_reference_lease(&store)?;
     action(&context, store)
 }
 
@@ -230,6 +253,7 @@ fn init(path: Option<PathBuf>, json_output: bool) -> Result<()> {
     create_policy_file(&root.join("javelin.toml"), DEFAULT_CONFIG)?;
     create_policy_file(&root.join(".javelinignore"), DEFAULT_IGNORE)?;
     let mut store = Store::create(&root)?;
+    let _object_lease = acquire_object_reference_lease(&store)?;
     let scan = scan_view(&root, &store.objects)?;
     let root_tree = store.objects.put_tree(&scan.tree)?;
     store.register_object(
@@ -393,6 +417,29 @@ fn open_reconcile_lock(store: &Store) -> Result<File> {
         .write(true)
         .open(store.metadata.join("locks/reconcile.lock"))
         .jctx("RECONCILE_LOCK", "cannot open reconciliation lock")
+}
+
+fn open_object_lifecycle_lock(store: &Store) -> Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(store.metadata.join("locks/object-lifecycle.lock"))
+        .jctx("GC_LOCK", "cannot open object lifecycle lock")
+}
+
+fn acquire_object_reference_lease(store: &Store) -> Result<File> {
+    let lock = open_object_lifecycle_lock(store)?;
+    FileExt::lock_shared(&lock).jctx("GC_LOCK", "cannot protect object references from GC")?;
+    Ok(lock)
+}
+
+fn acquire_object_gc_lease(store: &Store) -> Result<File> {
+    let lock = open_object_lifecycle_lock(store)?;
+    lock.lock_exclusive()
+        .jctx("GC_LOCK", "cannot isolate object garbage collection")?;
+    Ok(lock)
 }
 
 fn context_layer(context: &ProjectContext, store: &Store) -> Result<Layer> {
@@ -952,6 +999,30 @@ mod tests {
         Tree {
             entries: entry.into_iter().collect(),
         }
+    }
+
+    #[test]
+    fn gc_waits_for_active_object_reference_writer() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("world");
+        fs::create_dir_all(&root).unwrap();
+        let store = Store::create(&root).unwrap();
+        let writer = acquire_object_reference_lease(&store).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            let store = Store::open(&root).unwrap();
+            ready_tx.send(()).unwrap();
+            let _gc = acquire_object_gc_lease(&store).unwrap();
+            done_tx.send(()).unwrap();
+        });
+
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(writer);
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        handle.join().unwrap();
     }
 
     #[test]

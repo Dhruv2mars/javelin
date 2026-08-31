@@ -61,6 +61,9 @@ pub(super) fn monitor(store: &mut Store) -> Result<()> {
             if !Path::new(&layer.view_path).exists() {
                 continue;
             }
+            let Ok(_object_lease) = acquire_object_reference_lease(store) else {
+                continue;
+            };
             let view = Path::new(&layer.view_path);
             let Ok(stamp) = view_stamp(view) else {
                 continue;
