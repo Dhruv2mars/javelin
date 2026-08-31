@@ -47,7 +47,7 @@ use integration::{refresh, refresh_layer};
 use maintenance::{doctor, fsck, hex, repair};
 use monitor::{monitor, start_monitor, write_monitor_state};
 use provenance::{explain, provenance};
-use publish::{acquire_publish_lock, publish};
+use publish::{acquire_publish_lock, open_publish_lock, publish};
 use reachability::collect_reachability;
 use retention::{events, gc};
 use validation::{run_validations, verify};
@@ -676,19 +676,21 @@ fn history(
         let mut history = store.world_history()?;
         if let Some(path) = path {
             let mut filtered = Vec::new();
+            let mut previous: Option<Tree> = None;
             for version in &history {
                 let current = store.objects.read_tree(&version.root_tree)?;
-                let changed = if let Some(parent) = &version.parent_version {
-                    let parent = store.world_version(parent)?;
-                    diff_trees(&store.objects.read_tree(&parent.root_tree)?, &current)
-                        .iter()
-                        .any(|change| change.path == path)
-                } else {
-                    current.entries.iter().any(|entry| entry.path == path)
-                };
+                let changed = previous.as_ref().map_or_else(
+                    || current.entries.iter().any(|entry| entry.path == path),
+                    |previous| {
+                        diff_trees(previous, &current)
+                            .iter()
+                            .any(|change| change.path == path)
+                    },
+                );
                 if changed {
                     filtered.push(version.clone());
                 }
+                previous = Some(current);
             }
             history = filtered;
         }
@@ -965,6 +967,8 @@ fn restore_world(
     if accept_failing && reason.is_none() {
         return Err(JavelinError::invalid("--accept-failing requires --reason"));
     }
+    let lock_file = open_publish_lock(store, "world")?;
+    acquire_publish_lock(&lock_file)?;
     let candidate = store.objects.read_tree(&selected.root_tree)?;
     let validations = run_validations(store, &candidate, &selected.root_tree)?;
     let failed = validations
@@ -991,6 +995,7 @@ fn restore_world(
         .map(|record| record.id.clone())
         .collect::<Vec<_>>();
     store.link_version_validations(&restored.id, &validation_ids)?;
+    FileExt::unlock(&lock_file).jctx("PUBLISH_LOCK", "cannot release Publish lease")?;
     emit(
         json_output,
         &json!({"world_version": restored, "validations": validations, "policy_override": failed && accept_failing}),

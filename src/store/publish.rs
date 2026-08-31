@@ -171,7 +171,8 @@ impl Store {
             ) {
                 JavelinError::stale("duplicate Publish idempotency key")
             } else {
-                JavelinError::corruption(format!("cannot append Contribution: {error}"))
+                JavelinError::new(7, "STORE_WRITE", "cannot append Contribution")
+                    .details(json!({"cause": error.to_string()}))
             }
         })?;
         for validation_id in validation_ids {

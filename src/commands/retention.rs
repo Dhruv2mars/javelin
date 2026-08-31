@@ -50,12 +50,18 @@ pub(super) fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<
         .filter(|id| !reachable.contains(id))
         .collect::<Vec<_>>();
     if !dry_run {
+        let tx = store
+            .conn
+            .transaction()
+            .jctx("STORE_TX", "cannot begin GC metadata removal")?;
+        for id in &unreachable {
+            tx.execute("DELETE FROM object_metadata WHERE id = ?1", [id])
+                .jctx("STORE_WRITE", "cannot remove GC metadata")?;
+        }
+        tx.commit()
+            .jctx("STORE_TX", "cannot commit GC metadata removal")?;
         for id in &unreachable {
             store.objects.remove(id)?;
-            store
-                .conn
-                .execute("DELETE FROM object_metadata WHERE id = ?1", [id])
-                .jctx("STORE_WRITE", "cannot remove GC metadata")?;
         }
         store.append_event(
             "gc.completed",

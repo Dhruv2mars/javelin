@@ -59,17 +59,7 @@ pub(super) fn publish(
     } else {
         format!("layer-{}", layer.target_id.as_deref().unwrap_or("missing"))
     };
-    let lock_path = store
-        .metadata
-        .join("locks")
-        .join(format!("{lock_name}.publish.lock"));
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&lock_path)
-        .jctx("PUBLISH_LOCK", "cannot open Publish lease")?;
+    let lock_file = open_publish_lock(store, &lock_name)?;
     acquire_queued_publish_lock(store, &lock_name, &lock_file)?;
     let refreshed = refresh_layer(store, &layer)?;
     let candidate = store.objects.read_tree(&refreshed.checkpoint.root_tree)?;
@@ -153,6 +143,8 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
         .target_id
         .as_deref()
         .ok_or_else(|| JavelinError::corruption("Layer target has no ID"))?;
+    let lock_file = open_publish_lock(store, &format!("layer-{parent_id}"))?;
+    acquire_publish_lock(&lock_file)?;
     let parent = store.layer(parent_id)?;
     let parent_head = store.layer_head(&parent)?;
     let tree = store.objects.read_tree(&parent_head.root_tree)?;
@@ -161,7 +153,7 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
         project: store.root.to_string_lossy().into_owned(),
         layer_id: parent.id.clone(),
     };
-    match materialize_tree_from_cache(
+    let result = match materialize_tree_from_cache(
         &tree,
         &parent_head.root_tree,
         &store.metadata,
@@ -171,7 +163,24 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
     ) {
         Ok(backend) => store.mark_view(&parent.id, &parent_head.id, false, backend),
         Err(_) => store.mark_view(&parent.id, &parent_head.id, true, "repair_required"),
-    }
+    };
+    FileExt::unlock(&lock_file).jctx("PUBLISH_LOCK", "cannot release Publish lease")?;
+    result
+}
+
+pub(super) fn open_publish_lock(store: &Store, target: &str) -> Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(
+            store
+                .metadata
+                .join("locks")
+                .join(format!("{target}.publish.lock")),
+        )
+        .jctx("PUBLISH_LOCK", "cannot open Publish lease")
 }
 
 pub(super) fn acquire_publish_lock(file: &File) -> Result<()> {
@@ -204,17 +213,18 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
         .jctx("PUBLISH_QUEUE", "cannot enter Publish queue")?;
     let started = Instant::now();
     loop {
-        let head: Option<(String, u32)> = store
+        let head: Option<(String, u32, String)> = store
             .conn
             .query_row(
-                "SELECT request_id, pid FROM publish_queue WHERE target = ?1 ORDER BY ticket LIMIT 1",
+                "SELECT request_id, pid, created_at FROM publish_queue
+                 WHERE target = ?1 ORDER BY ticket LIMIT 1",
                 [target],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .jctx("PUBLISH_QUEUE", "cannot inspect Publish queue")?;
         match head {
-            Some((head_id, _head_pid)) if head_id == request_id => {
+            Some((head_id, _head_pid, _created_at)) if head_id == request_id => {
                 if file.try_lock_exclusive().is_ok() {
                     store
                         .conn
@@ -226,7 +236,9 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
                     return Ok(());
                 }
             }
-            Some((head_id, head_pid)) if !process_alive(head_pid) => {
+            Some((head_id, head_pid, created_at))
+                if !process_alive(head_pid) || publish_request_expired(&created_at) =>
+            {
                 store
                     .conn
                     .execute(
@@ -248,4 +260,11 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
         }
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn publish_request_expired(created_at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(created_at).map_or(true, |created| {
+        chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc))
+            > chrono::Duration::seconds(300)
+    })
 }
