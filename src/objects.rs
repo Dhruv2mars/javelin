@@ -461,7 +461,10 @@ fn sync_paths_in_parallel(paths: &[PathBuf], directories: bool) -> Result<()> {
                     if directories {
                         sync_dir(path)?;
                     } else {
-                        File::open(path)
+                        OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(path)
                             .and_then(|file| file.sync_all())
                             .jctx("OBJECT_IO", format!("cannot sync {}", path.display()))?;
                     }
