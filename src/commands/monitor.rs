@@ -10,7 +10,10 @@ fn monitor_ready(path: &Path) -> bool {
     let Some(pid) = value.get("pid").and_then(serde_json::Value::as_u64) else {
         return false;
     };
-    process_alive(pid as u32)
+    let Ok(pid) = u32::try_from(pid) else {
+        return false;
+    };
+    process_alive(pid)
 }
 
 pub(super) fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
@@ -49,30 +52,53 @@ pub(super) fn monitor(store: &mut Store) -> Result<()> {
     let debounce = Config::load(&store.root)?.checkpoint.debounce_ms.max(25);
     let mut pending_stamps = HashMap::<String, String>::new();
     let mut captured_stamps = HashMap::<String, String>::new();
-    loop {
+    let mut query_failures = 0_u8;
+    let result = loop {
         if !store.metadata.exists() {
-            break;
+            break Ok(());
         }
         let layers = match store.monitor_layers() {
-            Ok(layers) => layers,
-            Err(_) => break,
+            Ok(layers) => {
+                query_failures = 0;
+                layers
+            }
+            Err(error) => {
+                query_failures += 1;
+                if query_failures >= 3 {
+                    record_monitor_error(store, None, "layer-query", &error);
+                    break Err(error);
+                }
+                thread::sleep(Duration::from_millis(debounce));
+                continue;
+            }
         };
         for layer in layers {
             if !Path::new(&layer.view_path).exists() {
                 continue;
             }
-            let Ok(_object_lease) = acquire_object_reference_lease(store) else {
-                continue;
+            let _object_lease = match acquire_object_reference_lease(store) {
+                Ok(lease) => lease,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "object-lease", &error);
+                    continue;
+                }
             };
             let view = Path::new(&layer.view_path);
-            let Ok(stamp) = view_stamp(view) else {
-                continue;
+            let stamp = match view_stamp(view) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "view-stamp", &error);
+                    continue;
+                }
             };
-            if observed_checkpoint(store, &layer, &stamp)
-                .ok()
-                .flatten()
-                .is_some()
-            {
+            let observed = match observed_checkpoint(store, &layer, &stamp) {
+                Ok(observed) => observed,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "observation", &error);
+                    continue;
+                }
+            };
+            if observed.is_some() {
                 captured_stamps.insert(layer.id.clone(), stamp);
                 pending_stamps.remove(&layer.id);
                 continue;
@@ -84,72 +110,116 @@ pub(super) fn monitor(store: &mut Store) -> Result<()> {
                 pending_stamps.insert(layer.id.clone(), stamp);
                 continue;
             }
-            let Ok(policy) = tracking_policy(store, &layer) else {
-                continue;
+            let policy = match tracking_policy(store, &layer) {
+                Ok(policy) => policy,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "tracking-policy", &error);
+                    continue;
+                }
             };
-            let Ok(scan) = scan_view_with_policy(view, &store.objects, &policy) else {
-                continue;
+            let scan = match scan_view_with_policy(view, &store.objects, &policy) {
+                Ok(scan) => scan,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "scan", &error);
+                    continue;
+                }
             };
-            let Ok(stable_stamp) = view_stamp(view) else {
-                continue;
+            let stable_stamp = match view_stamp(view) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "stable-stamp", &error);
+                    continue;
+                }
             };
             if stable_stamp != pending_stamps[&layer.id] {
                 pending_stamps.insert(layer.id.clone(), stable_stamp);
                 continue;
             }
-            if store.register_objects(&scan.objects).is_err() {
+            if let Err(error) = store.register_objects(&scan.objects) {
+                record_monitor_error(store, Some(&layer.id), "object-metadata", &error);
                 continue;
             }
-            let Ok(root_tree) = store.objects.put_tree(&scan.tree) else {
-                continue;
+            let root_tree = match store.objects.put_tree(&scan.tree) {
+                Ok(root_tree) => root_tree,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "tree-write", &error);
+                    continue;
+                }
             };
-            let Ok(reconcile_lock) = open_reconcile_lock(store) else {
-                continue;
+            let reconcile_lock = match open_reconcile_lock(store) {
+                Ok(lock) => lock,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "reconcile-lock", &error);
+                    continue;
+                }
             };
             if reconcile_lock.try_lock_exclusive().is_err() {
                 continue;
             }
-            let checkpoint = store.layer(&layer.id).ok().and_then(|current| {
+            let checkpoint = (|| -> Result<Option<(Layer, crate::model::Checkpoint)>> {
+                let current = store.layer(&layer.id)?;
                 if current.synchronized_ref != layer.synchronized_ref {
-                    return None;
+                    return Ok(None);
                 }
-                let head = store.layer_head(&current).ok()?;
+                let head = store.layer_head(&current)?;
                 if head.root_tree == root_tree {
-                    return Some((current, head));
+                    return Ok(Some((current, head)));
                 }
-                store
-                    .register_object(
-                        &root_tree,
-                        ObjectKind::Tree,
-                        crate::objects::encode_tree(&scan.tree)
-                            .map(|bytes| bytes.len() as u64)
-                            .unwrap_or(0),
-                    )
-                    .ok()?;
-                let checkpoint = store
-                    .append_checkpoint(
-                        &current.id,
-                        &root_tree,
-                        &current.synchronized_ref,
-                        "automatic",
-                    )
-                    .ok()?;
-                Some((current, checkpoint))
-            });
+                store.register_object(
+                    &root_tree,
+                    ObjectKind::Tree,
+                    crate::objects::encode_tree(&scan.tree)?.len() as u64,
+                )?;
+                let checkpoint = store.append_checkpoint(
+                    &current.id,
+                    &root_tree,
+                    &current.synchronized_ref,
+                    "automatic",
+                )?;
+                Ok(Some((current, checkpoint)))
+            })();
             let _ = FileExt::unlock(&reconcile_lock);
-            if let Some((current, checkpoint)) = checkpoint
-                && write_view_observation(store, &current, &checkpoint, &stable_stamp).is_ok()
-            {
-                captured_stamps.insert(layer.id.clone(), stable_stamp);
-                pending_stamps.remove(&layer.id);
+            match checkpoint {
+                Ok(Some((current, checkpoint))) => {
+                    match write_view_observation(store, &current, &checkpoint, &stable_stamp) {
+                        Ok(()) => {
+                            captured_stamps.insert(layer.id.clone(), stable_stamp);
+                            pending_stamps.remove(&layer.id);
+                        }
+                        Err(error) => record_monitor_error(
+                            store,
+                            Some(&layer.id),
+                            "observation-write",
+                            &error,
+                        ),
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "checkpoint", &error);
+                }
             }
         }
         thread::sleep(Duration::from_millis(debounce));
-    }
+    };
     let _ = fs::remove_file(&ready_path);
     let _ = fs::remove_file(&pid_path);
     let _ = FileExt::unlock(&lock);
-    Ok(())
+    result
+}
+
+fn record_monitor_error(
+    store: &mut Store,
+    layer_id: Option<&str>,
+    stage: &str,
+    error: &JavelinError,
+) {
+    let _ = store.append_event(
+        "monitor.error",
+        layer_id.map(|_| "layer"),
+        layer_id,
+        &json!({"stage": stage, "code": error.code, "message": error.message}),
+    );
 }
 
 pub(super) fn start_monitor(store: &Store) -> Result<()> {
@@ -157,6 +227,16 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         return Ok(());
     }
     let ready_path = store.metadata.join("monitor/ready");
+    let startup_lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(store.metadata.join("monitor/start.lock"))
+        .jctx("MONITOR_LOCK", "cannot open Monitor startup lock")?;
+    startup_lock
+        .lock_exclusive()
+        .jctx("MONITOR_LOCK", "cannot acquire Monitor startup lock")?;
     if monitor_ready(&ready_path) {
         return Ok(());
     }
@@ -186,28 +266,7 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
 #[cfg(windows)]
 fn configure_monitor_process(command: &mut ProcessCommand) -> Result<()> {
     use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::Foundation::{
-        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
-    };
-    use windows_sys::Win32::System::Console::{
-        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-    };
     use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
-
-    for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-        let handle = unsafe { GetStdHandle(stream) };
-        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-            continue;
-        }
-        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
-            return Err(JavelinError::new(
-                7,
-                "MONITOR_IO",
-                "cannot prevent Monitor from inheriting command handles",
-            )
-            .details(json!({"cause": std::io::Error::last_os_error().to_string()})));
-        }
-    }
     command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
     Ok(())
 }
