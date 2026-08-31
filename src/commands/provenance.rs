@@ -53,6 +53,7 @@ pub(super) fn provenance(
             path,
             media_type,
         } => {
+            store.ensure_active_provenance(&session)?;
             let absolute = path.canonicalize().jctx(
                 "PROVENANCE_IO",
                 format!("cannot resolve {}", path.display()),

@@ -1,5 +1,7 @@
 use super::*;
 
+const PURGED_PAYLOAD: &str = crate::config::PURGED_PROVENANCE_PAYLOAD;
+
 impl Store {
     pub fn begin_provenance(
         &mut self,
@@ -65,19 +67,7 @@ impl Store {
         media_type: Option<&str>,
         object_id: &str,
     ) -> Result<String> {
-        let exists: bool = self
-            .conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM provenance_sessions WHERE id = ?1)",
-                [session_id],
-                |row| row.get(0),
-            )
-            .jctx("STORE_QUERY", "cannot inspect provenance session")?;
-        if !exists {
-            return Err(JavelinError::invalid(format!(
-                "unknown provenance session {session_id}"
-            )));
-        }
+        self.ensure_active_provenance(session_id)?;
         let id = ulid::Ulid::new().to_string();
         self.conn
             .execute(
@@ -87,6 +77,27 @@ impl Store {
             )
             .jctx("STORE_WRITE", "cannot attach provenance payload")?;
         Ok(id)
+    }
+
+    pub fn ensure_active_provenance(&self, session_id: &str) -> Result<()> {
+        let status: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT status FROM provenance_sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .jctx("STORE_QUERY", "cannot inspect provenance session")?;
+        match status.as_deref() {
+            Some("active") => Ok(()),
+            Some(_) => Err(JavelinError::policy(
+                "provenance session has ended or been purged",
+            )),
+            None => Err(JavelinError::invalid(format!(
+                "unknown provenance session {session_id}"
+            ))),
+        }
     }
 
     pub fn end_provenance(&mut self, session_id: &str) -> Result<()> {
@@ -195,13 +206,26 @@ impl Store {
     }
 
     pub fn purge_provenance(&mut self, session_id: &str) -> Result<()> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM provenance_sessions WHERE id = ?1)",
+                [session_id],
+                |row| row.get(0),
+            )
+            .jctx("STORE_QUERY", "cannot inspect provenance session")?;
+        if !exists {
+            return Err(JavelinError::invalid(format!(
+                "unknown provenance session {session_id}"
+            )));
+        }
         let tx = self
             .conn
             .transaction()
             .jctx("STORE_TX", "cannot begin provenance purge")?;
         tx.execute(
-            "UPDATE provenance_events SET payload_json = '{\"purged\":true}' WHERE session_id = ?1",
-            [session_id],
+            "UPDATE provenance_events SET payload_json = ?1 WHERE session_id = ?2",
+            params![PURGED_PAYLOAD, session_id],
         )
         .jctx("STORE_WRITE", "cannot purge provenance events")?;
         tx.execute(
@@ -209,6 +233,12 @@ impl Store {
             [session_id],
         )
         .jctx("STORE_WRITE", "cannot purge provenance attachments")?;
+        tx.execute(
+            "UPDATE provenance_sessions SET status = 'purged', ended_at = COALESCE(ended_at, ?1)
+             WHERE id = ?2",
+            params![now(), session_id],
+        )
+        .jctx("STORE_WRITE", "cannot mark provenance session purged")?;
         tx.commit()
             .jctx("STORE_TX", "cannot commit provenance purge")?;
         self.append_event(
@@ -226,13 +256,13 @@ impl Store {
             .prepare(
                 "SELECT id FROM provenance_sessions WHERE started_at <= ?1 AND
                  (EXISTS(SELECT 1 FROM provenance_events e WHERE e.session_id = provenance_sessions.id
-                  AND e.payload_json != '{\"purged\":true}') OR
+                  AND e.payload_json != ?2) OR
                   EXISTS(SELECT 1 FROM provenance_attachments a WHERE a.session_id = provenance_sessions.id
                   AND a.purged = 0)) ORDER BY started_at",
             )
             .jctx("STORE_QUERY", "cannot prepare expired provenance query")?;
         let rows = statement
-            .query_map([cutoff], |row| row.get(0))
+            .query_map(params![cutoff, PURGED_PAYLOAD], |row| row.get(0))
             .jctx("STORE_QUERY", "cannot read expired provenance sessions")?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .jctx("STORE_QUERY", "cannot decode expired provenance sessions")

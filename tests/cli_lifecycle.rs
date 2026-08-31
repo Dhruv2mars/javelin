@@ -785,6 +785,63 @@ fn provenance_search_treats_wildcards_as_literal_text() {
     assert_eq!(sessions[0]["actor"]["name"], "percent%agent");
 }
 
+#[test]
+fn provenance_rejects_attachments_after_end_or_purge_and_unknown_purge() {
+    let (_temp, world) = init();
+    let attachment = world.join("trace.jsonl");
+    fs::write(&attachment, b"{}\n").unwrap();
+
+    let ended = output_text(in_world(
+        &world,
+        &["provenance", "begin", "--actor", "ended-agent"],
+    ));
+    in_world(&world, &["provenance", "end", &ended]);
+    let rejected_ended = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "provenance",
+            "attach",
+            "--session",
+            &ended,
+            attachment.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected_ended.status.code(), Some(10));
+
+    let purged = output_text(in_world(
+        &world,
+        &["provenance", "begin", "--actor", "purged-agent"],
+    ));
+    in_world(&world, &["provenance", "purge", &purged]);
+    let rejected_purged = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "provenance",
+            "attach",
+            "--session",
+            &purged,
+            attachment.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(rejected_purged.status.code(), Some(10));
+
+    let unknown = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "provenance",
+            "purge",
+            "unknown-session",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+}
+
 #[cfg(unix)]
 #[test]
 fn candidate_timeout_change_is_not_deduplicated() {
