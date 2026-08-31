@@ -15,7 +15,7 @@ Version `1.0.0` is under final acceptance testing. Native CI passes on Apple Sil
 Requirements: Rust 1.85 or newer and a C toolchain for bundled SQLite and zstd.
 
 ```sh
-cargo install --path .
+cargo install --path . --locked
 javelin version
 ```
 

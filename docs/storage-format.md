@@ -98,7 +98,7 @@ A Layer scans with policy stored in its Synchronized Reference. A policy edit ta
 
 ## Retention
 
-Discarded Layer Checkpoints and reachable objects remain for seven days by default. Raw provenance remains for 30 days by default. `gc` expires claims, purges eligible raw payloads to tombstones, purges eligible discarded Layers, then removes unreachable objects.
+Discarded Layers remain recoverable for seven days by default. Objects reachable only from retained Discard state remain until that state expires or is purged. Objects reachable from accepted World state, active Layers, or other retained records do not expire. Raw provenance remains for 30 days by default. `gc` expires claims, purges eligible raw payloads to tombstones, purges eligible discarded Layers, then removes unreachable objects.
 
 Accepted World state, active Layer state, retained Discard state, validation output, Conflict evidence, and unpurged provenance attachments remain reachable.
 
