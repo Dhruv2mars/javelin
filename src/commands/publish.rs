@@ -125,7 +125,7 @@ pub(super) fn publish(
             Err(_) => store.mark_view(&parent.id, &parent_head.id, true, "repair_required")?,
         }
     }
-    FileExt::unlock(&lock_file).jctx("PUBLISH_LOCK", "cannot release Publish lease")?;
+    FileExt::unlock(&lock_file).jctx(8, "PUBLISH_LOCK", "cannot release Publish lease")?;
     emit(
         json_output,
         &json!({
@@ -169,7 +169,7 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
         Ok(backend) => store.mark_view(&parent.id, &parent_head.id, false, backend),
         Err(_) => store.mark_view(&parent.id, &parent_head.id, true, "repair_required"),
     };
-    FileExt::unlock(&lock_file).jctx("PUBLISH_LOCK", "cannot release Publish lease")?;
+    FileExt::unlock(&lock_file).jctx(8, "PUBLISH_LOCK", "cannot release Publish lease")?;
     result
 }
 
@@ -185,7 +185,7 @@ pub(super) fn open_publish_lock(store: &Store, target: &str) -> Result<File> {
                 .join("locks")
                 .join(format!("{target}.publish.lock")),
         )
-        .jctx("PUBLISH_LOCK", "cannot open Publish lease")
+        .jctx(8, "PUBLISH_LOCK", "cannot open Publish lease")
 }
 
 pub(super) fn acquire_publish_lock(file: &File) -> Result<()> {
@@ -215,7 +215,7 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
             "INSERT INTO publish_queue(request_id, target, pid, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![request_id, target, pid, now()],
         )
-        .jctx("PUBLISH_QUEUE", "cannot enter Publish queue")?;
+        .jctx(8, "PUBLISH_QUEUE", "cannot enter Publish queue")?;
     let started = Instant::now();
     loop {
         let head: Option<(String, u32, String)> = store
@@ -227,7 +227,7 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .jctx("PUBLISH_QUEUE", "cannot inspect Publish queue")?;
+            .jctx(8, "PUBLISH_QUEUE", "cannot inspect Publish queue")?;
         match head {
             Some((head_id, _head_pid, _created_at)) if head_id == request_id => {
                 if file.try_lock_exclusive().is_ok() {
@@ -237,7 +237,7 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
                             "DELETE FROM publish_queue WHERE request_id = ?1",
                             [&request_id],
                         )
-                        .jctx("PUBLISH_QUEUE", "cannot leave Publish queue")?;
+                        .jctx(8, "PUBLISH_QUEUE", "cannot leave Publish queue")?;
                     return Ok(());
                 }
             }
@@ -250,7 +250,11 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
                         "DELETE FROM publish_queue WHERE request_id = ?1",
                         [&head_id],
                     )
-                    .jctx("PUBLISH_QUEUE", "cannot remove abandoned Publish request")?;
+                    .jctx(
+                        8,
+                        "PUBLISH_QUEUE",
+                        "cannot remove abandoned Publish request",
+                    )?;
             }
             _ => {}
         }

@@ -53,7 +53,7 @@ pub(super) fn run_validations(
     let candidate_dir = tempfile::Builder::new()
         .prefix("candidate-")
         .tempdir_in(store.metadata.join("temp"))
-        .jctx("VERIFY_IO", "cannot create isolated candidate view")?;
+        .jctx(5, "VERIFY_IO", "cannot create isolated candidate view")?;
     materialize_tree_from_cache(
         candidate,
         candidate_root,
@@ -110,9 +110,9 @@ fn run_rule(
         .join("temp")
         .join(format!("validation-{}-stderr", ulid::Ulid::new()));
     let stdout_file =
-        File::create(&stdout_path).jctx("VERIFY_IO", "cannot create validation stdout")?;
+        File::create(&stdout_path).jctx(5, "VERIFY_IO", "cannot create validation stdout")?;
     let stderr_file =
-        File::create(&stderr_path).jctx("VERIFY_IO", "cannot create validation stderr")?;
+        File::create(&stderr_path).jctx(5, "VERIFY_IO", "cannot create validation stderr")?;
     let start = Instant::now();
     let mut child = ProcessCommand::new(&rule.command[0])
         .args(&rule.command[1..])
@@ -125,42 +125,43 @@ fn run_rule(
             JavelinError::verification(format!("cannot start World Rule {}: {error}", rule.name))
         })?;
     let timeout = Duration::from_secs(rule.timeout_seconds);
-    let status = match child
-        .wait_timeout(timeout)
-        .jctx("VERIFY_IO", "cannot wait for World Rule")?
-    {
-        Some(status) => status,
-        None => {
-            child
-                .kill()
-                .jctx("VERIFY_IO", "cannot stop timed-out World Rule")?;
-            let _ = child.wait();
-            let stdout = fs::read(&stdout_path).unwrap_or_default();
-            let stderr = fs::read(&stderr_path).unwrap_or_default();
-            let stdout_object = (!stdout.is_empty())
-                .then(|| store.objects.put_blob(&stdout))
-                .transpose()?;
-            let stderr_object = (!stderr.is_empty())
-                .then(|| store.objects.put_blob(&stderr))
-                .transpose()?;
-            let _ = fs::remove_file(&stdout_path);
-            let _ = fs::remove_file(&stderr_path);
-            return Ok(ValidationRecord {
-                id: ulid::Ulid::new().to_string(),
-                rule_name: rule.name.clone(),
-                command_json: serde_json::to_string(&rule.command).unwrap(),
-                required: rule.required,
-                exit_code: 124,
-                duration_ms: start.elapsed().as_millis() as i64,
-                environment_json: validation_environment(candidate_dir),
-                stdout_object,
-                stderr_object,
-                candidate_root: candidate_root.to_string(),
-                policy_hash: policy_hash.to_string(),
-                created_at: now(),
-            });
-        }
-    };
+    let status =
+        match child
+            .wait_timeout(timeout)
+            .jctx(5, "VERIFY_IO", "cannot wait for World Rule")?
+        {
+            Some(status) => status,
+            None => {
+                child
+                    .kill()
+                    .jctx(5, "VERIFY_IO", "cannot stop timed-out World Rule")?;
+                let _ = child.wait();
+                let stdout = fs::read(&stdout_path).unwrap_or_default();
+                let stderr = fs::read(&stderr_path).unwrap_or_default();
+                let stdout_object = (!stdout.is_empty())
+                    .then(|| store.objects.put_blob(&stdout))
+                    .transpose()?;
+                let stderr_object = (!stderr.is_empty())
+                    .then(|| store.objects.put_blob(&stderr))
+                    .transpose()?;
+                let _ = fs::remove_file(&stdout_path);
+                let _ = fs::remove_file(&stderr_path);
+                return Ok(ValidationRecord {
+                    id: ulid::Ulid::new().to_string(),
+                    rule_name: rule.name.clone(),
+                    command_json: serde_json::to_string(&rule.command).unwrap(),
+                    required: rule.required,
+                    exit_code: 124,
+                    duration_ms: start.elapsed().as_millis() as i64,
+                    environment_json: validation_environment(candidate_dir),
+                    stdout_object,
+                    stderr_object,
+                    candidate_root: candidate_root.to_string(),
+                    policy_hash: policy_hash.to_string(),
+                    created_at: now(),
+                });
+            }
+        };
     let stdout = fs::read(&stdout_path).unwrap_or_default();
     let stderr = fs::read(&stderr_path).unwrap_or_default();
     let stdout_object = (!stdout.is_empty())

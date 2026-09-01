@@ -55,6 +55,7 @@ pub(super) fn provenance(
         } => {
             store.ensure_active_provenance(&session)?;
             let absolute = path.canonicalize().jctx(
+                7,
                 "PROVENANCE_IO",
                 format!("cannot resolve {}", path.display()),
             )?;
@@ -69,7 +70,7 @@ pub(super) fn provenance(
                 .ok_or_else(|| JavelinError::unsupported("attachment name must be UTF-8"))?;
             let object_id = store.objects.put_blob_file(&absolute)?;
             let size = fs::metadata(&absolute)
-                .jctx("PROVENANCE_IO", "cannot stat provenance attachment")?
+                .jctx(7, "PROVENANCE_IO", "cannot stat provenance attachment")?
                 .len();
             store.register_object(&object_id, ObjectKind::Blob, size)?;
             let attachment =
@@ -229,12 +230,17 @@ fn provenance_for_contribution(store: &Store, contribution: &str) -> Result<Vec<
         .prepare(
             "SELECT session_id FROM contribution_provenance WHERE contribution_id = ?1 ORDER BY session_id",
         )
-        .jctx("STORE_QUERY", "cannot prepare Contribution provenance")?;
-    let rows = statement
-        .query_map([contribution], |row| row.get(0))
-        .jctx("STORE_QUERY", "cannot read Contribution provenance")?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .jctx("STORE_QUERY", "cannot decode Contribution provenance")
+        .jctx(7, "STORE_QUERY", "cannot prepare Contribution provenance")?;
+    let rows = statement.query_map([contribution], |row| row.get(0)).jctx(
+        7,
+        "STORE_QUERY",
+        "cannot read Contribution provenance",
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+        7,
+        "STORE_QUERY",
+        "cannot decode Contribution provenance",
+    )
 }
 
 fn provenance_for_checkpoint(store: &Store, checkpoint: &str) -> Result<Vec<String>> {
@@ -243,10 +249,15 @@ fn provenance_for_checkpoint(store: &Store, checkpoint: &str) -> Result<Vec<Stri
         .prepare(
             "SELECT session_id FROM checkpoint_provenance WHERE checkpoint_id = ?1 ORDER BY session_id",
         )
-        .jctx("STORE_QUERY", "cannot prepare Checkpoint provenance")?;
-    let rows = statement
-        .query_map([checkpoint], |row| row.get(0))
-        .jctx("STORE_QUERY", "cannot read Checkpoint provenance")?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .jctx("STORE_QUERY", "cannot decode Checkpoint provenance")
+        .jctx(7, "STORE_QUERY", "cannot prepare Checkpoint provenance")?;
+    let rows = statement.query_map([checkpoint], |row| row.get(0)).jctx(
+        7,
+        "STORE_QUERY",
+        "cannot read Checkpoint provenance",
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+        7,
+        "STORE_QUERY",
+        "cannot decode Checkpoint provenance",
+    )
 }

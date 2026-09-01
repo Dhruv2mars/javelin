@@ -59,8 +59,8 @@ impl ObjectStore {
     pub fn new(metadata: &Path) -> Result<Self> {
         let objects = metadata.join("objects");
         let temp = metadata.join("temp");
-        fs::create_dir_all(&objects).jctx("OBJECT_IO", "cannot create object directory")?;
-        fs::create_dir_all(&temp).jctx("OBJECT_IO", "cannot create temp directory")?;
+        fs::create_dir_all(&objects).jctx(7, "OBJECT_IO", "cannot create object directory")?;
+        fs::create_dir_all(&temp).jctx(7, "OBJECT_IO", "cannot create temp directory")?;
         Ok(Self { objects, temp })
     }
 
@@ -122,16 +122,21 @@ impl ObjectStore {
 
     pub fn validate(&self, id: &str) -> Result<(ObjectKind, u64)> {
         let (kind, expected_length, file) = self.open_object(id)?;
-        let mut decoder = zstd::stream::read::Decoder::new(file)
-            .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
+        let mut decoder = zstd::stream::read::Decoder::new(file).jctx(
+            7,
+            "CORRUPT_OBJECT",
+            format!("cannot decompress object {id}"),
+        )?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(kind.domain());
         let mut length = 0_u64;
         let mut buffer = vec![0_u8; 1024 * 1024];
         loop {
-            let read = decoder
-                .read(&mut buffer)
-                .jctx("CORRUPT_OBJECT", format!("cannot read object {id}"))?;
+            let read = decoder.read(&mut buffer).jctx(
+                7,
+                "CORRUPT_OBJECT",
+                format!("cannot read object {id}"),
+            )?;
             if read == 0 {
                 break;
             }
@@ -149,7 +154,7 @@ impl ObjectStore {
 
     pub fn write_blob_to_file(&self, id: &str, path: &Path) -> Result<u64> {
         let output =
-            File::create(path).jctx("VIEW_IO", format!("cannot create {}", path.display()))?;
+            File::create(path).jctx(7, "VIEW_IO", format!("cannot create {}", path.display()))?;
         self.write_blob_to_writer(id, output)
     }
 
@@ -160,23 +165,28 @@ impl ObjectStore {
                 "object {id} is not a blob"
             )));
         }
-        let mut decoder = zstd::stream::read::Decoder::new(file)
-            .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
+        let mut decoder = zstd::stream::read::Decoder::new(file).jctx(
+            7,
+            "CORRUPT_OBJECT",
+            format!("cannot decompress object {id}"),
+        )?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(kind.domain());
         let mut length = 0_u64;
         let mut buffer = vec![0_u8; 1024 * 1024];
         loop {
-            let read = decoder
-                .read(&mut buffer)
-                .jctx("CORRUPT_OBJECT", format!("cannot read object {id}"))?;
+            let read = decoder.read(&mut buffer).jctx(
+                7,
+                "CORRUPT_OBJECT",
+                format!("cannot read object {id}"),
+            )?;
             if read == 0 {
                 break;
             }
             hasher.update(&buffer[..read]);
             output
                 .write_all(&buffer[..read])
-                .jctx("OUTPUT_IO", "cannot write object bytes")?;
+                .jctx(7, "OUTPUT_IO", "cannot write object bytes")?;
             length += read as u64;
         }
         self.check_identity(id, expected_length, length, &hasher)?;
@@ -185,12 +195,17 @@ impl ObjectStore {
 
     fn read(&self, id: &str) -> Result<(ObjectKind, Vec<u8>)> {
         let (kind, expected_length, file) = self.open_object(id)?;
-        let mut decoder = zstd::stream::read::Decoder::new(file)
-            .jctx("CORRUPT_OBJECT", format!("cannot decompress object {id}"))?;
+        let mut decoder = zstd::stream::read::Decoder::new(file).jctx(
+            7,
+            "CORRUPT_OBJECT",
+            format!("cannot decompress object {id}"),
+        )?;
         let mut bytes = Vec::new();
-        decoder
-            .read_to_end(&mut bytes)
-            .jctx("CORRUPT_OBJECT", format!("cannot read object {id}"))?;
+        decoder.read_to_end(&mut bytes).jctx(
+            7,
+            "CORRUPT_OBJECT",
+            format!("cannot read object {id}"),
+        )?;
         if bytes.len() as u64 != expected_length {
             return Err(JavelinError::corruption(format!(
                 "object {id} length mismatch"
@@ -210,12 +225,13 @@ impl ObjectStore {
     fn open_object(&self, id: &str) -> Result<(ObjectKind, u64, File)> {
         let path = self.object_path(id)?;
         let mut file = File::open(&path).jctx(
+            7,
             "MISSING_OBJECT",
             format!("missing object {id} at {}", path.display()),
         )?;
         let mut header = [0_u8; HEADER_LEN as usize];
         file.read_exact(&mut header)
-            .jctx("CORRUPT_OBJECT", format!("truncated object {id}"))?;
+            .jctx(7, "CORRUPT_OBJECT", format!("truncated object {id}"))?;
         if &header[..4] != MAGIC {
             return Err(JavelinError::corruption(format!(
                 "invalid object header {id}"
@@ -251,14 +267,16 @@ impl ObjectStore {
         if !self.objects.exists() {
             return Ok(ids);
         }
-        for shard in fs::read_dir(&self.objects).jctx("OBJECT_IO", "cannot list object shards")? {
-            let shard = shard.jctx("OBJECT_IO", "cannot read object shard")?;
+        for shard in
+            fs::read_dir(&self.objects).jctx(7, "OBJECT_IO", "cannot list object shards")?
+        {
+            let shard = shard.jctx(7, "OBJECT_IO", "cannot read object shard")?;
             if !shard.path().is_dir() {
                 continue;
             }
             let prefix = shard.file_name().to_string_lossy().into_owned();
-            for object in fs::read_dir(shard.path()).jctx("OBJECT_IO", "cannot list objects")? {
-                let object = object.jctx("OBJECT_IO", "cannot read object entry")?;
+            for object in fs::read_dir(shard.path()).jctx(7, "OBJECT_IO", "cannot list objects")? {
+                let object = object.jctx(7, "OBJECT_IO", "cannot read object entry")?;
                 if object.path().is_file() {
                     ids.push(format!(
                         "{}{}",
@@ -276,6 +294,7 @@ impl ObjectStore {
         let path = self.object_path(id)?;
         if path.exists() {
             fs::remove_file(&path).jctx(
+                7,
                 "OBJECT_IO",
                 format!("cannot remove unreachable object {id}"),
             )?;
@@ -290,7 +309,8 @@ impl ObjectBatch<'_> {
     }
 
     pub fn put_blob_file(&mut self, path: &Path) -> Result<String> {
-        let file = File::open(path).jctx("OBJECT_IO", format!("cannot open {}", path.display()))?;
+        let file =
+            File::open(path).jctx(7, "OBJECT_IO", format!("cannot open {}", path.display()))?;
         self.put_reader(ObjectKind::Blob, BufReader::new(file))
     }
 
@@ -307,7 +327,7 @@ impl ObjectBatch<'_> {
         loop {
             let read = reader
                 .read(&mut buffer)
-                .jctx("OBJECT_IO", "cannot read object input")?;
+                .jctx(7, "OBJECT_IO", "cannot read object input")?;
             if read == 0 {
                 break;
             }
@@ -321,7 +341,7 @@ impl ObjectBatch<'_> {
         }
         reader
             .seek(SeekFrom::Start(0))
-            .jctx("OBJECT_IO", "cannot rewind object input")?;
+            .jctx(7, "OBJECT_IO", "cannot rewind object input")?;
 
         crate::fault::hit("before_object_temp_write");
         let temp = self
@@ -333,44 +353,54 @@ impl ObjectBatch<'_> {
             .read(true)
             .write(true)
             .open(&temp)
-            .jctx("OBJECT_IO", "cannot create temporary object")?;
+            .jctx(7, "OBJECT_IO", "cannot create temporary object")?;
         file.write_all(MAGIC)
             .and_then(|_| file.write_all(&[kind as u8]))
             .and_then(|_| file.write_all(&0_u64.to_be_bytes()))
-            .jctx("OBJECT_IO", "cannot write object header")?;
+            .jctx(7, "OBJECT_IO", "cannot write object header")?;
         let mut encoded_hasher = blake3::Hasher::new();
         encoded_hasher.update(kind.domain());
         let mut encoded_length = 0_u64;
         {
-            let mut encoder = zstd::stream::write::Encoder::new(&mut file, 3)
-                .jctx("OBJECT_IO", "cannot create zstd encoder")?;
+            let mut encoder = zstd::stream::write::Encoder::new(&mut file, 3).jctx(
+                7,
+                "OBJECT_IO",
+                "cannot create zstd encoder",
+            )?;
             loop {
-                let read = reader
-                    .read(&mut buffer)
-                    .jctx("OBJECT_IO", "cannot read object input")?;
+                let read =
+                    reader
+                        .read(&mut buffer)
+                        .jctx(7, "OBJECT_IO", "cannot read object input")?;
                 if read == 0 {
                     break;
                 }
                 encoded_hasher.update(&buffer[..read]);
                 encoded_length += read as u64;
-                encoder
-                    .write_all(&buffer[..read])
-                    .jctx("OBJECT_IO", "cannot compress object")?;
+                encoder.write_all(&buffer[..read]).jctx(
+                    7,
+                    "OBJECT_IO",
+                    "cannot compress object",
+                )?;
             }
             encoder
                 .finish()
-                .jctx("OBJECT_IO", "cannot finish object compression")?;
+                .jctx(7, "OBJECT_IO", "cannot finish object compression")?;
         }
         if encoded_length != length || encoded_hasher.finalize().to_hex().as_str() != id {
             drop(file);
-            fs::remove_file(&temp).jctx("OBJECT_IO", "cannot remove changed temporary object")?;
+            fs::remove_file(&temp).jctx(
+                7,
+                "OBJECT_IO",
+                "cannot remove changed temporary object",
+            )?;
             return Err(JavelinError::busy(
                 "object input changed during capture; retry the command",
             ));
         }
         file.seek(SeekFrom::Start(5))
             .and_then(|_| file.write_all(&length.to_be_bytes()))
-            .jctx("OBJECT_IO", "cannot finalize object")?;
+            .jctx(7, "OBJECT_IO", "cannot finalize object")?;
         drop(file);
 
         self.pending_ids.insert(id.clone());
@@ -397,8 +427,11 @@ impl ObjectBatch<'_> {
         let mut created_shard = false;
         for object in &self.pending {
             if object.target.exists() {
-                fs::remove_file(&object.temp)
-                    .jctx("OBJECT_IO", "cannot remove raced temp object")?;
+                fs::remove_file(&object.temp).jctx(
+                    7,
+                    "OBJECT_IO",
+                    "cannot remove raced temp object",
+                )?;
                 continue;
             }
             let parent = object
@@ -406,15 +439,18 @@ impl ObjectBatch<'_> {
                 .parent()
                 .ok_or_else(|| JavelinError::corruption("object path has no parent"))?;
             created_shard |= !parent.exists();
-            fs::create_dir_all(parent).jctx("OBJECT_IO", "cannot create object shard")?;
+            fs::create_dir_all(parent).jctx(7, "OBJECT_IO", "cannot create object shard")?;
             crate::fault::hit("before_object_rename");
             match fs::rename(&object.temp, &object.target) {
                 Ok(()) => {
                     parents.insert(parent.to_path_buf());
                 }
                 Err(error) if object.target.exists() => {
-                    fs::remove_file(&object.temp)
-                        .jctx("OBJECT_IO", "cannot remove raced temp object")?;
+                    fs::remove_file(&object.temp).jctx(
+                        7,
+                        "OBJECT_IO",
+                        "cannot remove raced temp object",
+                    )?;
                     let _ = error;
                 }
                 Err(error) => {
@@ -467,7 +503,7 @@ fn sync_paths_in_parallel(paths: &[PathBuf], directories: bool) -> Result<()> {
                             .write(true)
                             .open(path)
                             .and_then(|file| file.sync_all())
-                            .jctx("OBJECT_IO", format!("cannot sync {}", path.display()))?;
+                            .jctx(7, "OBJECT_IO", format!("cannot sync {}", path.display()))?;
                     }
                 }
                 Ok(())
@@ -522,7 +558,7 @@ pub fn decode_tree(bytes: &[u8]) -> Result<Tree> {
         let mut path_bytes = vec![0_u8; path_length];
         cursor
             .read_exact(&mut path_bytes)
-            .jctx("CORRUPT_TREE", "truncated tree path")?;
+            .jctx(7, "CORRUPT_TREE", "truncated tree path")?;
         let path = String::from_utf8(path_bytes)
             .map_err(|_| JavelinError::corruption("tree contains non-UTF-8 path"))?;
         crate::paths::validate_relative(&path)?;
@@ -537,12 +573,12 @@ pub fn decode_tree(bytes: &[u8]) -> Result<Tree> {
         cursor
             .read_exact(&mut kind)
             .and_then(|_| cursor.read_exact(&mut executable))
-            .jctx("CORRUPT_TREE", "truncated tree entry")?;
+            .jctx(7, "CORRUPT_TREE", "truncated tree entry")?;
         let object_length = read_u16(&mut cursor)? as usize;
         let mut object_bytes = vec![0_u8; object_length];
         cursor
             .read_exact(&mut object_bytes)
-            .jctx("CORRUPT_TREE", "truncated tree object ID")?;
+            .jctx(7, "CORRUPT_TREE", "truncated tree object ID")?;
         let object = String::from_utf8(object_bytes)
             .map_err(|_| JavelinError::corruption("invalid tree object ID"))?;
         entries.push(TreeEntry {
@@ -571,7 +607,7 @@ fn read_u32(reader: &mut impl Read) -> Result<u32> {
     let mut bytes = [0_u8; 4];
     reader
         .read_exact(&mut bytes)
-        .jctx("CORRUPT_TREE", "truncated tree integer")?;
+        .jctx(7, "CORRUPT_TREE", "truncated tree integer")?;
     Ok(u32::from_be_bytes(bytes))
 }
 
@@ -579,7 +615,7 @@ fn read_u16(reader: &mut impl Read) -> Result<u16> {
     let mut bytes = [0_u8; 2];
     reader
         .read_exact(&mut bytes)
-        .jctx("CORRUPT_TREE", "truncated tree integer")?;
+        .jctx(7, "CORRUPT_TREE", "truncated tree integer")?;
     Ok(u16::from_be_bytes(bytes))
 }
 

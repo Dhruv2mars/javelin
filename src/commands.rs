@@ -232,11 +232,16 @@ fn emit(json_output: bool, value: &impl Serialize, human: String) -> Result<()> 
 
 fn init(path: Option<PathBuf>, json_output: bool) -> Result<()> {
     let requested = path.unwrap_or_else(|| PathBuf::from("."));
-    fs::create_dir_all(&requested)
-        .jctx("INIT_IO", format!("cannot create {}", requested.display()))?;
-    let root = requested
-        .canonicalize()
-        .jctx("INIT_IO", format!("cannot resolve {}", requested.display()))?;
+    fs::create_dir_all(&requested).jctx(
+        7,
+        "INIT_IO",
+        format!("cannot create {}", requested.display()),
+    )?;
+    let root = requested.canonicalize().jctx(
+        7,
+        "INIT_IO",
+        format!("cannot resolve {}", requested.display()),
+    )?;
     if root.join(".javelin/store.sqlite3").exists() {
         let store = Store::open(&root)?;
         let world = store.current_world()?;
@@ -279,7 +284,7 @@ fn create_policy_file(path: &Path, contents: &str) -> Result<()> {
         Ok(mut file) => file
             .write_all(contents.as_bytes())
             .and_then(|_| file.sync_all())
-            .jctx("INIT_IO", format!("cannot write {}", path.display())),
+            .jctx(7, "INIT_IO", format!("cannot write {}", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => {
             Err(
@@ -331,8 +336,11 @@ fn reconcile(store: &mut Store, layer: &Layer, reason: &str) -> Result<crate::mo
         write_view_observation(store, &current, &checkpoint, &stable_stamp)?;
         Ok(checkpoint)
     })();
-    let unlock = FileExt::unlock(&reconcile_lock)
-        .jctx("RECONCILE_LOCK", "cannot release reconciliation lock");
+    let unlock = FileExt::unlock(&reconcile_lock).jctx(
+        8,
+        "RECONCILE_LOCK",
+        "cannot release reconciliation lock",
+    );
     match (result, unlock) {
         (Ok(checkpoint), Ok(())) => Ok(checkpoint),
         (Err(error), _) => Err(error),
@@ -418,7 +426,7 @@ fn open_reconcile_lock(store: &Store) -> Result<File> {
         .read(true)
         .write(true)
         .open(store.metadata.join("locks/reconcile.lock"))
-        .jctx("RECONCILE_LOCK", "cannot open reconciliation lock")
+        .jctx(8, "RECONCILE_LOCK", "cannot open reconciliation lock")
 }
 
 fn open_object_lifecycle_lock(store: &Store) -> Result<File> {
@@ -428,19 +436,19 @@ fn open_object_lifecycle_lock(store: &Store) -> Result<File> {
         .read(true)
         .write(true)
         .open(store.metadata.join("locks/object-lifecycle.lock"))
-        .jctx("GC_LOCK", "cannot open object lifecycle lock")
+        .jctx(8, "GC_LOCK", "cannot open object lifecycle lock")
 }
 
 fn acquire_object_reference_lease(store: &Store) -> Result<File> {
     let lock = open_object_lifecycle_lock(store)?;
-    FileExt::lock_shared(&lock).jctx("GC_LOCK", "cannot protect object references from GC")?;
+    FileExt::lock_shared(&lock).jctx(8, "GC_LOCK", "cannot protect object references from GC")?;
     Ok(lock)
 }
 
 fn acquire_object_gc_lease(store: &Store) -> Result<File> {
     let lock = open_object_lifecycle_lock(store)?;
     lock.lock_exclusive()
-        .jctx("GC_LOCK", "cannot isolate object garbage collection")?;
+        .jctx(8, "GC_LOCK", "cannot isolate object garbage collection")?;
     Ok(lock)
 }
 
@@ -780,7 +788,7 @@ fn show(store: &Store, reference: &str, json_output: bool) -> Result<()> {
         let stdout = std::io::stdout();
         let mut lock = stdout.lock();
         store.objects.write_blob_to_writer(object_id, &mut lock)?;
-        lock.flush().jctx("OUTPUT_IO", "cannot flush path bytes")
+        lock.flush().jctx(7, "OUTPUT_IO", "cannot flush path bytes")
     }
 }
 
@@ -995,7 +1003,7 @@ fn restore_world(
         .map(|record| record.id.clone())
         .collect::<Vec<_>>();
     store.link_version_validations(&restored.id, &validation_ids)?;
-    FileExt::unlock(&lock_file).jctx("PUBLISH_LOCK", "cannot release Publish lease")?;
+    FileExt::unlock(&lock_file).jctx(8, "PUBLISH_LOCK", "cannot release Publish lease")?;
     emit(
         json_output,
         &json!({"world_version": restored, "validations": validations, "policy_override": failed && accept_failing}),

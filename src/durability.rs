@@ -9,7 +9,11 @@ use std::path::Path;
 pub fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .jctx("DURABILITY_IO", format!("cannot sync {}", path.display()))
+        .jctx(
+            7,
+            "DURABILITY_IO",
+            format!("cannot sync {}", path.display()),
+        )
 }
 
 #[cfg(windows)]
@@ -22,12 +26,20 @@ pub fn sync_dir(path: &Path) -> Result<()> {
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
         .and_then(|directory| directory.sync_all())
-        .jctx("DURABILITY_IO", format!("cannot sync {}", path.display()))
+        .jctx(
+            7,
+            "DURABILITY_IO",
+            format!("cannot sync {}", path.display()),
+        )
 }
 
 #[cfg(not(any(unix, windows)))]
 pub fn sync_dir(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
-        .jctx("DURABILITY_IO", format!("cannot sync {}", path.display()))
+        .jctx(
+            7,
+            "DURABILITY_IO",
+            format!("cannot sync {}", path.display()),
+        )
 }

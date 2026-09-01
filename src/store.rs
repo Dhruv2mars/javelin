@@ -96,8 +96,11 @@ impl Store {
             "monitor",
             "trash",
         ] {
-            std::fs::create_dir_all(metadata.join(directory))
-                .jctx("STORE_IO", format!("cannot create .javelin/{directory}"))?;
+            std::fs::create_dir_all(metadata.join(directory)).jctx(
+                7,
+                "STORE_IO",
+                format!("cannot create .javelin/{directory}"),
+            )?;
         }
         set_private_permissions(&metadata)?;
         Self::open(root)
@@ -106,16 +109,31 @@ impl Store {
     pub fn open(root: &Path) -> Result<Self> {
         let metadata = root.join(".javelin");
         let database = metadata.join("store.sqlite3");
-        let conn = Connection::open(&database)
-            .jctx("STORE_OPEN", format!("cannot open {}", database.display()))?;
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .jctx("STORE_PRAGMA", "cannot enable WAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")
-            .jctx("STORE_PRAGMA", "cannot enable foreign keys")?;
-        conn.pragma_update(None, "busy_timeout", 10_000)
-            .jctx("STORE_PRAGMA", "cannot set busy timeout")?;
-        conn.pragma_update(None, "synchronous", "FULL")
-            .jctx("STORE_PRAGMA", "cannot set durable synchronization")?;
+        let conn = Connection::open(&database).jctx(
+            7,
+            "STORE_OPEN",
+            format!("cannot open {}", database.display()),
+        )?;
+        conn.pragma_update(None, "journal_mode", "WAL").jctx(
+            7,
+            "STORE_PRAGMA",
+            "cannot enable WAL",
+        )?;
+        conn.pragma_update(None, "foreign_keys", "ON").jctx(
+            7,
+            "STORE_PRAGMA",
+            "cannot enable foreign keys",
+        )?;
+        conn.pragma_update(None, "busy_timeout", 10_000).jctx(
+            7,
+            "STORE_PRAGMA",
+            "cannot set busy timeout",
+        )?;
+        conn.pragma_update(None, "synchronous", "FULL").jctx(
+            7,
+            "STORE_PRAGMA",
+            "cannot set durable synchronization",
+        )?;
         migrate(&conn)?;
         let objects = ObjectStore::new(&metadata)?;
         let mut store = Self {
@@ -144,33 +162,33 @@ impl Store {
                  WHERE released_at IS NULL AND expires_at <= ?1",
                 [&timestamp],
             )
-            .jctx("STARTUP_RECOVERY", "cannot expire Claims")?;
+            .jctx(7, "STARTUP_RECOVERY", "cannot expire Claims")?;
         self.conn
             .execute(
                 "UPDATE layers SET status = 'active' WHERE status = 'publishing'",
                 [],
             )
-            .jctx("STARTUP_RECOVERY", "cannot recover publishing Layers")?;
+            .jctx(7, "STARTUP_RECOVERY", "cannot recover publishing Layers")?;
         self.conn
             .execute(
                 "UPDATE publish_attempts SET status = 'interrupted', updated_at = ?1
                  WHERE status IN ('queued', 'running', 'publishing')",
                 [&timestamp],
             )
-            .jctx("STARTUP_RECOVERY", "cannot recover Publish attempts")?;
+            .jctx(7, "STARTUP_RECOVERY", "cannot recover Publish attempts")?;
 
         let abandoned = {
             let mut statement = self
                 .conn
                 .prepare("SELECT request_id, pid FROM publish_queue")
-                .jctx("STARTUP_RECOVERY", "cannot inspect Publish queue")?;
+                .jctx(7, "STARTUP_RECOVERY", "cannot inspect Publish queue")?;
             statement
                 .query_map([], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
                 })
-                .jctx("STARTUP_RECOVERY", "cannot read Publish queue")?
+                .jctx(7, "STARTUP_RECOVERY", "cannot read Publish queue")?
                 .collect::<rusqlite::Result<Vec<_>>>()
-                .jctx("STARTUP_RECOVERY", "cannot decode Publish queue")?
+                .jctx(7, "STARTUP_RECOVERY", "cannot decode Publish queue")?
                 .into_iter()
                 .filter_map(|(request_id, pid)| (!process_alive(pid)).then_some(request_id))
                 .collect::<Vec<_>>()
@@ -182,6 +200,7 @@ impl Store {
                     [&request_id],
                 )
                 .jctx(
+                    7,
                     "STARTUP_RECOVERY",
                     "cannot remove abandoned Publish request",
                 )?;
@@ -195,14 +214,14 @@ impl Store {
                      JOIN views v ON v.layer_id = l.id
                      WHERE l.status != 'discarded' AND l.id != 'local'",
                 )
-                .jctx("STARTUP_RECOVERY", "cannot inspect Managed views")?;
+                .jctx(7, "STARTUP_RECOVERY", "cannot inspect Managed views")?;
             statement
                 .query_map([], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })
-                .jctx("STARTUP_RECOVERY", "cannot read Managed views")?
+                .jctx(7, "STARTUP_RECOVERY", "cannot read Managed views")?
                 .collect::<rusqlite::Result<Vec<_>>>()
-                .jctx("STARTUP_RECOVERY", "cannot decode Managed views")?
+                .jctx(7, "STARTUP_RECOVERY", "cannot decode Managed views")?
         };
         for (layer_id, view_path) in views {
             let marker = Path::new(&view_path).join(".javelin-view");
@@ -223,7 +242,7 @@ impl Store {
                          WHERE layer_id = ?2",
                         params![timestamp, layer_id],
                     )
-                    .jctx("STARTUP_RECOVERY", "cannot mark stale Managed view")?;
+                    .jctx(7, "STARTUP_RECOVERY", "cannot mark stale Managed view")?;
             }
         }
 
@@ -233,10 +252,15 @@ impl Store {
             .unwrap_or(3600);
         let temp = self.metadata.join("temp");
         if temp.exists() {
-            for entry in fs::read_dir(&temp).jctx("STARTUP_RECOVERY", "cannot inspect temp data")? {
-                let entry = entry.jctx("STARTUP_RECOVERY", "cannot read temp entry")?;
-                let metadata = fs::symlink_metadata(entry.path())
-                    .jctx("STARTUP_RECOVERY", "cannot inspect temp entry")?;
+            for entry in
+                fs::read_dir(&temp).jctx(7, "STARTUP_RECOVERY", "cannot inspect temp data")?
+            {
+                let entry = entry.jctx(7, "STARTUP_RECOVERY", "cannot read temp entry")?;
+                let metadata = fs::symlink_metadata(entry.path()).jctx(
+                    7,
+                    "STARTUP_RECOVERY",
+                    "cannot inspect temp entry",
+                )?;
                 let old = metadata
                     .modified()
                     .ok()
@@ -244,11 +268,17 @@ impl Store {
                     .is_some_and(|age| age >= Duration::from_secs(grace_seconds));
                 if old {
                     if metadata.file_type().is_dir() {
-                        fs::remove_dir_all(entry.path())
-                            .jctx("STARTUP_RECOVERY", "cannot remove abandoned temp directory")?;
+                        fs::remove_dir_all(entry.path()).jctx(
+                            7,
+                            "STARTUP_RECOVERY",
+                            "cannot remove abandoned temp directory",
+                        )?;
                     } else {
-                        fs::remove_file(entry.path())
-                            .jctx("STARTUP_RECOVERY", "cannot remove abandoned temp file")?;
+                        fs::remove_file(entry.path()).jctx(
+                            7,
+                            "STARTUP_RECOVERY",
+                            "cannot remove abandoned temp file",
+                        )?;
                     }
                 }
             }
@@ -269,7 +299,7 @@ impl Store {
     pub fn initialized(&self) -> Result<bool> {
         self.conn
             .query_row("SELECT EXISTS(SELECT 1 FROM world)", [], |row| row.get(0))
-            .jctx("STORE_QUERY", "cannot inspect World")
+            .jctx(7, "STORE_QUERY", "cannot inspect World")
     }
 
     pub fn initialize_world(&mut self, root_tree: &str) -> Result<(WorldVersion, Layer)> {
@@ -279,40 +309,40 @@ impl Store {
         let now = now();
         let project_id = ulid::Ulid::new().to_string();
         let checkpoint_id = ulid::Ulid::new().to_string();
-        let tx = self
-            .conn
-            .transaction()
-            .jctx("STORE_TX", "cannot begin World initialization")?;
+        let tx =
+            self.conn
+                .transaction()
+                .jctx(7, "STORE_TX", "cannot begin World initialization")?;
         tx.execute(
             "INSERT INTO world(id, current_version, created_at) VALUES (?1, 'v1', ?2)",
             params![project_id, now],
         )
-        .jctx("STORE_WRITE", "cannot create World")?;
+        .jctx(7, "STORE_WRITE", "cannot create World")?;
         tx.execute(
             "INSERT INTO versions(id, sequence, parent_version, root_tree, accepted_contribution, created_at)
              VALUES ('v1', 1, NULL, ?1, NULL, ?2)",
             params![root_tree, now],
         )
-        .jctx("STORE_WRITE", "cannot create World Version v1")?;
+        .jctx(7, "STORE_WRITE", "cannot create World Version v1")?;
         tx.execute(
             "INSERT INTO layers(id, name, origin_ref, synchronized_ref, head_checkpoint, target_kind,
              target_id, status, view_path, created_at) VALUES
              ('local', 'local', 'v1', 'v1', ?1, 'world', NULL, 'active', ?2, ?3)",
             params![checkpoint_id, self.root.to_string_lossy(), now],
         )
-        .jctx("STORE_WRITE", "cannot create Local Layer")?;
+        .jctx(7, "STORE_WRITE", "cannot create Local Layer")?;
         tx.execute(
             "INSERT INTO layer_checkpoints(id, layer_id, sequence, previous_checkpoint, root_tree,
              synchronized_ref, reason, created_at) VALUES (?1, 'local', 1, NULL, ?2, 'v1', 'init', ?3)",
             params![checkpoint_id, root_tree, now],
         )
-        .jctx("STORE_WRITE", "cannot create Local Layer Checkpoint")?;
+        .jctx(7, "STORE_WRITE", "cannot create Local Layer Checkpoint")?;
         tx.execute(
             "INSERT INTO views(layer_id, path, materialized_ref, stale, backend, updated_at)
              VALUES ('local', ?1, ?2, 0, 'existing', ?3)",
             params![self.root.to_string_lossy(), checkpoint_id, now],
         )
-        .jctx("STORE_WRITE", "cannot register Local Layer view")?;
+        .jctx(7, "STORE_WRITE", "cannot register Local Layer view")?;
         append_event_tx(
             &tx,
             "world.initialized",
@@ -321,14 +351,14 @@ impl Store {
             &json!({"root_tree": root_tree}),
         )?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit World initialization")?;
+            .jctx(7, "STORE_TX", "cannot commit World initialization")?;
         Ok((self.current_world()?, self.layer("local")?))
     }
 
     pub fn project_id(&self) -> Result<String> {
         self.conn
             .query_row("SELECT id FROM world LIMIT 1", [], |row| row.get(0))
-            .jctx("STORE_QUERY", "cannot read World ID")
+            .jctx(7, "STORE_QUERY", "cannot read World ID")
     }
 
     pub fn current_world(&self) -> Result<WorldVersion> {
@@ -339,7 +369,7 @@ impl Store {
                 [],
                 world_from_row,
             )
-            .jctx("STORE_QUERY", "cannot read Current World")
+            .jctx(7, "STORE_QUERY", "cannot read Current World")
     }
 
     pub fn world_version(&self, id: &str) -> Result<WorldVersion> {
@@ -351,7 +381,7 @@ impl Store {
                 world_from_row,
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read World Version")?
+            .jctx(7, "STORE_QUERY", "cannot read World Version")?
             .ok_or_else(|| JavelinError::invalid(format!("unknown World Version {id}")))
     }
 
@@ -362,12 +392,17 @@ impl Store {
                 "SELECT id, sequence, parent_version, root_tree, accepted_contribution, created_at
                  FROM versions ORDER BY sequence",
             )
-            .jctx("STORE_QUERY", "cannot prepare World history")?;
-        let rows = statement
-            .query_map([], world_from_row)
-            .jctx("STORE_QUERY", "cannot read World history")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode World history")
+            .jctx(7, "STORE_QUERY", "cannot prepare World history")?;
+        let rows = statement.query_map([], world_from_row).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read World history",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode World history",
+        )
     }
 
     pub fn layer(&self, name_or_id: &str) -> Result<Layer> {
@@ -380,7 +415,7 @@ impl Store {
                 layer_from_row,
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read Private Layer")?
+            .jctx(7, "STORE_QUERY", "cannot read Private Layer")?
             .ok_or_else(|| JavelinError::invalid(format!("unknown Private Layer {name_or_id}")))
     }
 
@@ -393,15 +428,16 @@ impl Store {
              target_id, status, view_path, created_at FROM layers WHERE status != 'discarded'
              ORDER BY created_at, name"
         };
-        let mut statement = self
-            .conn
-            .prepare(query)
-            .jctx("STORE_QUERY", "cannot prepare Layer list")?;
-        let rows = statement
-            .query_map([], layer_from_row)
-            .jctx("STORE_QUERY", "cannot read Layers")?;
+        let mut statement =
+            self.conn
+                .prepare(query)
+                .jctx(7, "STORE_QUERY", "cannot prepare Layer list")?;
+        let rows =
+            statement
+                .query_map([], layer_from_row)
+                .jctx(7, "STORE_QUERY", "cannot read Layers")?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode Layers")
+            .jctx(7, "STORE_QUERY", "cannot decode Layers")
     }
 
     pub fn monitor_layers(&self) -> Result<Vec<Layer>> {
@@ -414,12 +450,17 @@ impl Store {
                  WHERE l.status IN ('active', 'conflicted') AND v.stale = 0 AND v.backend != 'pending'
                  ORDER BY l.created_at, l.name",
             )
-            .jctx("STORE_QUERY", "cannot prepare Monitor Layer list")?;
-        let rows = statement
-            .query_map([], layer_from_row)
-            .jctx("STORE_QUERY", "cannot read Monitor Layers")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode Monitor Layers")
+            .jctx(7, "STORE_QUERY", "cannot prepare Monitor Layer list")?;
+        let rows = statement.query_map([], layer_from_row).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read Monitor Layers",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode Monitor Layers",
+        )
     }
 
     pub fn checkpoint(&self, id: &str) -> Result<Checkpoint> {
@@ -431,7 +472,7 @@ impl Store {
                 checkpoint_from_row,
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read Layer Checkpoint")?
+            .jctx(7, "STORE_QUERY", "cannot read Layer Checkpoint")?
             .ok_or_else(|| JavelinError::invalid(format!("unknown Layer Checkpoint {id}")))
     }
 
@@ -446,12 +487,17 @@ impl Store {
                 "SELECT id, layer_id, sequence, previous_checkpoint, root_tree, synchronized_ref,
                  reason, created_at FROM layer_checkpoints WHERE layer_id = ?1 ORDER BY sequence",
             )
-            .jctx("STORE_QUERY", "cannot prepare Checkpoint history")?;
-        let rows = statement
-            .query_map([layer_id], checkpoint_from_row)
-            .jctx("STORE_QUERY", "cannot read Checkpoint history")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode Checkpoint history")
+            .jctx(7, "STORE_QUERY", "cannot prepare Checkpoint history")?;
+        let rows = statement.query_map([layer_id], checkpoint_from_row).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read Checkpoint history",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode Checkpoint history",
+        )
     }
 
     pub fn resolve_ref(&self, reference: &str) -> Result<(String, String)> {
@@ -506,7 +552,7 @@ impl Store {
                 [name],
                 |row| row.get::<_, bool>(0),
             )
-            .jctx("STORE_QUERY", "cannot check Layer name")?
+            .jctx(7, "STORE_QUERY", "cannot check Layer name")?
         {
             return Err(JavelinError::invalid(format!(
                 "Private Layer {name} already exists"
@@ -518,7 +564,7 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Layer creation")?;
+            .jctx(7, "STORE_TX", "cannot begin Layer creation")?;
         tx.execute(
             "INSERT INTO layers(id, name, origin_ref, synchronized_ref, head_checkpoint, target_kind,
              target_id, status, view_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
@@ -531,13 +577,13 @@ impl Store {
              synchronized_ref, reason, created_at) VALUES (?1, ?2, 1, NULL, ?3, ?4, 'create', ?5)",
             params![checkpoint, id, root_tree, synchronized_ref, now],
         )
-        .jctx("STORE_WRITE", "cannot create initial Layer Checkpoint")?;
+        .jctx(7, "STORE_WRITE", "cannot create initial Layer Checkpoint")?;
         tx.execute(
             "INSERT INTO views(layer_id, path, materialized_ref, stale, backend, updated_at)
              VALUES (?1, ?2, ?3, 0, 'pending', ?4)",
             params![id, view_path.to_string_lossy(), checkpoint, now],
         )
-        .jctx("STORE_WRITE", "cannot register Layer view")?;
+        .jctx(7, "STORE_WRITE", "cannot register Layer view")?;
         append_event_tx(
             &tx,
             "layer.created",
@@ -546,7 +592,7 @@ impl Store {
             &json!({"name": name, "origin_ref": origin_ref, "target_kind": target_kind, "target_id": target_id}),
         )?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Layer creation")?;
+            .jctx(7, "STORE_TX", "cannot commit Layer creation")?;
         self.layer(&id)
     }
 
@@ -571,7 +617,7 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Checkpoint append")?;
+            .jctx(7, "STORE_TX", "cannot begin Checkpoint append")?;
         tx.execute(
             "INSERT INTO layer_checkpoints(id, layer_id, sequence, previous_checkpoint, root_tree,
              synchronized_ref, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -586,23 +632,23 @@ impl Store {
                 now
             ],
         )
-        .jctx("STORE_WRITE", "cannot append Layer Checkpoint")?;
+        .jctx(7, "STORE_WRITE", "cannot append Layer Checkpoint")?;
         tx.execute(
             "UPDATE layers SET head_checkpoint = ?1, synchronized_ref = ?2 WHERE id = ?3",
             params![id, synchronized_ref, layer.id],
         )
-        .jctx("STORE_WRITE", "cannot advance Layer head")?;
+        .jctx(7, "STORE_WRITE", "cannot advance Layer head")?;
         tx.execute(
             "UPDATE views SET materialized_ref = ?1, stale = 0, updated_at = ?2 WHERE layer_id = ?3",
             params![id, now, layer.id],
         )
-        .jctx("STORE_WRITE", "cannot update view reference")?;
+        .jctx(7, "STORE_WRITE", "cannot update view reference")?;
         tx.execute(
             "INSERT OR IGNORE INTO checkpoint_provenance(checkpoint_id, session_id)
              SELECT ?1, id FROM provenance_sessions WHERE layer_id = ?2 AND status = 'active'",
             params![id, layer.id],
         )
-        .jctx("STORE_WRITE", "cannot link Checkpoint provenance")?;
+        .jctx(7, "STORE_WRITE", "cannot link Checkpoint provenance")?;
         append_event_tx(
             &tx,
             "checkpoint.created",
@@ -611,7 +657,7 @@ impl Store {
             &json!({"checkpoint_id": id, "root_tree": root_tree, "reason": reason}),
         )?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Layer Checkpoint")?;
+            .jctx(7, "STORE_TX", "cannot commit Layer Checkpoint")?;
         self.checkpoint(&id)
     }
 
@@ -629,19 +675,19 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin World acceptance")?;
+            .jctx(7, "STORE_TX", "cannot begin World acceptance")?;
         tx.execute(
             "INSERT INTO versions(id, sequence, parent_version, root_tree, accepted_contribution, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, sequence, current.id, root_tree, contribution_id, now],
         )
-        .jctx("STORE_WRITE", "cannot append World Version")?;
+        .jctx(7, "STORE_WRITE", "cannot append World Version")?;
         let changed = tx
             .execute(
                 "UPDATE world SET current_version = ?1 WHERE current_version = ?2",
                 params![id, current.id],
             )
-            .jctx("STORE_WRITE", "cannot advance Current World")?;
+            .jctx(7, "STORE_WRITE", "cannot advance Current World")?;
         if changed != 1 {
             return Err(JavelinError::stale(
                 "Current World changed during acceptance; retry Publish",
@@ -651,10 +697,10 @@ impl Store {
             "UPDATE views SET stale = 1, updated_at = ?1 WHERE layer_id != 'local'",
             [now.clone()],
         )
-        .jctx("STORE_WRITE", "cannot mark views stale")?;
+        .jctx(7, "STORE_WRITE", "cannot mark views stale")?;
         append_event_tx(&tx, event_type, Some("world"), Some(&id), event_payload)?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit World acceptance")?;
+            .jctx(7, "STORE_TX", "cannot commit World acceptance")?;
         self.world_version(&id)
     }
 
@@ -680,7 +726,7 @@ impl Store {
                     record.created_at
                 ],
             )
-            .jctx("STORE_WRITE", "cannot record validation")?;
+            .jctx(7, "STORE_WRITE", "cannot record validation")?;
         Ok(())
     }
 
@@ -689,20 +735,21 @@ impl Store {
         version_id: &str,
         validation_ids: &[String],
     ) -> Result<()> {
-        let tx = self
-            .conn
-            .transaction()
-            .jctx("STORE_TX", "cannot begin Version validation linking")?;
+        let tx = self.conn.transaction().jctx(
+            7,
+            "STORE_TX",
+            "cannot begin Version validation linking",
+        )?;
         for validation_id in validation_ids {
             tx.execute(
                 "INSERT INTO version_validations(id, version_id, validation_run_id)
                  VALUES (?1, ?2, ?3)",
                 params![ulid::Ulid::new().to_string(), version_id, validation_id],
             )
-            .jctx("STORE_WRITE", "cannot link World Version validation")?;
+            .jctx(7, "STORE_WRITE", "cannot link World Version validation")?;
         }
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Version validation links")
+            .jctx(7, "STORE_TX", "cannot commit Version validation links")
     }
 
     pub fn append_event(
@@ -722,7 +769,7 @@ impl Store {
                 "SELECT cursor, event_type, subject_kind, subject_id, payload_json, created_at
                  FROM events WHERE cursor > ?1 ORDER BY cursor",
             )
-            .jctx("STORE_QUERY", "cannot prepare event stream")?;
+            .jctx(7, "STORE_QUERY", "cannot prepare event stream")?;
         let rows = statement
             .query_map([cursor], |row| {
                 let payload: String = row.get(4)?;
@@ -736,9 +783,9 @@ impl Store {
                     "created_at": row.get::<_, String>(5)?,
                 }))
             })
-            .jctx("STORE_QUERY", "cannot read events")?;
+            .jctx(7, "STORE_QUERY", "cannot read events")?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode events")
+            .jctx(7, "STORE_QUERY", "cannot decode events")
     }
 
     pub fn mark_view(
@@ -754,7 +801,7 @@ impl Store {
                  WHERE layer_id = ?5",
                 params![state_ref, stale, backend, now(), layer_id],
             )
-            .jctx("STORE_WRITE", "cannot update Managed view")?;
+            .jctx(7, "STORE_WRITE", "cannot update Managed view")?;
         Ok(())
     }
 
@@ -765,7 +812,7 @@ impl Store {
                 [layer_id],
                 |row| row.get(0),
             )
-            .jctx("STORE_QUERY", "cannot read Managed view state")
+            .jctx(7, "STORE_QUERY", "cannot read Managed view state")
     }
 
     pub fn set_layer_status(&mut self, layer_id: &str, status: &str) -> Result<()> {
@@ -774,7 +821,7 @@ impl Store {
                 "UPDATE layers SET status = ?1 WHERE id = ?2",
                 params![status, layer_id],
             )
-            .jctx("STORE_WRITE", "cannot change Layer status")?;
+            .jctx(7, "STORE_WRITE", "cannot change Layer status")?;
         Ok(())
     }
 
@@ -786,12 +833,17 @@ impl Store {
                  target_id, status, view_path, created_at FROM layers WHERE target_kind = 'layer'
                  AND target_id = ?1 AND status != 'discarded' ORDER BY created_at",
             )
-            .jctx("STORE_QUERY", "cannot prepare child Layer query")?;
-        let rows = statement
-            .query_map([layer_id], layer_from_row)
-            .jctx("STORE_QUERY", "cannot read child Layers")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode child Layers")
+            .jctx(7, "STORE_QUERY", "cannot prepare child Layer query")?;
+        let rows = statement.query_map([layer_id], layer_from_row).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read child Layers",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode child Layers",
+        )
     }
 
     pub fn all_children(&self, layer_id: &str) -> Result<Vec<Layer>> {
@@ -802,12 +854,17 @@ impl Store {
                  target_id, status, view_path, created_at FROM layers WHERE target_kind = 'layer'
                  AND target_id = ?1 ORDER BY created_at",
             )
-            .jctx("STORE_QUERY", "cannot prepare child Layer query")?;
-        let rows = statement
-            .query_map([layer_id], layer_from_row)
-            .jctx("STORE_QUERY", "cannot read child Layers")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode child Layers")
+            .jctx(7, "STORE_QUERY", "cannot prepare child Layer query")?;
+        let rows = statement.query_map([layer_id], layer_from_row).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read child Layers",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode child Layers",
+        )
     }
 
     pub fn reparent_layer(
@@ -830,7 +887,7 @@ impl Store {
                 "UPDATE layers SET target_kind = ?1, target_id = ?2 WHERE id = ?3",
                 params![target_kind, target_id, layer_id],
             )
-            .jctx("STORE_WRITE", "cannot reparent Private Layer")?;
+            .jctx(7, "STORE_WRITE", "cannot reparent Private Layer")?;
         if changed != 1 {
             return Err(JavelinError::invalid("unknown Private Layer"));
         }
@@ -848,19 +905,19 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Discard")?;
+            .jctx(7, "STORE_TX", "cannot begin Discard")?;
         tx.execute(
             "UPDATE layers SET status = 'discarded' WHERE id = ?1",
             [layer_id],
         )
-        .jctx("STORE_WRITE", "cannot Discard Layer")?;
+        .jctx(7, "STORE_WRITE", "cannot Discard Layer")?;
         tx.execute(
             "INSERT INTO discard_records(layer_id, discarded_at, purge_after) VALUES (?1, ?2, ?3)
              ON CONFLICT(layer_id) DO UPDATE SET discarded_at = excluded.discarded_at,
              purge_after = excluded.purge_after",
             params![layer_id, now, purge_after],
         )
-        .jctx("STORE_WRITE", "cannot record Discard retention")?;
+        .jctx(7, "STORE_WRITE", "cannot record Discard retention")?;
         append_event_tx(
             &tx,
             "layer.discarded",
@@ -868,24 +925,24 @@ impl Store {
             Some(layer_id),
             &json!({"purge_after": purge_after}),
         )?;
-        tx.commit().jctx("STORE_TX", "cannot commit Discard")
+        tx.commit().jctx(7, "STORE_TX", "cannot commit Discard")
     }
 
     pub fn recover_discard(&mut self, layer_id: &str) -> Result<()> {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Discard recovery")?;
+            .jctx(7, "STORE_TX", "cannot begin Discard recovery")?;
         tx.execute(
             "UPDATE layers SET status = 'active' WHERE id = ?1 AND status = 'discarded'",
             [layer_id],
         )
-        .jctx("STORE_WRITE", "cannot recover Layer")?;
+        .jctx(7, "STORE_WRITE", "cannot recover Layer")?;
         tx.execute(
             "DELETE FROM discard_records WHERE layer_id = ?1",
             [layer_id],
         )
-        .jctx("STORE_WRITE", "cannot clear Discard record")?;
+        .jctx(7, "STORE_WRITE", "cannot clear Discard record")?;
         append_event_tx(
             &tx,
             "layer.recovered",
@@ -894,7 +951,7 @@ impl Store {
             &json!({}),
         )?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Discard recovery")
+            .jctx(7, "STORE_TX", "cannot commit Discard recovery")
     }
 
     pub fn purge_layer(&mut self, layer_id: &str) -> Result<()> {
@@ -912,20 +969,20 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Layer purge")?;
+            .jctx(7, "STORE_TX", "cannot begin Layer purge")?;
         tx.execute(
             "UPDATE provenance_sessions SET layer_id = NULL WHERE layer_id = ?1",
             [&layer.id],
         )
-        .jctx("STORE_WRITE", "cannot detach Layer provenance sessions")?;
+        .jctx(7, "STORE_WRITE", "cannot detach Layer provenance sessions")?;
         tx.execute(
             "UPDATE provenance_events SET layer_id = NULL WHERE layer_id = ?1",
             [&layer.id],
         )
-        .jctx("STORE_WRITE", "cannot detach Layer provenance events")?;
+        .jctx(7, "STORE_WRITE", "cannot detach Layer provenance events")?;
         tx.execute("DELETE FROM layers WHERE id = ?1", [&layer.id])
-            .jctx("STORE_WRITE", "cannot purge Layer")?;
-        tx.commit().jctx("STORE_TX", "cannot commit Layer purge")
+            .jctx(7, "STORE_WRITE", "cannot purge Layer")?;
+        tx.commit().jctx(7, "STORE_TX", "cannot commit Layer purge")
     }
 
     pub fn register_object(&mut self, id: &str, kind: ObjectKind, size: u64) -> Result<()> {
@@ -935,7 +992,7 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4)",
                 params![id, format!("{kind:?}").to_lowercase(), size as i64, now()],
             )
-            .jctx("STORE_WRITE", "cannot register object")?;
+            .jctx(7, "STORE_WRITE", "cannot register object")?;
         Ok(())
     }
 
@@ -943,17 +1000,22 @@ impl Store {
         if objects.is_empty() {
             return Ok(());
         }
-        let tx = self
-            .conn
-            .transaction()
-            .jctx("STORE_TX", "cannot begin object metadata registration")?;
+        let tx = self.conn.transaction().jctx(
+            7,
+            "STORE_TX",
+            "cannot begin object metadata registration",
+        )?;
         {
             let mut statement = tx
                 .prepare(
                     "INSERT OR IGNORE INTO object_metadata(id, kind, uncompressed_size, created_at)
                      VALUES (?1, ?2, ?3, ?4)",
                 )
-                .jctx("STORE_WRITE", "cannot prepare object metadata registration")?;
+                .jctx(
+                    7,
+                    "STORE_WRITE",
+                    "cannot prepare object metadata registration",
+                )?;
             for (id, kind, size) in objects {
                 statement
                     .execute(params![
@@ -962,11 +1024,11 @@ impl Store {
                         *size as i64,
                         now()
                     ])
-                    .jctx("STORE_WRITE", "cannot register object metadata")?;
+                    .jctx(7, "STORE_WRITE", "cannot register object metadata")?;
             }
         }
         tx.commit()
-            .jctx("STORE_TX", "cannot commit object metadata registration")
+            .jctx(7, "STORE_TX", "cannot commit object metadata registration")
     }
 
     pub fn expired_discarded_layers(&self, cutoff: &str) -> Result<Vec<String>> {
@@ -975,12 +1037,17 @@ impl Store {
             .prepare(
                 "SELECT layer_id FROM discard_records WHERE purge_after <= ?1 ORDER BY purge_after",
             )
-            .jctx("STORE_QUERY", "cannot prepare expired Discard query")?;
-        let rows = statement
-            .query_map([cutoff], |row| row.get(0))
-            .jctx("STORE_QUERY", "cannot read expired discarded Layers")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode expired discarded Layers")
+            .jctx(7, "STORE_QUERY", "cannot prepare expired Discard query")?;
+        let rows = statement.query_map([cutoff], |row| row.get(0)).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot read expired discarded Layers",
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode expired discarded Layers",
+        )
     }
 }
 
@@ -991,8 +1058,11 @@ pub fn now() -> String {
 #[cfg(unix)]
 fn set_private_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-        .jctx("STORE_IO", "cannot protect Javelin metadata")
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).jctx(
+        7,
+        "STORE_IO",
+        "cannot protect Javelin metadata",
+    )
 }
 
 #[cfg(not(unix))]

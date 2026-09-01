@@ -198,16 +198,18 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
         COMMIT;
         "#,
     )
-    .jctx("MIGRATION_FAILED", "cannot migrate Javelin Store")?;
+    .jctx(7, "MIGRATION_FAILED", "cannot migrate Javelin Store")?;
     let has_environment = {
-        let mut statement = conn
-            .prepare("PRAGMA table_info(validation_runs)")
-            .jctx("MIGRATION_FAILED", "cannot inspect validation schema")?;
+        let mut statement = conn.prepare("PRAGMA table_info(validation_runs)").jctx(
+            7,
+            "MIGRATION_FAILED",
+            "cannot inspect validation schema",
+        )?;
         let columns = statement
             .query_map([], |row| row.get::<_, String>(1))
-            .jctx("MIGRATION_FAILED", "cannot read validation schema")?
+            .jctx(7, "MIGRATION_FAILED", "cannot read validation schema")?
             .collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("MIGRATION_FAILED", "cannot decode validation schema")?;
+            .jctx(7, "MIGRATION_FAILED", "cannot decode validation schema")?;
         columns.iter().any(|column| column == "environment_json")
     };
     if !has_environment {
@@ -221,6 +223,7 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
             "#,
         )
         .jctx(
+            7,
             "MIGRATION_FAILED",
             "cannot migrate validation environment schema",
         )?;
@@ -230,7 +233,7 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
              VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             [],
         )
-        .jctx("MIGRATION_FAILED", "cannot record schema migration 2")?;
+        .jctx(7, "MIGRATION_FAILED", "cannot record schema migration 2")?;
     }
     migrate_nullable_contribution_sources(conn)?;
     Ok(())
@@ -238,16 +241,18 @@ pub(super) fn migrate(conn: &Connection) -> Result<()> {
 
 fn migrate_nullable_contribution_sources(conn: &Connection) -> Result<()> {
     let source_layer_required = {
-        let mut statement = conn
-            .prepare("PRAGMA table_info(contributions)")
-            .jctx("MIGRATION_FAILED", "cannot inspect Contribution schema")?;
+        let mut statement = conn.prepare("PRAGMA table_info(contributions)").jctx(
+            7,
+            "MIGRATION_FAILED",
+            "cannot inspect Contribution schema",
+        )?;
         statement
             .query_map([], |row| {
                 Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
             })
-            .jctx("MIGRATION_FAILED", "cannot read Contribution schema")?
+            .jctx(7, "MIGRATION_FAILED", "cannot read Contribution schema")?
             .collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("MIGRATION_FAILED", "cannot decode Contribution schema")?
+            .jctx(7, "MIGRATION_FAILED", "cannot decode Contribution schema")?
             .into_iter()
             .find(|(name, _)| name == "source_layer")
             .is_some_and(|(_, not_null)| not_null != 0)
@@ -258,11 +263,12 @@ fn migrate_nullable_contribution_sources(conn: &Connection) -> Result<()> {
              VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             [],
         )
-        .jctx("MIGRATION_FAILED", "cannot record schema migration 3")?;
+        .jctx(7, "MIGRATION_FAILED", "cannot record schema migration 3")?;
         return Ok(());
     }
 
     conn.pragma_update(None, "foreign_keys", "OFF").jctx(
+        7,
         "MIGRATION_FAILED",
         "cannot pause foreign keys for migration",
     )?;
@@ -296,17 +302,19 @@ fn migrate_nullable_contribution_sources(conn: &Connection) -> Result<()> {
         "#,
     );
     conn.pragma_update(None, "foreign_keys", "ON").jctx(
+        7,
         "MIGRATION_FAILED",
         "cannot restore foreign keys after migration",
     )?;
     migrated.jctx(
+        7,
         "MIGRATION_FAILED",
         "cannot make Contribution source references purge-safe",
     )?;
     let violation: Option<String> = conn
         .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
         .optional()
-        .jctx("MIGRATION_FAILED", "cannot verify migrated foreign keys")?;
+        .jctx(7, "MIGRATION_FAILED", "cannot verify migrated foreign keys")?;
     if let Some(table) = violation {
         return Err(JavelinError::corruption(format!(
             "foreign-key violation after schema migration in {table}"

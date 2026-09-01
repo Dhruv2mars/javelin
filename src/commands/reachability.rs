@@ -49,15 +49,16 @@ pub(super) fn collect_reachability(store: &Store) -> Result<Reachability> {
         "SELECT stderr_object FROM validation_runs WHERE stderr_object IS NOT NULL",
         "SELECT object_id FROM provenance_attachments WHERE object_id IS NOT NULL",
     ] {
-        let mut statement = store
-            .conn
-            .prepare(query)
-            .jctx("STORE_QUERY", "cannot prepare reachability query")?;
+        let mut statement = store.conn.prepare(query).jctx(
+            7,
+            "STORE_QUERY",
+            "cannot prepare reachability query",
+        )?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
-            .jctx("STORE_QUERY", "cannot read reachable objects")?;
+            .jctx(7, "STORE_QUERY", "cannot read reachable objects")?;
         for row in rows {
-            blobs.insert(row.jctx("STORE_QUERY", "cannot decode reachable object")?);
+            blobs.insert(row.jctx(7, "STORE_QUERY", "cannot decode reachable object")?);
         }
     }
     for conflict in store.conflicts(None, true)? {

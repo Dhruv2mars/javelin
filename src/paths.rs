@@ -47,12 +47,14 @@ pub fn discover(start: Option<&Path>) -> Result<ProjectContext> {
         requested.to_path_buf()
     } else {
         std::env::current_dir()
-            .jctx("PATH_IO", "cannot read current directory")?
+            .jctx(9, "PATH_IO", "cannot read current directory")?
             .join(requested)
     };
-    let absolute = absolute
-        .canonicalize()
-        .jctx("PATH_IO", format!("cannot resolve {}", absolute.display()))?;
+    let absolute = absolute.canonicalize().jctx(
+        9,
+        "PATH_IO",
+        format!("cannot resolve {}", absolute.display()),
+    )?;
     let start_directory = if absolute.is_file() {
         absolute.parent().unwrap_or(&absolute).to_path_buf()
     } else {
@@ -63,6 +65,7 @@ pub fn discover(start: Option<&Path>) -> Result<ProjectContext> {
         let marker_path = directory.join(".javelin-view");
         if marker_path.is_file() {
             let bytes = fs::read(&marker_path).jctx(
+                7,
                 "VIEW_MARKER",
                 format!("cannot read {}", marker_path.display()),
             )?;
@@ -75,9 +78,11 @@ pub fn discover(start: Option<&Path>) -> Result<ProjectContext> {
                     marker.format
                 )));
             }
-            let root = PathBuf::from(marker.project)
-                .canonicalize()
-                .jctx("VIEW_MARKER", "view marker project does not exist")?;
+            let root = PathBuf::from(marker.project).canonicalize().jctx(
+                7,
+                "VIEW_MARKER",
+                "view marker project does not exist",
+            )?;
             validate_view_marker(&root, directory, &marker.layer_id)?;
             return Ok(ProjectContext {
                 metadata: root.join(".javelin"),
@@ -109,7 +114,7 @@ fn validate_view_marker(root: &Path, directory: &Path, layer_id: &str) -> Result
         &database,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .jctx("VIEW_MARKER", "cannot verify view marker Store")?;
+    .jctx(7, "VIEW_MARKER", "cannot verify view marker Store")?;
     let registered: Option<String> = connection
         .query_row(
             "SELECT v.path FROM views v JOIN layers l ON l.id = v.layer_id
@@ -118,15 +123,17 @@ fn validate_view_marker(root: &Path, directory: &Path, layer_id: &str) -> Result
             |row| row.get(0),
         )
         .optional()
-        .jctx("VIEW_MARKER", "cannot verify view marker Layer")?;
+        .jctx(7, "VIEW_MARKER", "cannot verify view marker Layer")?;
     let Some(registered) = registered else {
         return Err(JavelinError::corruption(
             "view marker does not match an active registered Layer",
         ));
     };
-    let registered = PathBuf::from(registered)
-        .canonicalize()
-        .jctx("VIEW_MARKER", "registered Layer view does not exist")?;
+    let registered = PathBuf::from(registered).canonicalize().jctx(
+        7,
+        "VIEW_MARKER",
+        "registered Layer view does not exist",
+    )?;
     if registered != directory {
         return Err(JavelinError::corruption(
             "view marker does not match its registered Layer path",

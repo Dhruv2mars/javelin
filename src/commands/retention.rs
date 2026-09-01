@@ -28,8 +28,11 @@ pub(super) fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<
                     let trash = store.metadata.join("trash").join(&layer_id);
                     store.purge_layer(&layer_id)?;
                     if trash.exists() {
-                        fs::remove_dir_all(&trash)
-                            .jctx("DISCARD_IO", "cannot purge expired retained view")?;
+                        fs::remove_dir_all(&trash).jctx(
+                            7,
+                            "DISCARD_IO",
+                            "cannot purge expired retained view",
+                        )?;
                     }
                     discarded_purged.push(layer_id);
                     progressed = true;
@@ -50,16 +53,17 @@ pub(super) fn gc(store: &mut Store, dry_run: bool, json_output: bool) -> Result<
         .filter(|id| !reachable.contains(id))
         .collect::<Vec<_>>();
     if !dry_run {
-        let tx = store
-            .conn
-            .transaction()
-            .jctx("STORE_TX", "cannot begin GC metadata removal")?;
+        let tx =
+            store
+                .conn
+                .transaction()
+                .jctx(7, "STORE_TX", "cannot begin GC metadata removal")?;
         for id in &unreachable {
             tx.execute("DELETE FROM object_metadata WHERE id = ?1", [id])
-                .jctx("STORE_WRITE", "cannot remove GC metadata")?;
+                .jctx(7, "STORE_WRITE", "cannot remove GC metadata")?;
         }
         tx.commit()
-            .jctx("STORE_TX", "cannot commit GC metadata removal")?;
+            .jctx(7, "STORE_TX", "cannot commit GC metadata removal")?;
         for id in &unreachable {
             store.objects.remove(id)?;
         }
@@ -100,7 +104,7 @@ pub(super) fn events(store: &Store, since: i64, follow: bool, jsonl: bool) -> Re
             println!("{event}");
             std::io::stdout()
                 .flush()
-                .jctx("OUTPUT_IO", "cannot flush event stream")?;
+                .jctx(7, "OUTPUT_IO", "cannot flush event stream")?;
             cursor = event["cursor"].as_i64().unwrap_or(cursor);
         }
         if follow {
@@ -110,7 +114,7 @@ pub(super) fn events(store: &Store, since: i64, follow: bool, jsonl: bool) -> Re
                     println!("{event}");
                     std::io::stdout()
                         .flush()
-                        .jctx("OUTPUT_IO", "cannot flush event stream")?;
+                        .jctx(7, "OUTPUT_IO", "cannot flush event stream")?;
                     cursor = event["cursor"].as_i64().unwrap_or(cursor);
                 }
             }

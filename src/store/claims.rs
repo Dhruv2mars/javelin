@@ -7,7 +7,7 @@ impl Store {
                 "UPDATE claims SET released_at = ?1 WHERE released_at IS NULL AND expires_at <= ?1",
                 [cutoff],
             )
-            .jctx("STORE_WRITE", "cannot expire Claims")
+            .jctx(7, "STORE_WRITE", "cannot expire Claims")
     }
 
     pub fn create_claim(&mut self, layer_id: &str, resource: &str, seconds: u64) -> Result<String> {
@@ -21,7 +21,7 @@ impl Store {
                  VALUES (?1, ?2, ?3, 'path', ?4, NULL, ?5)",
                 params![id, layer.id, resource, expires, now()],
             )
-            .jctx("STORE_WRITE", "cannot create Claim")?;
+            .jctx(7, "STORE_WRITE", "cannot create Claim")?;
         self.append_event(
             "claim.created",
             Some("claim"),
@@ -39,7 +39,7 @@ impl Store {
                  c.created_at FROM claims c JOIN layers l ON l.id = c.layer_id
                  WHERE c.released_at IS NULL AND c.expires_at > ?1 ORDER BY c.created_at",
             )
-            .jctx("STORE_QUERY", "cannot prepare Claim list")?;
+            .jctx(7, "STORE_QUERY", "cannot prepare Claim list")?;
         let rows = statement
             .query_map([now()], |row| {
                 Ok(json!({
@@ -53,9 +53,9 @@ impl Store {
                     "created_at": row.get::<_, String>(7)?,
                 }))
             })
-            .jctx("STORE_QUERY", "cannot read Claims")?;
+            .jctx(7, "STORE_QUERY", "cannot read Claims")?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode Claims")
+            .jctx(7, "STORE_QUERY", "cannot decode Claims")
     }
 
     pub fn renew_claim(&mut self, id: &str, seconds: u64) -> Result<String> {
@@ -67,7 +67,7 @@ impl Store {
                 "UPDATE claims SET expires_at = ?1 WHERE id = ?2 AND released_at IS NULL",
                 params![expires, id],
             )
-            .jctx("STORE_WRITE", "cannot renew Claim")?;
+            .jctx(7, "STORE_WRITE", "cannot renew Claim")?;
         if changed != 1 {
             return Err(JavelinError::invalid("Claim is unknown or released"));
         }
@@ -87,7 +87,7 @@ impl Store {
                 "UPDATE claims SET released_at = ?1 WHERE id = ?2 AND released_at IS NULL",
                 params![now(), id],
             )
-            .jctx("STORE_WRITE", "cannot release Claim")?;
+            .jctx(7, "STORE_WRITE", "cannot release Claim")?;
         if changed != 1 {
             return Err(JavelinError::invalid("Claim is unknown or released"));
         }

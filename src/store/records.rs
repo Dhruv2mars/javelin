@@ -124,7 +124,7 @@ pub(super) fn append_event_tx(
             now()
         ],
     )
-    .jctx("STORE_WRITE", "cannot append event")?;
+    .jctx(7, "STORE_WRITE", "cannot append event")?;
     Ok(tx.last_insert_rowid())
 }
 
@@ -146,6 +146,6 @@ pub(super) fn append_event_conn(
             now()
         ],
     )
-    .jctx("STORE_WRITE", "cannot append event")?;
+    .jctx(7, "STORE_WRITE", "cannot append event")?;
     Ok(conn.last_insert_rowid())
 }

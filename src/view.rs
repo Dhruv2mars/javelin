@@ -53,7 +53,7 @@ fn scan_view_into_batch(
             !is_reserved_path(&entry.file_name().to_string_lossy())
         });
     for item in walker {
-        let item = item.jctx("SCAN_IO", format!("cannot scan {}", view.display()))?;
+        let item = item.jctx(7, "SCAN_IO", format!("cannot scan {}", view.display()))?;
         if item.depth() == 0 {
             continue;
         }
@@ -66,8 +66,11 @@ fn scan_view_into_batch(
             .ok_or_else(|| JavelinError::unsupported("non-UTF-8 paths are unsupported"))?
             .replace(std::path::MAIN_SEPARATOR, "/");
         validate_relative(&relative)?;
-        let metadata =
-            fs::symlink_metadata(item.path()).jctx("SCAN_IO", format!("cannot stat {relative}"))?;
+        let metadata = fs::symlink_metadata(item.path()).jctx(
+            7,
+            "SCAN_IO",
+            format!("cannot stat {relative}"),
+        )?;
         let is_directory = metadata.file_type().is_dir();
         if let Some((is_ignored, rule)) = policy.decision(&relative, is_directory) {
             if is_ignored {
@@ -130,7 +133,7 @@ pub fn view_stamp(view: &Path) -> Result<String> {
             !is_reserved_path(&entry.file_name().to_string_lossy())
         });
     for item in walker {
-        let item = item.jctx("SCAN_IO", format!("cannot inspect {}", view.display()))?;
+        let item = item.jctx(7, "SCAN_IO", format!("cannot inspect {}", view.display()))?;
         if item.depth() == 0 {
             continue;
         }
@@ -142,8 +145,11 @@ pub fn view_stamp(view: &Path) -> Result<String> {
             .ok_or_else(|| JavelinError::unsupported("non-UTF-8 paths are unsupported"))?
             .replace(std::path::MAIN_SEPARATOR, "/");
         validate_relative(&relative)?;
-        let metadata =
-            fs::symlink_metadata(item.path()).jctx("SCAN_IO", format!("cannot stat {relative}"))?;
+        let metadata = fs::symlink_metadata(item.path()).jctx(
+            7,
+            "SCAN_IO",
+            format!("cannot stat {relative}"),
+        )?;
         hasher.update(relative.as_bytes());
         hasher.update(&[0]);
         hasher.update(&metadata.len().to_be_bytes());
@@ -193,7 +199,11 @@ fn detect_case_collisions(entries: &[TreeEntry]) -> Result<()> {
 fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     Ok(fs::read_link(path)
-        .jctx("SCAN_IO", format!("cannot read symlink {}", path.display()))?
+        .jctx(
+            7,
+            "SCAN_IO",
+            format!("cannot read symlink {}", path.display()),
+        )?
         .as_os_str()
         .as_bytes()
         .to_vec())
@@ -202,7 +212,11 @@ fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
 #[cfg(not(unix))]
 fn symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
     Ok(fs::read_link(path)
-        .jctx("SCAN_IO", format!("cannot read symlink {}", path.display()))?
+        .jctx(
+            7,
+            "SCAN_IO",
+            format!("cannot read symlink {}", path.display()),
+        )?
         .to_string_lossy()
         .as_bytes()
         .to_vec())
@@ -226,11 +240,11 @@ pub fn materialize_tree(
     marker: Option<&ViewMarker>,
 ) -> Result<&'static str> {
     let parent = destination.parent().unwrap_or(destination);
-    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create materialization parent")?;
+    fs::create_dir_all(parent).jctx(7, "VIEW_IO", "cannot create materialization parent")?;
     let snapshot = tempfile::Builder::new()
         .prefix(".javelin-materialize-")
         .tempdir_in(parent)
-        .jctx("VIEW_IO", "cannot create materialization snapshot")?;
+        .jctx(7, "VIEW_IO", "cannot create materialization snapshot")?;
     populate_snapshot(tree, snapshot.path(), objects, false)?;
     materialize_snapshot(tree, snapshot.path(), destination, objects, marker)
 }
@@ -255,6 +269,7 @@ fn materialize_snapshot(
     marker: Option<&ViewMarker>,
 ) -> Result<&'static str> {
     fs::create_dir_all(destination).jctx(
+        7,
         "VIEW_IO",
         format!("cannot create view {}", destination.display()),
     )?;
@@ -271,12 +286,16 @@ fn materialize_snapshot(
         let path = safe_join(destination, &entry.path)?;
         match entry.kind {
             EntryKind::Directory => {
-                fs::create_dir_all(&path)
-                    .jctx("VIEW_IO", format!("cannot create directory {}", entry.path))?;
+                fs::create_dir_all(&path).jctx(
+                    7,
+                    "VIEW_IO",
+                    format!("cannot create directory {}", entry.path),
+                )?;
             }
             EntryKind::File => {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent).jctx(
+                        7,
                         "VIEW_IO",
                         format!("cannot create parent for {}", entry.path),
                     )?;
@@ -290,6 +309,7 @@ fn materialize_snapshot(
             EntryKind::Symlink => {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent).jctx(
+                        7,
                         "VIEW_IO",
                         format!("cannot create parent for {}", entry.path),
                     )?;
@@ -316,7 +336,7 @@ pub fn ensure_root_cache(
     objects: &ObjectStore,
 ) -> Result<PathBuf> {
     let materialized = metadata.join("materialized");
-    fs::create_dir_all(&materialized).jctx("VIEW_IO", "cannot create root cache directory")?;
+    fs::create_dir_all(&materialized).jctx(7, "VIEW_IO", "cannot create root cache directory")?;
     let target = materialized.join(root_id);
     if target.join(".complete").is_file() {
         return Ok(target);
@@ -324,17 +344,17 @@ pub fn ensure_root_cache(
     let temp = metadata
         .join("temp")
         .join(format!("materialized-{}", ulid::Ulid::new()));
-    fs::create_dir_all(&temp).jctx("VIEW_IO", "cannot create temporary root cache")?;
+    fs::create_dir_all(&temp).jctx(7, "VIEW_IO", "cannot create temporary root cache")?;
     populate_snapshot(tree, &temp, objects, true)?;
     let complete = temp.join(".complete");
     File::create(&complete)
         .and_then(|file| file.sync_all())
-        .jctx("VIEW_IO", "cannot complete root cache")?;
+        .jctx(7, "VIEW_IO", "cannot complete root cache")?;
     sync_dir(&temp)?;
     match fs::rename(&temp, &target) {
         Ok(()) => sync_dir(&materialized)?,
         Err(_) if target.join(".complete").is_file() => {
-            fs::remove_dir_all(&temp).jctx("VIEW_IO", "cannot remove raced root cache")?;
+            fs::remove_dir_all(&temp).jctx(7, "VIEW_IO", "cannot remove raced root cache")?;
         }
         Err(error) => {
             return Err(JavelinError::new(7, "VIEW_IO", "cannot install root cache")
@@ -354,12 +374,15 @@ fn populate_snapshot(
         let path = safe_join(destination, &entry.path)?;
         match entry.kind {
             EntryKind::Directory => {
-                fs::create_dir_all(&path)
-                    .jctx("VIEW_IO", format!("cannot cache directory {}", entry.path))?;
+                fs::create_dir_all(&path).jctx(
+                    7,
+                    "VIEW_IO",
+                    format!("cannot cache directory {}", entry.path),
+                )?;
             }
             EntryKind::File => {
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create cache parent")?;
+                    fs::create_dir_all(parent).jctx(7, "VIEW_IO", "cannot create cache parent")?;
                 }
                 let object_id = entry.object_id.as_deref().ok_or_else(|| {
                     JavelinError::corruption(format!("file {} has no blob", entry.path))
@@ -373,7 +396,7 @@ fn populate_snapshot(
             }
             EntryKind::Symlink => {
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create cache parent")?;
+                    fs::create_dir_all(parent).jctx(7, "VIEW_IO", "cannot create cache parent")?;
                 }
                 let object_id = entry.object_id.as_deref().ok_or_else(|| {
                     JavelinError::corruption(format!("symlink {} has no target", entry.path))
@@ -398,17 +421,20 @@ pub fn invalidate_root_cache(metadata: &Path, root_id: &str) -> Result<()> {
     }
     let path = metadata.join("materialized").join(root_id);
     if path.exists() {
-        fs::remove_dir_all(&path)
-            .jctx("VIEW_IO", format!("cannot invalidate root cache {root_id}"))?;
+        fs::remove_dir_all(&path).jctx(
+            7,
+            "VIEW_IO",
+            format!("cannot invalidate root cache {root_id}"),
+        )?;
     }
     Ok(())
 }
 
 fn clear_view(root: &Path, view: &Path, policy: &IgnorePolicy) -> Result<()> {
-    for item in fs::read_dir(view).jctx("VIEW_IO", format!("cannot list {}", view.display()))? {
-        let item = item.jctx("VIEW_IO", "cannot read view entry")?;
+    for item in fs::read_dir(view).jctx(7, "VIEW_IO", format!("cannot list {}", view.display()))? {
+        let item = item.jctx(7, "VIEW_IO", "cannot read view entry")?;
         let path = item.path();
-        let metadata = fs::symlink_metadata(&path).jctx("VIEW_IO", "cannot stat view entry")?;
+        let metadata = fs::symlink_metadata(&path).jctx(7, "VIEW_IO", "cannot stat view entry")?;
         let relative = path
             .strip_prefix(root)
             .map_err(|_| JavelinError::corruption("view cleanup escaped destination"))?
@@ -422,15 +448,22 @@ fn clear_view(root: &Path, view: &Path, policy: &IgnorePolicy) -> Result<()> {
         if directory {
             clear_view(root, &path, policy)?;
             let empty = fs::read_dir(&path)
-                .jctx("VIEW_IO", format!("cannot list {}", path.display()))?
+                .jctx(7, "VIEW_IO", format!("cannot list {}", path.display()))?
                 .next()
                 .is_none();
             if empty {
-                fs::remove_dir(&path)
-                    .jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+                fs::remove_dir(&path).jctx(
+                    7,
+                    "VIEW_IO",
+                    format!("cannot remove {}", path.display()),
+                )?;
             }
         } else {
-            fs::remove_file(&path).jctx("VIEW_IO", format!("cannot remove {}", path.display()))?;
+            fs::remove_file(&path).jctx(
+                7,
+                "VIEW_IO",
+                format!("cannot remove {}", path.display()),
+            )?;
         }
     }
     Ok(())
@@ -440,18 +473,20 @@ fn atomic_write(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| JavelinError::corruption("write path has no parent"))?;
-    fs::create_dir_all(parent).jctx("VIEW_IO", "cannot create write parent")?;
+    fs::create_dir_all(parent).jctx(7, "VIEW_IO", "cannot create write parent")?;
     let temp = parent.join(format!(".javelin-write-{}.tmp", ulid::Ulid::new()));
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&temp)
-        .jctx("VIEW_IO", format!("cannot create {}", temp.display()))?;
-    file.write_all(bytes)
-        .and_then(|_| file.sync_all())
-        .jctx("VIEW_IO", format!("cannot write {}", path.display()))?;
+        .jctx(7, "VIEW_IO", format!("cannot create {}", temp.display()))?;
+    file.write_all(bytes).and_then(|_| file.sync_all()).jctx(
+        7,
+        "VIEW_IO",
+        format!("cannot write {}", path.display()),
+    )?;
     set_executable(&temp, executable)?;
-    fs::rename(&temp, path).jctx("VIEW_IO", format!("cannot install {}", path.display()))?;
+    fs::rename(&temp, path).jctx(7, "VIEW_IO", format!("cannot install {}", path.display()))?;
     sync_dir(parent)?;
     Ok(())
 }
@@ -461,6 +496,7 @@ fn set_cache_mode(path: &Path, executable: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = if executable { 0o555 } else { 0o444 };
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).jctx(
+        7,
         "VIEW_IO",
         format!("cannot protect cached file {}", path.display()),
     )
@@ -469,10 +505,10 @@ fn set_cache_mode(path: &Path, executable: bool) -> Result<()> {
 #[cfg(not(unix))]
 fn set_cache_mode(path: &Path, _executable: bool) -> Result<()> {
     let mut permissions = fs::metadata(path)
-        .jctx("VIEW_IO", "cannot stat cached file")?
+        .jctx(7, "VIEW_IO", "cannot stat cached file")?
         .permissions();
     permissions.set_readonly(true);
-    fs::set_permissions(path, permissions).jctx("VIEW_IO", "cannot protect cached file")
+    fs::set_permissions(path, permissions).jctx(7, "VIEW_IO", "cannot protect cached file")
 }
 
 #[cfg(unix)]
@@ -480,6 +516,7 @@ fn set_writable_mode(path: &Path, executable: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = if executable { 0o755 } else { 0o644 };
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).jctx(
+        7,
         "VIEW_IO",
         format!("cannot set view mode on {}", path.display()),
     )
@@ -492,10 +529,10 @@ fn set_writable_mode(path: &Path, executable: bool) -> Result<()> {
 )]
 fn set_writable_mode(path: &Path, _executable: bool) -> Result<()> {
     let mut permissions = fs::metadata(path)
-        .jctx("VIEW_IO", "cannot stat materialized file")?
+        .jctx(7, "VIEW_IO", "cannot stat materialized file")?
         .permissions();
     permissions.set_readonly(false);
-    fs::set_permissions(path, permissions).jctx("VIEW_IO", "cannot make view file writable")
+    fs::set_permissions(path, permissions).jctx(7, "VIEW_IO", "cannot make view file writable")
 }
 
 #[cfg(target_os = "macos")]
@@ -514,15 +551,21 @@ fn clone_or_copy(source: &Path, destination: &Path) -> Result<bool> {
     if cloned {
         return Ok(true);
     }
-    fs::copy(source, destination)
-        .jctx("VIEW_IO", format!("cannot copy {}", destination.display()))?;
+    fs::copy(source, destination).jctx(
+        7,
+        "VIEW_IO",
+        format!("cannot copy {}", destination.display()),
+    )?;
     Ok(false)
 }
 
 #[cfg(not(target_os = "macos"))]
 fn clone_or_copy(source: &Path, destination: &Path) -> Result<bool> {
-    fs::copy(source, destination)
-        .jctx("VIEW_IO", format!("cannot copy {}", destination.display()))?;
+    fs::copy(source, destination).jctx(
+        7,
+        "VIEW_IO",
+        format!("cannot copy {}", destination.display()),
+    )?;
     Ok(false)
 }
 
@@ -567,6 +610,7 @@ fn create_symlink(target: &[u8], path: &Path, _directory: bool) -> Result<()> {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     std::os::unix::fs::symlink(OsStr::from_bytes(target), path).jctx(
+        7,
         "VIEW_IO",
         format!("cannot create symlink {}", path.display()),
     )
@@ -582,6 +626,7 @@ fn create_symlink(target: &[u8], path: &Path, directory: bool) -> Result<()> {
         std::os::windows::fs::symlink_file(target, path)
     };
     result.jctx(
+        7,
         "VIEW_IO",
         format!("cannot create symlink {}", path.display()),
     )
@@ -591,7 +636,7 @@ fn create_symlink(target: &[u8], path: &Path, directory: bool) -> Result<()> {
 fn set_executable(path: &Path, executable: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
-        .jctx("VIEW_IO", format!("cannot stat {}", path.display()))?
+        .jctx(7, "VIEW_IO", format!("cannot stat {}", path.display()))?
         .permissions();
     let mut mode = permissions.mode();
     if executable {
@@ -600,8 +645,11 @@ fn set_executable(path: &Path, executable: bool) -> Result<()> {
         mode &= !0o111;
     }
     permissions.set_mode(mode);
-    fs::set_permissions(path, permissions)
-        .jctx("VIEW_IO", format!("cannot set mode on {}", path.display()))
+    fs::set_permissions(path, permissions).jctx(
+        7,
+        "VIEW_IO",
+        format!("cannot set mode on {}", path.display()),
+    )
 }
 
 #[cfg(not(unix))]

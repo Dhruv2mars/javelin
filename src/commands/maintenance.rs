@@ -4,7 +4,7 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
     let integrity: String = store
         .conn
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
-        .jctx("STORE_QUERY", "cannot run SQLite integrity check")?;
+        .jctx(7, "STORE_QUERY", "cannot run SQLite integrity check")?;
     if integrity != "ok" {
         return Err(JavelinError::corruption(format!(
             "SQLite integrity check failed: {integrity}"
@@ -16,7 +16,7 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
             Ok((row.get(0)?, row.get(1)?))
         })
         .optional()
-        .jctx("STORE_QUERY", "cannot run SQLite foreign-key check")?;
+        .jctx(7, "STORE_QUERY", "cannot run SQLite foreign-key check")?;
     if let Some((table, rowid)) = foreign_key_failure {
         return Err(JavelinError::corruption(format!(
             "foreign-key violation in {table} row {rowid}"
@@ -46,7 +46,7 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
     let mut statement = store
         .conn
         .prepare("SELECT id, kind, uncompressed_size FROM object_metadata")
-        .jctx("STORE_QUERY", "cannot prepare object metadata check")?;
+        .jctx(7, "STORE_QUERY", "cannot prepare object metadata check")?;
     let metadata = statement
         .query_map([], |row| {
             Ok((
@@ -55,9 +55,9 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
                 row.get::<_, i64>(2)?,
             ))
         })
-        .jctx("STORE_QUERY", "cannot read object metadata")?
+        .jctx(7, "STORE_QUERY", "cannot read object metadata")?
         .collect::<rusqlite::Result<Vec<_>>>()
-        .jctx("STORE_QUERY", "cannot decode object metadata")?;
+        .jctx(7, "STORE_QUERY", "cannot decode object metadata")?;
     let metadata = metadata
         .into_iter()
         .map(|(id, kind, size)| (id, (kind, size)))
@@ -126,7 +126,7 @@ pub(super) fn repair(store: &mut Store, requested: Option<&str>, json_output: bo
             }
         };
         store.mark_view(&layer.id, &head.id, false, backend)?;
-        FileExt::unlock(&reconcile_lock).jctx("RECONCILE_LOCK", "cannot release repair lock")?;
+        FileExt::unlock(&reconcile_lock).jctx(8, "RECONCILE_LOCK", "cannot release repair lock")?;
         repaired.push(json!({"layer": layer.name, "checkpoint": head.id, "backend": backend}));
     }
     store.append_event(

@@ -94,13 +94,14 @@ impl std::error::Error for JavelinError {}
 pub type Result<T> = std::result::Result<T, JavelinError>;
 
 pub trait Context<T> {
-    fn jctx(self, code: &'static str, message: impl Into<String>) -> Result<T>;
+    fn jctx(self, exit_code: u8, code: &'static str, message: impl Into<String>) -> Result<T>;
 }
 
 impl<T, E: Display> Context<T> for std::result::Result<T, E> {
-    fn jctx(self, code: &'static str, message: impl Into<String>) -> Result<T> {
+    fn jctx(self, exit_code: u8, code: &'static str, message: impl Into<String>) -> Result<T> {
         self.map_err(|error| {
-            JavelinError::new(7, code, message.into()).details(json!({"cause": error.to_string()}))
+            JavelinError::new(exit_code, code, message.into())
+                .details(json!({"cause": error.to_string()}))
         })
     }
 }

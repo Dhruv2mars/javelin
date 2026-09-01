@@ -10,12 +10,12 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin conflict recording")?;
+            .jctx(7, "STORE_TX", "cannot begin conflict recording")?;
         tx.execute(
             "UPDATE layers SET status = 'conflicted' WHERE id = ?1",
             [layer_id],
         )
-        .jctx("STORE_WRITE", "cannot mark Layer conflicted")?;
+        .jctx(7, "STORE_WRITE", "cannot mark Layer conflicted")?;
         let mut ids = Vec::new();
         for conflict in conflicts {
             let id = ulid::Ulid::new().to_string();
@@ -35,7 +35,7 @@ impl Store {
                     now()
                 ],
             )
-            .jctx("STORE_WRITE", "cannot store Conflict")?;
+            .jctx(7, "STORE_WRITE", "cannot store Conflict")?;
             append_event_tx(
                 &tx,
                 "conflict.created",
@@ -45,7 +45,7 @@ impl Store {
             )?;
             ids.push(id);
         }
-        tx.commit().jctx("STORE_TX", "cannot commit Conflicts")?;
+        tx.commit().jctx(7, "STORE_TX", "cannot commit Conflicts")?;
         Ok(ids)
     }
 
@@ -65,23 +65,23 @@ impl Store {
             query.push_str(" AND status = 'open'");
         }
         query.push_str(" ORDER BY created_at, path");
-        let mut statement = self
-            .conn
-            .prepare(&query)
-            .jctx("STORE_QUERY", "cannot prepare Conflict list")?;
+        let mut statement =
+            self.conn
+                .prepare(&query)
+                .jctx(7, "STORE_QUERY", "cannot prepare Conflict list")?;
         let map = |row: &rusqlite::Row<'_>| conflict_from_row(row);
         let records = if let Some(layer) = layer {
             statement
                 .query_map([layer], map)
-                .jctx("STORE_QUERY", "cannot read Conflicts")?
+                .jctx(7, "STORE_QUERY", "cannot read Conflicts")?
                 .collect::<rusqlite::Result<Vec<_>>>()
         } else {
             statement
                 .query_map([], map)
-                .jctx("STORE_QUERY", "cannot read Conflicts")?
+                .jctx(7, "STORE_QUERY", "cannot read Conflicts")?
                 .collect::<rusqlite::Result<Vec<_>>>()
         };
-        records.jctx("STORE_QUERY", "cannot decode Conflicts")
+        records.jctx(7, "STORE_QUERY", "cannot decode Conflicts")
     }
 
     pub fn conflict(&self, id: &str) -> Result<ConflictRecord> {
@@ -93,7 +93,7 @@ impl Store {
                 conflict_from_row,
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read Conflict")?
+            .jctx(7, "STORE_QUERY", "cannot read Conflict")?
             .ok_or_else(|| JavelinError::invalid(format!("unknown Conflict {id}")))
     }
 
@@ -107,25 +107,25 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin Conflict resolution")?;
+            .jctx(7, "STORE_TX", "cannot begin Conflict resolution")?;
         tx.execute(
             "UPDATE conflicts SET status = 'resolved', resolution = ?1 WHERE id = ?2",
             params![resolution, id],
         )
-        .jctx("STORE_WRITE", "cannot resolve Conflict")?;
+        .jctx(7, "STORE_WRITE", "cannot resolve Conflict")?;
         let remaining: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM conflicts WHERE layer_id = ?1 AND status = 'open'",
                 [&conflict.layer_id],
                 |row| row.get(0),
             )
-            .jctx("STORE_QUERY", "cannot count open Conflicts")?;
+            .jctx(7, "STORE_QUERY", "cannot count open Conflicts")?;
         if remaining == 0 {
             tx.execute(
                 "UPDATE layers SET status = 'active' WHERE id = ?1",
                 [&conflict.layer_id],
             )
-            .jctx("STORE_WRITE", "cannot reactivate Layer")?;
+            .jctx(7, "STORE_WRITE", "cannot reactivate Layer")?;
         }
         append_event_tx(
             &tx,
@@ -135,6 +135,6 @@ impl Store {
             &json!({"resolution": resolution, "remaining": remaining}),
         )?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Conflict resolution")
+            .jctx(7, "STORE_TX", "cannot commit Conflict resolution")
     }
 }

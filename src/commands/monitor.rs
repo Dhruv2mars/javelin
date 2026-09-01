@@ -18,11 +18,11 @@ fn monitor_ready(path: &Path) -> bool {
 
 pub(super) fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
     let temp = path.with_extension(format!("tmp-{}", ulid::Ulid::new()));
-    let mut file = File::create(&temp).jctx("MONITOR_IO", "cannot create Monitor state")?;
+    let mut file = File::create(&temp).jctx(8, "MONITOR_IO", "cannot create Monitor state")?;
     file.write_all(value.as_bytes())
         .and_then(|_| file.sync_all())
-        .jctx("MONITOR_IO", "cannot write Monitor state")?;
-    fs::rename(&temp, path).jctx("MONITOR_IO", "cannot install Monitor state")?;
+        .jctx(8, "MONITOR_IO", "cannot write Monitor state")?;
+    fs::rename(&temp, path).jctx(8, "MONITOR_IO", "cannot install Monitor state")?;
     sync_dir(
         path.parent()
             .ok_or_else(|| JavelinError::corruption("Monitor state path has no parent"))?,
@@ -37,7 +37,7 @@ pub(super) fn monitor(store: &mut Store) -> Result<()> {
         .read(true)
         .write(true)
         .open(&lock_path)
-        .jctx("MONITOR_IO", "cannot open Monitor lock")?;
+        .jctx(8, "MONITOR_IO", "cannot open Monitor lock")?;
     lock.try_lock_exclusive()
         .map_err(|_| JavelinError::busy("another Monitor already owns this World"))?;
     let pid = std::process::id();
@@ -233,15 +233,16 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         .read(true)
         .write(true)
         .open(store.metadata.join("monitor/start.lock"))
-        .jctx("MONITOR_LOCK", "cannot open Monitor startup lock")?;
+        .jctx(8, "MONITOR_LOCK", "cannot open Monitor startup lock")?;
     startup_lock
         .lock_exclusive()
-        .jctx("MONITOR_LOCK", "cannot acquire Monitor startup lock")?;
+        .jctx(8, "MONITOR_LOCK", "cannot acquire Monitor startup lock")?;
     if monitor_ready(&ready_path) {
         return Ok(());
     }
     let _ = fs::remove_file(&ready_path);
-    let executable = std::env::current_exe().jctx("MONITOR_IO", "cannot locate Javelin binary")?;
+    let executable =
+        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
     let mut command = ProcessCommand::new(executable);
     command
         .arg("--project")
@@ -252,7 +253,9 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure_monitor_process(&mut command)?;
-    command.spawn().jctx("MONITOR_IO", "cannot start Monitor")?;
+    command
+        .spawn()
+        .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(5) {
         if monitor_ready(&ready_path) {

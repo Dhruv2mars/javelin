@@ -126,8 +126,11 @@ pub struct ProvenanceConfig {
 impl Config {
     pub fn load(root: &Path) -> Result<Self> {
         let path = root.join("javelin.toml");
-        let text = fs::read_to_string(&path)
-            .jctx("CONFIG_IO", format!("cannot read {}", path.display()))?;
+        let text = fs::read_to_string(&path).jctx(
+            10,
+            "CONFIG_IO",
+            format!("cannot read {}", path.display()),
+        )?;
         Self::parse(&text)
     }
 
@@ -186,7 +189,7 @@ impl IgnorePolicy {
             Err(error) if error.kind() == ErrorKind::NotFound => DEFAULT_IGNORE.to_string(),
             Err(error) => {
                 return Err(JavelinError::new(
-                    7,
+                    10,
                     "CONFIG_IO",
                     format!("cannot read {}", path.display()),
                 )

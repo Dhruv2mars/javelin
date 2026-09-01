@@ -9,7 +9,7 @@ impl Store {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read idempotent Contribution")
+            .jctx(7, "STORE_QUERY", "cannot read idempotent Contribution")
     }
 
     pub fn contribution_details_by_key(&self, key: &str) -> Result<Option<ExistingContribution>> {
@@ -28,7 +28,11 @@ impl Store {
                 },
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read idempotent Contribution details")
+            .jctx(
+                7,
+                "STORE_QUERY",
+                "cannot read idempotent Contribution details",
+            )
     }
 
     pub fn accept_publish(
@@ -56,12 +60,12 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .jctx("STORE_TX", "cannot begin Publish acceptance")?;
+            .jctx(7, "STORE_TX", "cannot begin Publish acceptance")?;
         let previous_target_ref = if layer.target_kind == TargetKind::World {
             tx.query_row("SELECT current_version FROM world LIMIT 1", [], |row| {
                 row.get::<_, String>(0)
             })
-            .jctx("STORE_QUERY", "cannot read Publish target")?
+            .jctx(7, "STORE_QUERY", "cannot read Publish target")?
         } else {
             let target_id = layer
                 .target_id
@@ -73,7 +77,7 @@ impl Store {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read parent Layer target")?
+            .jctx(7, "STORE_QUERY", "cannot read parent Layer target")?
             .ok_or_else(|| JavelinError::stale("parent Layer is unavailable"))?
         };
         if previous_target_ref != source_checkpoint.synchronized_ref {
@@ -89,21 +93,21 @@ impl Store {
                     [],
                     |row| row.get(0),
                 )
-                .jctx("STORE_QUERY", "cannot allocate World Version")?;
+                .jctx(7, "STORE_QUERY", "cannot allocate World Version")?;
             let version_id = format!("v{sequence}");
             tx.execute(
                 "INSERT INTO versions(id, sequence, parent_version, root_tree, accepted_contribution, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![version_id, sequence, previous_target_ref, candidate_root, contribution_id, now],
             )
-            .jctx("STORE_WRITE", "cannot append accepted World Version")?;
+            .jctx(7, "STORE_WRITE", "cannot append accepted World Version")?;
             crate::fault::hit("inside_transaction_before_current_pointer_update");
             let changed = tx
                 .execute(
                     "UPDATE world SET current_version = ?1 WHERE current_version = ?2",
                     params![version_id, previous_target_ref],
                 )
-                .jctx("STORE_WRITE", "cannot advance Current World")?;
+                .jctx(7, "STORE_WRITE", "cannot advance Current World")?;
             if changed != 1 {
                 return Err(JavelinError::stale("Current World changed during Publish"));
             }
@@ -117,7 +121,7 @@ impl Store {
                     [&previous_target_ref],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .jctx("STORE_QUERY", "cannot read parent Layer head")?;
+                .jctx(7, "STORE_QUERY", "cannot read parent Layer head")?;
             let checkpoint_id = ulid::Ulid::new().to_string();
             tx.execute(
                 "INSERT INTO layer_checkpoints(id, layer_id, sequence, previous_checkpoint, root_tree,
@@ -133,13 +137,13 @@ impl Store {
                     now
                 ],
             )
-            .jctx("STORE_WRITE", "cannot append parent Layer Checkpoint")?;
+            .jctx(7, "STORE_WRITE", "cannot append parent Layer Checkpoint")?;
             let changed = tx
                 .execute(
                     "UPDATE layers SET head_checkpoint = ?1 WHERE id = ?2 AND head_checkpoint = ?3",
                     params![checkpoint_id, target_id, previous_target_ref],
                 )
-                .jctx("STORE_WRITE", "cannot advance parent Layer")?;
+                .jctx(7, "STORE_WRITE", "cannot advance parent Layer")?;
             if changed != 1 {
                 return Err(JavelinError::stale("parent Layer changed during Publish"));
             }
@@ -185,26 +189,26 @@ impl Store {
                     validation_id
                 ],
             )
-            .jctx("STORE_WRITE", "cannot link Publish validation")?;
+            .jctx(7, "STORE_WRITE", "cannot link Publish validation")?;
         }
         tx.execute(
             "INSERT OR IGNORE INTO contribution_provenance(contribution_id, session_id)
              SELECT ?1, id FROM provenance_sessions WHERE layer_id = ?2",
             params![contribution_id, layer.id],
         )
-        .jctx("STORE_WRITE", "cannot link Contribution provenance")?;
+        .jctx(7, "STORE_WRITE", "cannot link Contribution provenance")?;
         if layer.target_kind == TargetKind::World {
             tx.execute(
                 "UPDATE views SET stale = 1, updated_at = ?1 WHERE layer_id != ?2",
                 params![now, layer.id],
             )
-            .jctx("STORE_WRITE", "cannot mark World views stale")?;
+            .jctx(7, "STORE_WRITE", "cannot mark World views stale")?;
         } else if let Some(target_id) = &layer.target_id {
             tx.execute(
                 "UPDATE views SET stale = 1, updated_at = ?1 WHERE layer_id = ?2",
                 params![now, target_id],
             )
-            .jctx("STORE_WRITE", "cannot mark parent view stale")?;
+            .jctx(7, "STORE_WRITE", "cannot mark parent view stale")?;
         }
         append_event_tx(
             &tx,
@@ -221,7 +225,7 @@ impl Store {
         )?;
         crate::fault::hit("before_event_delivery");
         tx.commit()
-            .jctx("STORE_TX", "cannot commit Publish acceptance")?;
+            .jctx(7, "STORE_TX", "cannot commit Publish acceptance")?;
         crate::fault::hit("after_db_commit_before_view_update");
         Ok((contribution_id, resulting_target_ref))
     }

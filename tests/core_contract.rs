@@ -123,7 +123,7 @@ timeout_seconds = 0
     let policy = IgnorePolicy::load(temp.path()).unwrap();
     assert!(policy.ignored(".env", false));
     fs::create_dir(temp.path().join(".javelinignore")).unwrap();
-    assert!(IgnorePolicy::load(temp.path()).is_err());
+    assert_eq!(IgnorePolicy::load(temp.path()).unwrap_err().exit_code, 10);
 }
 
 #[test]

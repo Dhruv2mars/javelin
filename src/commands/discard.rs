@@ -98,8 +98,11 @@ fn cascade_discard_children(store: &mut Store, parent_id: &str, purge: bool) -> 
             let trash = store.metadata.join("trash").join(&child.id);
             store.purge_layer(&child.id)?;
             if trash.exists() {
-                fs::remove_dir_all(&trash)
-                    .jctx("DISCARD_IO", "cannot purge retained child view")?;
+                fs::remove_dir_all(&trash).jctx(
+                    7,
+                    "DISCARD_IO",
+                    "cannot purge retained child view",
+                )?;
             }
         }
     }
@@ -141,9 +144,13 @@ fn discard_named(store: &mut Store, layer: &Layer) -> Result<()> {
     let trash = store.metadata.join("trash").join(&layer.id);
     if view.exists() {
         if trash.exists() {
-            fs::remove_dir_all(&trash).jctx("DISCARD_IO", "cannot replace retained trash view")?;
+            fs::remove_dir_all(&trash).jctx(
+                7,
+                "DISCARD_IO",
+                "cannot replace retained trash view",
+            )?;
         }
-        fs::rename(&view, &trash).jctx("DISCARD_IO", "cannot retain discarded Layer view")?;
+        fs::rename(&view, &trash).jctx(7, "DISCARD_IO", "cannot retain discarded Layer view")?;
         sync_dir(
             trash
                 .parent()
@@ -187,9 +194,13 @@ pub(super) fn discarded(
             let view = PathBuf::from(&layer.view_path);
             if trash.exists() {
                 if let Some(parent) = view.parent() {
-                    fs::create_dir_all(parent).jctx("DISCARD_IO", "cannot create view parent")?;
+                    fs::create_dir_all(parent).jctx(
+                        7,
+                        "DISCARD_IO",
+                        "cannot create view parent",
+                    )?;
                 }
-                fs::rename(&trash, &view).jctx("DISCARD_IO", "cannot recover retained view")?;
+                fs::rename(&trash, &view).jctx(7, "DISCARD_IO", "cannot recover retained view")?;
                 sync_dir(
                     view.parent()
                         .ok_or_else(|| JavelinError::corruption("view path has no parent"))?,
@@ -230,7 +241,7 @@ pub(super) fn discarded(
             let trash = store.metadata.join("trash").join(&layer.id);
             store.purge_layer(&layer.id)?;
             if trash.exists() {
-                fs::remove_dir_all(&trash).jctx("DISCARD_IO", "cannot purge retained view")?;
+                fs::remove_dir_all(&trash).jctx(7, "DISCARD_IO", "cannot purge retained view")?;
             }
             emit(
                 json_output,

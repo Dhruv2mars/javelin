@@ -18,7 +18,7 @@ impl Store {
                  VALUES (?1, ?2, ?3, 'active', ?4)",
                 params![id, layer_id, actor.to_string(), now()],
             )
-            .jctx("STORE_WRITE", "cannot begin provenance session")?;
+            .jctx(7, "STORE_WRITE", "cannot begin provenance session")?;
         self.append_event(
             "provenance.started",
             Some("provenance"),
@@ -42,7 +42,7 @@ impl Store {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read provenance session")?
+            .jctx(7, "STORE_QUERY", "cannot read provenance session")?
             .ok_or_else(|| {
                 JavelinError::invalid(format!("unknown provenance session {session_id}"))
             })?;
@@ -56,7 +56,7 @@ impl Store {
                  event_type, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![event_id, session_id, layer_id, now(), actor_json, event_type, payload.to_string()],
             )
-            .jctx("STORE_WRITE", "cannot append provenance event")?;
+            .jctx(7, "STORE_WRITE", "cannot append provenance event")?;
         Ok(event_id)
     }
 
@@ -75,7 +75,7 @@ impl Store {
                  purged, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
                 params![id, session_id, object_id, name, media_type, now()],
             )
-            .jctx("STORE_WRITE", "cannot attach provenance payload")?;
+            .jctx(7, "STORE_WRITE", "cannot attach provenance payload")?;
         Ok(id)
     }
 
@@ -88,7 +88,7 @@ impl Store {
                 |row| row.get(0),
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot inspect provenance session")?;
+            .jctx(7, "STORE_QUERY", "cannot inspect provenance session")?;
         match status.as_deref() {
             Some("active") => Ok(()),
             Some(_) => Err(JavelinError::policy(
@@ -108,7 +108,7 @@ impl Store {
                  WHERE id = ?2 AND status = 'active'",
                 params![now(), session_id],
             )
-            .jctx("STORE_WRITE", "cannot end provenance session")?;
+            .jctx(7, "STORE_WRITE", "cannot end provenance session")?;
         if changed != 1 {
             return Err(JavelinError::invalid(
                 "provenance session is unknown or ended",
@@ -143,7 +143,7 @@ impl Store {
                 },
             )
             .optional()
-            .jctx("STORE_QUERY", "cannot read provenance session")?
+            .jctx(7, "STORE_QUERY", "cannot read provenance session")?
             .ok_or_else(|| JavelinError::invalid(format!("unknown provenance session {session_id}")))?;
         let mut statement = self
             .conn
@@ -151,7 +151,7 @@ impl Store {
                 "SELECT event_id, layer_id, timestamp, actor_json, event_type, payload_json FROM provenance_events
                  WHERE session_id = ?1 ORDER BY timestamp, event_id",
             )
-            .jctx("STORE_QUERY", "cannot prepare provenance event query")?;
+            .jctx(7, "STORE_QUERY", "cannot prepare provenance event query")?;
         let events = statement
             .query_map([session_id], |row| {
                 let actor: String = row.get(3)?;
@@ -167,9 +167,9 @@ impl Store {
                     "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(json!({})),
                 }))
             })
-            .jctx("STORE_QUERY", "cannot read provenance events")?
+            .jctx(7, "STORE_QUERY", "cannot read provenance events")?
             .collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode provenance events")?;
+            .jctx(7, "STORE_QUERY", "cannot decode provenance events")?;
         Ok(json!({"session": session, "events": events}))
     }
 
@@ -188,7 +188,7 @@ impl Store {
                     OR e.payload_json LIKE ?1 ESCAPE '\\' OR e.event_type LIKE ?1 ESCAPE '\\'
                  ORDER BY s.started_at",
             )
-            .jctx("STORE_QUERY", "cannot prepare provenance search")?;
+            .jctx(7, "STORE_QUERY", "cannot prepare provenance search")?;
         let rows = statement
             .query_map([pattern], |row| {
                 let actor: String = row.get(2)?;
@@ -200,9 +200,12 @@ impl Store {
                     "started_at": row.get::<_, String>(4)?,
                 }))
             })
-            .jctx("STORE_QUERY", "cannot search provenance")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode provenance search")
+            .jctx(7, "STORE_QUERY", "cannot search provenance")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode provenance search",
+        )
     }
 
     pub fn purge_provenance(&mut self, session_id: &str) -> Result<()> {
@@ -213,7 +216,7 @@ impl Store {
                 [session_id],
                 |row| row.get(0),
             )
-            .jctx("STORE_QUERY", "cannot inspect provenance session")?;
+            .jctx(7, "STORE_QUERY", "cannot inspect provenance session")?;
         if !exists {
             return Err(JavelinError::invalid(format!(
                 "unknown provenance session {session_id}"
@@ -222,25 +225,25 @@ impl Store {
         let tx = self
             .conn
             .transaction()
-            .jctx("STORE_TX", "cannot begin provenance purge")?;
+            .jctx(7, "STORE_TX", "cannot begin provenance purge")?;
         tx.execute(
             "UPDATE provenance_events SET payload_json = ?1 WHERE session_id = ?2",
             params![PURGED_PAYLOAD, session_id],
         )
-        .jctx("STORE_WRITE", "cannot purge provenance events")?;
+        .jctx(7, "STORE_WRITE", "cannot purge provenance events")?;
         tx.execute(
             "UPDATE provenance_attachments SET object_id = NULL, purged = 1 WHERE session_id = ?1",
             [session_id],
         )
-        .jctx("STORE_WRITE", "cannot purge provenance attachments")?;
+        .jctx(7, "STORE_WRITE", "cannot purge provenance attachments")?;
         tx.execute(
             "UPDATE provenance_sessions SET status = 'purged', ended_at = COALESCE(ended_at, ?1)
              WHERE id = ?2",
             params![now(), session_id],
         )
-        .jctx("STORE_WRITE", "cannot mark provenance session purged")?;
+        .jctx(7, "STORE_WRITE", "cannot mark provenance session purged")?;
         tx.commit()
-            .jctx("STORE_TX", "cannot commit provenance purge")?;
+            .jctx(7, "STORE_TX", "cannot commit provenance purge")?;
         self.append_event(
             "provenance.purged",
             Some("provenance"),
@@ -260,11 +263,14 @@ impl Store {
                   EXISTS(SELECT 1 FROM provenance_attachments a WHERE a.session_id = provenance_sessions.id
                   AND a.purged = 0)) ORDER BY started_at",
             )
-            .jctx("STORE_QUERY", "cannot prepare expired provenance query")?;
+            .jctx(7, "STORE_QUERY", "cannot prepare expired provenance query")?;
         let rows = statement
             .query_map(params![cutoff, PURGED_PAYLOAD], |row| row.get(0))
-            .jctx("STORE_QUERY", "cannot read expired provenance sessions")?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .jctx("STORE_QUERY", "cannot decode expired provenance sessions")
+            .jctx(7, "STORE_QUERY", "cannot read expired provenance sessions")?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().jctx(
+            7,
+            "STORE_QUERY",
+            "cannot decode expired provenance sessions",
+        )
     }
 }
