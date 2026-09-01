@@ -62,7 +62,12 @@ pub(super) fn fsck(store: &mut Store, json_output: bool) -> Result<()> {
         .into_iter()
         .map(|(id, kind, size)| (id, (kind, size)))
         .collect::<BTreeMap<_, _>>();
-    for id in &all_objects {
+    let referenced = reachability
+        .roots
+        .iter()
+        .chain(&reachability.blobs)
+        .collect::<BTreeSet<_>>();
+    for id in referenced {
         if !metadata.contains_key(id) {
             return Err(JavelinError::corruption(format!(
                 "object metadata missing for {id}"
