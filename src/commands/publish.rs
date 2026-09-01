@@ -23,18 +23,23 @@ pub(super) fn publish(
             let layer = store.layer(source_layer)?;
             let head = store.layer_head(&layer)?;
             let checkpoint = if head.synchronized_ref == existing.resulting_target_ref {
-                head
+                Some(head.id)
+            } else if head.id == *source_checkpoint {
+                Some(
+                    store
+                        .append_checkpoint(
+                            &layer.id,
+                            &head.root_tree,
+                            &existing.resulting_target_ref,
+                            &format!("recover Publish Contribution {}", existing.id),
+                        )?
+                        .id,
+                )
             } else {
-                let source = store.checkpoint(source_checkpoint)?;
-                store.append_checkpoint(
-                    &layer.id,
-                    &source.root_tree,
-                    &existing.resulting_target_ref,
-                    &format!("recover Publish Contribution {}", existing.id),
-                )?
+                None
             };
             repair_layer_target_view(store, &layer)?;
-            Some(checkpoint.id)
+            checkpoint
         } else {
             None
         };

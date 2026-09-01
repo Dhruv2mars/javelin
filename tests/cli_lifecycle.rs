@@ -641,6 +641,42 @@ fn idempotent_child_publish_repairs_parent_view_after_commit_crash() {
 }
 
 #[test]
+fn retrying_an_older_publish_key_does_not_roll_back_an_advanced_layer() {
+    let (_temp, world) = init();
+    let layer = output_text(in_world(
+        &world,
+        &["layer", "create", "advancing", "--from", "world"],
+    ));
+    fs::write(Path::new(&layer).join("state.txt"), b"one\n").unwrap();
+    in_world(
+        &world,
+        &["publish", "advancing", "--idempotency-key", "key-a"],
+    );
+    fs::write(Path::new(&layer).join("state.txt"), b"two\n").unwrap();
+    in_world(
+        &world,
+        &["publish", "advancing", "--idempotency-key", "key-b"],
+    );
+    let before: Value =
+        serde_json::from_slice(&in_world(&world, &["layer", "show", "advancing", "--json"]).stdout)
+            .unwrap();
+
+    in_world(
+        &world,
+        &["publish", "advancing", "--idempotency-key", "key-a"],
+    );
+
+    let after: Value =
+        serde_json::from_slice(&in_world(&world, &["layer", "show", "advancing", "--json"]).stdout)
+            .unwrap();
+    assert_eq!(before["result"]["head"], after["result"]["head"]);
+    assert_eq!(
+        fs::read(Path::new(&layer).join("state.txt")).unwrap(),
+        b"two\n"
+    );
+}
+
+#[test]
 fn idempotency_key_cannot_alias_a_different_layer() {
     let (_temp, world) = init();
     let first = output_text(in_world(
