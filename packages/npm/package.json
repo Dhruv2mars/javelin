@@ -1,0 +1,21 @@
+{
+  "name": "javelin-cli",
+  "version": "1.0.0",
+  "description": "Local, agent-native version control for World Versions and Private Layers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dhruv2mars/javelin.git",
+    "directory": "packages/npm"
+  },
+  "homepage": "https://github.com/Dhruv2mars/javelin#readme",
+  "bugs": "https://github.com/Dhruv2mars/javelin/issues",
+  "bin": {
+    "javelin": "bin/javelin.cjs"
+  },
+  "files": ["bin/", "vendor/", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["arm64", "x64"],
+  "publishConfig": { "access": "public" }
+}
