@@ -38,7 +38,7 @@ jobs:
       - name: Run Windows 100-Layer stress serially
         if: runner.os == 'Windows'
         timeout-minutes: 15
-        run: cargo test --locked --test stress_100_layers -- --test-threads=1
+        run: cargo test --locked --test stress_100_layers -- --test-threads=1 --nocapture
       - name: Installed-binary acceptance
         if: runner.os != 'Windows'
         run: ./tests/acceptance/installed_binary.sh

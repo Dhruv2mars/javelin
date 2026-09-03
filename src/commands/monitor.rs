@@ -241,27 +241,7 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         return Ok(());
     }
     let _ = fs::remove_file(&ready_path);
-    let executable =
-        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
-    let mut command = ProcessCommand::new(executable);
-    command
-        .arg("--project")
-        .arg(&store.root)
-        .arg("__monitor")
-        .env("JAVELIN_MONITOR_CHILD", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    configure_monitor_process(&mut command)?;
-    {
-        // Windows inherits every inheritable handle, even when the child's
-        // standard streams are NUL. Do not keep a caller's output pipe alive.
-        #[cfg(windows)]
-        let _stdio = MonitorStdioInheritance::suspend()?;
-        command
-            .spawn()
-            .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
-    }
+    spawn_monitor(&store.root)?;
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(5) {
         if monitor_ready(&ready_path) {
@@ -273,69 +253,68 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
 }
 
 #[cfg(windows)]
-struct MonitorStdioInheritance(Vec<(windows_sys::Win32::Foundation::HANDLE, u32)>);
-
-#[cfg(windows)]
-impl MonitorStdioInheritance {
-    fn suspend() -> Result<Self> {
-        use windows_sys::Win32::Foundation::{
-            GetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
-        };
-        use windows_sys::Win32::System::Console::{
-            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        };
-        let mut guard = Self(Vec::new());
-        for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            // Standard handles remain owned by this process throughout spawn.
-            let handle = unsafe { GetStdHandle(stream) };
-            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-                continue;
-            }
-            let mut flags = 0;
-            if unsafe { GetHandleInformation(handle, &mut flags) } == 0 {
-                return Err(JavelinError::new(
-                    8,
-                    "MONITOR_IO",
-                    "cannot read stdio inheritance",
-                ));
-            }
-            if flags & HANDLE_FLAG_INHERIT != 0 {
-                if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
-                    return Err(JavelinError::new(
-                        8,
-                        "MONITOR_IO",
-                        "cannot suspend stdio inheritance",
-                    ));
-                }
-                guard.0.push((handle, flags));
-            }
-        }
-        Ok(guard)
+fn spawn_monitor(root: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+    let executable =
+        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
+    let application = executable
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let directory = root
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let mut command = "javelin __monitor\0".encode_utf16().collect::<Vec<_>>();
+    // Zeroed startup info requests no inherited stdio. All backing buffers
+    // remain live until CreateProcessW returns; no caller handles are changed.
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            command.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+            std::ptr::null(),
+            directory.as_ptr(),
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(JavelinError::new(8, "MONITOR_IO", "cannot start Monitor")
+            .details(json!({"cause": std::io::Error::last_os_error().to_string()})));
     }
-}
-
-#[cfg(windows)]
-impl Drop for MonitorStdioInheritance {
-    fn drop(&mut self) {
-        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-        for &(handle, flags) in &self.0 {
-            // Restore the caller's flags before validation or any later spawn.
-            unsafe {
-                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags);
-            }
-        }
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
     }
-}
-
-#[cfg(windows)]
-fn configure_monitor_process(command: &mut ProcessCommand) -> Result<()> {
-    use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn configure_monitor_process(_command: &mut ProcessCommand) -> Result<()> {
+fn spawn_monitor(root: &Path) -> Result<()> {
+    let executable =
+        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
+    ProcessCommand::new(executable)
+        .arg("__monitor")
+        .current_dir(root)
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
     Ok(())
 }
