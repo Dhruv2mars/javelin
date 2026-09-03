@@ -23,6 +23,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Test npm package
+        run: node --test tests/npm-package.test.cjs tests/npm-assemble.test.mjs
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - name: Run tests

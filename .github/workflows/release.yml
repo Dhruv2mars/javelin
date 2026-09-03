@@ -106,3 +106,42 @@ jobs:
         with:
           draft: true
           files: release/*
+
+  publish_npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unix, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Assemble npm package
+        run: node scripts/assemble-npm.mjs release
+      - name: Publish with npm provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.11.1
+          local_v=$(node -p "require('./packages/npm/package.json').version")
+          remote_v=$(npm view javelin-cli version 2>/dev/null || true)
+          if [ -z "$remote_v" ]; then
+            echo "skip: javelin-cli needs its one-time authenticated first publish"
+            exit 0
+          fi
+          if [ "$remote_v" = "$local_v" ]; then
+            echo "skip: javelin-cli@$local_v is already published"
+            exit 0
+          fi
+          rc="${RUNNER_TEMP}/npmrc"
+          echo "registry=https://registry.npmjs.org/" > "$rc"
+          export NPM_CONFIG_USERCONFIG="$rc"
+          unset NODE_AUTH_TOKEN || true
+          cd packages/npm
+          npm publish --provenance --access public
