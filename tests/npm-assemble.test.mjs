@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -22,11 +23,16 @@ async function fixture() {
   for (const [target, extension, executable] of targets) {
     const name = `javelin-1.0.0-${target}`;
     const archive = `${name}.${extension}`;
-    const archiveBytes = Buffer.from(`archive:${target}`);
     await mkdir(path.join(artifacts, name), { recursive: true });
     await writeFile(path.join(artifacts, name, executable), `binary:${target}`);
     await chmod(path.join(artifacts, name, executable), 0o755);
-    await writeFile(path.join(artifacts, archive), archiveBytes);
+    const archivePath = path.join(artifacts, archive);
+    if (extension === 'zip' && process.platform !== 'win32') {
+      execFileSync('zip', ['-q', '-r', archivePath, name], { cwd: artifacts });
+    } else {
+      execFileSync('tar', [extension === 'zip' ? '--format=zip' : '-z', '-cf', archivePath, '-C', artifacts, name]);
+    }
+    const archiveBytes = await readFile(archivePath);
     const digest = createHash('sha256').update(archiveBytes).digest('hex');
     await writeFile(path.join(artifacts, `${archive}.sha256`), `${digest}  ${archive}\n`);
   }
@@ -36,6 +42,7 @@ async function fixture() {
 test('verifies artifacts and assembles all released binaries', async (t) => {
   const paths = await fixture();
   t.after(() => rm(paths.root, { recursive: true, force: true }));
+  await writeFile(path.join(paths.artifacts, 'javelin-1.0.0-aarch64-apple-darwin', 'javelin'), 'untrusted unpacked copy');
   await assemble(paths.artifacts, paths.packageDir, '1.0.0', path.join(paths.root, 'LICENSE'));
   for (const [target, , executable] of targets) {
     assert.equal(

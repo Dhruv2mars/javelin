@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { chmod, copyFile, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,13 +25,13 @@ export async function assemble(artifacts, packageDir, version, license) {
     if (digest !== manifest[0].toLowerCase()) {
       throw new Error(`Checksum mismatch for ${archive}`);
     }
-    const source = path.join(artifacts, name, executable);
-    if (!(await stat(source)).isFile()) {
-      throw new Error(`Missing native binary: ${source}`);
-    }
+    const member = `${name}/${executable}`;
+    const binary = extension === 'zip' && process.platform !== 'win32'
+      ? execFileSync('unzip', ['-p', archivePath, member], { maxBuffer: 64 * 1024 * 1024 })
+      : execFileSync('tar', ['-xOf', archivePath, member], { maxBuffer: 64 * 1024 * 1024 });
     const destination = path.join(vendor, target, executable);
     await mkdir(path.dirname(destination), { recursive: true });
-    await copyFile(source, destination);
+    await writeFile(destination, binary);
     await chmod(destination, 0o755);
   }
   await copyFile(license, path.join(packageDir, 'LICENSE'));
