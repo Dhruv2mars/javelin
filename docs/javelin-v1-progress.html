@@ -73,7 +73,7 @@
     <div class="eyebrow">Living delivery tracker</div>
     <h1>Javelin v1.0.0</h1>
     <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
-    <p class="updated">Snapshot: 31 August 2026, 08:27 IST · Source branch <code>feat/javelin-v1.0.0</code> · Draft PR #1</p>
+    <p class="updated">Snapshot: 3 September 2026 · Review head <code>8a4d793</code> · PR #1 ready for review</p>
 
     <section class="grid" aria-label="Delivery status">
       <article class="card">
@@ -88,7 +88,7 @@
         <div class="note">macOS, Ubuntu, and Windows Server 2025 are green.</div>
       </article>
       <article class="card">
-        <div class="metric">52</div>
+        <div class="metric">70</div>
         <div class="label">Changed files</div>
         <div class="note">Rust CLI, tests, packaging, docs, ADRs, and verification fixtures.</div>
       </article>
@@ -101,7 +101,7 @@
       <article class="card wide callout">
         <h2>Current gate</h2>
         <p><strong class="good">Product contract complete:</strong> the disk-wait regression is fixed without replacing SQLite. Hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 61.243 seconds while all 100,003 objects remained valid.</p>
-        <p class="note">Final native CI, local archive acceptance, checksum, fake-Git proof, 100-Layer stress, and independent downloaded-artifact audit are green. Merge and public release require explicit approval.</p>
+        <p class="note">Local source tests (50), archive acceptance, checksum, fake-Git proof, and 100-Layer stress are green. Fresh native CI is running on review head <code>8a4d793</code>. Merge and release follow only after every gate is green.</p>
       </article>
 
       <article class="card half">
@@ -126,9 +126,9 @@
       <article class="card half">
         <h2>Approval and release path</h2>
         <ol>
-          <li><strong>Human review.</strong> Review the clean draft PR and this evidence.</li>
-          <li><strong>Explicit approval.</strong> Authorize merge and public v1.0.0 publication separately.</li>
-          <li><strong>Release smoke.</strong> After approval, publish assets and verify a fresh public download.</li>
+          <li><strong>Review closeout.</strong> Fresh macOS, Ubuntu, Windows, package, CodeRabbit, and Greptile checks must pass.</li>
+          <li><strong>Merge.</strong> Merge PR #1 to main and delete the feature branch.</li>
+          <li><strong>Release smoke.</strong> Cut v1.0.0, verify downloaded assets, publish <code>javelin-cli</code>, and verify a clean npm install.</li>
         </ol>
       </article>
 
@@ -152,10 +152,10 @@
       <article class="card half">
         <h2>Release boundary</h2>
         <ul class="status-list">
-          <li class="hold">No merge without explicit approval</li>
-          <li class="hold">No GitHub v1.0.0 release published</li>
-          <li class="hold">No npm package published; Javelin is currently delivered as a native Rust CLI/archive</li>
-          <li class="open">Draft PR remains the review and delivery vehicle</li>
+          <li class="done">Explicit merge and release approval received</li>
+          <li class="open">Fresh native CI and automated review running</li>
+          <li class="hold">GitHub v1.0.0 release waits for merge</li>
+          <li class="hold">npm package <code>javelin-cli</code> waits for verified release assets</li>
         </ul>
       </article>
 
@@ -163,15 +163,15 @@
         <h2>Live links</h2>
         <div class="links">
           <a href="https://github.com/Dhruv2mars/javelin">Repository</a>
-          <a href="https://github.com/Dhruv2mars/javelin/pull/1">Draft PR #1</a>
-          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33352082822">Final native CI</a>
-          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33352082853">Final release-package CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/pull/1">PR #1</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33774556179">Current native CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33774556128">Current release-package CI</a>
         </div>
         <p class="note" style="margin-top: 16px">This page uses one stable Postplan draft. It is regenerated and re-uploaded after each material milestone.</p>
       </article>
     </section>
 
-    <footer>All 20 frozen contract conditions pass using the packaged binary, native platform claims match CI evidence, docs match measured behavior, and the draft PR is review-clean. Public release remains a separate approval.</footer>
+    <footer>All 20 frozen contract conditions have packaged-binary evidence. This tracker distinguishes local proof, running CI, merge state, GitHub release state, and npm publication state.</footer>
   </main>
 </body>
 </html>
