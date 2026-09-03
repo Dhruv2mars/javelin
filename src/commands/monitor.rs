@@ -1,0 +1,320 @@
+use super::*;
+
+fn monitor_ready(path: &Path) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    let Some(pid) = value.get("pid").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Ok(pid) = u32::try_from(pid) else {
+        return false;
+    };
+    process_alive(pid)
+}
+
+pub(super) fn write_monitor_state(path: &Path, value: &str) -> Result<()> {
+    let temp = path.with_extension(format!("tmp-{}", ulid::Ulid::new()));
+    let mut file = File::create(&temp).jctx(8, "MONITOR_IO", "cannot create Monitor state")?;
+    file.write_all(value.as_bytes())
+        .and_then(|_| file.sync_all())
+        .jctx(8, "MONITOR_IO", "cannot write Monitor state")?;
+    fs::rename(&temp, path).jctx(8, "MONITOR_IO", "cannot install Monitor state")?;
+    sync_dir(
+        path.parent()
+            .ok_or_else(|| JavelinError::corruption("Monitor state path has no parent"))?,
+    )
+}
+
+pub(super) fn monitor(store: &mut Store) -> Result<()> {
+    let lock_path = store.metadata.join("monitor/lock");
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .jctx(8, "MONITOR_IO", "cannot open Monitor lock")?;
+    lock.try_lock_exclusive()
+        .map_err(|_| JavelinError::busy("another Monitor already owns this World"))?;
+    let pid = std::process::id();
+    let ready_path = store.metadata.join("monitor/ready");
+    let pid_path = store.metadata.join("monitor/pid");
+    write_monitor_state(&pid_path, &pid.to_string())?;
+    write_monitor_state(
+        &ready_path,
+        &json!({"pid": pid, "ready": true, "started_at": now()}).to_string(),
+    )?;
+    store.append_event("monitor.ready", Some("world"), None, &json!({"pid": pid}))?;
+    let debounce = Config::load(&store.root)?.checkpoint.debounce_ms.max(25);
+    let mut pending_stamps = HashMap::<String, String>::new();
+    let mut captured_stamps = HashMap::<String, String>::new();
+    let mut query_failures = 0_u8;
+    let result = loop {
+        if !store.metadata.exists() {
+            break Ok(());
+        }
+        let layers = match store.monitor_layers() {
+            Ok(layers) => {
+                query_failures = 0;
+                layers
+            }
+            Err(error) => {
+                query_failures += 1;
+                if query_failures >= 3 {
+                    record_monitor_error(store, None, "layer-query", &error);
+                    break Err(error);
+                }
+                thread::sleep(Duration::from_millis(debounce));
+                continue;
+            }
+        };
+        for layer in layers {
+            if !Path::new(&layer.view_path).exists() {
+                continue;
+            }
+            let _object_lease = match acquire_object_reference_lease(store) {
+                Ok(lease) => lease,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "object-lease", &error);
+                    continue;
+                }
+            };
+            let view = Path::new(&layer.view_path);
+            let stamp = match view_stamp(view) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "view-stamp", &error);
+                    continue;
+                }
+            };
+            let observed = match observed_checkpoint(store, &layer, &stamp) {
+                Ok(observed) => observed,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "observation", &error);
+                    continue;
+                }
+            };
+            if observed.is_some() {
+                captured_stamps.insert(layer.id.clone(), stamp);
+                pending_stamps.remove(&layer.id);
+                continue;
+            }
+            if captured_stamps.get(&layer.id) == Some(&stamp) {
+                continue;
+            }
+            if pending_stamps.get(&layer.id) != Some(&stamp) {
+                pending_stamps.insert(layer.id.clone(), stamp);
+                continue;
+            }
+            let policy = match tracking_policy(store, &layer) {
+                Ok(policy) => policy,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "tracking-policy", &error);
+                    continue;
+                }
+            };
+            let scan = match scan_view_with_policy(view, &store.objects, &policy) {
+                Ok(scan) => scan,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "scan", &error);
+                    continue;
+                }
+            };
+            let stable_stamp = match view_stamp(view) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "stable-stamp", &error);
+                    continue;
+                }
+            };
+            if stable_stamp != pending_stamps[&layer.id] {
+                pending_stamps.insert(layer.id.clone(), stable_stamp);
+                continue;
+            }
+            if let Err(error) = store.register_objects(&scan.objects) {
+                record_monitor_error(store, Some(&layer.id), "object-metadata", &error);
+                continue;
+            }
+            let root_tree = match store.objects.put_tree(&scan.tree) {
+                Ok(root_tree) => root_tree,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "tree-write", &error);
+                    continue;
+                }
+            };
+            let reconcile_lock = match open_reconcile_lock(store) {
+                Ok(lock) => lock,
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "reconcile-lock", &error);
+                    continue;
+                }
+            };
+            if reconcile_lock.try_lock_exclusive().is_err() {
+                continue;
+            }
+            let checkpoint = (|| -> Result<Option<(Layer, crate::model::Checkpoint)>> {
+                let current = store.layer(&layer.id)?;
+                if current.synchronized_ref != layer.synchronized_ref {
+                    return Ok(None);
+                }
+                let head = store.layer_head(&current)?;
+                if head.root_tree == root_tree {
+                    return Ok(Some((current, head)));
+                }
+                store.register_object(
+                    &root_tree,
+                    ObjectKind::Tree,
+                    crate::objects::encode_tree(&scan.tree)?.len() as u64,
+                )?;
+                let checkpoint = store.append_checkpoint(
+                    &current.id,
+                    &root_tree,
+                    &current.synchronized_ref,
+                    "automatic",
+                )?;
+                Ok(Some((current, checkpoint)))
+            })();
+            let _ = FileExt::unlock(&reconcile_lock);
+            match checkpoint {
+                Ok(Some((current, checkpoint))) => {
+                    match write_view_observation(store, &current, &checkpoint, &stable_stamp) {
+                        Ok(()) => {
+                            captured_stamps.insert(layer.id.clone(), stable_stamp);
+                            pending_stamps.remove(&layer.id);
+                        }
+                        Err(error) => record_monitor_error(
+                            store,
+                            Some(&layer.id),
+                            "observation-write",
+                            &error,
+                        ),
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    record_monitor_error(store, Some(&layer.id), "checkpoint", &error);
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(debounce));
+    };
+    let _ = fs::remove_file(&ready_path);
+    let _ = fs::remove_file(&pid_path);
+    let _ = FileExt::unlock(&lock);
+    result
+}
+
+fn record_monitor_error(
+    store: &mut Store,
+    layer_id: Option<&str>,
+    stage: &str,
+    error: &JavelinError,
+) {
+    let _ = store.append_event(
+        "monitor.error",
+        layer_id.map(|_| "layer"),
+        layer_id,
+        &json!({"stage": stage, "code": error.code, "message": error.message}),
+    );
+}
+
+pub(super) fn start_monitor(store: &Store) -> Result<()> {
+    if std::env::var_os("JAVELIN_MONITOR_CHILD").is_some() {
+        return Ok(());
+    }
+    let ready_path = store.metadata.join("monitor/ready");
+    let startup_lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(store.metadata.join("monitor/start.lock"))
+        .jctx(8, "MONITOR_LOCK", "cannot open Monitor startup lock")?;
+    startup_lock
+        .lock_exclusive()
+        .jctx(8, "MONITOR_LOCK", "cannot acquire Monitor startup lock")?;
+    if monitor_ready(&ready_path) {
+        return Ok(());
+    }
+    let _ = fs::remove_file(&ready_path);
+    spawn_monitor(&store.root)?;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        if monitor_ready(&ready_path) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    Err(JavelinError::busy("Monitor did not become ready within 5s"))
+}
+
+#[cfg(windows)]
+fn spawn_monitor(root: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+    let executable =
+        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
+    let application = executable
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let directory = root
+        .as_os_str()
+        .encode_wide()
+        .chain([0])
+        .collect::<Vec<_>>();
+    let mut command = "javelin __monitor\0".encode_utf16().collect::<Vec<_>>();
+    // Zeroed startup info requests no inherited stdio. All backing buffers
+    // remain live until CreateProcessW returns; no caller handles are changed.
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            command.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+            std::ptr::null(),
+            directory.as_ptr(),
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(JavelinError::new(8, "MONITOR_IO", "cannot start Monitor")
+            .details(json!({"cause": std::io::Error::last_os_error().to_string()})));
+    }
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn spawn_monitor(root: &Path) -> Result<()> {
+    let executable =
+        std::env::current_exe().jctx(8, "MONITOR_IO", "cannot locate Javelin binary")?;
+    ProcessCommand::new(executable)
+        .arg("__monitor")
+        .current_dir(root)
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
+    Ok(())
+}

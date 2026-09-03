@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javelin.local/schemas/event-v1.schema.json",
+  "title": "Javelin event stream item v1",
+  "type": "object",
+  "required": ["schema", "cursor", "type", "subject_kind", "subject_id", "payload", "created_at"],
+  "properties": {
+    "schema": { "const": "javelin.event.v1" },
+    "cursor": { "type": "integer", "minimum": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "subject_kind": { "type": ["string", "null"] },
+    "subject_id": { "type": ["string", "null"] },
+    "payload": { "type": "object" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

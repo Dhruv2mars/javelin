@@ -1,6 +1,39 @@
 [package]
 name = "javelin"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "Local, agent-native version control for World Versions and Private Layers"
+license = "MIT"
+repository = "https://github.com/Dhruv2mars/javelin"
+rust-version = "1.85"
 
 [dependencies]
+anyhow = "1"
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+diffy = "0.4"
+fs2 = "0.4"
+globset = "0.4"
+libc = "0.2"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+toml = "0.9"
+ulid = { version = "1", features = ["serde"] }
+walkdir = "2"
+wait-timeout = "0.2"
+zstd = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

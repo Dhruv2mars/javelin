@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://javelin.local/schemas/error-v1.schema.json",
+  "title": "Javelin command error v1",
+  "type": "object",
+  "required": ["schema_version", "ok", "error"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "ok": { "const": false },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "details", "recovery"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" },
+        "recovery": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

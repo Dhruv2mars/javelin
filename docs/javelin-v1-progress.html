@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Javelin v1.0.0 — Living Delivery Tracker</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d10;
+      --panel: #12161b;
+      --line: #28303a;
+      --text: #f4f7fb;
+      --muted: #9aa6b2;
+      --green: #54d691;
+      --amber: #f4bd62;
+      --red: #ff7b7b;
+      --blue: #73a7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; padding: 56px 0 80px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 10px; font-size: clamp(32px, 6vw, 58px); line-height: 1; letter-spacing: -0.045em; }
+    h2 { margin-bottom: 18px; font-size: 19px; letter-spacing: -0.015em; }
+    h3 { margin-bottom: 6px; font-size: 15px; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .eyebrow { margin-bottom: 14px; color: var(--green); font-size: 12px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+    .lede { max-width: 760px; margin-bottom: 28px; color: var(--muted); font-size: 18px; }
+    .updated { color: var(--muted); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 28px; }
+    .card { grid-column: span 3; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+    .wide { grid-column: span 12; }
+    .half { grid-column: span 6; }
+    .metric { margin-bottom: 4px; font-size: 30px; font-weight: 760; letter-spacing: -0.04em; }
+    .label, .note { color: var(--muted); font-size: 13px; }
+    .good { color: var(--green); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+    .progress { height: 10px; margin: 14px 0 8px; overflow: hidden; background: #222831; border-radius: 99px; }
+    .progress > span { display: block; width: 100%; height: 100%; background: var(--green); border-radius: inherit; }
+    ul, ol { margin: 0; padding-left: 20px; }
+    li + li { margin-top: 9px; }
+    .status-list { list-style: none; padding: 0; }
+    .status-list li { display: grid; grid-template-columns: 19px 1fr; gap: 8px; }
+    .status-list .done::before { content: "✓"; color: var(--green); font-weight: 800; }
+    .status-list .open::before { content: "→"; color: var(--amber); font-weight: 800; }
+    .status-list .hold::before { content: "•"; color: var(--muted); font-weight: 800; }
+    .callout { border-left: 3px solid var(--amber); }
+    code { color: #dbe7f6; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-size: 12px; font-weight: 650; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .table-wrap { overflow-x: auto; }
+    .links { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+    footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 760px) {
+      main { padding-top: 32px; }
+      .card, .half { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">Living delivery tracker</div>
+    <h1>Javelin v1.0.0</h1>
+    <p class="lede">Local, agent-native version control built around immutable World Versions and isolated Private Layers. Runtime and user workflow stay independent of Git.</p>
+    <p class="updated">Snapshot: 3 September 2026 · Review head <code>30c1a7a</code> · PR #1 ready for review</p>
+
+    <section class="grid" aria-label="Delivery status">
+      <article class="card">
+        <div class="metric good">100%</div>
+        <div class="label">Contract gates proven</div>
+        <div class="progress" aria-label="100 percent complete"><span></span></div>
+        <div class="note">All 20 definition-of-done conditions have direct executable evidence.</div>
+      </article>
+      <article class="card">
+        <div class="metric">3</div>
+        <div class="label">Native CI platforms</div>
+        <div class="note">macOS, Ubuntu, and Windows Server 2025 are green.</div>
+      </article>
+      <article class="card">
+        <div class="metric">70</div>
+        <div class="label">Changed files</div>
+        <div class="note">Rust CLI, tests, packaging, docs, ADRs, and verification fixtures.</div>
+      </article>
+      <article class="card">
+        <div class="metric good">5 GiB</div>
+        <div class="label">Largest verified fixture</div>
+        <div class="note">100,000 files; object and SQLite integrity valid.</div>
+      </article>
+
+      <article class="card wide callout">
+        <h2>Current gate</h2>
+        <p><strong class="good">Product contract complete:</strong> the disk-wait regression is fixed without replacing SQLite. Hash-first deduplication and durable scan batches reduced packaged 100,000-file initialization from 1,254.604 seconds to 61.243 seconds while all 100,003 objects remained valid.</p>
+        <p class="note">Local source tests (50), archive acceptance, checksum, fake-Git proof, and 100-Layer stress are green. Fresh native CI is running on review head <code>30c1a7a</code>. Merge and release follow only after every gate is green.</p>
+      </article>
+
+      <article class="card half">
+        <h2>Proven now</h2>
+        <ul class="status-list">
+          <li class="done">World Version and Private Layer lifecycle</li>
+          <li class="done">Automatic and explicit Checkpoints</li>
+          <li class="done">Refresh, first-class conflicts, and atomic Publish</li>
+          <li class="done">Nested Layers, Discard, recovery, restore, and claims</li>
+          <li class="done">Verification rules, fault injection, fsck, repair, and GC</li>
+          <li class="done">Events, provenance, history, and machine-readable output</li>
+          <li class="done">Packaged macOS acceptance with fake failing Git on PATH</li>
+          <li class="done">100-Layer packaged stress and Bun/TypeScript dogfood</li>
+          <li class="done">Native Ubuntu and macOS CI plus release packaging</li>
+          <li class="done">Native Windows unit, core contract, and lifecycle CI</li>
+          <li class="done">Final macOS archive gauntlet and 100-Layer packaged stress</li>
+          <li class="done">12.5x–22.1x faster packaged initialization with valid integrity</li>
+          <li class="done">Dead Monitor recovery and writable durable flushes on Windows</li>
+        </ul>
+      </article>
+
+      <article class="card half">
+        <h2>Approval and release path</h2>
+        <ol>
+          <li><strong>Review closeout.</strong> Fresh macOS, Ubuntu, Windows, package, CodeRabbit, and Greptile checks must pass.</li>
+          <li><strong>Merge.</strong> Merge PR #1 to main and delete the feature branch.</li>
+          <li><strong>Release smoke.</strong> Cut v1.0.0, verify downloaded assets, publish <code>javelin-cli</code>, and verify a clean npm install.</li>
+        </ol>
+      </article>
+
+      <article class="card wide">
+        <h2>Packaged performance evidence</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Fixture</th><th>Init</th><th>Unchanged status</th><th>Layer create</th><th>fsck</th><th>Integrity</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>1,000 files / 50 MiB</td><td>0.84 s</td><td>10.2 ms</td><td>0.39 s</td><td>0.33 s</td><td class="good">valid</td></tr>
+              <tr><td>25,000 files / 1 GiB</td><td>12.37 s</td><td>110.6 ms</td><td>9.13 s</td><td>11.83 s</td><td class="good">valid</td></tr>
+              <tr><td>100,000 files / 5 GiB</td><td>61.24 s</td><td>444.7 ms</td><td>44.70 s</td><td>68.55 s</td><td class="good">valid</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Measured against the final packaged Apple Silicon binary. Init improved 12.5x, 22.1x, and 20.5x respectively. One-file Checkpoint in the supplied 1,000-file repro completed in 80 ms.</p>
+      </article>
+
+      <article class="card half">
+        <h2>Release boundary</h2>
+        <ul class="status-list">
+          <li class="done">Explicit merge and release approval received</li>
+          <li class="open">Fresh native CI and automated review running</li>
+          <li class="hold">GitHub v1.0.0 release waits for merge</li>
+          <li class="hold">npm package <code>javelin-cli</code> waits for verified release assets</li>
+        </ul>
+      </article>
+
+      <article class="card half">
+        <h2>Live links</h2>
+        <div class="links">
+          <a href="https://github.com/Dhruv2mars/javelin">Repository</a>
+          <a href="https://github.com/Dhruv2mars/javelin/pull/1">PR #1</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33774556179">Current native CI</a>
+          <a href="https://github.com/Dhruv2mars/javelin/actions/runs/33774556128">Current release-package CI</a>
+        </div>
+        <p class="note" style="margin-top: 16px">This page uses one stable Postplan draft. It is regenerated and re-uploaded after each material milestone.</p>
+      </article>
+    </section>
+
+    <footer>All 20 frozen contract conditions have packaged-binary evidence. This tracker distinguishes local proof, running CI, merge state, GitHub release state, and npm publication state.</footer>
+  </main>
+</body>
+</html>
