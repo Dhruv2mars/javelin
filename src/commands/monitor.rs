@@ -253,9 +253,15 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure_monitor_process(&mut command)?;
-    command
-        .spawn()
-        .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
+    {
+        // Windows inherits every inheritable handle, even when the child's
+        // standard streams are NUL. Do not keep a caller's output pipe alive.
+        #[cfg(windows)]
+        let _stdio = MonitorStdioInheritance::suspend()?;
+        command
+            .spawn()
+            .jctx(8, "MONITOR_IO", "cannot start Monitor")?;
+    }
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(5) {
         if monitor_ready(&ready_path) {
@@ -264,6 +270,61 @@ pub(super) fn start_monitor(store: &Store) -> Result<()> {
         thread::sleep(Duration::from_millis(25));
     }
     Err(JavelinError::busy("Monitor did not become ready within 5s"))
+}
+
+#[cfg(windows)]
+struct MonitorStdioInheritance(Vec<(windows_sys::Win32::Foundation::HANDLE, u32)>);
+
+#[cfg(windows)]
+impl MonitorStdioInheritance {
+    fn suspend() -> Result<Self> {
+        use windows_sys::Win32::Foundation::{
+            GetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+        let mut guard = Self(Vec::new());
+        for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // Standard handles remain owned by this process throughout spawn.
+            let handle = unsafe { GetStdHandle(stream) };
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                continue;
+            }
+            let mut flags = 0;
+            if unsafe { GetHandleInformation(handle, &mut flags) } == 0 {
+                return Err(JavelinError::new(
+                    8,
+                    "MONITOR_IO",
+                    "cannot read stdio inheritance",
+                ));
+            }
+            if flags & HANDLE_FLAG_INHERIT != 0 {
+                if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+                    return Err(JavelinError::new(
+                        8,
+                        "MONITOR_IO",
+                        "cannot suspend stdio inheritance",
+                    ));
+                }
+                guard.0.push((handle, flags));
+            }
+        }
+        Ok(guard)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for MonitorStdioInheritance {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+        for &(handle, flags) in &self.0 {
+            // Restore the caller's flags before validation or any later spawn.
+            unsafe {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags);
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
