@@ -7,14 +7,22 @@ pub(super) fn publish(
     key: Option<&str>,
     json_output: bool,
 ) -> Result<()> {
+    let layer = selected_layer(context, store, requested)?;
+    crate::fault::hit("before_publish_lease");
+    let lock_name = if layer.target_kind == TargetKind::World {
+        "world".to_string()
+    } else {
+        format!("layer-{}", layer.target_id.as_deref().unwrap_or("missing"))
+    };
+    let lock_file = open_publish_lock(store, &lock_name)?;
+    acquire_queued_publish_lock(store, &lock_name, &lock_file)?;
     if let Some(key) = key
         && let Some(existing) = store.contribution_details_by_key(key)?
     {
         let source_layer = existing.source_layer.as_deref().ok_or_else(|| {
             JavelinError::stale("Publish idempotency key belongs to a purged Private Layer")
         })?;
-        let requested_layer = selected_layer(context, store, requested)?;
-        if requested_layer.id != source_layer {
+        if layer.id != source_layer {
             return Err(JavelinError::stale(
                 "Publish idempotency key belongs to a different Private Layer",
             ));
@@ -38,7 +46,7 @@ pub(super) fn publish(
             } else {
                 None
             };
-            repair_layer_target_view(store, &layer)?;
+            repair_layer_target_view_under_lease(store, &layer)?;
             checkpoint
         } else {
             None
@@ -57,15 +65,6 @@ pub(super) fn publish(
             ),
         );
     }
-    let layer = selected_layer(context, store, requested)?;
-    crate::fault::hit("before_publish_lease");
-    let lock_name = if layer.target_kind == TargetKind::World {
-        "world".to_string()
-    } else {
-        format!("layer-{}", layer.target_id.as_deref().unwrap_or("missing"))
-    };
-    let lock_file = open_publish_lock(store, &lock_name)?;
-    acquire_queued_publish_lock(store, &lock_name, &lock_file)?;
     let refreshed = refresh_layer(store, &layer)?;
     let candidate = store.objects.read_tree(&refreshed.checkpoint.root_tree)?;
     crate::fault::hit("after_candidate_construction");
@@ -140,7 +139,7 @@ pub(super) fn publish(
     )
 }
 
-fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
+fn repair_layer_target_view_under_lease(store: &mut Store, source: &Layer) -> Result<()> {
     if source.target_kind != TargetKind::Layer {
         return Ok(());
     }
@@ -148,8 +147,6 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
         .target_id
         .as_deref()
         .ok_or_else(|| JavelinError::corruption("Layer target has no ID"))?;
-    let lock_file = open_publish_lock(store, &format!("layer-{parent_id}"))?;
-    acquire_publish_lock(&lock_file)?;
     let parent = store.layer(parent_id)?;
     let parent_head = store.layer_head(&parent)?;
     let tree = store.objects.read_tree(&parent_head.root_tree)?;
@@ -158,7 +155,7 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
         project: store.root.to_string_lossy().into_owned(),
         layer_id: parent.id.clone(),
     };
-    let result = match materialize_tree_from_cache(
+    match materialize_tree_from_cache(
         &tree,
         &parent_head.root_tree,
         &store.metadata,
@@ -168,9 +165,7 @@ fn repair_layer_target_view(store: &mut Store, source: &Layer) -> Result<()> {
     ) {
         Ok(backend) => store.mark_view(&parent.id, &parent_head.id, false, backend),
         Err(_) => store.mark_view(&parent.id, &parent_head.id, true, "repair_required"),
-    };
-    FileExt::unlock(&lock_file).jctx(8, "PUBLISH_LOCK", "cannot release Publish lease")?;
-    result
+    }
 }
 
 pub(super) fn open_publish_lock(store: &Store, target: &str) -> Result<File> {

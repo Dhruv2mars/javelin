@@ -10,7 +10,14 @@ fn binary() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Output {
-    let output = Command::new(binary()).args(args).output().unwrap();
+    let mut command = Command::new(binary());
+    command.args(args);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || sender.send(command.output()).ok());
+    let output = receiver
+        .recv_timeout(Duration::from_secs(30))
+        .unwrap_or_else(|_| panic!("command or inherited output pipe hung: {args:?}"))
+        .unwrap();
     if !output.status.success() {
         panic!(
             "command failed ({:?}):\nstdout: {}\nstderr: {}",
@@ -586,6 +593,110 @@ fn nested_child_publish_parent_publish_and_idempotent_retry_are_linear() {
     assert_eq!(
         output_text(in_world(&world, &["show", "world:api.ts"])),
         "export const api = 1;"
+    );
+}
+
+#[test]
+fn concurrent_idempotent_retries_share_the_recovered_checkpoint() {
+    let (_temp, world) = init();
+    let layer = output_text(in_world(
+        &world,
+        &["layer", "create", "retry", "--from", "world"],
+    ));
+    fs::write(Path::new(&layer).join("change.txt"), b"published\n").unwrap();
+
+    let crashed = Command::new(binary())
+        .args([
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "retry",
+            "--idempotency-key",
+            "concurrent-retry",
+        ])
+        .env("JAVELIN_MONITOR_CHILD", "1")
+        .env("JAVELIN_FAULT_POINT", "after_db_commit_before_view_update")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(86));
+
+    let lease = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(world.join(".javelin/locks/world.publish.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lease).unwrap();
+    let mut children = (0..8)
+        .map(|_| {
+            Command::new(binary())
+                .args([
+                    "--project",
+                    world.to_str().unwrap(),
+                    "publish",
+                    "retry",
+                    "--idempotency-key",
+                    "concurrent-retry",
+                    "--json",
+                ])
+                .env("JAVELIN_MONITOR_CHILD", "1")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    thread::sleep(Duration::from_millis(250));
+    let respected_lease = children
+        .iter_mut()
+        .all(|child| child.try_wait().unwrap().is_none());
+    fs2::FileExt::unlock(&lease).unwrap();
+    let mut recovered = None;
+    for child in children {
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let checkpoint = value["result"]["source_checkpoint"].clone();
+        if let Some(expected) = &recovered {
+            assert_eq!(&checkpoint, expected);
+        }
+        recovered = Some(checkpoint);
+    }
+    assert!(
+        respected_lease,
+        "idempotent recovery bypassed the target lease"
+    );
+
+    let history: Value = serde_json::from_slice(
+        &Command::new(binary())
+            .args([
+                "--project",
+                world.to_str().unwrap(),
+                "history",
+                "--layer",
+                "retry",
+                "--json",
+            ])
+            .env("JAVELIN_MONITOR_CHILD", "1")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        history["result"]["checkpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|checkpoint| checkpoint["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("recover Publish"))
+            .count(),
+        1
     );
 }
 
