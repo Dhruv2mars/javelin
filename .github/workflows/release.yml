@@ -10,7 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622
+      - name: Check release versions
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const pkg = JSON.parse(fs.readFileSync("packages/npm/package.json"));
+            const cargo = fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)[1];
+            if (pkg.version !== cargo) throw new Error("Package version mismatch");
+            if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME !== `v${cargo}`) throw new Error("Tag version mismatch");
+          '
+      - run: node --test tests/npm-package.test.cjs tests/npm-assemble.test.mjs
+
   unix:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +67,7 @@ jobs:
           path: dist/*
 
   windows:
+    needs: validate
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622 # v4
@@ -91,9 +108,25 @@ jobs:
           name: javelin-x86_64-pc-windows-msvc
           path: dist/*
 
+  smoke_npm:
+    needs: [unix, windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: release
+          merge-multiple: true
+      - run: node scripts/assemble-npm.mjs release
+      - run: node scripts/smoke-npm.mjs
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [unix, windows]
+    needs: [unix, windows, smoke_npm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,3 +139,42 @@ jobs:
         with:
           draft: true
           files: release/*
+
+  publish_npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unix, windows, smoke_npm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Assemble npm package
+        run: node scripts/assemble-npm.mjs release
+      - name: Publish with npm provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.11.1
+          local_v=$(node -p "require('./packages/npm/package.json').version")
+          remote_v=$(npm view javelin-cli version 2>/dev/null || true)
+          if [ -z "$remote_v" ]; then
+            echo "skip: javelin-cli needs its one-time authenticated first publish"
+            exit 0
+          fi
+          if [ "$remote_v" = "$local_v" ]; then
+            echo "skip: javelin-cli@$local_v is already published"
+            exit 0
+          fi
+          rc="${RUNNER_TEMP}/npmrc"
+          echo "registry=https://registry.npmjs.org/" > "$rc"
+          export NPM_CONFIG_USERCONFIG="$rc"
+          unset NODE_AUTH_TOKEN || true
+          cd packages/npm
+          npm publish --provenance --access public

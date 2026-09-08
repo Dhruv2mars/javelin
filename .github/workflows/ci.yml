@@ -23,6 +23,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Test npm package
+        run: node --test tests/npm-package.test.cjs tests/npm-assemble.test.mjs
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - name: Run tests
@@ -35,10 +37,10 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 10
         run: cargo test --locked --test cli_lifecycle -- --test-threads=1
-      - name: Run Windows 100-Layer stress serially
+      - name: Run Windows 100-Layer stress against the release binary
         if: runner.os == 'Windows'
         timeout-minutes: 15
-        run: cargo test --locked --test stress_100_layers -- --test-threads=1 --nocapture
+        run: cargo test --locked --release --test stress_100_layers -- --test-threads=1 --nocapture
       - name: Installed-binary acceptance
         if: runner.os != 'Windows'
         run: ./tests/acceptance/installed_binary.sh

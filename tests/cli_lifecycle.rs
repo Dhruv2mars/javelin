@@ -33,8 +33,42 @@ fn output_text(output: Output) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-fn init() -> (tempfile::TempDir, PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
+struct TestWorld(tempfile::TempDir);
+
+impl TestWorld {
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for TestWorld {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess,
+            WaitForSingleObject,
+        };
+        let Ok(pid) = fs::read_to_string(self.path().join("world/.javelin/monitor/pid")) else {
+            return;
+        };
+        let Ok(pid) = pid.trim().parse::<u32>() else {
+            return;
+        };
+        // Stop only this disposable World's Monitor before TempDir removes its cwd.
+        unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, pid);
+            if !handle.is_null() {
+                TerminateProcess(handle, 0);
+                WaitForSingleObject(handle, 5000);
+                CloseHandle(handle);
+            }
+        }
+    }
+}
+
+fn init() -> (TestWorld, PathBuf) {
+    let temp = TestWorld(tempfile::tempdir().unwrap());
     let world = temp.path().join("world");
     run(&["init", world.to_str().unwrap()]);
     (temp, world)
@@ -1245,9 +1279,31 @@ fn fsck_detects_corrupt_copied_store_without_damaging_original() {
 
 #[test]
 fn fsck_reports_missing_object_metadata_without_repairing_it() {
-    let (_temp, world) = init();
-    fs::write(world.join("tracked.txt"), b"tracked\n").unwrap();
-    in_world(&world, &["publish", "--idempotency-key", "tracked"]);
+    let temp = tempfile::tempdir().unwrap();
+    let world = temp.path().join("world");
+    // Keep the Monitor from restoring metadata while this test injects corruption.
+    for args in [
+        vec!["init", world.to_str().unwrap()],
+        vec![
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "--idempotency-key",
+            "tracked",
+        ],
+    ] {
+        let output = Command::new(binary())
+            .args(args)
+            .env("JAVELIN_MONITOR_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::write(world.join("tracked.txt"), b"tracked\n").unwrap();
+    }
     let database = world.join(".javelin/store.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
     let object_id: String = connection
