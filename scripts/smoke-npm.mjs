@@ -23,5 +23,7 @@ try {
   cli('fsck');
   console.log(`Installed npm lifecycle passed on ${process.platform}-${process.arch}`);
 } finally {
-  rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  // Remove the World first so its Monitor exits before deleting the Windows executable.
+  rmSync(path.join(root, 'world'), { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
