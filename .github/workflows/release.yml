@@ -10,7 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622
+      - name: Check release versions
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const pkg = JSON.parse(fs.readFileSync("packages/npm/package.json"));
+            const cargo = fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)[1];
+            if (pkg.version !== cargo) throw new Error("Package version mismatch");
+            if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME !== `v${cargo}`) throw new Error("Tag version mismatch");
+          '
+      - run: node --test tests/npm-package.test.cjs tests/npm-assemble.test.mjs
+
   unix:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +67,7 @@ jobs:
           path: dist/*
 
   windows:
+    needs: validate
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622 # v4

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 - 2026-09-03
+## 0.0.1 - 2026-09-03
 
 - Added immutable BLAKE3 and zstd object storage backed by bundled SQLite metadata.
 - Added World Versions, Local Layer, named Private Layers, nested Layers, automatic and explicit Checkpoints, Refresh, Publish, Discard, recovery, and append-only restore.
