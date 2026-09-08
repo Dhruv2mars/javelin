@@ -1245,9 +1245,31 @@ fn fsck_detects_corrupt_copied_store_without_damaging_original() {
 
 #[test]
 fn fsck_reports_missing_object_metadata_without_repairing_it() {
-    let (_temp, world) = init();
-    fs::write(world.join("tracked.txt"), b"tracked\n").unwrap();
-    in_world(&world, &["publish", "--idempotency-key", "tracked"]);
+    let temp = tempfile::tempdir().unwrap();
+    let world = temp.path().join("world");
+    // Keep the Monitor from restoring metadata while this test injects corruption.
+    for args in [
+        vec!["init", world.to_str().unwrap()],
+        vec![
+            "--project",
+            world.to_str().unwrap(),
+            "publish",
+            "--idempotency-key",
+            "tracked",
+        ],
+    ] {
+        let output = Command::new(binary())
+            .args(args)
+            .env("JAVELIN_MONITOR_CHILD", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::write(world.join("tracked.txt"), b"tracked\n").unwrap();
+    }
     let database = world.join(".javelin/store.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
     let object_id: String = connection
