@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,7 +24,12 @@ try {
   cli('fsck');
   console.log(`Installed npm lifecycle passed on ${process.platform}-${process.arch}`);
 } finally {
-  // Remove the World first so its Monitor exits before deleting the Windows executable.
-  rmSync(path.join(root, 'world'), { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
-  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
+  // This disposable World's Monitor holds its cwd and executable open on Windows.
+  try {
+    const pid = Number(readFileSync(path.join(root, 'world/.javelin/monitor/pid'), 'utf8'));
+    if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid);
+  } catch (error) {
+    if (!['ENOENT', 'ESRCH'].includes(error.code)) throw error;
+  }
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
