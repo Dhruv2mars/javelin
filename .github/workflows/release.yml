@@ -108,9 +108,25 @@ jobs:
           name: javelin-x86_64-pc-windows-msvc
           path: dist/*
 
+  smoke_npm:
+    needs: [unix, windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af6772622
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: release
+          merge-multiple: true
+      - run: node scripts/assemble-npm.mjs release
+      - run: node scripts/smoke-npm.mjs
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [unix, windows]
+    needs: [unix, windows, smoke_npm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -126,7 +142,7 @@ jobs:
 
   publish_npm:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [unix, windows]
+    needs: [unix, windows, smoke_npm]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

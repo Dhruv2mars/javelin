@@ -8,7 +8,7 @@ Javelin never launches agents. An editor, coding agent, or orchestrator asks Jav
 
 ## Release state
 
-The first public release is `0.0.1`. Javelin supports Apple Silicon macOS, x64 Linux with glibc, and x64 Windows. It is local-only; see [limitations](docs/limitations.md) before adopting it.
+The first public release is `0.0.1`. Javelin supports Apple Silicon macOS, x64 Ubuntu 24.04 or newer with glibc, and x64 Windows. It is local-only; see [limitations](docs/limitations.md) before adopting it.
 
 ## Install from npm
 
