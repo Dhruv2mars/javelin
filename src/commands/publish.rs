@@ -211,20 +211,21 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
             rusqlite::params![request_id, target, pid, now()],
         )
         .jctx(8, "PUBLISH_QUEUE", "cannot enter Publish queue")?;
-    let started = Instant::now();
+    let mut progress = QueueProgress::new(Instant::now());
     loop {
-        let head: Option<(String, u32, String)> = store
+        let head: Option<(String, u32)> = store
             .conn
             .query_row(
-                "SELECT request_id, pid, created_at FROM publish_queue
+                "SELECT request_id, pid FROM publish_queue
                  WHERE target = ?1 ORDER BY ticket LIMIT 1",
                 [target],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .jctx(8, "PUBLISH_QUEUE", "cannot inspect Publish queue")?;
+        progress.observe(head.as_ref().map(|(id, _)| id.as_str()), Instant::now());
         match head {
-            Some((head_id, _head_pid, _created_at)) if head_id == request_id => {
+            Some((head_id, _head_pid)) if head_id == request_id => {
                 if file.try_lock_exclusive().is_ok() {
                     store
                         .conn
@@ -236,9 +237,7 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
                     return Ok(());
                 }
             }
-            Some((head_id, head_pid, created_at))
-                if !process_alive(head_pid) || publish_request_expired(&created_at) =>
-            {
+            Some((head_id, head_pid)) if !process_alive(head_pid) => {
                 store
                     .conn
                     .execute(
@@ -253,22 +252,57 @@ fn acquire_queued_publish_lock(store: &mut Store, target: &str, file: &File) -> 
             }
             _ => {}
         }
-        if started.elapsed() >= Duration::from_secs(300) {
+        if progress.stalled(Instant::now()) {
             let _ = store.conn.execute(
                 "DELETE FROM publish_queue WHERE request_id = ?1",
                 [&request_id],
             );
             return Err(JavelinError::busy(
-                "Publish queue wait exceeded 300 seconds",
+                "Publish queue made no progress for 300 seconds",
             ));
         }
         thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn publish_request_expired(created_at: &str) -> bool {
-    chrono::DateTime::parse_from_rfc3339(created_at).map_or(true, |created| {
-        chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc))
-            > chrono::Duration::seconds(300)
-    })
+// A long, advancing queue is healthy. Only bound time without forward progress.
+struct QueueProgress {
+    head: Option<String>,
+    changed_at: Instant,
+}
+
+impl QueueProgress {
+    fn new(now: Instant) -> Self {
+        Self {
+            head: None,
+            changed_at: now,
+        }
+    }
+
+    fn observe(&mut self, head: Option<&str>, now: Instant) {
+        if self.head.as_deref() != head {
+            self.head = head.map(str::to_owned);
+            self.changed_at = now;
+        }
+    }
+
+    fn stalled(&self, now: Instant) -> bool {
+        now.duration_since(self.changed_at) >= Duration::from_secs(300)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn advancing_publish_queue_can_wait_longer_than_five_minutes() {
+        let start = Instant::now();
+        let mut progress = QueueProgress::new(start);
+        progress.observe(Some("first"), start);
+        progress.observe(Some("second"), start + Duration::from_secs(250));
+        assert!(!progress.stalled(start + Duration::from_secs(400)));
+        progress.observe(Some("second"), start + Duration::from_secs(500));
+        assert!(progress.stalled(start + Duration::from_secs(550)));
+    }
 }
