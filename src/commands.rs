@@ -170,7 +170,11 @@ pub fn execute(cli: Cli) -> Result<()> {
         Command::Gc { dry_run } => with_store_gc(cli.project, |_context, mut store| {
             gc(&mut store, dry_run, json_output)
         }),
-        Command::Monitor => with_store_read(cli.project, |_context, mut store| monitor(&mut store)),
+        Command::Monitor => {
+            let context = discover(cli.project.as_deref())?;
+            let mut store = Store::open(&context.root)?;
+            monitor(&mut store)
+        }
     }
 }
 

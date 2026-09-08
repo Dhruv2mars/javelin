@@ -81,10 +81,12 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
             })
         })
         .collect::<Vec<_>>();
+    eprintln!("STRESS_PROGRESS created 100 layers; checkpoint workers started");
     let checkpoint_ms = checkpoint_workers
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect::<Vec<_>>();
+    eprintln!("STRESS_PROGRESS checkpoint workers complete");
 
     let refresh_workers = layers
         .iter()
@@ -107,6 +109,7 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect::<Vec<_>>();
+    eprintln!("STRESS_PROGRESS refresh workers complete");
 
     let publish_workers = layers
         .iter()
@@ -133,6 +136,7 @@ fn one_hundred_layers_checkpoint_refresh_and_publish_without_loss() {
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect::<Vec<_>>();
+    eprintln!("STRESS_PROGRESS publish workers complete");
     for (name, _, output) in &publish_results {
         assert!(
             output.status.success(),
