@@ -114,10 +114,10 @@ This proof does not complete product Gate 2 or GA. Only this appended checklist
 is owned here. Privileged mounts are restricted to the ephemeral Linux CI job.
 
 - [x] Read instructions and latest hub contract; define verifiable scope.
-- [ ] Open and immediately link one draft PR against `test/layer-filesystem-contract`.
-- [ ] Confirm official kernel/runner prerequisites and record unresolved assumptions.
-- [ ] Implement guarded small fixtures, actual mounts and immutable sparse snapshot clones.
+- [x] Open and immediately link one draft PR against `test/layer-filesystem-contract`: [#7](https://github.com/Dhruv2mars/javelin/pull/7).
+- [x] Confirm official kernel/runner prerequisites and record unresolved hosted-mount assumptions in `docs/linux-workspace-proof.md`.
+- [x] Implement guarded small fixtures, actual mount commands and immutable sparse snapshot clones. Cloud behavior remains unverified.
 - [ ] Drive common probe as ordinary runner user; verify bytes, storage and recovery.
-- [ ] Add owned workflow with pinned actions, bounded execution and retained artifacts.
+- [x] Add owned workflow with pinned actions, bounded execution and retained artifacts. Local shell/Bun/Python checks pass; laptop refusal exits 2 before sudo.
 - [ ] Observe actual cloud run and record exact SHA, results and limitations.
 - [ ] Report evidence and blockers to hub; leave PR unmerged.
