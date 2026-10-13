@@ -145,7 +145,7 @@ PRs are never merged without explicit user instruction.
 
 - Thread: `t3-thread://v1/mcp:7a0a409d-e0f3-4321-84f1-5ebbcc357056`.
 - Branch: `feat/linux-sparse-layer-proof`, based on `test/layer-filesystem-contract`.
-- PR: creation pending, one draft PR stacked on PR #5.
+- PR: [#7](https://github.com/Dhruv2mars/javelin/pull/7), draft, stacked on PR #5.
 - Owns `tools/overlayfs-proof/`, `.github/workflows/overlayfs-proof.yml`, and
   `docs/linux-workspace-proof.md`. Native CI owns only `native.yml`.
 - Done: bounded real shared-base OverlayFS mounts, sparse private changes and clones,
@@ -172,7 +172,17 @@ PRs are never merged without explicit user instruction.
 - Product implementation, sparse backend behavior, and GA readiness remain unverified.
 - Native commit `6d44167` is under hub review. The hub independently exported it and
   observed `cargo test --locked`: 21 passed, one ignored process-test entry point.
-  Independent code review and release CLI smoke remain pending; no completion signal yet.
+  Its release build also passed. Owner added a rollback regression at `8ae7fba`
+  and final evidence at `b9decc6`, reporting 22 tests passed.
+- Hub acceptance is withheld for a reproduced medium correctness gap: after an
+  acknowledged advance, deleting the newest World row while retaining its accepted
+  attempt makes `history` and repeated `init` silently return the older head.
+  `check` detects the broken foreign key. The owner is fixing this in the same PR #4.
+- Reproduction used exported `6d44167` and `/tmp/javelin-hub-tail-corruption-6d44167`.
+  No runtime or test invoked Git. Tests must reject missing-tail history and stale
+  results beyond head; the explicit-directory CLI's eager cwd lookup is also returned.
+- No `native-core-complete` signal has been sent. The corrected source and final
+  release smoke must pass hub verification before PR #6 tests the actual core.
 
 ### Superseded work
 
