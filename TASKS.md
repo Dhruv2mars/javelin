@@ -41,6 +41,8 @@ workflow may invoke or interpret Git.
 - [ ] Run native formatting, lint, test, and release-build checks on development
   GitHub Actions macOS, Linux, and Windows runners. Repeat against the exact native
   PR #4 commit independently verified by the hub at Gate 1. This does not verify product CI.
+- [x] Verify the development CI scaffold setup on all three hosted OSes. This is
+  infrastructure evidence only; the greeting-only test does not verify native VCS behavior.
 
 ## Prove hosting and collaboration
 
@@ -83,8 +85,8 @@ PRs are never merged without explicit user instruction.
 - Done: native initialization, exact immutable objects, ordered history, integrity checks,
   and proven publication metadata behavior across retries, concurrency, and restart.
 - Evidence so far: planning commit `3d4144b`; implementation and product verification pending.
-- Local baseline `7ec2e75` is committed but was not yet on the remote native branch
-  when CI started. The native owner has been asked to push it without rewriting it.
+- Local baseline `7ec2e75` was initially unpublished when CI started. The native
+  owner pushed it unchanged, and the hub confirmed the remote branch now names that SHA.
 - Bounded foundation decision: init creates empty immutable World 0 and preserves
   existing files. Existing-project adoption through a Layer is a follow-on gate.
 
@@ -118,6 +120,12 @@ PRs are never merged without explicit user instruction.
   Linux, and Windows, with logs and explicit dependency status.
 - Baseline source: `7ec2e75`, `tests/scaffold.rs`. The single process assertion
   captures the original greeting and proves no VCS behavior.
+- VERIFIED setup evidence: [run 38427608862](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862),
+  checked-out commit `fca6f758abec55f92f104d0fb0d9a42fd7b0278f`.
+- The hub inspected all three completed job results and downloaded all three log
+  artifacts to `/tmp/javelin-hub-ci-38427608862`. Each has six logs, matching SHA,
+  and one passing scaffold integration test. Artifacts expire 2026-10-27.
+- Actual failure-path log upload is unconfirmed. Product behavior remains unverified.
 - Complete implementation checks remain pending until the hub independently verifies
   PR #4's native initialization, exact objects, publication, corruption detection, and
   restart/retry/concurrency checks at a named commit SHA, satisfying Gate 1.
