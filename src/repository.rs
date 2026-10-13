@@ -5,13 +5,13 @@ use serde::Serialize;
 
 use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
 
-const FORMAT: i64 = 1;
+const FORMAT: i64 = 2;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 const SCHEMA: &str = "
 CREATE TABLE objects (
     id TEXT PRIMARY KEY CHECK(length(id)=64),
-    kind INTEGER NOT NULL CHECK(kind IN (1,2)),
+    kind INTEGER NOT NULL CHECK(kind IN (1,2,3)),
     bytes BLOB NOT NULL
 ) STRICT;
 CREATE TABLE attempts (
@@ -32,7 +32,7 @@ CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 PRAGMA application_id=1245795916;
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 ";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -54,12 +54,13 @@ pub struct IntegrityReport {
     pub versions: usize,
     pub objects: usize,
     pub attempts: usize,
+    pub layers: usize,
 }
 
 /// One handle per caller. Independent processes use independent SQLite connections.
 /// The project root must exist. No parent-directory search or working-file ingestion.
 pub struct Repository {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Repository {
@@ -105,7 +106,15 @@ impl Repository {
                 ));
             }
             tx.execute_batch(SCHEMA)?;
-            for table in ["objects", "versions", "attempts"] {
+            tx.execute_batch(crate::layer::SCHEMA)?;
+            for table in [
+                "objects",
+                "versions",
+                "attempts",
+                "repository_identity",
+                "layer_heads",
+                "layer_attempts",
+            ] {
                 for action in ["UPDATE", "DELETE"] {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
                 }
@@ -119,6 +128,7 @@ impl Repository {
         } else {
             validate_format(&tx)?;
             history_in(&tx)?;
+            crate::layer::check_layers(&tx)?;
         }
         #[cfg(test)]
         test_boundary("init_before_commit");
@@ -174,7 +184,7 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for entry in manifest.entries().values() {
-            read_object(&tx, entry.content, ObjectKind::Blob)?;
+            validate_entry(&tx, entry)?;
         }
         let id = insert_object(&tx, ObjectKind::Manifest, &manifest.canonical_bytes())?;
         tx.commit()?;
@@ -314,10 +324,15 @@ impl Repository {
                 ObjectKind::Manifest => {
                     manifest_in(&tx, id)?;
                 }
+                ObjectKind::Checkpoint => {
+                    crate::layer::checkpoint_in(&tx, id)?;
+                }
             }
         }
         let attempts: i64 = tx.query_row("SELECT count(*) FROM attempts", [], |r| r.get(0))?;
+        let layers = crate::layer::check_layers(&tx)?;
         let report = IntegrityReport {
+            layers,
             versions: history.len(),
             objects: objects.len(),
             attempts: usize::try_from(attempts).map_err(|_| {
@@ -391,7 +406,7 @@ fn validate_format(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_object(conn: &Connection, kind: ObjectKind, bytes: &[u8]) -> Result<ObjectId> {
+pub(crate) fn insert_object(conn: &Connection, kind: ObjectKind, bytes: &[u8]) -> Result<ObjectId> {
     let id = ObjectId::hash(kind, bytes);
     conn.execute(
         "INSERT INTO objects(id,kind,bytes) VALUES(?1,?2,?3) ON CONFLICT(id) DO NOTHING",
@@ -403,7 +418,11 @@ fn insert_object(conn: &Connection, kind: ObjectKind, bytes: &[u8]) -> Result<Ob
     Ok(id)
 }
 
-fn read_object(conn: &Connection, id: ObjectId, expected_kind: ObjectKind) -> Result<Vec<u8>> {
+pub(crate) fn read_object(
+    conn: &Connection,
+    id: ObjectId,
+    expected_kind: ObjectKind,
+) -> Result<Vec<u8>> {
     let (kind, bytes): (i64, Vec<u8>) = conn
         .query_row(
             "SELECT kind,bytes FROM objects WHERE id=?1",
@@ -422,16 +441,27 @@ fn read_object(conn: &Connection, id: ObjectId, expected_kind: ObjectKind) -> Re
     Ok(bytes)
 }
 
-fn manifest_in(conn: &Connection, id: ObjectId) -> Result<Manifest> {
+pub(crate) fn manifest_in(conn: &Connection, id: ObjectId) -> Result<Manifest> {
     let bytes = read_object(conn, id, ObjectKind::Manifest)?;
     let manifest = Manifest::decode(&bytes).map_err(|_| Error::CorruptObject(id))?;
     for entry in manifest.entries().values() {
-        read_object(conn, entry.content, ObjectKind::Blob)?;
+        validate_entry(conn, entry)?;
     }
     Ok(manifest)
 }
 
-fn decode_id(value: &str) -> Result<ObjectId> {
+pub(crate) fn validate_entry(conn: &Connection, entry: &crate::FileEntry) -> Result<()> {
+    let bytes = read_object(conn, entry.content(), ObjectKind::Blob)?;
+    if matches!(entry, crate::FileEntry::Symlink { .. }) && (bytes.is_empty() || bytes.contains(&0))
+    {
+        return Err(Error::InvalidInput(
+            "symlink target must be nonempty and contain no NUL".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn decode_id(value: &str) -> Result<ObjectId> {
     ObjectId::parse(value).map_err(|_| Error::CorruptRepository("invalid stored object ID".into()))
 }
 
@@ -440,7 +470,7 @@ fn decode_operation(value: &str) -> Result<OperationId> {
         .map_err(|_| Error::CorruptRepository("invalid stored operation ID".into()))
 }
 
-fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
+pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
     let rows = conn
         .prepare("SELECT number,manifest,operation FROM versions ORDER BY number")?
         .query_map([], |r| {
@@ -575,7 +605,7 @@ fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attem
 }
 
 #[cfg(test)]
-fn test_boundary(phase: &str) {
+pub(crate) fn test_boundary(phase: &str) {
     use std::io::{Read, Write};
     if std::env::var("JAVELIN_TEST_BOUNDARY").as_deref() == Ok(phase) {
         println!("BOUNDARY {phase}");

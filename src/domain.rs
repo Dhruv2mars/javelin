@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt};
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
 use crate::{Error, Result};
@@ -51,10 +51,17 @@ impl Serialize for ObjectId {
     }
 }
 
+impl<'de> Deserialize<'de> for ObjectId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Self::parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ObjectKind {
     Blob = 1,
     Manifest = 2,
+    Checkpoint = 3,
 }
 
 impl ObjectKind {
@@ -62,6 +69,7 @@ impl ObjectKind {
         match kind {
             1 => Ok(Self::Blob),
             2 => Ok(Self::Manifest),
+            3 => Ok(Self::Checkpoint),
             _ => Err(Error::CorruptRepository("unknown object kind".into())),
         }
     }
@@ -152,21 +160,30 @@ impl fmt::Display for OperationId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct FileEntry {
-    pub content: ObjectId,
-    pub executable: bool,
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FileEntry {
+    Regular {
+        content: ObjectId,
+        executable: bool,
+    },
+    /// Exact link-target bytes live in a blob; readers never follow the target.
+    Symlink {
+        target: ObjectId,
+    },
+}
+
+impl FileEntry {
+    pub fn content(&self) -> ObjectId {
+        match self {
+            Self::Regular { content, .. } => *content,
+            Self::Symlink { target } => *target,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Manifest(BTreeMap<RepoPath, FileEntry>);
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EncodedEntry {
-    content: String,
-    executable: bool,
-}
 
 impl Manifest {
     pub fn new(entries: impl IntoIterator<Item = (RepoPath, FileEntry)>) -> Result<Self> {
@@ -195,34 +212,18 @@ impl Manifest {
         let entries: BTreeMap<_, _> = self
             .0
             .iter()
-            .map(|(path, entry)| {
-                (
-                    path.as_str(),
-                    EncodedEntry {
-                        content: entry.content.to_string(),
-                        executable: entry.executable,
-                    },
-                )
-            })
+            .map(|(path, entry)| (path.as_str(), entry))
             .collect();
         // Serializing a string-keyed map with string and bool fields cannot fail.
         serde_json::to_vec(&entries).expect("manifest encoding")
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
-        let entries: BTreeMap<String, EncodedEntry> = serde_json::from_slice(bytes)
+        let entries: BTreeMap<String, FileEntry> = serde_json::from_slice(bytes)
             .map_err(|e| Error::CorruptRepository(format!("invalid manifest encoding: {e}")))?;
         let entries = entries
             .into_iter()
-            .map(|(path, entry)| {
-                Ok((
-                    RepoPath::parse(&path)?,
-                    FileEntry {
-                        content: ObjectId::parse(&entry.content)?,
-                        executable: entry.executable,
-                    },
-                ))
-            })
+            .map(|(path, entry)| Ok((RepoPath::parse(&path)?, entry)))
             .collect::<Result<Vec<_>>>()?;
         let manifest = Self::new(entries)?;
         if manifest.canonical_bytes() != bytes {

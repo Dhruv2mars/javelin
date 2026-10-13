@@ -1,11 +1,15 @@
 //! Native immutable repository storage and ordered World publication metadata.
-//! Layer preparation, permissions, and full Layer Publish are outside this crate's
-//! current foundation API.
+//! Sparse Layer state is available; filesystem capture and full Publish are later work.
 
 mod domain;
+mod layer;
 mod repository;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
+pub use layer::{
+    CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate,
+    PathDiff, SparseChanges,
+};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 
 pub type Result<T> = std::result::Result<T, Error>;

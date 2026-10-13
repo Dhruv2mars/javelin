@@ -109,6 +109,59 @@ fn actor() {
     } else if mode == "check" {
         let repo = Repository::open(&root).unwrap();
         json!({"integrity": repo.check().unwrap(), "history": repo.history().unwrap()})
+    } else if mode == "layer_capture" || mode == "layer_isolated" || mode == "layer_discard" {
+        use crate::{LayerId, LayerState, SparseChanges};
+        let mut repo = Repository::open(&root).unwrap();
+        let operation =
+            OperationId::parse(&std::env::var("JAVELIN_TEST_OPERATION").unwrap()).unwrap();
+        let layer = LayerId::parse(if mode == "layer_isolated" {
+            operation.as_str()
+        } else {
+            "shared"
+        })
+        .unwrap();
+        let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+        let initial = repo.create_layer(&layer, &base).unwrap();
+        let expected: u64 = std::env::var("JAVELIN_TEST_EXPECTED")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let head = if expected == 0 {
+            initial
+        } else {
+            match repo.layer_state(&layer).unwrap() {
+                LayerState::Active { head } => {
+                    assert_eq!(head.revision(), expected);
+                    head
+                }
+                _ => panic!("expected active Layer"),
+            }
+        };
+        let result = if mode == "layer_discard" {
+            repo.discard_layer(&operation, &head)
+        } else {
+            let content =
+                ObjectId::parse(&std::env::var("JAVELIN_TEST_MANIFEST").unwrap()).unwrap();
+            let changes = SparseChanges::new([(
+                RepoPath::parse("binary").unwrap(),
+                Some(FileEntry::Regular {
+                    content,
+                    executable: false,
+                }),
+            )])
+            .unwrap();
+            repo.capture_layer(&operation, &head, &changes)
+        };
+        match result {
+            Ok(outcome) => json!(outcome),
+            Err(error) => json!({"error": error.code()}),
+        }
+    } else if mode == "layer_read" {
+        let repo = Repository::open(&root).unwrap();
+        let checkpoint =
+            crate::CheckpointId::parse(&std::env::var("JAVELIN_TEST_MANIFEST").unwrap()).unwrap();
+        let frozen = repo.read_checkpoint(checkpoint).unwrap();
+        json!({"checkpoint":frozen.id(),"entries":frozen.manifest().entries(),"changes":frozen.changes().entries().len(),"integrity":repo.check().unwrap()})
     } else {
         let mut repo = Repository::open(&root).unwrap();
         let operation =
@@ -135,7 +188,7 @@ fn candidate(repo: &mut Repository, bytes: &[u8]) -> ObjectId {
     let content = repo.put_blob(bytes).unwrap();
     let manifest = Manifest::new([(
         RepoPath::parse("binary").unwrap(),
-        FileEntry {
+        FileEntry::Regular {
             content,
             executable: false,
         },
@@ -389,5 +442,272 @@ fn initialization_recovers_on_both_sides_of_commit() {
         let repo = Repository::open(root.path()).unwrap();
         assert_eq!(repo.check().unwrap().versions, 1);
         assert_eq!(repo.check().unwrap().objects, 1);
+    }
+}
+
+fn layer_fixture() -> (TempDir, ObjectId) {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+    repo.create_layer(&crate::LayerId::parse("shared").unwrap(), &base)
+        .unwrap();
+    let content = repo.put_blob(b"private bytes").unwrap();
+    (root, content)
+}
+
+#[test]
+fn independent_layer_writers_have_one_winner_and_durable_stale_retries() {
+    let (root, _) = layer_fixture();
+    let mut repo = Repository::open(root.path()).unwrap();
+    let content: Vec<_> = (0..8).map(|i| repo.put_blob(&[i, 255]).unwrap()).collect();
+    drop(repo);
+    let mut actors: Vec<_> = content
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            Actor::spawn(
+                root.path(),
+                "layer_capture",
+                &format!("capture-{i}"),
+                Some(*c),
+                0,
+                "",
+            )
+        })
+        .collect();
+    for actor in &mut actors {
+        actor.release();
+    }
+    let results: Vec<_> = actors.iter_mut().map(Actor::result).collect();
+    assert_eq!(
+        results.iter().filter(|r| r["outcome"] == "applied").count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| r["outcome"] == "stale" && r["state"]["head"]["revision"] == 1)
+            .count(),
+        7
+    );
+    for (i, c) in content.iter().enumerate() {
+        let mut retry = Actor::spawn(
+            root.path(),
+            "layer_capture",
+            &format!("capture-{i}"),
+            Some(*c),
+            0,
+            "",
+        );
+        retry.release();
+        assert_eq!(retry.result(), results[i]);
+    }
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.history().unwrap().len(), 1);
+    repo.check().unwrap();
+}
+
+#[test]
+fn simultaneous_layer_retries_append_once_and_input_reuse_is_rejected() {
+    let (root, content) = layer_fixture();
+    let mut actors: Vec<_> = (0..8)
+        .map(|_| Actor::spawn(root.path(), "layer_capture", "same", Some(content), 0, ""))
+        .collect();
+    for actor in &mut actors {
+        actor.release();
+    }
+    let results: Vec<_> = actors.iter_mut().map(Actor::result).collect();
+    assert!(
+        results
+            .iter()
+            .all(|r| r == &results[0] && r["outcome"] == "applied")
+    );
+    let mut repo = Repository::open(root.path()).unwrap();
+    let different = repo.put_blob(b"different").unwrap();
+    drop(repo);
+    let mut retry = Actor::spawn(root.path(), "layer_capture", "same", Some(different), 0, "");
+    retry.release();
+    assert_eq!(retry.result()["error"], "operation_id_reused");
+    let repo = Repository::open(root.path()).unwrap();
+    match repo
+        .layer_state(&crate::LayerId::parse("shared").unwrap())
+        .unwrap()
+    {
+        crate::LayerState::Active { head } => assert_eq!(head.revision(), 1),
+        _ => panic!("expected active head"),
+    }
+    repo.check().unwrap();
+}
+
+#[test]
+fn simultaneous_independent_layer_heads_do_not_invalidate_each_other() {
+    let (root, content) = layer_fixture();
+    let mut actors: Vec<_> = (0..8)
+        .map(|i| {
+            Actor::spawn(
+                root.path(),
+                "layer_isolated",
+                &format!("layer-{i}"),
+                Some(content),
+                0,
+                "",
+            )
+        })
+        .collect();
+    for actor in &mut actors {
+        actor.release();
+    }
+    let results: Vec<_> = actors.iter_mut().map(Actor::result).collect();
+    assert!(
+        results
+            .iter()
+            .all(|r| r["outcome"] == "applied" && r["state"]["head"]["revision"] == 1)
+    );
+    assert!(
+        results
+            .iter()
+            .all(|r| r["state"]["head"]["checkpoint"] == results[0]["state"]["head"]["checkpoint"])
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    let report = repo.check().unwrap();
+    assert_eq!(report.layers, 9);
+    assert_eq!(report.objects, 4); // genesis, empty checkpoint, blob, changed checkpoint
+    assert_eq!(report.versions, 1);
+}
+
+#[test]
+fn concurrent_discard_and_capture_choose_one_terminal_or_active_head() {
+    let (root, content) = layer_fixture();
+    let mut capture = Actor::spawn(
+        root.path(),
+        "layer_capture",
+        "capture",
+        Some(content),
+        0,
+        "",
+    );
+    let mut discard = Actor::spawn(root.path(), "layer_discard", "discard", None, 0, "");
+    capture.release();
+    discard.release();
+    let captured = capture.result();
+    let discarded = discard.result();
+    assert_eq!(
+        [&captured, &discarded]
+            .iter()
+            .filter(|r| r["outcome"] == "applied")
+            .count(),
+        1
+    );
+    assert_eq!(
+        [&captured, &discarded]
+            .iter()
+            .filter(|r| r["outcome"] == "stale")
+            .count(),
+        1
+    );
+    assert_eq!(captured["state"], discarded["state"]);
+    for (mode, operation, object, expected_result) in [
+        ("layer_capture", "capture", Some(content), captured),
+        ("layer_discard", "discard", None, discarded),
+    ] {
+        let mut retry = Actor::spawn(root.path(), mode, operation, object, 0, "");
+        retry.release();
+        assert_eq!(retry.result(), expected_result);
+    }
+    Repository::open(root.path()).unwrap().check().unwrap();
+}
+
+#[test]
+fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
+    let (root, content) = layer_fixture();
+    let mut writer = Actor::spawn(
+        root.path(),
+        "layer_capture",
+        "interrupted",
+        Some(content),
+        0,
+        "layer_before_commit",
+    );
+    writer.release();
+    writer.marker("BOUNDARY layer_before_commit");
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.check().unwrap().objects, 3);
+    match repo
+        .layer_state(&crate::LayerId::parse("shared").unwrap())
+        .unwrap()
+    {
+        crate::LayerState::Active { head } => assert_eq!(head.revision(), 0),
+        _ => panic!("expected initial head"),
+    }
+    drop(repo);
+    writer.kill();
+    let mut retry = Actor::spawn(
+        root.path(),
+        "layer_capture",
+        "interrupted",
+        Some(content),
+        0,
+        "",
+    );
+    retry.release();
+    assert_eq!(retry.result()["outcome"], "applied");
+    assert_eq!(
+        Repository::open(root.path())
+            .unwrap()
+            .check()
+            .unwrap()
+            .objects,
+        4
+    );
+}
+
+#[test]
+fn layer_lost_and_received_ack_survive_process_exit_and_later_heads() {
+    for boundary in ["layer_after_commit", "after_ack"] {
+        let (root, content) = layer_fixture();
+        let mut writer = Actor::spawn(
+            root.path(),
+            "layer_capture",
+            "original",
+            Some(content),
+            0,
+            boundary,
+        );
+        writer.release();
+        let acknowledged = if boundary == "after_ack" {
+            Some(serde_json::from_str::<Value>(&writer.marker("RESULT ")).unwrap())
+        } else {
+            None
+        };
+        writer.marker(&format!("BOUNDARY {boundary}"));
+        writer.kill();
+        let mut repo = Repository::open(root.path()).unwrap();
+        let later = repo.put_blob(b"later private bytes").unwrap();
+        drop(repo);
+        let mut next = Actor::spawn(root.path(), "layer_capture", "later", Some(later), 1, "");
+        next.release();
+        assert_eq!(next.result()["state"]["head"]["revision"], 2);
+        let mut retry = Actor::spawn(
+            root.path(),
+            "layer_capture",
+            "original",
+            Some(content),
+            0,
+            "",
+        );
+        retry.release();
+        let original = retry.result();
+        assert_eq!(original["state"]["head"]["revision"], 1);
+        if let Some(ack) = acknowledged {
+            assert_eq!(original, ack);
+        }
+        let frozen =
+            ObjectId::parse(original["state"]["head"]["checkpoint"].as_str().unwrap()).unwrap();
+        let mut reader = Actor::spawn(root.path(), "layer_read", "", Some(frozen), 0, "");
+        reader.release();
+        let read = reader.result();
+        assert_eq!(read["entries"]["binary"]["content"], content.to_string());
+        assert_eq!(read["changes"], 1);
+        assert_eq!(read["integrity"]["versions"], 1);
     }
 }
