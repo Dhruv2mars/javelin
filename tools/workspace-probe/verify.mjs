@@ -35,6 +35,14 @@ const broken = await run('hardlink-negative', ['--backend', 'directory', '--nega
 for (const id of ['private-in-place-writes', 'final-base-and-peer-integrity']) {
   assert.equal(broken.checks.find(c => c.id === id).verdict, 'NOT VERIFIED');
 }
+const aborted = await run('wall-budget-negative', ['--backend', 'directory', '--wall-ms', '300'], 124);
+assert.equal(aborted.behaviorVerdict, 'INCONCLUSIVE');
+assert.match(aborted.fatal, /wall budget/);
+if (aborted.ownedTemporaryRoot) {
+  await fs.chmod(join(aborted.ownedTemporaryRoot, 'base'), 0o755);
+  await fs.chmod(join(aborted.ownedTemporaryRoot, 'base/dir'), 0o755);
+  await fs.rm(aborted.ownedTemporaryRoot, { recursive: true, force: true });
+}
 const caller = await fs.mkdtemp(join(tmpdir(), 'javelin-caller-paths-'));
 try {
   const base = join(caller, 'base'); await fs.mkdir(base);

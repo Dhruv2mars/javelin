@@ -263,17 +263,20 @@ function option(name, fallback) { const index = args.indexOf(name); return index
 const mode = option('--backend', 'directory');
 let output = resolve(option('--out', 'workspace-probe.json'));
 let outputApproved = false;
+const wallTimeoutMs = Number(option('--wall-ms', '60000'));
+assert.ok(Number.isInteger(wallTimeoutMs) && wallTimeoutMs >= 100 && wallTimeoutMs <= 60000, 'wall budget must be 100..60000 ms');
+report.limits.wallTimeoutMs = wallTimeoutMs;
 report.backend = mode;
 report.contract = ['immutable-shared-base', 'sparse-changes-and-clones', 'backend-interruption-recovery', 'real-sparse-backend-gate-2']
   .map(id => ({ id, verdict: 'INCONCLUSIVE', evidence: 'probe did not complete' }));
 // A stuck caller-provided filesystem must not make this an unbounded stress run.
 // Exit 124 means incomplete evidence; it must never be interpreted as success.
 const deadline = setTimeout(() => {
-  report.fatal = 'Probe exceeded 60-second wall budget'; report.behaviorVerdict = 'INCONCLUSIVE';
+  report.fatal = `Probe exceeded ${wallTimeoutMs}-ms wall budget`; report.behaviorVerdict = 'INCONCLUSIVE';
   report.cleanup = 'aborted; fixture cleanup not confirmed'; report.finishedAt = new Date().toISOString();
   if (outputApproved) writeFileSync(output, JSON.stringify(report, null, 2) + '\n');
   console.error(report.fatal); process.exit(124);
-}, 60000);
+}, wallTimeoutMs);
 let temporary;
 try {
   if (args.includes('--seed')) {
@@ -301,6 +304,7 @@ try {
   } else {
     outputApproved = true;
     temporary = await fs.mkdtemp(join(tmpdir(), 'javelin-fs-probe-'));
+    report.ownedTemporaryRoot = temporary;
     base = join(temporary, 'base'); a = join(temporary, 'a'); b = join(temporary, 'b'); c = join(temporary, 'c');
     await fs.mkdir(base); await seed(base);
     if (mode === 'clonefile') {
