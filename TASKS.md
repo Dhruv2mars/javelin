@@ -38,6 +38,8 @@ workflow may invoke or interpret Git.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
 - [ ] Verify the complete workflow on each supported operating system.
+- [ ] Run native formatting, lint, test, and release-build checks on hosted macOS,
+  Linux, and Windows runners, then repeat against the completed native implementation.
 
 ## Prove hosting and collaboration
 
@@ -94,6 +96,18 @@ PRs are never merged without explicit user instruction.
   host prerequisites, and a bounded evidence-backed recommendation.
 - Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
 - Host: macOS 26.6.2 build 25G83, arm64. Linux and Windows execution remains unverified.
+
+### Cross-platform verification CI
+
+- Thread: `t3-thread://v1/mcp:fa456317-56e0-44c1-afc9-91ecbbaccbe0`.
+- Branch: `chore/native-cross-platform-ci`, based on `feat/native-repository-foundation`.
+- PR: creation pending. The thread will own one draft PR stacked on PR #4.
+- Owns `.github/workflows/` and `docs/cross-platform-verification.md`.
+- Done: real formatting, lint, test, and release-build runs on hosted macOS,
+  Linux, and Windows, with logs and explicit dependency status.
+- Baseline source: `7ec2e75`, `tests/scaffold.rs`. The single process assertion
+  captures the original greeting and proves no VCS behavior.
+- Complete implementation checks remain pending until the native-core unit is ready.
 
 ### Hub continuation and review
 
