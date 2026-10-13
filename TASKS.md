@@ -19,9 +19,9 @@ workflow may invoke or interpret Git.
 - [x] Open and link the hub's draft planning PR: [#3](https://github.com/Dhruv2mars/javelin/pull/3).
 - [x] Record the accepted product contract and milestone verification gates in `docs/build-contract.md`.
 - [x] Persist the latest working instructions in `AGENTS.md` and `RTK.md`.
-- [ ] Launch one local-core thread and one filesystem-verification thread.
-- [ ] Record their thread, branch, PR, and evidence links here.
-- [ ] Arrange persistent hub continuation without duplicating active work.
+- [x] Launch one local-core thread and one filesystem-verification thread.
+- [x] Record their thread, branch, PR, and evidence links here.
+- [x] Arrange hourly persistent hub continuation without duplicating active work.
 - [ ] Independently review this plan against the accepted design.
 
 ## Prove the local VCS
@@ -66,6 +66,41 @@ workflow may invoke or interpret Git.
 The hub owns branch `chore/ga-build-plan` and [PR #3](https://github.com/Dhruv2mars/javelin/pull/3).
 The initial implementation workstreams will start from this branch's recorded contract.
 PRs are never merged without explicit user instruction.
+
+### Native repository foundation
+
+- Thread: `t3-thread://v1/mcp:0b3d92f7-a705-4ba5-9bb6-b5ca62612768`.
+- Branch: `feat/native-repository-foundation`, based on `chore/ga-build-plan`.
+- PR: [#4](https://github.com/Dhruv2mars/javelin/pull/4), draft.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-native-repository-foundation`.
+- Owns `src/`, root Cargo manifests, native tests, and local-core documentation.
+- Done: native initialization, exact immutable objects, ordered history, integrity checks,
+  and proven publication metadata behavior across retries, concurrency, and restart.
+- Evidence so far: planning commit `3d4144b`; implementation and product verification pending.
+
+### Layer filesystem verification
+
+- Thread: `t3-thread://v1/mcp:24542472-902b-4329-927b-f4e65dfe7531`.
+- Branch: `test/layer-filesystem-contract`, based on `chore/ga-build-plan`.
+- PR: [#5](https://github.com/Dhruv2mars/javelin/pull/5), draft.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract`.
+- Owns `tools/workspace-probe/` and `docs/workspace-verification.md`.
+- Done: reproducible ordinary-path probe, honest backend capability verdicts,
+  host prerequisites, and a bounded evidence-backed recommendation.
+- Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
+- Host: macOS 26.6.2 build 25G83, arm64. Linux and Windows execution remains unverified.
+
+### Hub continuation and review
+
+- Hourly scheduler: `scheduled-task:command:mcp:3981ee7f-8fb4-4683-a0d3-78e3e74e0371:schedule-task:javelin-ga-hub-continuation-20261013`.
+- Bound hub: `e659350e-23d8-4473-98e8-d3609b784340`.
+- First scheduled continuation: 2026-10-13 16:54:44 UTC, 22:24:44 Asia/Kolkata.
+- Continuation reads this checklist, checks live work before delegating, and keeps
+  unchanged status quiet. Disable the scheduler when GA is verified or the user cancels.
+- Contract review round 1 failed before review with `Claude API rate limit reached. Try again later.`
+- Contract review round 2 uses provider `claude-work`, model `claude-opus-5-5`.
+- Review task: `node:delegated-task:command%3Amcp%3A3981ee7f-8fb4-4683-a0d3-78e3e74e0371%3Adelegate-task%3Ajavelin-ga-contract-review-r2-20261013`.
+- Review findings and acceptance remain pending.
 
 ## Open engineering questions
 

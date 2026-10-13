@@ -1,3 +1,5 @@
 ts	phase	decision	why	evidence	result
 2026-10-13T15:51:47Z	frame	Start from the accepted design; earlier code is optional	The user explicitly permits replacing all previous work	TASKS.md; docs/build-contract.md; hub user message 2026-10-13	open
 2026-10-13T15:51:47Z	execution	Use isolated threads with one PR each and a hub-owned checklist	The user requested T3 thread ownership and autonomous progress	AGENTS.md; TASKS.md; https://github.com/Dhruv2mars/javelin/pull/3	open
+2026-10-13T15:56:16Z	delegation	Launch native-core and filesystem-probe threads in separate app-bound worktrees	Prove storage correctness and ordinary tooling compatibility independently	https://github.com/Dhruv2mars/javelin/pull/4; https://github.com/Dhruv2mars/javelin/pull/5; TASKS.md	work running; product verification pending
+2026-10-13T15:56:16Z	continuation	Schedule hourly continuation in the existing hub	The user requested autonomous work over weeks or months	TASKS.md hub continuation scheduler identifier	enabled; first run 2026-10-13T16:54:44.475Z
