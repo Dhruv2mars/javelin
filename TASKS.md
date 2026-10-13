@@ -137,10 +137,15 @@ sparse filesystem backends, installation, or GA. After the hub confirms native
 core completion, rebase this same PR and repeat the three-OS implementation gate.
 
 - [x] Read worktree instructions, TASKS, and the current hub contract at `8db2a5b`.
-- [ ] Create the planning commit and open and register exactly one draft PR.
-- [ ] Confirm runner labels, action versions, and Rust commands in primary docs.
-- [ ] Add a bounded three-OS workflow with narrow permissions and failure evidence.
+- [x] Create the planning commit and open and register exactly one draft PR.
+- [x] Confirm runner labels, action versions, and Rust commands in primary docs.
+- [x] Add a bounded three-OS workflow with narrow permissions and failure evidence.
 - [ ] Check repository Actions availability and push the committed baseline gate.
 - [ ] Inspect real hosted runner results and record exact scope and proof links.
 - [ ] Report PR, results, dependencies, and blockers to the hub.
 - [ ] After hub confirmation, rebase onto native core and verify all three OSes.
+
+Draft PR: https://github.com/Dhruv2mars/javelin/pull/6, registered with T3 Code.
+Actions API reads confirm public repository, enabled Actions, and read-only token
+defaults. Local Rust `1.99.0` formatting, Clippy, scaffold test, and release build
+passed. Hosted execution is still INCONCLUSIVE until the three jobs finish.

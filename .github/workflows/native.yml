@@ -1,0 +1,76 @@
+name: Native Rust
+
+on:
+  push:
+    branches: [main, feat/native-repository-foundation]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: 1
+
+jobs:
+  native:
+    name: Native / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out committed source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          mkdir -p ci-logs
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy 2>&1 | tee ci-logs/toolchain-install.log
+
+      - name: Record runner and compiler
+        env:
+          CHECKED_OUT_COMMIT: ${{ steps.checkout.outputs.commit }}
+        run: |
+          {
+            printf 'commit=%s\nrunner=%s\narchitecture=%s\nimage=%s\nimage_version=%s\n' "$CHECKED_OUT_COMMIT" "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" "$ImageVersion"
+            rustc --version --verbose
+            cargo --version
+            rustfmt --version
+            cargo clippy --version
+          } 2>&1 | tee ci-logs/environment.log
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check 2>&1 | tee ci-logs/format.log
+
+      - name: Lint native targets
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings 2>&1 | tee ci-logs/clippy.log
+
+      - name: Test native targets
+        run: cargo test --locked --all-targets --all-features -- --nocapture 2>&1 | tee ci-logs/test.log
+
+      - name: Build release binary
+        run: cargo build --locked --release --all-features 2>&1 | tee ci-logs/release-build.log
+
+      - name: Retain check logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: native-logs-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ci-logs/
+          retention-days: 14
+          if-no-files-found: warn
