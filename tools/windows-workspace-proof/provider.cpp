@@ -101,8 +101,9 @@ struct Provider {
             auto name = fs::path(entry.name).filename().wstring();
             if (!PrjFileNameMatch(name.c_str(), session.search.c_str())) { ++session.next; continue; }
             PRJ_EXTENDED_INFO extended{}; extended.InfoType = PRJ_EXT_INFO_TYPE_SYMLINK; extended.Symlink.TargetName = entry.target.c_str();
-            HRESULT hr = entry.target.empty() ? PrjFillDirEntryBuffer(name.c_str(), &entry.info, buffer)
-                : PrjFillDirEntryBuffer2(buffer, name.c_str(), &entry.info, &extended);
+            auto info = entry.info; // SDK enumeration helpers take mutable metadata pointers.
+            HRESULT hr = entry.target.empty() ? PrjFillDirEntryBuffer(name.c_str(), &info, buffer)
+                : PrjFillDirEntryBuffer2(buffer, name.c_str(), &info, &extended);
             if (hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) return filled ? S_OK : hr;
             if (FAILED(hr)) return hr;
             filled = true; ++session.next;
@@ -157,19 +158,19 @@ struct Provider {
         const auto backing = scan(base);
         auto index = backing;
         if (!snapshot.empty()) {
-            std::wifstream deleted(snapshot / L"deleted.txt"); std::wstring name;
-            while (std::getline(deleted, name)) {
+            std::wifstream deleted(snapshot / L"deleted.txt"); std::wstring line;
+            while (std::getline(deleted, line)) {
                 for (auto it = index.begin(); it != index.end();) {
-                    if (PrjFileNameCompare(it->first.c_str(), name.c_str()) == 0 || it->first.starts_with(name + L"\\")) it = index.erase(it);
+                    if (PrjFileNameCompare(it->first.c_str(), line.c_str()) == 0 || it->first.starts_with(line + L"\\")) it = index.erase(it);
                     else ++it;
                 }
             }
             for (const auto& [name, entry] : scan(snapshot / L"changed")) index[name] = entry;
             std::wifstream aliases(snapshot / L"aliases.txt");
-            while (std::getline(aliases, name)) {
-                auto tab = name.find(L'\t');
+            while (std::getline(aliases, line)) {
+                auto tab = line.find(L'\t');
                 if (tab == std::wstring::npos) throw std::runtime_error("invalid bounded alias record");
-                auto destination = name.substr(0, tab), source = name.substr(tab + 1);
+                auto destination = line.substr(0, tab), source = line.substr(tab + 1);
                 auto entry = backing.at(source); entry.name = destination; index[destination] = entry;
             }
         }
@@ -253,7 +254,8 @@ static int bounded(int argc, wchar_t** argv) {
     if (!job) return 2;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { CloseHandle(job); return 2; }
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup); startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE); startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE); startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     PROCESS_INFORMATION child{};
     if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_SUSPENDED, nullptr, nullptr, &startup, &child)) {
         std::printf("CreateProcessW error=%lu\n", GetLastError()); CloseHandle(job); return 2;
@@ -268,14 +270,16 @@ static int bounded(int argc, wchar_t** argv) {
     TerminateJobObject(job, 124); // Also stop remaining children after a normal parent exit.
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
     ULONGLONG deadline = GetTickCount64() + 5000;
+    bool queried = false;
     do {
-        QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr);
+        queried = QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr) != FALSE;
+        if (!queried) break;
         if (accounting.ActiveProcesses == 0) break; Sleep(20);
     } while (GetTickCount64() < deadline);
     std::fprintf(stderr, "WINDOWS_JOB parent=%lu timedOut=%d exit=%lu activeAfterTermination=%lu\n", child.dwProcessId, timedOut,
         code, accounting.ActiveProcesses);
     CloseHandle(child.hProcess); CloseHandle(job);
-    return accounting.ActiveProcesses == 0 ? static_cast<int>(code) : 125;
+    return queried && accounting.ActiveProcesses == 0 ? static_cast<int>(code) : 125;
 }
 
 int wmain(int argc, wchar_t** argv) {
