@@ -170,6 +170,87 @@ fn history_corruption_fails_closed_and_mutations_are_rejected() {
 }
 
 #[test]
+fn missing_tail_world_is_corruption_when_any_outcome_retains_its_anchor() {
+    for retain_accepted in [false, true] {
+        let root = TempDir::new().unwrap();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let (_, manifest) = snapshot(&mut repo, b"acknowledged");
+        repo.compare_and_advance(&op("accepted"), version(0), manifest)
+            .unwrap();
+        if !retain_accepted {
+            assert_eq!(
+                repo.compare_and_advance(&op("stale"), version(0), manifest)
+                    .unwrap(),
+                AdvanceOutcome::Stale { actual: version(1) }
+            );
+        }
+        let db = raw(&root);
+        db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER versions_no_DELETE; DELETE FROM versions WHERE number=1;").unwrap();
+        if !retain_accepted {
+            db.execute_batch(
+                "DROP TRIGGER attempts_no_DELETE; DELETE FROM attempts WHERE id='accepted';",
+            )
+            .unwrap();
+        }
+        drop(repo);
+        let mut repo = Repository::open(root.path()).unwrap();
+        assert!(
+            matches!(repo.history(), Err(Error::CorruptRepository(_))),
+            "retained accepted anchor: {retain_accepted}"
+        );
+        assert!(matches!(
+            repo.version(version(0)),
+            Err(Error::CorruptRepository(_))
+        ));
+        assert!(matches!(
+            Repository::init(root.path()),
+            Err(Error::CorruptRepository(_))
+        ));
+        assert!(matches!(
+            repo.compare_and_advance(&op("new"), version(0), manifest),
+            Err(Error::CorruptRepository(_))
+        ));
+        assert!(matches!(repo.check(), Err(Error::CorruptRepository(_))));
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM versions", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM attempts WHERE id='new'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn repeated_init_preserves_incidental_files_in_a_valid_store() {
+    let root = TempDir::new().unwrap();
+    let repo = Repository::init(root.path()).unwrap();
+    let old = repo.history().unwrap();
+    let incidental = root.path().join(".javelin/.DS_Store");
+    std::fs::write(&incidental, b"incidental metadata").unwrap();
+    let repo = Repository::init(root.path()).unwrap();
+    assert_eq!(repo.history().unwrap(), old);
+    assert_eq!(std::fs::read(incidental).unwrap(), b"incidental metadata");
+}
+
+#[test]
+fn empty_interrupted_database_is_not_initialized_and_can_resume() {
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join(".javelin")).unwrap();
+    drop(raw(&root));
+    assert!(matches!(
+        Repository::open(root.path()),
+        Err(Error::NotInitialized(_))
+    ));
+    let repo = Repository::init(root.path()).unwrap();
+    assert_eq!(repo.history().unwrap().len(), 1);
+}
+
+#[test]
 fn durable_accepted_and_stale_outcomes_bind_exact_input() {
     let root = TempDir::new().unwrap();
     let mut repo = Repository::init(root.path()).unwrap();

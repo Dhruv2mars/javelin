@@ -79,14 +79,6 @@ impl Repository {
             Err(e) => return Err(e.into()),
         }
         validate_directory(&directory)?;
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            if entry.file_name() != DATABASE && entry.file_name() != "repository.sqlite3-journal" {
-                return Err(Error::CorruptRepository(
-                    "unexpected files in repository directory; refusing initialization".into(),
-                ));
-            }
-        }
         let path = directory.join(DATABASE);
         validate_database_path(&path)?;
         let mut conn = connect(&path, true)?;
@@ -94,6 +86,17 @@ impl Repository {
         let format: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let application: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
         if format == 0 && application == 0 {
+            for entry in fs::read_dir(&directory)? {
+                let entry = entry?;
+                if entry.file_name() != DATABASE
+                    && entry.file_name() != "repository.sqlite3-journal"
+                    && entry.file_name() != ".DS_Store"
+                {
+                    return Err(Error::CorruptRepository(
+                        "unexpected files in uninitialized repository directory".into(),
+                    ));
+                }
+            }
             let tables: i64 =
                 tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
             if tables != 0 {
@@ -137,7 +140,19 @@ impl Repository {
         validate_directory(&directory)?;
         validate_database_path(&path)?;
         let conn = connect(&path, false)?;
-        validate_format(&conn)?;
+        let tx = conn.unchecked_transaction()?;
+        let format: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let application: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
+        if format == 0
+            && application == 0
+            && tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
+                r.get::<_, i64>(0)
+            })? == 0
+        {
+            return Err(Error::NotInitialized(root));
+        }
+        validate_format(&tx)?;
+        tx.commit()?;
         Ok(Self { conn })
     }
 
@@ -301,21 +316,13 @@ impl Repository {
                 }
             }
         }
-        let operations = tx
-            .prepare("SELECT id FROM attempts ORDER BY id")?
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        for id in &operations {
-            let operation = decode_operation(id)?;
-            let attempt = attempt_in(&tx, &operation)?
-                .ok_or_else(|| Error::CorruptRepository("missing attempt".into()))?;
-            manifest_in(&tx, attempt.manifest)?;
-            attempt.outcome(&history)?;
-        }
+        let attempts: i64 = tx.query_row("SELECT count(*) FROM attempts", [], |r| r.get(0))?;
         let report = IntegrityReport {
             versions: history.len(),
             objects: objects.len(),
-            attempts: operations.len(),
+            attempts: usize::try_from(attempts).map_err(|_| {
+                Error::CorruptRepository("operation count exceeds memory range".into())
+            })?,
         };
         tx.commit()?;
         Ok(report)
@@ -483,6 +490,17 @@ fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
             manifest,
             operation,
         });
+    }
+    let operations = conn
+        .prepare("SELECT id FROM attempts ORDER BY id")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for id in operations {
+        let operation = decode_operation(&id)?;
+        let attempt = attempt_in(conn, &operation)?
+            .ok_or_else(|| Error::CorruptRepository("missing attempt".into()))?;
+        manifest_in(conn, attempt.manifest)?;
+        attempt.outcome(&history)?;
     }
     Ok(history)
 }
