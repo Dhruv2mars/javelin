@@ -90,11 +90,19 @@ automatic capture remain required follow-on work. Do not change probes/workflows
 
 - [x] Read instructions, latest hub contract, accepted core and source ownership.
 - [x] Ground the store and compare complete sparse deltas with checkpoint chains.
-- [ ] Create planning commit and immediately register the single draft PR.
-- [ ] Implement typed Layer bases, sparse checkpoints, clone, head updates and discard.
-- [ ] Add core stale-manifest/outcome regressions and Layer behavioral/process checks.
-- [ ] Run foundational tests, formatting, Clippy, release build and inherited CI.
+- [x] Create planning commit and immediately register the single draft PR [#8](https://github.com/Dhruv2mars/javelin/pull/8).
+- [x] Implement typed Layer bases, sparse checkpoints, clone, head updates and discard.
+- [x] Add core stale-manifest/outcome regressions and Layer behavioral/process checks.
+- [x] Run all foundational tests, formatting, Clippy and release build locally.
+- [ ] Inspect our exact source's inherited three-OS CI and retained logs.
 - [ ] Report exact source, artifacts, verdict and follow-on work to the hub.
+
+Local native API/process checks pass 43 tests, one ignored actor, on Darwin arm64
+Rust 1.93.0. The documented caller also ran against the production release library
+and release CLI integrity inspection. Sparse sharing and limits are recorded in
+`docs/layer-checkpoints.md`. Own platform results remain pending. The accepted
+PR6 base is `0c8582ddcb175d7bd4d2752e73f795651f810a6f`; its unchanged-core run
+does not verify these Layer changes. Filesystem binding/autosave remain follow-on.
 
 ## Workstream: native repository foundation
 
