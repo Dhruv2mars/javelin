@@ -101,7 +101,7 @@ PRs are never merged without explicit user instruction.
 
 - Thread: `t3-thread://v1/mcp:fa456317-56e0-44c1-afc9-91ecbbaccbe0`.
 - Branch: `chore/native-cross-platform-ci`, based on `feat/native-repository-foundation`.
-- PR: creation pending. The thread will own one draft PR stacked on PR #4.
+- PR: [#6](https://github.com/Dhruv2mars/javelin/pull/6), draft, stacked on PR #4.
 - Owns `.github/workflows/` and `docs/cross-platform-verification.md`.
 - Done: real formatting, lint, test, and release-build runs on hosted macOS,
   Linux, and Windows, with logs and explicit dependency status.
