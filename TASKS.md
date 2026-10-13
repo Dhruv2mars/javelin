@@ -125,3 +125,24 @@ is owned here. Privileged mounts are restricted to the ephemeral Linux CI job.
 - [x] Resolve base TASKS conflict by preserving PR #5's completed handoff and this appended workstream. Import base repairs unchanged.
 - [x] Establish real hosted run after conflict repair. The `bf9fbc4` notification referred only to a skipped Macroscope check; real OverlayFS run `38430385798` passed at `89d76df`.
 - [x] Audit retained artifact against source hashes and raw storage/recovery records with `rtk proxy bun tools/overlayfs-proof/verify-evidence.mjs`; all 19 downloaded artifact files match the committed copies. Final evidence reported to hub.
+
+## Windows projected filesystem proof workstream
+
+Owned by `feat/windows-projfs-proof`, based on `feat/linux-sparse-layer-proof`.
+Done means one rerunnable bounded disposable GitHub-hosted Windows attempt retains
+raw prerequisite results, exact executable source SHA, job and artifact provenance,
+and per-scope verdicts. If ProjFS can run without reboot, implement a minimal native
+provider and measure actual ordinary-path behavior and sparse private state.
+If feature, API, compiler or other required prerequisites are missing, finish with
+availability evidence and an INCONCLUSIVE backend verdict. Product Gate 2 and GA
+remain unverified. No Windows installation or projection runs on the laptop.
+Only owned Windows tools, documentation, workflow and this section may change.
+
+- [x] Read instructions and latest hub contract; define bounded self-verifiable done.
+- [ ] Open exactly one draft PR against `feat/linux-sparse-layer-proof`, link it immediately, and report planning SHA to the hub.
+- [ ] Apply architect and compare two source-backed native provider shapes before coding.
+- [ ] Implement bounded prerequisite capture for feature, API, compiler, identity and Unix utility availability.
+- [ ] Run actual hosted Windows job and inspect its raw artifact; stop on unavailable prerequisites or required reboot.
+- [ ] If available, implement and verify provider behavior, cache/private-state cost, sparse clone and kill/restart recovery; otherwise record these scopes INCONCLUSIVE.
+- [ ] Preserve original artifact, audit source hashes offline, and document exact evidence and gaps.
+- [ ] Report VERIFIED/NOT VERIFIED/INCONCLUSIVE scopes, dependencies and blockers to the hub; leave the single PR draft and unmerged.
