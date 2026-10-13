@@ -17,6 +17,12 @@ $bun = Join-Path $Owned 'user-tools/bun.exe'
 $probe = Join-Path $Owned 'user-tools/probe.mjs'
 $checks = Join-Path $Owned 'user-tools/checks.mjs'
 $env:PATH = "C:\Program Files\Git\usr\bin;C:\mingw64\bin;$env:PATH"
+$userTemp = Join-Path $Owned 'user-temp'
+New-Item -ItemType Directory -Path $userTemp | Out-Null
+$env:TEMP = $userTemp
+$env:TMP = $userTemp
+$env:TMPDIR = $userTemp
+$summary.tempDirectory = $userTemp
 
 function Start-Provider([string]$Name, [string]$Snapshot = '') {
     $script:generation++
