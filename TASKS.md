@@ -127,7 +127,7 @@ the corrected source and limits are documented in `docs/native-repository.md`.
 
 ## Workstream: native cross-platform CI
 
-Owns only `.github/workflows/**`, `docs/cross-platform-verification.md`, and
+Owns only `.github/workflows/native.yml`, `docs/cross-platform-verification.md`, and
 this progress section. The single draft PR targets `feat/native-repository-foundation`
 at scaffold baseline `7ec2e75`. It cannot land independently before its base.
 Done means committed formatting, Clippy, native tests, and release-build jobs
@@ -144,6 +144,8 @@ core completion, rebase this same PR and repeat the three-OS implementation gate
 - [x] Inspect real hosted runner results and record exact scope and proof links.
 - [x] Report PR, results, dependencies, and blockers to the hub.
 - [ ] After hub confirmation, rebase onto native core and verify all three OSes.
+- [x] Rebase onto hub-reviewed core `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+- [ ] Inspect actual core job results and downloaded artifacts on all three OSes.
 
 Draft PR: https://github.com/Dhruv2mars/javelin/pull/6, registered with T3 Code.
 Actions API reads confirm public repository, enabled Actions, and read-only token
@@ -154,5 +156,8 @@ All check steps and artifact uploads passed. Downloaded all three artifacts and
 confirmed all six logs, exact commit, and one passing scaffold test per runner.
 Evidence and artifact expiry are recorded in `docs/cross-platform-verification.md`.
 Native core, sparse backends, GA, and Javelin product CI remain NOT VERIFIED.
-Follow-on work waits for hub `native-core-complete <SHA>` after independent PR #4
-Gate 1 verification, then rebases this same PR onto that exact reviewed core.
+Hub sent `native-core-complete c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+Rebased onto that exact commit. The TASKS conflict was resolved by preserving the
+entire reviewed base and appending only this workstream section. Source, tests,
+Cargo files, and all other native-owned files match the reviewed core exactly.
+Actual hosted core execution is INCONCLUSIVE until its jobs and logs are inspected.

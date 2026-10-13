@@ -43,6 +43,33 @@ invoke or interpret Git.
 
 ## Evidence and limits
 
+### Reviewed core follow-on
+
+The hub sent `native-core-complete c78ea7a5d3eb9555625391e2f7346859d70f4c2a`
+after independently verifying corrected Gate 1 and its follow-up review. This same
+PR is rebased onto that exact reviewed core. The diff from that commit contains
+only `native.yml`, this document, and the appended CI progress section in TASKS.
+Source, tests, Cargo manifest and lockfile are unchanged.
+
+**INCONCLUSIVE: actual core hosted checks are pending.** The full compiled suite
+will run on each OS. Two tests use `cfg(unix)`: storage symlink rejection and the
+explicit-project-directory CLI regression from a deleted cwd. Windows excludes
+those tests, so its passing count cannot equal the Unix count without changing
+reviewed source. Record the actual per-platform count and this gap in the result.
+No source changes or weakened validation are authorized by this CI workstream.
+
+Local macOS arm64 preflight passed with pinned Rust `1.99.0`: formatting,
+warnings-denied Clippy, 26 passing tests with one ignored process entry point,
+and the release build. These checks do not replace hosted execution evidence.
+
+The hub's accepted core limits remain: integrity inspection checks data rather
+than authenticating schema definitions; consistent-tail deletion without a
+retained operation anchor is undetectable; non-Unix parent-directory sync is
+unimplemented. Actual hardware power-loss durability and performance remain
+unverified. Hosted native tests do not prove sparse Layer or GA behavior.
+
+### Historical scaffold setup
+
 **VERIFIED: hosted scaffold CI setup only.** The starting product baseline is
 `7ec2e75`, whose only integration test asserts that `javelin init` prints
 `Hello, world!`. The successful baseline run proves only that the CI setup executes
@@ -84,10 +111,8 @@ and actions allowed. Both the availability read and actual run completed without
 an Actions permission error.
 
 Native immutable storage, World ordering and recovery are **NOT VERIFIED** by
-the scaffold. The rerun trigger is the hub's `native-core-complete <SHA>` message
-after it independently verifies native PR #4 Gate 1 at that named final commit.
-Rebase this same PR onto that SHA and record fresh three-OS checks against that
-exact reviewed core. Do not rewrite or change the native owner's baseline files.
+the scaffold. The reviewed-core follow-on above supersedes that baseline scope
+only after its actual checks are inspected. Native-owned files remain unchanged.
 Sparse FSKit, OverlayFS, and ProjFS behavior is **NOT VERIFIED** by this gate.
 The current hub contract at `8db2a5b` requires ordinary filesystem operations,
 tool use, isolation, and recovery on a sparse backend. Full-copy controls do not
