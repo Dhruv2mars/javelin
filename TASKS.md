@@ -108,3 +108,19 @@ this bounded foundation on Darwin arm64. Global GA items above remain unchanged.
 Linux/Windows behavior, hardware power-loss durability, Layer adoption, and the
 complete Layer Publish workflow remain unconfirmed follow-on work. PR #4 stays
 draft and unmerged, depending on the hub planning branch.
+
+## Hub acceptance corrections
+
+The hub found missing-tail metadata validation after the initial report. Done for
+this correction requires regression failures before the fix, corruption errors from
+history/init/advance after it, and a passing full suite at the corrected SHA.
+
+- [x] Reject missing tail Worlds with retained accepted or stale operation anchors.
+- [x] Resolve explicit CLI directories without evaluating a deleted current directory.
+- [x] Preserve incidental files on valid-store init and classify empty interrupted init.
+- [x] Document undetectable consistent truncation and integrity inspection schema scope.
+- [x] Run final checks and report exact corrected SHA within PR #4, message `native-acceptance-corrections-final-v1`.
+
+The corrected suite passes 26 tests, one ignored child-process entry point.
+Earlier completion evidence is superseded by the hub acceptance corrections;
+the corrected source and limits are documented in `docs/native-repository.md`.

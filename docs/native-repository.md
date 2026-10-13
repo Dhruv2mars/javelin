@@ -93,10 +93,20 @@ is supplied. A new input after validation failure is allowed because no terminal
 operation outcome exists. This differs from the external sketch's pending binding
 and avoids a separate transaction/state without weakening acknowledged outcomes.
 
-Reads of graphs hold one read transaction. SQL triggers reject updates/deletes of
-immutable records; read-time hashing and graph validation detect tampering when
-those triggers are bypassed. Triggers are protection against accidental mutation,
-not a security boundary against a repository owner editing the database.
+Reads of graphs hold one read transaction. History validation checks every persisted
+operation outcome against the surviving World sequence, including stale outcomes.
+A retained outcome pointing to a deleted tail World reports repository corruption
+before history, init, or metadata advance can return an earlier head. SQL triggers
+reject updates/deletes of immutable records. Triggers protect against accidental
+mutation and are not a security boundary against an owner editing the database.
+
+Integrity inspection checks format identity, SQLite data integrity, object bytes,
+graphs and operation references. It does not authenticate table or trigger definitions.
+Removing a trigger without changing data is outside the inspection's detection scope.
+Consistently deleting a tail World and every operation anchor that records its
+existence is undetectable without a trusted external anchor. Retained unreferenced
+objects cannot establish that a World was once accepted. This implementation has
+no external acceptance anchor and makes no tamper-proof history claim.
 
 SQLite uses DELETE journaling, synchronous EXTRA, foreign keys and a five-second
 busy timeout. On macOS fullfsync is enabled. EXTRA synchronizes the journal's
@@ -110,8 +120,11 @@ durability is unconfirmed. No platform power-loss claim follows from process-kil
 ## Recovery and accepted tradeoffs
 
 An empty interrupted native directory/database can resume initialization. An
-unrecognized database, directory symlink, or unexpected repository-directory file
-is rejected without replacement. Genesis and schema commit together, so a process
+unrecognized database or directory symlink is rejected without replacement. New
+initialization refuses unknown files in an uninitialized repository directory;
+incidental `.DS_Store` metadata is preserved. Reopening a valid initialized store
+preserves incidental files. Opening an interrupted empty database returns
+`not_initialized`, and retrying init can resume it. Genesis and schema commit together, so a process
 crash exposes no partial World. SQLite recovers its journal; Javelin never deletes
 it. A storage error around commit can leave the result unknown. Reopen and retry
 the same operation ID and input to discover the durable result.
@@ -145,20 +158,35 @@ rtk proxy cargo build --release --locked
 rtk git diff --check
 ```
 
-The final suite passes 22 tests with one ignored child-process entry point and
+The corrected suite passes 26 tests with one ignored child-process entry point and
 no failing tests. Formatting, Clippy with warnings denied, release build, and
-diff whitespace check pass. The independent Sol reviewer ran the preceding
-21-test suite and found no reproducible high/medium correctness gap. The added
-test proves rollback after a storage insertion error and an exact retry after
-reopen; the parent ran the full final suite. No reviewer assertion substitutes
-for these observed runs.
+diff whitespace check pass. The earlier independent Sol review of the 21-test
+suite missed an orphan operation anchor after deleting the newest World. Hub
+acceptance review reproduced that medium gap at `6d44167` and `b9decc6`.
+The parent reproduced new regression failures before fixing shared history
+validation and ran the full corrected suite. Earlier verification reports are
+superseded by this corrected evidence.
+
+Before the fix, `rtk cargo test --test native_repository --locked` failed the
+missing-tail, incidental-file init, and interrupted-empty-database regressions.
+`rtk cargo test --test cli --locked explicit_project_directory` reproduced
+`io_error` for an explicit path from a deleted cwd. After the corrections,
+the full 26-test suite and all listed checks pass. The release binary's
+init/history/check commands were also run by an isolated Python process that
+removed its own cwd before passing an explicit absolute project path; all three
+exited successfully and integrity returned one World, one object, zero attempts.
 
 - `tests/native_repository.rs` proves exact one-MiB binary/empty content and
   canonical manifest bytes after reopen, kind separation, invalid paths and
   duplicate/ancestor collisions, absent/corrupt proposed and accepted content,
   malformed manifests with valid hashes, immutable SQL mutation refusal,
   non-clobbering init, durable accepted/stale input binding, and storage-write
-  failure rollback. Unix tests also reject storage symlinks.
+  failure rollback. Missing-tail regressions retain either an accepted anchor or
+  only a stale anchor beyond the head. History, version reads, repeated init,
+  new metadata advance and check all report `corrupt_repository`, with no new
+  operation or World inserted. Tests also cover incidental files on valid init
+  and `not_initialized` classification of an empty interrupted database.
+  Unix tests reject storage symlinks.
 - `tests/support/process.rs`, compiled into the library test binary, launches
   independent OS processes behind pipe barriers. Eight simultaneous initializers
   see one genesis. Eight different publishers produce one accepted result and
@@ -174,6 +202,8 @@ for these observed runs.
   and ordinary output, restart, file preservation, corruption failures, exit 1
   for repository errors, and exit 2 for usage errors. Successful JSON goes to
   stdout; errors go to stderr with `ok: false` and a stable error code/message.
+  A Unix regression drives init/history/check with an explicit project directory
+  from an isolated process whose cwd was deleted, without changing the parent cwd.
 
 The release binary was also driven outside the test suite:
 
