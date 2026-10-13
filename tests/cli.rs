@@ -100,3 +100,37 @@ fn integrity_cli_rejects_corrupt_content() {
     assert!(!cli(&root, &["history"]).status.success());
     assert!(!cli(&root, &["init"]).status.success());
 }
+
+#[cfg(unix)]
+#[test]
+fn explicit_project_directory_works_from_a_deleted_working_directory() {
+    if let Some(root) = std::env::var_os("JAVELIN_TEST_EXPLICIT_ROOT") {
+        let directory = TempDir::new().unwrap();
+        std::env::set_current_dir(directory.path()).unwrap();
+        std::fs::remove_dir(directory.path()).unwrap();
+        for command in ["init", "history", "check"] {
+            let result = Command::new(env!("CARGO_BIN_EXE_javelin"))
+                .arg(command)
+                .arg(&root)
+                .arg("--json")
+                .output()
+                .unwrap();
+            assert!(result.status.success(), "{command}: {:?}", result);
+            let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(value["ok"], true);
+        }
+        return;
+    }
+    // Only this isolated test process changes cwd; parallel parent tests are unaffected.
+    let root = TempDir::new().unwrap();
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "explicit_project_directory_works_from_a_deleted_working_directory",
+            "--nocapture",
+        ])
+        .env("JAVELIN_TEST_EXPLICIT_ROOT", root.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result);
+}

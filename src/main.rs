@@ -50,10 +50,10 @@ fn run(args: Vec<OsString>) -> Result<(Value, String)> {
             command
         )));
     }
-    let root = args
-        .next()
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
+    let root = match args.next() {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir()?,
+    };
     if root.as_os_str().to_string_lossy().starts_with('-') || args.next().is_some() {
         return Err(Error::InvalidInput(
             "expected one optional project directory and --json".into(),
