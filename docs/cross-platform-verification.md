@@ -43,11 +43,29 @@ invoke or interpret Git.
 
 ## Evidence and limits
 
-**INCONCLUSIVE: hosted execution is pending.** The starting product baseline is
+**VERIFIED: hosted scaffold CI setup only.** The starting product baseline is
 `7ec2e75`, whose only integration test asserts that `javelin init` prints
-`Hello, world!`. A successful baseline run proves only that the CI setup executes
+`Hello, world!`. The successful baseline run proves only that the CI setup executes
 the listed checks on these runner images. YAML validation and local checks cannot
 prove hosted execution.
+
+[Run 38427608862](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862)
+completed successfully on 2026-10-13 at checked-out commit
+`fca6f758abec55f92f104d0fb0d9a42fd7b0278f`, containing the unchanged `7ec2e75`
+scaffold plus this workstream's planning, workflow, and documentation. Every
+formatting, Clippy, test, release-build, and log-upload step succeeded on each OS.
+
+| Job proof | Observed Rust host | Runner image version | Retained log artifact |
+| --- | --- | --- | --- |
+| [Linux](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/job/115401005999) | `x86_64-unknown-linux-gnu` | `20261004.327.1` | [11829576272](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/artifacts/11829576272) |
+| [macOS](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/job/115401005443) | `aarch64-apple-darwin` | `20260907.0337.1` | [11829406723](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/artifacts/11829406723) |
+| [Windows](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/job/115401006060) | `x86_64-pc-windows-msvc` | `20260925.250.1` | [11829127289](https://github.com/Dhruv2mars/javelin/actions/runs/38427608862/artifacts/11829127289) |
+
+Downloaded and inspected all three artifacts. Each contains all six expected
+log files, the exact checked-out commit, Rust `1.99.0`, and the passing scaffold
+test. Artifacts expire on 2026-10-27. No runner scheduling, toolchain, action
+runtime, or artifact permission error occurred. No failing cloud check was
+deliberately injected, so upload after an actual failure remains unconfirmed.
 
 Local macOS arm64 checks passed with pinned Rust `1.99.0`: formatting, Clippy,
 the single scaffold integration test, and the release build. Bun parsed the YAML.
@@ -62,18 +80,21 @@ Download artifacts before expiry if evidence must be kept longer. GitHub job log
 also show step conclusions and action errors under the repository retention policy.
 
 On 2026-10-13, the repository API reported public visibility, Actions enabled,
-and actions allowed. No Actions permission error appeared during this read-only
-availability check. Runner scheduling and execution remain unconfirmed until a
-real run completes.
+and actions allowed. Both the availability read and actual run completed without
+an Actions permission error.
 
 Native immutable storage, World ordering and recovery are **NOT VERIFIED** by
-the scaffold. After the hub confirms native-core completion, rebase this same PR
-onto the updated foundation branch and record a fresh run for all three OSes.
+the scaffold. The rerun trigger is the hub's `native-core-complete <SHA>` message
+after it independently verifies native PR #4 Gate 1 at that named final commit.
+Rebase this same PR onto that SHA and record fresh three-OS checks against that
+exact reviewed core. Do not rewrite or change the native owner's baseline files.
 Sparse FSKit, OverlayFS, and ProjFS behavior is **NOT VERIFIED** by this gate.
 The current hub contract at `8db2a5b` requires ordinary filesystem operations,
 tool use, isolation, and recovery on a sparse backend. Full-copy controls do not
 pass that requirement. Installation, upgrades, release architectures, complete
 workflows, and GA support on all three platforms remain **NOT VERIFIED**.
+These GitHub Actions runs verify Javelin development checks. Javelin's product CI
+execution and accepted workflow syntax remain **NOT VERIFIED** by this work.
 
 ## Primary sources
 

@@ -140,12 +140,19 @@ core completion, rebase this same PR and repeat the three-OS implementation gate
 - [x] Create the planning commit and open and register exactly one draft PR.
 - [x] Confirm runner labels, action versions, and Rust commands in primary docs.
 - [x] Add a bounded three-OS workflow with narrow permissions and failure evidence.
-- [ ] Check repository Actions availability and push the committed baseline gate.
-- [ ] Inspect real hosted runner results and record exact scope and proof links.
-- [ ] Report PR, results, dependencies, and blockers to the hub.
+- [x] Check repository Actions availability and push the committed baseline gate.
+- [x] Inspect real hosted runner results and record exact scope and proof links.
+- [x] Report PR, results, dependencies, and blockers to the hub.
 - [ ] After hub confirmation, rebase onto native core and verify all three OSes.
 
 Draft PR: https://github.com/Dhruv2mars/javelin/pull/6, registered with T3 Code.
 Actions API reads confirm public repository, enabled Actions, and read-only token
 defaults. Local Rust `1.99.0` formatting, Clippy, scaffold test, and release build
-passed. Hosted execution is still INCONCLUSIVE until the three jobs finish.
+passed. Hosted scaffold setup is VERIFIED at `fca6f75` by successful Linux, macOS,
+and Windows jobs in https://github.com/Dhruv2mars/javelin/actions/runs/38427608862.
+All check steps and artifact uploads passed. Downloaded all three artifacts and
+confirmed all six logs, exact commit, and one passing scaffold test per runner.
+Evidence and artifact expiry are recorded in `docs/cross-platform-verification.md`.
+Native core, sparse backends, GA, and Javelin product CI remain NOT VERIFIED.
+Follow-on work waits for hub `native-core-complete <SHA>` after independent PR #4
+Gate 1 verification, then rebases this same PR onto that exact reviewed core.
