@@ -215,9 +215,29 @@ PRs are never merged without explicit user instruction.
   four objects, one World and zero World attempts. Test hooks are absent from the
   release binary. This verifies local API execution; bounded acceptance awaits review.
 - Hub export: `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-layer-bd16d52-pfz39_ae`.
-  Independent review task `javelin-layer-state-review-hub-r1-bd16d52` is active.
-  Hosted run `38465628999` is handled by the owner's existing watcher; its results
-  require artifact inspection. Complete Layer filesystem workflows remain open.
+  Independent review `javelin-layer-state-review-hub-r1-bd16d52` completed with
+  no material code defect and a medium canonical-checkpoint test coverage gap.
+  The same PR owner is repairing that gap. Bounded dependency acceptance is held
+  until the corrected tests and their evidence are reviewed.
+- The hub downloaded all eighteen artifact logs and the full job log from
+  [run 38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999)
+  to `/tmp/javelin-hub-layer-ci-38465628999`. Exact `bd16d52` passed formatting,
+  Clippy, release build and 43 tests on Linux/macOS, 41 on Windows, with one ignored
+  actor each. All fourteen process tests and nine Layer integration tests passed.
+  Windows omits storage-symlink and deleted-cwd tests. Artifacts expire 2026-10-27.
+  Evidence head `45fe5e7` changes only TASKS and docs; it does not change tested code.
+- Review corrections stay in PR #8. Canonical-delta and byte-encoding fixtures must
+  each detect removal of their own guard. Add valid-graph tamper coverage for base
+  binding and discard where practical. Clones may use any valid immutable checkpoint,
+  including stale-only candidates. Directory deletions must name each tracked entry;
+  an implied directory-prefix tombstone must not silently stand in for its children.
+- The hub reproduced the coverage gap by removing each guard separately in an
+  isolated scratch copy. The existing valid-hash test still passed both times.
+  Original source was restored. Mutation logs are in
+  `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-layer-guard-audit-yghl6v22`.
+- Layer IDs are opaque metadata, not host path components. The future filesystem
+  binder must map identities safely and prove containment and collision handling.
+  Ordinary-path binding, autosave, production naming limits and Gate 2 remain open.
 
 ### Windows projected Layer filesystem proof
 
@@ -252,6 +272,13 @@ PRs are never merged without explicit user instruction.
   This is a source error, not proof of an unavailable compiler. No projected root
   or provider existed. The owner added `<cwchar>` at `648474c` and is rerunning
   the same PR. API availability and backend behavior remain INCONCLUSIVE.
+- The corrected [run 38465691765](https://github.com/Dhruv2mars/javelin/actions/runs/38465691765)
+  at `648474ce69800c2d77ed51c806a7b88fcb21b098` passed actual SDK compilation and
+  export inspection. The hub downloaded raw compiler and API records to
+  `/tmp/javelin-hub-windows-prereq-38465691765`, confirming both exited zero.
+  Feature and API prerequisites are VERIFIED on this admin Server 2022 runner.
+  No provider or projected root existed in that attempt; backend remains INCONCLUSIVE.
+  The same owner is implementing non-admin provider and ordinary-path runtime proof.
 
 ### Hub continuation and review
 
