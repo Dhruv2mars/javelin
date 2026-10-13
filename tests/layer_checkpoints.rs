@@ -104,6 +104,17 @@ fn sparse_capture_clone_diff_and_discard_share_objects_and_preserve_worlds() {
         })
         .collect();
     assert_eq!(usage(&db), captured);
+    let clone_metadata: (i64, i64) = db.query_row(
+        "SELECT count(*),sum(length(layer)+length(checkpoint)) FROM layer_heads WHERE layer LIKE 'child-%'",
+        [], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(clone_metadata.0, 24);
+    assert!(clone_metadata.1 <= 24 * 80); // logical ID/reference bytes, excluding SQLite row overhead
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM layer_attempts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
     assert!(siblings.iter().all(|h| h.checkpoint() == head.checkpoint()));
     let diff = repo.layer_diff(&siblings[0]).unwrap();
     assert_eq!(diff.len(), 2);
