@@ -136,7 +136,7 @@ event that retains the last checkpoint. `layer_history` enumerates old heads aft
 restart or discard, so recovery does not depend on caller-held tokens.
 
 Capture takes a complete delta relative to the frozen World, not edits relative to
-the preceding checkpoint. It removes unchanged entries and nonexistent deletions,
+the preceding checkpoint. It removes unchanged entries and nonexistent exact-path deletions,
 validates content kinds and the whole merged path tree, then writes the checkpoint,
 head event and retry outcome in one immediate transaction. Stored candidates from
 stale operations remain immutable too. The operation ID binds Layer, expected head
@@ -166,9 +166,10 @@ Calling inherited metadata compare-and-advance is not full Layer Publish.
 
 ## Local verification and remaining work
 
-Verified on Darwin arm64 with rustc/cargo 1.93.0. The inherited baseline passed
+Original source was verified on Darwin arm64 with rustc/cargo 1.93.0. The inherited baseline passed
 26 tests with one ignored process actor before changes. Format 2 passes all of
-those checks plus the new regressions, totaling 43 tests with one ignored actor.
+those checks plus the original regressions, totaling 43 tests with one ignored actor.
+These results predate the review repair and corrected checks below.
 Commands from this worktree:
 
 ```sh
@@ -221,13 +222,100 @@ Source inspection for process calls, sleeps and Git references found only launch
 of the native CLI/current test executable in tests. Runtime and tests are
 Git-independent. These API/process checks do not verify ordinary-path binding.
 
-The bounded native state result is VERIFIED locally and through the compiled
-three-OS checks below. Filesystem paths, backend capture reconciliation,
+The original source's compiled native scope is VERIFIED locally and through the
+three-OS checks below. Hub dependency acceptance is pending the corrected
+evidence repair described below. Filesystem paths, backend capture reconciliation,
 stable-change detection, automatic capture and interrupted materialization must
 be integrated and verified in a follow-on unit. Windows symlink materialization,
 platform naming limits, non-Unix parent-directory sync, hardware power loss,
 network filesystems and scale/performance remain unverified. No Gate2 or GA claim
 follows from this PR.
+
+## Hub review and same-PR evidence repair
+
+The hub reviewed `bd16d52` and all 18 artifact logs/full job log. Its independent
+Claude Opus 5.5 review reported no material code defect, but dependency acceptance
+remains pending an evidence repair in this same PR. The original malformed-object
+test used `serde_json::json!`, which sorted outer fields alphabetically. Redundant
+unchanged entries and nonexistent tombstones therefore had both a noncanonical
+delta and noncanonical bytes. Removing either canonicality comparison separately
+still passed that test. The hub independently reproduced both exit-0 results in
+`/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-layer-guard-audit-yghl6v22`.
+The original run remains compiled-platform evidence; it did not independently
+protect the two canonicality checks.
+
+The corrected fixtures serialize in `repository/version/manifest/changes` field
+order. They compare empty and regular-entry control bytes with actual API-produced
+checkpoint bytes, including the nested `kind/content/executable` order. Separate
+tests inject a redundant unchanged entry and a nonexistent exact-path tombstone
+with otherwise canonical bytes. A normalized empty delta has a successful
+canonical control, followed by semantically identical reordered and trailing-newline
+variants. Those variants isolate byte canonicality. Every injected object has a
+correct native kind-tagged hash. No production encoder or guard is called to decide
+whether malformed external bytes should be accepted.
+
+Small SQL tamper cases replace a stale candidate with a valid checkpoint from
+another World base, replace a stale discard candidate with a different valid
+checkpoint on the same base, and switch a head plus its accepted candidate to a
+valid checkpoint on another base. They exercise public state/history/init/check
+and subsequent capture rejection, while the checkpoint graphs themselves remain
+readable. Independent guard probes produced these confirmed results, with all
+changes restored byte-for-byte before final actual-source checks:
+
+- Removing only `normalized != changes` makes each canonically encoded redundant
+  entry/tombstone test fail with exit 101. The byte comparison remains enabled.
+- Removing only the byte re-encoding comparison makes the normalized empty-delta
+  byte-encoding test fail with exit 101. Delta normalization remains enabled.
+- Removing only candidate-base binding makes the valid stale foreign-base
+  candidate test fail with exit 101.
+- Removing only discard-candidate equality makes the valid same-base stale
+  discard replacement test fail with exit 101.
+- Removing only the per-Layer base scan still rejects the switched-base head,
+  so that behavioral test passes with exit 0. Accepted-attempt binding supplies
+  overlapping protection: each accepted event must be the next ordinal, match
+  its candidate, and bind that candidate to the preceding head's base. Removing
+  both base protections makes this test fail with exit 101. We do not claim an
+  independent single-guard failure for the redundant scan. This overlap is
+  confirmed by the probes, beyond the reviewer's initial coverage finding.
+
+Mutation logs are at `/tmp/javelin-pr8-checkpoint-guard-repair`, named
+`normalization-redundant.log`, `normalization-tombstone.log`, `byte-encoding.log`,
+`candidate-base.log`, `discard-candidate.log`, `base-scan-overlap.log` and
+`both-base-guards.log`. They are temporary development artifacts.
+
+Corrected code/test commit `0a75b1a26e4ca3fbdf7f93a5ae7162c2e0f73b61` passes
+52 tests in both debug and release on Darwin arm64 Rust 1.93.0, with one ignored
+actor per suite. This includes all 14 inherited/new process tests, 18 Layer tests,
+16 core tests and four CLI tests. Actual-source formatting, Clippy with warnings
+denied, release build, whitespace check and the extracted caller compiled against
+the production release library pass. Release CLI integrity again reports two
+Layers, four objects, one World and zero World attempts. The release binary has
+no test-boundary string. Runtime/tests still contain no Git invocation or parsing.
+Corrected-source hosted checks are pending; the original hosted run is not claimed
+as verification of these repaired tests or the prefix-tombstone clarification.
+
+The hub resolved these semantics within the authorized scope:
+
+- Any valid immutable checkpoint bound to this repository can seed a Layer,
+  including one retained only as a stale operation candidate. The recovery test
+  reads that retained candidate ID, reopens the repository and clones it without
+  adding object bytes or changing the original head or World.
+- A tombstone deletes an exact file/symlink entry. It does not delete a subtree.
+  Ambiguous implied-directory prefixes now return `invalid_input`, including a
+  prefix supplied alongside its child tombstones or private child additions.
+  Future capture expands directory deletes into exact per-entry tombstones. No
+  directory entries, directory conventions or materialization are added here.
+  Removing an actual base file to replace it with child entries stays valid.
+- `LayerId` is an opaque, case-sensitive metadata identity. Native state accepts
+  names such as `.`, `..`, `CON`, `con`, `A` and `a` without using them as host
+  paths. These are unsafe as raw host components. A future binder must map/encode
+  identities and guard containment, platform reserved names and case collisions.
+
+Foreign-reference error classification remains a nonblocking limitation. A foreign
+base/head token returns `invalid_input`; a foreign checkpoint object inserted into
+this store is rejected as `corrupt_repository` when its graph is read. An unknown
+checkpoint ID without local bytes is indistinguishable from another missing local
+object. None can silently adopt another repository's base.
 
 ## Hosted verification at the exact source
 
