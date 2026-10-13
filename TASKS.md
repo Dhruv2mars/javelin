@@ -98,6 +98,7 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 - [x] Build a backend-agnostic behavior probe and explicit directory/clonefile controls.
 - [x] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption. Both controls pass eleven checks on this host.
 - [x] Verify the probe catches a broken isolation control and records unsupported capabilities. Hardlink leakage fails; caller-prepared paths report clone provisioning INCONCLUSIVE.
-- [ ] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds.
-- [ ] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step.
+- [x] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds. Hub independently reproduced controls and regressions at `0f15db2`.
+- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `eb3037c`; omitted-output run exits 0 into unique `javelin-probe-evidence-EfCkEZ`.
+- [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
 - [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
