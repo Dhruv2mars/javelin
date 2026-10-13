@@ -42,9 +42,9 @@ workflow may invoke or interpret Git.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
 - [ ] Verify the complete workflow on each supported operating system.
-- [ ] Run native formatting, lint, test, and release-build checks on development
-  GitHub Actions macOS, Linux, and Windows runners. Repeat against the exact native
-  PR #4 commit independently verified by the hub at Gate 1. This does not verify product CI.
+- [x] Run native formatting, lint, test, and release-build checks on development
+  GitHub Actions macOS, Linux, and Windows runners. Verify that the tested source
+  matches the exact native PR #4 commit accepted by the hub at Gate 1. This does not verify product CI.
 - [x] Verify the development CI scaffold setup on all three hosted OSes. This is
   infrastructure evidence only; the greeting-only test does not verify native VCS behavior.
 
@@ -91,7 +91,9 @@ PRs are never merged without explicit user instruction.
   and proven publication metadata behavior across retries, concurrency, and restart.
 - VERIFIED bounded Darwin foundation: reviewed commit `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
   The hub ran 26 tests, formatting, warnings-denied Clippy, release build, and real
-  CLI smoke in an isolated export. Full Layer workflows and other platforms remain open.
+  CLI smoke in an isolated export. PR #6 verifies matching compiled source on Linux
+  and macOS, plus the Windows suite with two Unix-only tests excluded.
+  Full Layer workflows remain open.
 - The original correction turn is terminal with T3 status `failed`; it left a clean
   committed correction, which the hub verified independently. It is not a live writer.
 - Local baseline `7ec2e75` was initially unpublished when CI started. The native
@@ -109,7 +111,8 @@ PRs are never merged without explicit user instruction.
 - Done: reproducible ordinary-path probe, honest backend capability verdicts,
   host prerequisites, and a bounded evidence-backed recommendation.
 - Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
-- Host: macOS 26.6.2 build 25G83, arm64. Linux and Windows execution remains unverified.
+- Host: macOS 26.6.2 build 25G83, arm64. PR #7 subsequently verified Linux caller
+  paths on a sparse backend. Windows execution remains unverified.
 - The hub independently exported `0f15db2` and reran directory, clonefile, hardlink
   negative, and safety regression checks. Both controls pass all eleven checks;
   the hardlink negative fails actual isolation assertions with exit 1. Timeout
@@ -142,16 +145,28 @@ PRs are never merged without explicit user instruction.
 - The hub inspected all three completed job results and downloaded all three log
   artifacts to `/tmp/javelin-hub-ci-38427608862`. Each has six logs, matching SHA,
   and one passing scaffold integration test. Artifacts expire 2026-10-27.
-- Actual failure-path log upload is unconfirmed. Product behavior remains unverified.
-- Complete implementation checks remain pending until the hub independently verifies
-  PR #4's native initialization, exact objects, publication, corruption detection, and
-  restart/retry/concurrency checks at a named commit SHA, satisfying Gate 1.
-- The hub then sends `native-core-complete <SHA>` to the CI thread. That same PR
-  rebases onto the SHA and records actual platform results against the reviewed core.
+- Actual failure-path log upload is unconfirmed. Complete product workflows remain open.
+- The implementation rerun requires hub verification of PR #4 at a named commit,
+  followed by `native-core-complete <SHA>` and a rebase of this same PR onto that source.
 - GitHub Actions here is Javelin development infrastructure. Javelin's product CI
   workflow syntax and execution design remain a separate, unchecked hosting item.
 - `native-core-complete c78ea7a5d3eb9555625391e2f7346859d70f4c2a` was sent after
-  independent corrected-source acceptance. The same PR #6 is rerunning the actual core.
+  independent corrected-source acceptance. The same PR #6 completed the actual-core run.
+- VERIFIED compiled core suite at final head `0c8582ddcb175d7bd4d2752e73f795651f810a6f`,
+  [run 38463522128](https://github.com/Dhruv2mars/javelin/actions/runs/38463522128).
+  The hub inspected all three jobs and downloaded all eighteen logs to
+  `/tmp/javelin-hub-ci-38463522128`. Linux and macOS each passed 26 tests; Windows
+  passed 24. Each has one ignored child-process entry point exercised by parent tests.
+  Formatting, Clippy, release builds, all eight process tests and the missing-tail
+  retained-anchor regression passed on every OS with Rust 1.99.0.
+- The hub also inspected earlier actual-core run `38462957668` at `bfd2a51d` and
+  its eighteen logs in `/tmp/javelin-hub-ci-38462957668`. Host API comparisons from
+  reviewed `c78ea7a` to both tested heads show only workflow, CI doc and TASKS changes.
+- Windows excludes Unix-only storage-symlink and deleted-cwd tests. Those behaviors,
+  non-Unix directory syncing, hardware power loss and performance remain unverified.
+  Native checks do not establish sparse Layers, installation, product CI or GA.
+  Retained artifacts expire 2026-10-27 UTC. PR #6 remains draft and unmerged; its
+  owner stopped the watcher after the final handoff.
 
 ### Linux sparse Layer backend proof
 
@@ -192,6 +207,27 @@ PRs are never merged without explicit user instruction.
   transactional head history and retry outcomes. Format 2 distinguishes symlinks
   and rejects unshipped format 1. This is a reported design choice, not verified behavior.
 
+### Windows projected Layer filesystem proof
+
+- Thread: `t3-thread://v1/mcp:ab206657-bb50-427f-bc5a-2e93ef9843d1`.
+- Branch: `feat/windows-projfs-proof`, based on verified `feat/linux-sparse-layer-proof`
+  at `19224ef`. Draft PR registration is pending.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-windows-projfs-proof`.
+- Owns `tools/windows-workspace-proof/`, `docs/windows-workspace-proof.md`, and
+  `.github/workflows/windows-workspace-proof.yml`. Native code and existing probes
+  and workflows are excluded. This work does not overlap active PR #8.
+- Done: bounded real Windows CI prerequisite discovery, and projected ordinary-path
+  behavior, isolation, sparse clone and provider restart proof when available.
+  Missing capabilities remain INCONCLUSIVE with exact commands and source evidence.
+- ProjFS is provisional. Official Microsoft docs describe the optional feature and
+  read hydration, not its availability on the hosted runner or production acceptance.
+  The proof must distinguish read caches from private changes and measure both.
+- The unchanged caller-path probe needs Unix utilities on Windows. The owner will
+  record their exact paths and versions; missing utilities leave affected checks
+  INCONCLUSIVE. Unix-only verifier safety tests cannot count as Windows evidence.
+- Feature setup is limited to disposable CI, with no reboot or macOS host changes.
+  Native database binding, autosave and product Gate 2 are outside this unit.
+
 ### Hub continuation and review
 
 - Hourly scheduler: `scheduled-task:command:mcp:3981ee7f-8fb4-4683-a0d3-78e3e74e0371:schedule-task:javelin-ga-hub-continuation-20261013`.
@@ -208,7 +244,7 @@ PRs are never merged without explicit user instruction.
 - Live workthread and PR ownership records were updated while review was running.
 - PR #4's checklist heading placement was returned to its owner for correction.
 - Product implementation, sparse backend behavior, and GA readiness remain unverified.
-- Native commit `6d44167` is under hub review. The hub independently exported it and
+- Historical native review started at `6d44167`. The hub independently exported it and
   observed `cargo test --locked`: 21 passed, one ignored process-test entry point.
   Its release build also passed. Owner added a rollback regression at `8ae7fba`
   and final evidence at `b9decc6`, reporting 22 tests passed.
@@ -225,6 +261,11 @@ PRs are never merged without explicit user instruction.
 - Follow-on low test coverage: preserve regressions for stale-only manifest graph
   corruption and invalid stale-result ordering. Code was directly probed and rejects
   both, but the current suite does not detect removal of those individual checks.
+- Cross-model platform trail review by `claude-opus-5-5` confirmed exact-source
+  comparisons and downloaded test evidence. Wording now distinguishes matching source
+  from the tested CI head and names Windows exclusions. Its Windows probe portability
+  gap is resolved in the launch brief through explicit utility discovery and
+  INCONCLUSIVE checks when utilities are absent. Read-hydration cost remains open.
 
 ### Superseded work
 
