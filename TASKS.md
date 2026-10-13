@@ -76,6 +76,11 @@ PRs are never merged without explicit user instruction.
 
 ## Sources
 
+- Final design: `codex://threads/01a12eae-a899-7ad3-9462-5f95a64e76cc`.
+- Earlier grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
+- Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
+- Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
+
 ## Workstream: native repository foundation
 
 Owns one draft PR based on `chore/ga-build-plan`. Done means a fresh non-Git
@@ -86,9 +91,10 @@ init/history/integrity checks must produce useful ordinary and JSON output.
 This work does not claim Layers, filesystem backends, or complete Layer Publish.
 
 - [x] Read local instructions and accepted build contract.
-- [ ] Open and immediately register the single draft PR.
-- [ ] Compare two storage/type sketches with read-only design subagents.
-- [ ] Record chosen design and smallest runnable scaffold baseline.
+- [x] Open and immediately register the single draft PR: [#4](https://github.com/Dhruv2mars/javelin/pull/4).
+- [x] Compare two storage/type sketches with read-only design subagents and cross-judge.
+- [x] Capture smallest runnable scaffold baseline, commit `7ec2e75`.
+- [x] Record chosen storage design and reconciliation in `docs/native-repository.md`.
 - [ ] Implement typed immutable objects, manifests, and repository initialization.
 - [ ] Implement ordered history and atomic idempotent compare-and-advance.
 - [ ] Implement minimal CLI init, history, and integrity inspection.
@@ -96,9 +102,3 @@ This work does not claim Layers, filesystem backends, or complete Layer Publish.
 - [ ] Prove process restart, contention, retries, and failure boundaries.
 - [ ] Independently inspect behavior and reconcile documentation.
 - [ ] Report commands, results, limitations, and verification status to hub.
-
-
-- Final design: `codex://threads/01a12eae-a899-7ad3-9462-5f95a64e76cc`.
-- Earlier grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
-- Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
-- Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
