@@ -102,4 +102,4 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 - [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `bce352e`; omitted-output run exits 0 into unique `javelin-probe-evidence-6sxr25`.
 - [x] Repair final review findings and exercise hard-link and FIFO report rejection plus actual external-tool subprocess termination on wall expiry. Directory and clonefile still pass eleven checks.
 - [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
-- [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
+- [x] Report final evidence and verdict to the hub, leaving PR #5 draft and unmerged. Final source `bce352ec4e5f78eb98c71facba68b872d3e11118`; probe VERIFIED, sparse backend and Gate 2 INCONCLUSIVE. Stable completion message `filesystem-pr5-completion-evidence-v1`.

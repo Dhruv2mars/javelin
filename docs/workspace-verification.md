@@ -4,7 +4,7 @@ PR [#5](https://github.com/Dhruv2mars/javelin/pull/5) delivers a VERIFIED
 ordinary-path probe on this macOS host. The real sparse-backend result is
 INCONCLUSIVE. No production backend is accepted, and filesystem Gate 2 remains
 open. This follows the hub's clarified Gate 2 at planning commit `8db2a5b`.
-The final executable probe source is commit `eb3037c`.
+The final executable probe source is commit `bce352ec4e5f78eb98c71facba68b872d3e11118`.
 
 The contract requires immutable shared base content, private writes, deletions
 and renames, sparse Layer clones, ordinary external-tool paths, prevention of
@@ -33,7 +33,7 @@ rtk proxy /usr/sbin/diskutil info /System/Volumes/Data
 The [committed evidence](../tools/workspace-probe/evidence/macos-arm64/)
 contains command outputs and fixture hashes.
 The final omitted-output run created the unique directory
-`javelin-probe-evidence-EfCkEZ` under the host temporary directory and exited 0.
+`javelin-probe-evidence-6sxr25` under the host temporary directory and exited 0.
 Its JSON files are the committed behavior evidence. The hub also independently
 exported and verified the prior source commit `0f15db2`, including safety cases.
 
@@ -59,6 +59,10 @@ integrity. This proves that ordinary-path leakage can fail the probe.
 Caller-prepared directory paths pass ten checks. Cloning a modified Layer is
 INCONCLUSIVE because that mode has no backend lifecycle adapter. Unsafe output
 paths are rejected without modifying fixture bytes, including symlink aliases.
+Hard-linked destinations and FIFOs are rejected too. A 2-second wall abort with
+a deliberately stalled shell tool proves that both that tool and its subprocess
+stop. The incomplete report exits 124. Report creation uses exclusive open after
+approved previous evidence is removed, so existing aliases cannot be overwritten.
 An overlapping-root configuration exits 2. A deliberate 300-ms wall timeout
 exits 124 and records INCONCLUSIVE. The verification runner exits 0 after checking
 all these expected results. None of its caller-path evidence represents a mount.
