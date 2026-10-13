@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
-const output = resolve(process.argv[2] ?? join(tmpdir(), 'javelin-probe-evidence'));
+const output = process.argv[2] ? resolve(process.argv[2]) : await fs.mkdtemp(join(tmpdir(), 'javelin-probe-evidence-'));
 await fs.mkdir(output, { recursive: true });
 async function run(name, args, expectedExit) {
   const reportPath = join(output, `${name}.json`);

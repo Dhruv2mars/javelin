@@ -1,10 +1,13 @@
 #import <Foundation/Foundation.h>
 #import <FSKit/FSKit.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+
+static atomic_bool done;
+static atomic_int result;
 
 int main(void) {
     @autoreleasepool {
-        __block BOOL done = NO;
-        __block int result = 0;
         [[FSClient sharedInstance] fetchInstalledExtensionsWithCompletionHandler:
          ^(NSArray<FSModuleIdentity *> *modules, NSError *error) {
             NSMutableArray *rows = [NSMutableArray array];
@@ -20,14 +23,14 @@ int main(void) {
                     NSSelectorFromString(@"mountSingleVolumeForResource:bundleID:options:completionHandler:")])};
             NSData *data = [NSJSONSerialization dataWithJSONObject:output options:0 error:nil];
             puts([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding].UTF8String);
-            result = error ? 1 : 0;
-            done = YES;
+            atomic_store(&result, error ? 1 : 0);
+            atomic_store(&done, true);
         }];
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
-        while (!done && deadline.timeIntervalSinceNow > 0) {
+        while (!atomic_load(&done) && deadline.timeIntervalSinceNow > 0) {
             [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
         }
-        if (!done) { fprintf(stderr, "FSClient discovery timed out after 5 seconds\n"); return 2; }
-        return result;
+        if (!atomic_load(&done)) { fprintf(stderr, "FSClient discovery timed out after 5 seconds\n"); return 2; }
+        return atomic_load(&result);
     }
 }
