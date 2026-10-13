@@ -31,6 +31,8 @@ workflow may invoke or interpret Git.
 - [ ] Define native objects, World versions, Layers, checkpoints, and atomic Publish.
 - [ ] Implement initialization, durable immutable snapshots, history, and restore.
 - [ ] Prove ordinary filesystem behavior for sparse isolated Layers.
+- [x] Independently verify committed filesystem-probe controls and negative cases
+  at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
 - [ ] Implement Layer creation, cloning, checkpointing, discard, status, and diff.
 - [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
@@ -101,8 +103,13 @@ PRs are never merged without explicit user instruction.
   host prerequisites, and a bounded evidence-backed recommendation.
 - Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
 - Host: macOS 26.6.2 build 25G83, arm64. Linux and Windows execution remains unverified.
-- Worker reports eleven normal-path checks pass on directory and clonefile controls,
-  with leakage detected by the hardlink negative control. Hub rerun remains pending.
+- The hub independently exported `0f15db2` and reran directory, clonefile, hardlink
+  negative, and safety regression checks. Both controls pass all eleven checks;
+  the hardlink negative fails actual isolation assertions with exit 1. Timeout
+  exit 124 remains INCONCLUSIVE, and unsafe report aliases leave caller bytes intact.
+- Hub evidence: `/tmp/javelin-hub-probe-0f15db2`, including `safety/` reports.
+- Review finding returned to owner: the verifier's default output folder must be
+  unique to avoid concurrent evidence writes. Final source and docs remain pending.
 - The official FSKit sample build exited 69 because Xcode's license is unaccepted.
   Zero valid signing identities were found. These are prerequisites, not an accepted
   sparse backend, and no license or host security change has been made.
