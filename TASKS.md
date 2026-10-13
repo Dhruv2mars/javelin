@@ -80,3 +80,19 @@ PRs are never merged without explicit user instruction.
 - Earlier grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
 - Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
 - Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
+
+## Filesystem verification workstream
+
+Owned by `test/layer-filesystem-contract`, based on `chore/ga-build-plan`.
+Done means a committed bounded probe that uses ordinary paths and external tools,
+reports per-capability verdicts, and records host evidence and a backend decision.
+Only this workstream's checklist is updated here. Global gates remain unverified.
+
+- [x] Read build instructions and define the self-verifiable outcome.
+- [ ] Open exactly one draft PR and register it with T3 Code.
+- [ ] Discover host filesystem, FSKit, SDK, signing, and installation prerequisites.
+- [ ] Build a backend-agnostic behavior probe and explicit directory/clonefile controls.
+- [ ] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption.
+- [ ] Verify the probe catches a broken isolation control and records unsupported capabilities.
+- [ ] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step.
+- [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
