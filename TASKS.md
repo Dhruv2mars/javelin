@@ -99,6 +99,7 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 - [x] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption. Both controls pass eleven checks on this host.
 - [x] Verify the probe catches a broken isolation control and records unsupported capabilities. Hardlink leakage fails; caller-prepared paths report clone provisioning INCONCLUSIVE.
 - [x] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds. Hub independently reproduced controls and regressions at `0f15db2`.
-- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `eb3037c`; omitted-output run exits 0 into unique `javelin-probe-evidence-EfCkEZ`.
+- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `bce352e`; omitted-output run exits 0 into unique `javelin-probe-evidence-6sxr25`.
+- [x] Repair final review findings and exercise hard-link and FIFO report rejection plus actual external-tool subprocess termination on wall expiry. Directory and clonefile still pass eleven checks.
 - [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
 - [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.

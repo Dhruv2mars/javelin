@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "startedAt": "2026-10-13T16:13:15.532Z",
+  "startedAt": "2026-10-13T16:20:44.669Z",
   "backend": "paths",
   "host": {
     "platform": "darwin",
@@ -12,7 +12,7 @@
     "testFilesystem": {
       "type": 26,
       "blockSize": 4096,
-      "availableBytes": 105131606016
+      "availableBytes": 104566153216
     }
   },
   "limits": {
@@ -32,14 +32,14 @@
       "exitCode": 0,
       "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n",
       "stderr": "",
-      "elapsedMs": 9
+      "elapsedMs": 12
     },
     {
       "argv": [
         "cat",
         "README.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "shared base text\n",
       "stderr": "",
@@ -48,8 +48,8 @@
     {
       "argv": [
         "cmp",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/base/bytes.bin",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a/bytes.bin"
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/base/bytes.bin",
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -61,7 +61,7 @@
         "cat",
         "README.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -73,7 +73,7 @@
         "README.txt",
         "created.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -85,7 +85,7 @@
         "dir",
         "renamed-dir"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -96,7 +96,7 @@
         "rm",
         "delete.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -109,7 +109,7 @@
         "-type",
         "f"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "./value.h\n./main.c\n./README.txt\n./created.txt\n./renamed-dir/nested.txt\n./bytes.bin\n",
       "stderr": "",
@@ -120,7 +120,7 @@
         "cat",
         "inside-link"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -136,21 +136,21 @@
         "-o",
         "probe-app"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 101
+      "elapsedMs": 62
     },
     {
       "argv": [
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a/probe-app"
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a/probe-app"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "9\n",
       "stderr": "",
-      "elapsedMs": 170
+      "elapsedMs": 164
     },
     {
       "argv": [
@@ -162,39 +162,27 @@
         "-o",
         "probe-app"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/b",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/b",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 56
+      "elapsedMs": 55
     },
     {
       "argv": [
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/b/probe-app"
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/b/probe-app"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/b",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/b",
       "exitCode": 0,
       "stdout": "7\n",
       "stderr": "",
-      "elapsedMs": 147
+      "elapsedMs": 144
     },
     {
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a/concurrent.txt",
-        "after",
-        "A\n"
-      ],
-      "code": null,
-      "signal": "SIGKILL",
-      "ready": true
-    },
-    {
-      "argv": [
-        "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
-        "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/b/concurrent.txt",
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/b/concurrent.txt",
         "after",
         "B\n"
       ],
@@ -206,7 +194,19 @@
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a/recovery.txt",
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a/concurrent.txt",
+        "after",
+        "A\n"
+      ],
+      "code": null,
+      "signal": "SIGKILL",
+      "ready": true
+    },
+    {
+      "argv": [
+        "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
+        "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a/recovery.txt",
         "before",
         "unpublished\n"
       ],
@@ -219,7 +219,7 @@
         "cat",
         "recovery.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "old\n",
       "stderr": "",
@@ -229,7 +229,7 @@
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a/recovery.txt",
+        "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a/recovery.txt",
         "after",
         "committed\n"
       ],
@@ -242,7 +242,7 @@
         "cat",
         "recovery.txt"
       ],
-      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
+      "cwd": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
       "exitCode": 0,
       "stdout": "committed\n",
       "stderr": "",
@@ -283,6 +283,10 @@
           {
             "name": "watch-create",
             "events": [
+              {
+                "type": "rename",
+                "name": "README.txt"
+              },
               {
                 "type": "rename",
                 "name": "watch-create"
@@ -371,10 +375,10 @@
     }
   ],
   "paths": {
-    "base": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/base",
-    "layerA": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/a",
-    "layerB": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/b",
-    "clone": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-ysD4aF/c"
+    "base": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/base",
+    "layerA": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/a",
+    "layerB": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/b",
+    "clone": "/private/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-caller-paths-euAQem/c"
   },
   "fixture": {
     "entries": 9,
@@ -439,5 +443,5 @@
   },
   "behaviorVerdict": "INCONCLUSIVE",
   "cleanup": "caller paths retained",
-  "finishedAt": "2026-10-13T16:13:16.494Z"
+  "finishedAt": "2026-10-13T16:20:45.590Z"
 }

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "startedAt": "2026-10-13T16:13:15.079Z",
+  "startedAt": "2026-10-13T16:20:42.090Z",
   "backend": "directory",
   "host": {
     "platform": "darwin",
@@ -12,7 +12,7 @@
     "testFilesystem": {
       "type": 26,
       "blockSize": 4096,
-      "availableBytes": 105131577344
+      "availableBytes": 104567083008
     }
   },
   "limits": {
@@ -39,7 +39,7 @@
         "cat",
         "README.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "shared base text\n",
       "stderr": "",
@@ -48,8 +48,8 @@
     {
       "argv": [
         "cmp",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/base/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a/bytes.bin"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/base/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -61,7 +61,7 @@
         "cat",
         "README.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -73,7 +73,7 @@
         "README.txt",
         "created.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -85,7 +85,7 @@
         "dir",
         "renamed-dir"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -96,7 +96,7 @@
         "rm",
         "delete.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -109,7 +109,7 @@
         "-type",
         "f"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "./value.h\n./main.c\n./README.txt\n./created.txt\n./renamed-dir/nested.txt\n./bytes.bin\n",
       "stderr": "",
@@ -120,7 +120,7 @@
         "cat",
         "inside-link"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -176,12 +176,12 @@
       "evidence": "probe did not complete"
     }
   ],
-  "ownedTemporaryRoot": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O",
+  "ownedTemporaryRoot": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT",
   "paths": {
-    "base": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/base",
-    "layerA": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/a",
-    "layerB": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/b",
-    "clone": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-D7NW5O/c"
+    "base": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/base",
+    "layerA": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/a",
+    "layerB": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/b",
+    "clone": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-jckMfT/c"
   },
   "fixture": {
     "entries": 9,
@@ -241,5 +241,5 @@
   "fatal": "Probe exceeded 300-ms wall budget",
   "behaviorVerdict": "INCONCLUSIVE",
   "cleanup": "aborted; fixture cleanup not confirmed",
-  "finishedAt": "2026-10-13T16:13:15.380Z"
+  "finishedAt": "2026-10-13T16:20:42.391Z"
 }

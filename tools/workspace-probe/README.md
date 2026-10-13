@@ -14,6 +14,7 @@ rtk proxy bun tools/workspace-probe/discover.mjs /tmp/javelin-host.json
 `verify.mjs` runs controls sequentially. It expects directory and macOS clonefile
 success, detects deliberate hard-link leakage, checks safe report destinations,
 and rejects overlapping caller paths. A 300-ms abort checks incomplete reporting.
+Another abort stops a deliberately stalled external tool and its child process.
 It then exercises caller-prepared directory paths. Those paths remain an
 explicit control, with backend cloning INCONCLUSIVE.
 If you omit its output argument, it creates a unique temporary evidence directory.
@@ -64,6 +65,8 @@ rtk proxy bun tools/workspace-probe/probe.mjs --backend paths --paths /tmp/paths
 The four paths must be distinct, non-nested directories. Report destinations
 inside them, through a directory symlink alias, or at an existing symlink are
 rejected before mutation. Output parents must already exist.
+Existing output files must be singly linked regular files. Hard links, FIFOs,
+and directories are rejected. Report creation uses exclusive open.
 
 This mode proves only observed path behavior. It cannot create a clone of a
 modified Layer or interrupt and restart its backend. Those checks remain
@@ -86,6 +89,8 @@ Exit 124 means the wall budget expired. Inspect `behaviorVerdict`, `checks`, and
 The default wall budget is 60 seconds. `--wall-ms` permits 100 through 60000 ms.
 Each external command has a 20-second timeout and 16-KiB output cap. Writer
 readiness has a 5-second deadline; an orphaned writer exits after 10 seconds.
+Wall expiry stops active POSIX command groups. Abort reporting has a separate
+100-ms exit deadline; if reporting fails, exit 124 still means INCONCLUSIVE.
 The fixture has six regular files, one directory, and one symlink, plus its root.
 It contains 8,339 file bytes. Runs use three views, with no stress expansion.
 Snapshot traversal rejects more than 64 entries or 256 KiB per tree. Compiler
