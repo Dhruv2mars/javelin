@@ -124,3 +124,23 @@ history/init/advance after it, and a passing full suite at the corrected SHA.
 The corrected suite passes 26 tests, one ignored child-process entry point.
 Earlier completion evidence is superseded by the hub acceptance corrections;
 the corrected source and limits are documented in `docs/native-repository.md`.
+
+## Workstream: native cross-platform CI
+
+Owns only `.github/workflows/**`, `docs/cross-platform-verification.md`, and
+this progress section. The single draft PR targets `feat/native-repository-foundation`
+at scaffold baseline `7ec2e75`. It cannot land independently before its base.
+Done means committed formatting, Clippy, native tests, and release-build jobs
+actually run on macOS, Linux, and Windows hosted runners, with retained failure
+logs and linked evidence. Baseline success does not verify future native core,
+sparse filesystem backends, installation, or GA. After the hub confirms native
+core completion, rebase this same PR and repeat the three-OS implementation gate.
+
+- [x] Read worktree instructions, TASKS, and the current hub contract at `8db2a5b`.
+- [ ] Create the planning commit and open and register exactly one draft PR.
+- [ ] Confirm runner labels, action versions, and Rust commands in primary docs.
+- [ ] Add a bounded three-OS workflow with narrow permissions and failure evidence.
+- [ ] Check repository Actions availability and push the committed baseline gate.
+- [ ] Inspect real hosted runner results and record exact scope and proof links.
+- [ ] Report PR, results, dependencies, and blockers to the hub.
+- [ ] After hub confirmation, rebase onto native core and verify all three OSes.
