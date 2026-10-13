@@ -88,7 +88,9 @@ PRs are never merged without explicit user instruction.
 - Owns `src/`, root Cargo manifests, native tests, and local-core documentation.
 - Done: native initialization, exact immutable objects, ordered history, integrity checks,
   and proven publication metadata behavior across retries, concurrency, and restart.
-- Evidence so far: planning commit `3d4144b`; implementation and product verification pending.
+- VERIFIED bounded Darwin foundation: reviewed commit `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+  The hub ran 26 tests, formatting, warnings-denied Clippy, release build, and real
+  CLI smoke in an isolated export. Full Layer workflows and other platforms remain open.
 - Local baseline `7ec2e75` was initially unpublished when CI started. The native
   owner pushed it unchanged, and the hub confirmed the remote branch now names that SHA.
 - Bounded foundation decision: init creates empty immutable World 0 and preserves
@@ -127,7 +129,7 @@ PRs are never merged without explicit user instruction.
 - Thread: `t3-thread://v1/mcp:fa456317-56e0-44c1-afc9-91ecbbaccbe0`.
 - Branch: `chore/native-cross-platform-ci`, based on `feat/native-repository-foundation`.
 - PR: [#6](https://github.com/Dhruv2mars/javelin/pull/6), draft, stacked on PR #4.
-- Owns `.github/workflows/` and `docs/cross-platform-verification.md`.
+- Owns `.github/workflows/native.yml` and `docs/cross-platform-verification.md`.
 - Done: real formatting, lint, test, and release-build runs on hosted macOS,
   Linux, and Windows, with logs and explicit dependency status.
 - Baseline source: `7ec2e75`, `tests/scaffold.rs`. The single process assertion
@@ -145,6 +147,8 @@ PRs are never merged without explicit user instruction.
   rebases onto the SHA and records actual platform results against the reviewed core.
 - GitHub Actions here is Javelin development infrastructure. Javelin's product CI
   workflow syntax and execution design remain a separate, unchecked hosting item.
+- `native-core-complete c78ea7a5d3eb9555625391e2f7346859d70f4c2a` was sent after
+  independent corrected-source acceptance. The same PR #6 is rerunning the actual core.
 
 ### Linux sparse Layer backend proof
 
@@ -163,7 +167,10 @@ PRs are never merged without explicit user instruction.
   wake had no Actions run. The owner rejected that earlier false-positive status.
 - The hub inspected the completed OverlayFS job and downloaded its artifacts to
   `/tmp/javelin-hub-overlayfs-38430385798`. Shared-base mounts, separate clone proof,
-  remount results and cleanup are evidenced. Code/claim review remains in progress.
+  remount results and cleanup are evidenced. The hub ran the offline source-hash
+  audit and compared all nineteen downloaded files with the committed evidence;
+  all are byte-identical. This bounded Linux primitive is VERIFIED; native Layer
+  integration, production lifecycle and product Gate 2 remain open.
 
 ### Hub continuation and review
 
@@ -185,15 +192,19 @@ PRs are never merged without explicit user instruction.
   observed `cargo test --locked`: 21 passed, one ignored process-test entry point.
   Its release build also passed. Owner added a rollback regression at `8ae7fba`
   and final evidence at `b9decc6`, reporting 22 tests passed.
-- Hub acceptance is withheld for a reproduced medium correctness gap: after an
+- Earlier hub acceptance was withheld for a reproduced medium correctness gap: after an
   acknowledged advance, deleting the newest World row while retaining its accepted
   attempt makes `history` and repeated `init` silently return the older head.
-  `check` detects the broken foreign key. The owner is fixing this in the same PR #4.
+  `check` detected the broken foreign key. The owner fixed this in the same PR #4.
 - Reproduction used exported `6d44167` and `/tmp/javelin-hub-tail-corruption-6d44167`.
   No runtime or test invoked Git. Tests must reject missing-tail history and stale
   results beyond head; the explicit-directory CLI's eager cwd lookup is also returned.
-- No `native-core-complete` signal has been sent. The corrected source and final
-  release smoke must pass hub verification before PR #6 tests the actual core.
+- Corrected source `c78ea7a` passes the hub's 26-test suite, release smoke, original
+  corruption reproduction, formatting and Clippy. Follow-up Claude Opus5.5 review
+  reports no blocking findings. The core-complete signal was sent to PR #6's owner.
+- Follow-on low test coverage: preserve regressions for stale-only manifest graph
+  corruption and invalid stale-result ordering. Code was directly probed and rejects
+  both, but the current suite does not detect removal of those individual checks.
 
 ### Superseded work
 
