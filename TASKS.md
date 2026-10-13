@@ -139,9 +139,9 @@ remain unverified. No Windows installation or projection runs on the laptop.
 Only owned Windows tools, documentation, workflow and this section may change.
 
 - [x] Read instructions and latest hub contract; define bounded self-verifiable done.
-- [ ] Open exactly one draft PR against `feat/linux-sparse-layer-proof`, link it immediately, and report planning SHA to the hub.
-- [ ] Apply architect and compare two source-backed native provider shapes before coding.
-- [ ] Implement bounded prerequisite capture for feature, API, compiler, identity and Unix utility availability.
+- [x] Open exactly one draft PR against `feat/linux-sparse-layer-proof`, link it immediately, and report planning SHA to the hub. PR #9; planning `387cbaa`; stable hub message `windows-pr9-planning-v1`.
+- [x] Apply architect and compare two source-backed native provider shapes before coding. Direct-tree/native root owner chosen over blob-index/per-root write manifest; retain only immutable changed/deleted snapshot model for clone. Same-model reviews have limited diversity.
+- [x] Implement bounded prerequisite capture for feature, API, compiler, identity and Unix utility availability. No provider or projection is present in this first unit.
 - [ ] Run actual hosted Windows job and inspect its raw artifact; stop on unavailable prerequisites or required reboot.
 - [ ] If available, implement and verify provider behavior, cache/private-state cost, sparse clone and kill/restart recovery; otherwise record these scopes INCONCLUSIVE.
 - [ ] Preserve original artifact, audit source hashes offline, and document exact evidence and gaps.
