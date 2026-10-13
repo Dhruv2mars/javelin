@@ -33,6 +33,8 @@ workflow may invoke or interpret Git.
 - [ ] Prove ordinary filesystem behavior for sparse isolated Layers.
 - [x] Independently verify committed filesystem-probe controls and negative cases
   at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
+- [x] Rerun final probe source `bce352e`, including termination of a stalled external
+  command group and rejection of hardlinked or FIFO report destinations.
 - [ ] Implement Layer creation, cloning, checkpointing, discard, status, and diff.
 - [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
@@ -108,8 +110,11 @@ PRs are never merged without explicit user instruction.
   the hardlink negative fails actual isolation assertions with exit 1. Timeout
   exit 124 remains INCONCLUSIVE, and unsafe report aliases leave caller bytes intact.
 - Hub evidence: `/tmp/javelin-hub-probe-0f15db2`, including `safety/` reports.
-- Review finding returned to owner: the verifier's default output folder must be
-  unique to avoid concurrent evidence writes. Final source and docs remain pending.
+- Final executable source `bce352e` was exported and independently rerun by the hub
+  at `/tmp/javelin-hub-probe-bce352e/evidence`; all verifier assertions pass, including
+  stalled-child termination, alias, hardlink and FIFO report protections.
+- The verifier now creates a unique default output folder. Final docs and checklist
+  were handed off at `0e7ed04`. The probe is VERIFIED; production sparse backend is not.
 - The official FSKit sample build exited 69 because Xcode's license is unaccepted.
   Zero valid signing identities were found. These are prerequisites, not an accepted
   sparse backend, and no license or host security change has been made.
@@ -153,6 +158,12 @@ PRs are never merged without explicit user instruction.
 - Mounts or privilege changes on the macOS developer host are outside this task.
 - The proof is not complete product filesystem acceptance. Native storage integration,
   automatic checkpointing, platform coverage, and production lifecycle remain gates.
+- Actual Linux run [38430385798](https://github.com/Dhruv2mars/javelin/actions/runs/38430385798)
+  completed on `89d76df34bf85daee9852ffc9350109bd13b2daf`, after an earlier watcher
+  wake had no Actions run. The owner rejected that earlier false-positive status.
+- The hub inspected the completed OverlayFS job and downloaded its artifacts to
+  `/tmp/javelin-hub-overlayfs-38430385798`. Shared-base mounts, separate clone proof,
+  remount results and cleanup are evidenced. Code/claim review remains in progress.
 
 ### Hub continuation and review
 
