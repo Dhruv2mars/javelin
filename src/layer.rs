@@ -83,7 +83,8 @@ impl LayerBase {
     }
 }
 
-/// Complete private changes relative to the exact base. None is a deletion.
+/// Complete private changes relative to the exact base. None deletes an exact
+/// file/symlink path; capture must expand directory deletion into entry tombstones.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SparseChanges(BTreeMap<RepoPath, Option<FileEntry>>);
 
@@ -354,6 +355,24 @@ fn normalize(
     for (path, after) in &changes.0 {
         if let Some(entry) = after {
             validate_entry(conn, entry)?;
+        }
+        if after.is_none() && !base.entries().contains_key(path) {
+            let prefix = format!("{}/", path.as_str());
+            let has_children = base
+                .entries()
+                .keys()
+                .chain(
+                    changes
+                        .0
+                        .iter()
+                        .filter_map(|(p, entry)| entry.as_ref().map(|_| p)),
+                )
+                .any(|p| p.as_str().starts_with(&prefix));
+            if has_children {
+                return Err(Error::InvalidInput(
+                    "directory-prefix tombstone is ambiguous; delete exact entries".into(),
+                ));
+            }
         }
         if base.entries().get(path) == after.as_ref() {
             continue;
