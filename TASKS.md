@@ -16,9 +16,9 @@ workflow may invoke or interpret Git.
 
 - [x] Recover the accepted design from the final and earlier grilling threads.
 - [x] Confirm that earlier code may be replaced rather than preserved.
-- [ ] Open and link the hub's draft planning PR.
-- [ ] Record the accepted product contract and milestone verification gates.
-- [ ] Persist the latest working instructions for independent work threads.
+- [x] Open and link the hub's draft planning PR: [#3](https://github.com/Dhruv2mars/javelin/pull/3).
+- [x] Record the accepted product contract and milestone verification gates in `docs/build-contract.md`.
+- [x] Persist the latest working instructions in `AGENTS.md` and `RTK.md`.
 - [ ] Launch one local-core thread and one filesystem-verification thread.
 - [ ] Record their thread, branch, PR, and evidence links here.
 - [ ] Arrange persistent hub continuation without duplicating active work.
@@ -63,7 +63,8 @@ workflow may invoke or interpret Git.
 
 ## Current work
 
-The hub owns branch `chore/ga-build-plan`. Implementation has not started.
+The hub owns branch `chore/ga-build-plan` and [PR #3](https://github.com/Dhruv2mars/javelin/pull/3).
+The initial implementation workstreams will start from this branch's recorded contract.
 PRs are never merged without explicit user instruction.
 
 ## Open engineering questions

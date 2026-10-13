@@ -1,0 +1,3 @@
+ts	phase	decision	why	evidence	result
+2026-10-13T15:51:47Z	frame	Start from the accepted design; earlier code is optional	The user explicitly permits replacing all previous work	TASKS.md; docs/build-contract.md; hub user message 2026-10-13	open
+2026-10-13T15:51:47Z	execution	Use isolated threads with one PR each and a hub-owned checklist	The user requested T3 thread ownership and autonomous progress	AGENTS.md; TASKS.md; https://github.com/Dhruv2mars/javelin/pull/3	open
