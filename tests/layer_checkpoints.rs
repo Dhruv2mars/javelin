@@ -1,6 +1,6 @@
 use javelin::{
-    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
-    OperationId, RepoPath, Repository, SparseChanges, VersionNumber,
+    CheckpointId, Error, FileEntry, LayerBase, LayerHead, LayerId, LayerState, LayerUpdate,
+    Manifest, OperationId, RepoPath, Repository, SparseChanges, VersionNumber,
 };
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
@@ -57,6 +57,411 @@ fn fixture() -> (TempDir, Repository, FileEntry, FileEntry) {
     repo.compare_and_advance(&op("world"), version(0), manifest)
         .unwrap();
     (root, repo, large, removed)
+}
+
+fn small_fixture() -> (TempDir, Repository, FileEntry) {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let entry = regular(&mut repo, b"tracked");
+    let manifest = repo
+        .put_manifest(&Manifest::new([(path("tracked"), entry.clone())]).unwrap())
+        .unwrap();
+    repo.compare_and_advance(&op("world"), version(0), manifest)
+        .unwrap();
+    (root, repo, entry)
+}
+
+fn insert_checkpoint_bytes(db: &Connection, bytes: &[u8]) -> CheckpointId {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"javelin-object-v1\0");
+    hash.update([3]);
+    hash.update(bytes);
+    let encoded: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    db.execute(
+        "INSERT INTO objects(id,kind,bytes) VALUES(?1,3,?2) ON CONFLICT(id) DO NOTHING",
+        params![encoded, bytes],
+    )
+    .unwrap();
+    CheckpointId::parse(&encoded).unwrap()
+}
+
+// External byte fixture: field order deliberately matches the format, independent
+// of serde_json::Value's alphabetical object ordering.
+fn ordered_checkpoint_bytes(base: &LayerBase, delta: &SparseChanges) -> Vec<u8> {
+    #[derive(serde::Serialize)]
+    struct Fixture<'a> {
+        repository: String,
+        version: u64,
+        manifest: String,
+        changes: &'a std::collections::BTreeMap<RepoPath, Option<FileEntry>>,
+    }
+    serde_json::to_vec(&Fixture {
+        repository: serde_json::to_value(base).unwrap()["repository"]
+            .as_str()
+            .unwrap()
+            .into(),
+        version: base.version().get(),
+        manifest: base.manifest().to_string(),
+        changes: delta.entries(),
+    })
+    .unwrap()
+}
+
+fn assert_ordered_fixture_matches_store(repo: &mut Repository, db: &Connection, base: &LayerBase) {
+    let head = repo.create_layer(&id("fixture-control"), base).unwrap();
+    let actual: Vec<u8> = db
+        .query_row(
+            "SELECT bytes FROM objects WHERE id=?1",
+            [head.checkpoint().object().to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ordered_checkpoint_bytes(base, &changes([])), actual);
+    let entry = repo
+        .read_manifest(base.manifest())
+        .unwrap()
+        .entries()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let delta = changes([("fixture-new", Some(entry))]);
+    let next = applied(
+        repo.capture_layer(&op("fixture-order"), &head, &delta)
+            .unwrap(),
+    );
+    let actual: Vec<u8> = db
+        .query_row(
+            "SELECT bytes FROM objects WHERE id=?1",
+            [next.checkpoint().object().to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ordered_checkpoint_bytes(base, &delta), actual);
+}
+
+#[test]
+fn canonical_encoding_rejects_redundant_unchanged_delta() {
+    let (root, mut repo, entry) = small_fixture();
+    let base = repo.layer_base(version(1)).unwrap();
+    let db = raw(&root);
+    assert_ordered_fixture_matches_store(&mut repo, &db, &base);
+    let checkpoint = insert_checkpoint_bytes(
+        &db,
+        &ordered_checkpoint_bytes(&base, &changes([("tracked", Some(entry))])),
+    );
+    assert!(
+        matches!(repo.read_checkpoint(checkpoint),Err(Error::CorruptObject(id)) if id==checkpoint.object())
+    );
+}
+
+#[test]
+fn canonical_encoding_rejects_nonexistent_exact_path_tombstone() {
+    let (root, mut repo, _) = small_fixture();
+    let base = repo.layer_base(version(1)).unwrap();
+    let db = raw(&root);
+    assert_ordered_fixture_matches_store(&mut repo, &db, &base);
+    let checkpoint = insert_checkpoint_bytes(
+        &db,
+        &ordered_checkpoint_bytes(&base, &changes([("missing", None)])),
+    );
+    assert!(
+        matches!(repo.read_checkpoint(checkpoint),Err(Error::CorruptObject(id)) if id==checkpoint.object())
+    );
+}
+
+#[test]
+fn normalized_checkpoint_rejects_only_noncanonical_byte_encoding() {
+    let (root, mut repo, _) = small_fixture();
+    let base = repo.layer_base(version(1)).unwrap();
+    let db = raw(&root);
+    assert_ordered_fixture_matches_store(&mut repo, &db, &base);
+    let delta = changes([]);
+    let canonical = ordered_checkpoint_bytes(&base, &delta);
+    let canonical_id = insert_checkpoint_bytes(&db, &canonical);
+    assert_eq!(
+        repo.read_checkpoint(canonical_id).unwrap().changes(),
+        &delta
+    );
+    let decoded: serde_json::Value = serde_json::from_slice(&canonical).unwrap();
+    let reordered = serde_json::to_vec(&decoded).unwrap();
+    assert_ne!(canonical, reordered);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&reordered).unwrap(),
+        decoded
+    );
+    let mut whitespace = canonical.clone();
+    whitespace.push(b'\n');
+    for bytes in [reordered, whitespace] {
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            decoded
+        );
+        let checkpoint = insert_checkpoint_bytes(&db, &bytes);
+        assert!(
+            matches!(repo.read_checkpoint(checkpoint),Err(Error::CorruptObject(id)) if id==checkpoint.object())
+        );
+    }
+}
+
+fn assert_binding_damage_rejected(root: &TempDir, repo: &mut Repository, head: &LayerHead) {
+    assert!(matches!(
+        repo.layer_state(head.layer()),
+        Err(Error::CorruptRepository(_))
+    ));
+    assert!(matches!(
+        repo.layer_history(head.layer()),
+        Err(Error::CorruptRepository(_))
+    ));
+    assert!(matches!(repo.check(), Err(Error::CorruptRepository(_))));
+    assert!(matches!(
+        Repository::init(root.path()),
+        Err(Error::CorruptRepository(_))
+    ));
+    let db = raw(root);
+    let count: i64 = db
+        .query_row("SELECT count(*) FROM layer_attempts", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        repo.capture_layer(&op("after-tamper"), head, &changes([]))
+            .is_err()
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM layer_attempts", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        count
+    );
+}
+
+#[test]
+fn valid_stale_candidate_from_another_world_cannot_change_attempt_base_binding() {
+    let (root, mut repo, entry) = small_fixture();
+    let initial = repo
+        .create_layer(&id("base-zero"), &repo.layer_base(version(0)).unwrap())
+        .unwrap();
+    let other = repo
+        .create_layer(&id("base-one"), &repo.layer_base(version(1)).unwrap())
+        .unwrap();
+    let head = applied(
+        repo.capture_layer(&op("accepted"), &initial, &changes([("new", Some(entry))]))
+            .unwrap(),
+    );
+    repo.capture_layer(&op("stale"), &initial, &changes([]))
+        .unwrap();
+    let foreign_base = repo.read_checkpoint(other.checkpoint()).unwrap();
+    let db = raw(&root);
+    db.execute_batch("DROP TRIGGER layer_attempts_no_UPDATE;")
+        .unwrap();
+    db.execute(
+        "UPDATE layer_attempts SET checkpoint=?1 WHERE id='stale'",
+        [other.checkpoint().object().to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        repo.read_checkpoint(other.checkpoint()).unwrap(),
+        foreign_base
+    );
+    assert_binding_damage_rejected(&root, &mut repo, &head);
+}
+
+#[test]
+fn valid_same_base_checkpoint_cannot_replace_stale_discard_candidate() {
+    let (root, mut repo, entry) = small_fixture();
+    let initial = repo
+        .create_layer(
+            &id("discard-binding"),
+            &repo.layer_base(version(1)).unwrap(),
+        )
+        .unwrap();
+    let head = applied(
+        repo.capture_layer(&op("accepted"), &initial, &changes([("new", Some(entry))]))
+            .unwrap(),
+    );
+    repo.discard_layer(&op("stale-discard"), &initial).unwrap();
+    assert_eq!(
+        repo.read_checkpoint(initial.checkpoint()).unwrap().base(),
+        repo.read_checkpoint(head.checkpoint()).unwrap().base()
+    );
+    assert_ne!(initial.checkpoint(), head.checkpoint());
+    let db = raw(&root);
+    db.execute_batch("DROP TRIGGER layer_attempts_no_UPDATE;")
+        .unwrap();
+    db.execute(
+        "UPDATE layer_attempts SET checkpoint=?1 WHERE id='stale-discard'",
+        [head.checkpoint().object().to_string()],
+    )
+    .unwrap();
+    repo.read_checkpoint(head.checkpoint()).unwrap();
+    assert_binding_damage_rejected(&root, &mut repo, &head);
+}
+
+#[test]
+fn valid_head_and_accepted_candidate_cannot_switch_layer_world_base() {
+    let (root, mut repo, entry) = small_fixture();
+    let worlds = repo.history().unwrap();
+    let initial = repo
+        .create_layer(&id("base-zero"), &repo.layer_base(version(0)).unwrap())
+        .unwrap();
+    let other = repo
+        .create_layer(&id("base-one"), &repo.layer_base(version(1)).unwrap())
+        .unwrap();
+    let head = applied(
+        repo.capture_layer(&op("accepted"), &initial, &changes([("new", Some(entry))]))
+            .unwrap(),
+    );
+    let db = raw(&root);
+    db.execute_batch("DROP TRIGGER layer_heads_no_UPDATE; DROP TRIGGER layer_attempts_no_UPDATE;")
+        .unwrap();
+    db.execute(
+        "UPDATE layer_heads SET checkpoint=?1 WHERE layer='base-zero' AND revision=1",
+        [other.checkpoint().object().to_string()],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE layer_attempts SET checkpoint=?1 WHERE id='accepted'",
+        [other.checkpoint().object().to_string()],
+    )
+    .unwrap();
+    repo.read_checkpoint(other.checkpoint()).unwrap();
+    assert_eq!(repo.history().unwrap(), worlds);
+    assert_binding_damage_rejected(&root, &mut repo, &head);
+}
+
+#[test]
+fn stale_only_candidate_can_seed_an_independent_recovery_layer() {
+    let (root, mut repo, entry) = small_fixture();
+    let base = repo.layer_base(version(1)).unwrap();
+    let initial = repo.create_layer(&id("original"), &base).unwrap();
+    let head = applied(
+        repo.capture_layer(
+            &op("winner"),
+            &initial,
+            &changes([("accepted-private", Some(entry))]),
+        )
+        .unwrap(),
+    );
+    let private = regular(&mut repo, b"stale-only-private");
+    assert!(matches!(
+        repo.capture_layer(
+            &op("stale-only"),
+            &initial,
+            &changes([("recovered", Some(private.clone()))])
+        )
+        .unwrap(),
+        LayerUpdate::Stale { .. }
+    ));
+    let db = raw(&root);
+    let encoded: String = db
+        .query_row(
+            "SELECT checkpoint FROM layer_attempts WHERE id='stale-only'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM layer_heads WHERE checkpoint=?1",
+            [&encoded],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    let checkpoint = CheckpointId::parse(&encoded).unwrap();
+    let before = usage(&db);
+    drop(repo);
+    let mut repo = Repository::open(root.path()).unwrap();
+    let recovered = repo.clone_layer(&id("recovery"), checkpoint).unwrap();
+    assert_eq!(usage(&db), before);
+    assert_eq!(repo.layer_diff(&recovered).unwrap()[0].after, Some(private));
+    assert_eq!(repo.read_checkpoint(checkpoint).unwrap().base(), &base);
+    assert_eq!(
+        repo.layer_state(head.layer()).unwrap(),
+        LayerState::Active { head }
+    );
+    assert_eq!(repo.history().unwrap().len(), 2);
+    repo.check().unwrap();
+}
+
+#[test]
+fn directory_prefix_tombstones_do_not_substitute_for_exact_file_deletions() {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let entry = regular(&mut repo, b"child");
+    let target = repo.put_blob(b"../file").unwrap();
+    let manifest = repo
+        .put_manifest(
+            &Manifest::new([
+                (path("dir/file"), entry.clone()),
+                (path("dir/nested/link"), FileEntry::Symlink { target }),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+    repo.compare_and_advance(&op("world"), version(0), manifest)
+        .unwrap();
+    let head = repo
+        .create_layer(&id("exact-deletes"), &repo.layer_base(version(1)).unwrap())
+        .unwrap();
+    for delta in [
+        changes([("dir", None)]),
+        changes([("dir", None), ("dir/file", None), ("dir/nested/link", None)]),
+        changes([
+            ("private-dir", None),
+            ("private-dir/new", Some(entry.clone())),
+        ]),
+    ] {
+        assert!(matches!(
+            repo.capture_layer(&op("bad-prefix"), &head, &delta),
+            Err(Error::InvalidInput(_))
+        ));
+        assert_eq!(
+            repo.layer_state(head.layer()).unwrap(),
+            LayerState::Active { head: head.clone() }
+        );
+    }
+    let removed = applied(
+        repo.capture_layer(
+            &op("bad-prefix"),
+            &head,
+            &changes([("dir/file", None), ("dir/nested/link", None)]),
+        )
+        .unwrap(),
+    );
+    assert!(
+        repo.read_checkpoint(removed.checkpoint())
+            .unwrap()
+            .manifest()
+            .entries()
+            .is_empty()
+    );
+    assert_eq!(repo.layer_diff(&removed).unwrap().len(), 2);
+    assert_eq!(repo.history().unwrap().len(), 2);
+    repo.check().unwrap();
+}
+
+#[test]
+fn opaque_layer_ids_do_not_become_host_paths_or_case_folded_identities() {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let base = repo.layer_base(version(0)).unwrap();
+    for name in [".", "..", "CON", "con", "A", "a"] {
+        let layer = id(name);
+        let head = repo.create_layer(&layer, &base).unwrap();
+        assert_eq!(head.layer().as_str(), name);
+        assert_eq!(
+            repo.layer_state(&layer).unwrap(),
+            LayerState::Active { head }
+        );
+    }
+    let entries: Vec<_> = std::fs::read_dir(root.path())
+        .unwrap()
+        .map(|p| p.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, [".javelin"]);
+    assert_eq!(repo.check().unwrap().layers, 6);
 }
 
 #[test]
@@ -553,17 +958,12 @@ fn external_boundaries_and_unshipped_old_format_are_rejected_without_rewrite() {
 
 #[test]
 fn valid_hash_checkpoint_must_have_exact_base_canonical_sparse_paths_and_valid_graph() {
-    use sha2::{Digest, Sha256};
     let (root, mut repo, large, _) = fixture();
     let base = repo.layer_base(version(1)).unwrap();
     let identity = serde_json::to_value(&base).unwrap()["repository"].clone();
     let original = serde_json::json!({"repository":identity,"version":1,"manifest":base.manifest(),"changes":{}});
     let mut invalid_path = original.clone();
     invalid_path["changes"] = serde_json::json!({"../bad":null});
-    let mut redundant = original.clone();
-    redundant["changes"] = serde_json::json!({"keep":large});
-    let mut no_delete = original.clone();
-    no_delete["changes"] = serde_json::json!({"absent":null});
     let mut wrong_base = original.clone();
     wrong_base["version"] = serde_json::json!(0);
     let mut collision = original.clone();
@@ -574,27 +974,9 @@ fn valid_hash_checkpoint_must_have_exact_base_canonical_sparse_paths_and_valid_g
     let mut unknown = original.clone();
     unknown["unexpected"] = serde_json::json!(true);
     let db = raw(&root);
-    for invalid in [
-        invalid_path,
-        redundant,
-        no_delete,
-        wrong_base,
-        collision,
-        missing,
-        unknown,
-    ] {
+    for invalid in [invalid_path, wrong_base, collision, missing, unknown] {
         let bytes = serde_json::to_vec(&invalid).unwrap();
-        let mut hash = Sha256::new();
-        hash.update(b"javelin-object-v1\0");
-        hash.update([3]);
-        hash.update(&bytes);
-        let encoded: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        let checkpoint = CheckpointId::parse(&encoded).unwrap();
-        db.execute(
-            "INSERT INTO objects(id,kind,bytes) VALUES(?1,3,?2)",
-            params![encoded, bytes],
-        )
-        .unwrap();
+        let checkpoint = insert_checkpoint_bytes(&db, &bytes);
         assert!(repo.read_checkpoint(checkpoint).is_err());
         assert!(repo.clone_layer(&id("invalid"), checkpoint).is_err());
         assert_eq!(
