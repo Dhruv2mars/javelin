@@ -141,6 +141,19 @@ PRs are never merged without explicit user instruction.
 - GitHub Actions here is Javelin development infrastructure. Javelin's product CI
   workflow syntax and execution design remain a separate, unchecked hosting item.
 
+### Linux sparse Layer backend proof
+
+- Thread: `t3-thread://v1/mcp:7a0a409d-e0f3-4321-84f1-5ebbcc357056`.
+- Branch: `feat/linux-sparse-layer-proof`, based on `test/layer-filesystem-contract`.
+- PR: creation pending, one draft PR stacked on PR #5.
+- Owns `tools/overlayfs-proof/`, `.github/workflows/overlayfs-proof.yml`, and
+  `docs/linux-workspace-proof.md`. Native CI owns only `native.yml`.
+- Done: bounded real shared-base OverlayFS mounts, sparse private changes and clones,
+  ordinary-tool verification, recovery and cleanup evidence on disposable Linux CI.
+- Mounts or privilege changes on the macOS developer host are outside this task.
+- The proof is not complete product filesystem acceptance. Native storage integration,
+  automatic checkpointing, platform coverage, and production lifecycle remain gates.
+
 ### Hub continuation and review
 
 - Hourly scheduler: `scheduled-task:command:mcp:3981ee7f-8fb4-4683-a0d3-78e3e74e0371:schedule-task:javelin-ga-hub-continuation-20261013`.
@@ -157,6 +170,9 @@ PRs are never merged without explicit user instruction.
 - Live workthread and PR ownership records were updated while review was running.
 - PR #4's checklist heading placement was returned to its owner for correction.
 - Product implementation, sparse backend behavior, and GA readiness remain unverified.
+- Native commit `6d44167` is under hub review. The hub independently exported it and
+  observed `cargo test --locked`: 21 passed, one ignored process-test entry point.
+  Independent code review and release CLI smoke remain pending; no completion signal yet.
 
 ### Superseded work
 
