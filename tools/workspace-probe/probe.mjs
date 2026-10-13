@@ -1,7 +1,6 @@
 import * as fs from 'node:fs/promises';
-import { watch, writeFileSync } from 'node:fs';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { watch } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir, platform, arch, release, totalmem } from 'node:os';
@@ -9,7 +8,13 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const execute = promisify(execFile);
+const activeChildren = new Set();
+function stopChild(child) {
+  if (platform() !== 'win32' && child.pid) {
+    try { process.kill(-child.pid, 'SIGKILL'); return; } catch {}
+  }
+  child.kill('SIGKILL');
+}
 const binary = Buffer.from(Array.from({ length: 8192 }, (_, i) => i % 256));
 const fixture = {
   'README.txt': 'shared base text\n',
@@ -26,9 +31,28 @@ const report = { schema: 1, startedAt: new Date().toISOString(), backend: null,
   limits, commands: [], checks: [], contract: [] };
 
 async function command(argv, cwd, timeout = limits.commandTimeoutMs) {
+  if (aborted) throw new Error('run already aborted');
   const started = performance.now();
   try {
-    const result = await execute(argv[0], argv.slice(1), { cwd, timeout, maxBuffer: 16384, killSignal: 'SIGKILL' });
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(argv[0], argv.slice(1), { cwd, detached: platform() !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      activeChildren.add(child);
+      let stdout = '', stderr = '', failure, bytes = 0;
+      const timer = setTimeout(() => { failure = 'command timeout'; stopChild(child); }, timeout);
+      const collect = (data, isError) => {
+        bytes += data.length;
+        if (bytes > 16384) { failure = 'command output exceeds 16 KiB'; stopChild(child); return; }
+        if (isError) stderr += data.toString(); else stdout += data.toString();
+      };
+      child.stdout.on('data', data => collect(data, false));
+      child.stderr.on('data', data => collect(data, true));
+      child.once('error', error => { clearTimeout(timer); activeChildren.delete(child); reject(error); });
+      child.once('close', (code, signal) => {
+        clearTimeout(timer); activeChildren.delete(child);
+        if (code === 0 && !failure) resolve({ stdout, stderr });
+        else reject(Object.assign(new Error(failure ?? `command exited ${code} ${signal ?? ''}`), { code, signal, stdout, stderr }));
+      });
+    });
     report.commands.push({ argv, cwd, exitCode: 0, stdout: result.stdout, stderr: result.stderr,
       elapsedMs: Math.round(performance.now() - started) });
     return result.stdout;
@@ -84,6 +108,7 @@ async function copyTree(source, target, cloneExecutable) {
 }
 
 async function check(id, run) {
+  if (aborted) throw new Error('run already aborted');
   try {
     const evidence = await run();
     report.checks.push({ id, verdict: 'VERIFIED', evidence: evidence ?? 'assertions passed' });
@@ -95,10 +120,11 @@ async function check(id, run) {
 
 async function killWriter(target, phase, contents) {
   const argv = [process.execPath, join(here, 'atomic-writer.mjs'), target, phase, contents];
-  const child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], detached: platform() !== 'win32' });
+  activeChildren.add(child);
   const exit = new Promise((resolve, reject) => {
     child.once('error', reject);
-    child.once('exit', (code, signal) => resolve({ code, signal }));
+    child.once('exit', (code, signal) => { activeChildren.delete(child); resolve({ code, signal }); });
   });
   let timer;
   try {
@@ -113,13 +139,13 @@ async function killWriter(target, phase, contents) {
       child.once('error', reject);
       child.once('exit', (code) => reject(new Error(`writer exited before readiness: ${code} ${errors}`)));
     });
-    child.kill('SIGKILL');
+    stopChild(child);
     const result = await exit;
     assert.equal(result.signal, 'SIGKILL');
     report.commands.push({ argv, ...result, ready: true });
   } finally {
     clearTimeout(timer);
-    child.kill('SIGKILL');
+    stopChild(child);
     await exit;
   }
 }
@@ -263,6 +289,7 @@ function option(name, fallback) { const index = args.indexOf(name); return index
 const mode = option('--backend', 'directory');
 let output = resolve(option('--out', 'workspace-probe.json'));
 let outputApproved = false;
+let aborted = false;
 const wallTimeoutMs = Number(option('--wall-ms', '60000'));
 assert.ok(Number.isInteger(wallTimeoutMs) && wallTimeoutMs >= 100 && wallTimeoutMs <= 60000, 'wall budget must be 100..60000 ms');
 report.limits.wallTimeoutMs = wallTimeoutMs;
@@ -272,10 +299,16 @@ report.contract = ['immutable-shared-base', 'sparse-changes-and-clones', 'backen
 // A stuck caller-provided filesystem must not make this an unbounded stress run.
 // Exit 124 means incomplete evidence; it must never be interpreted as success.
 const deadline = setTimeout(() => {
+  aborted = true;
   report.fatal = `Probe exceeded ${wallTimeoutMs}-ms wall budget`; report.behaviorVerdict = 'INCONCLUSIVE';
   report.cleanup = 'aborted; fixture cleanup not confirmed'; report.finishedAt = new Date().toISOString();
-  if (outputApproved) writeFileSync(output, JSON.stringify(report, null, 2) + '\n');
-  console.error(report.fatal); process.exit(124);
+  for (const child of activeChildren) stopChild(child);
+  console.error(report.fatal);
+  // Reporting itself must not hold the process alive on an unhealthy output filesystem.
+  setTimeout(() => process.exit(124), 100);
+  if (outputApproved) fs.writeFile(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' })
+    .finally(() => process.exit(124));
+  else process.exit(124);
 }, wallTimeoutMs);
 let temporary;
 try {
@@ -285,6 +318,7 @@ try {
   }
   const destination = await fs.lstat(output).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
   assert.ok(!destination?.isSymbolicLink(), 'report destination must not be a symlink');
+  assert.ok(!destination || (destination.isFile() && destination.nlink === 1), 'existing report must be a singly linked regular file');
   output = join(await fs.realpath(dirname(output)), basename(output));
   assert.ok(['directory', 'clonefile', 'paths'].includes(mode), 'unknown backend');
   if (platform() === 'darwin') report.host.macOS = (await command(['/usr/bin/sw_vers'])).trim();
@@ -295,6 +329,7 @@ try {
     const roots = [base, a, b, c];
     assert.ok(roots.every(p => output !== p && !output.startsWith(`${p}/`)), 'report must be outside tested paths');
     outputApproved = true;
+    await fs.rm(output, { force: true });
     for (let i = 0; i < roots.length; i++) for (let j = i + 1; j < roots.length; j++) {
       assert.ok(roots[i] !== roots[j] && !roots[i].startsWith(`${roots[j]}/`) && !roots[j].startsWith(`${roots[i]}/`), 'paths must be distinct and non-nested');
     }
@@ -303,6 +338,7 @@ try {
     finally { await fs.rm(expectedRoot, { recursive: true, force: true }); }
   } else {
     outputApproved = true;
+    await fs.rm(output, { force: true });
     temporary = await fs.mkdtemp(join(tmpdir(), 'javelin-fs-probe-'));
     report.ownedTemporaryRoot = temporary;
     base = join(temporary, 'base'); a = join(temporary, 'a'); b = join(temporary, 'b'); c = join(temporary, 'c');
@@ -336,18 +372,20 @@ try {
   report.behaviorVerdict = report.checks.some(c => c.verdict === 'NOT VERIFIED') ? 'NOT VERIFIED'
     : report.checks.some(c => c.verdict === 'INCONCLUSIVE') ? 'INCONCLUSIVE' : 'VERIFIED';
   process.exitCode = report.behaviorVerdict === 'VERIFIED' ? 0 : 1;
-} catch (error) { report.fatal = error.message; report.behaviorVerdict = 'INCONCLUSIVE'; process.exitCode = 2; }
+} catch (error) { if (!aborted) { report.fatal = error.message; report.behaviorVerdict = 'INCONCLUSIVE'; process.exitCode = 2; } }
 finally {
-  if (temporary) {
-    await fs.chmod(join(temporary, 'base'), 0o755).catch(() => {});
-    await fs.chmod(join(temporary, 'base/dir'), 0o755).catch(() => {});
-    await fs.rm(temporary, { recursive: true, force: true });
-    report.cleanup = 'removed owned temporary fixture';
-  } else report.cleanup = 'caller paths retained';
-  report.finishedAt = new Date().toISOString();
-  if (outputApproved) await fs.writeFile(output, JSON.stringify(report, null, 2) + '\n');
-  else console.error('Report destination was not approved; no report written');
-  clearTimeout(deadline);
-  console.log(`${report.behaviorVerdict}: ${output}`);
-  for (const check of report.checks) console.log(`${check.verdict}: ${check.id}`);
+  if (!aborted) {
+    if (temporary) {
+      await fs.chmod(join(temporary, 'base'), 0o755).catch(() => {});
+      await fs.chmod(join(temporary, 'base/dir'), 0o755).catch(() => {});
+      await fs.rm(temporary, { recursive: true, force: true });
+      report.cleanup = 'removed owned temporary fixture';
+    } else report.cleanup = 'caller paths retained';
+    report.finishedAt = new Date().toISOString();
+    if (outputApproved) await fs.writeFile(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
+    else console.error('Report destination was not approved; no report written');
+    clearTimeout(deadline);
+    console.log(`${report.behaviorVerdict}: ${output}`);
+    for (const check of report.checks) console.log(`${check.verdict}: ${check.id}`);
+  }
 }

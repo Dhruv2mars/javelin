@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "startedAt": "2026-10-13T16:13:16.518Z",
+  "startedAt": "2026-10-13T16:20:45.615Z",
   "backend": "paths",
   "host": {
     "platform": "darwin",
@@ -27,7 +27,7 @@
       "exitCode": 0,
       "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n",
       "stderr": "",
-      "elapsedMs": 9
+      "elapsedMs": 10
     }
   ],
   "checks": [],
@@ -56,5 +56,5 @@
   "fatal": "paths must be distinct and non-nested",
   "behaviorVerdict": "INCONCLUSIVE",
   "cleanup": "caller paths retained",
-  "finishedAt": "2026-10-13T16:13:16.530Z"
+  "finishedAt": "2026-10-13T16:20:45.627Z"
 }

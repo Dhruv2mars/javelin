@@ -99,9 +99,10 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 - [x] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption. Both controls pass eleven checks on this host.
 - [x] Verify the probe catches a broken isolation control and records unsupported capabilities. Hardlink leakage fails; caller-prepared paths report clone provisioning INCONCLUSIVE.
 - [x] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds. Hub independently reproduced controls and regressions at `0f15db2`.
-- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `eb3037c`; omitted-output run exits 0 into unique `javelin-probe-evidence-EfCkEZ`.
+- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `bce352e`; omitted-output run exits 0 into unique `javelin-probe-evidence-6sxr25`.
+- [x] Repair final review findings and exercise hard-link and FIFO report rejection plus actual external-tool subprocess termination on wall expiry. Directory and clonefile still pass eleven checks.
 - [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
-- [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
+- [x] Report final evidence and verdict to the hub, leaving PR #5 draft and unmerged. Final source `bce352ec4e5f78eb98c71facba68b872d3e11118`; probe VERIFIED, sparse backend and Gate 2 INCONCLUSIVE. Stable completion message `filesystem-pr5-completion-evidence-v1`.
 
 ## Linux sparse Layer proof workstream
 
@@ -121,3 +122,5 @@ is owned here. Privileged mounts are restricted to the ephemeral Linux CI job.
 - [x] Add owned workflow with pinned actions, bounded execution and retained artifacts. Local shell/Bun/Python checks pass; laptop refusal exits 2 before sudo.
 - [ ] Observe actual cloud run and record exact SHA, results and limitations.
 - [ ] Report evidence and blockers to hub; leave PR unmerged.
+- [x] Resolve base TASKS conflict by preserving PR #5's completed handoff and this appended workstream. Import base repairs unchanged.
+- [ ] Establish real hosted run after conflict repair. The `bf9fbc4` notification referred only to a skipped Macroscope check; no OverlayFS cloud run existed.

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "startedAt": "2026-10-13T16:13:12.822Z",
+  "startedAt": "2026-10-13T16:20:39.570Z",
   "backend": "clonefile",
   "host": {
     "platform": "darwin",
@@ -12,7 +12,7 @@
     "testFilesystem": {
       "type": 26,
       "blockSize": 4096,
-      "availableBytes": 105135644672
+      "availableBytes": 104567345152
     }
   },
   "limits": {
@@ -32,7 +32,7 @@
       "exitCode": 0,
       "stdout": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n",
       "stderr": "",
-      "elapsedMs": 10
+      "elapsedMs": 20
     },
     {
       "argv": [
@@ -42,40 +42,29 @@
         "-Werror",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/clonefile.c",
         "-o",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile"
       ],
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 54
+      "elapsedMs": 65
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/value.h",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/value.h"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/value.h",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/value.h"
       ],
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 169
+      "elapsedMs": 174
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/main.c",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/main.c"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 2
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/dir/nested.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/dir/nested.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/main.c",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/main.c"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -84,9 +73,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/README.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/README.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/dir/nested.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/dir/nested.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -95,9 +84,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/bytes.bin"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/README.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/README.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -106,9 +95,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/delete.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/delete.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -117,9 +106,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/value.h",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/value.h"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/delete.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/delete.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -128,9 +117,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/main.c",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/main.c"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/value.h",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/value.h"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -139,9 +128,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/dir/nested.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/dir/nested.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/main.c",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/main.c"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -150,9 +139,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/README.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/README.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/dir/nested.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/dir/nested.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -161,20 +150,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/bytes.bin"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 3
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/delete.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/delete.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/README.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/README.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -183,9 +161,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/value.h",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/value.h"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -194,9 +172,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/main.c",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/main.c"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/delete.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/delete.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -205,9 +183,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/dir/nested.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/dir/nested.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/value.h",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/value.h"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -216,9 +194,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/README.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/README.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/main.c",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/main.c"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -227,9 +205,9 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/bytes.bin"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/dir/nested.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/dir/nested.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -238,9 +216,31 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/delete.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/delete.txt"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/README.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/README.txt"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 2
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/bytes.bin"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 2
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/delete.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/delete.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -252,7 +252,7 @@
         "cat",
         "README.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "shared base text\n",
       "stderr": "",
@@ -261,8 +261,8 @@
     {
       "argv": [
         "cmp",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/bytes.bin"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -274,7 +274,7 @@
         "cat",
         "README.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -286,7 +286,7 @@
         "README.txt",
         "created.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -298,7 +298,7 @@
         "dir",
         "renamed-dir"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -309,7 +309,7 @@
         "rm",
         "delete.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
@@ -322,7 +322,7 @@
         "-type",
         "f"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "./value.h\n./main.c\n./README.txt\n./created.txt\n./renamed-dir/nested.txt\n./bytes.bin\n",
       "stderr": "",
@@ -333,7 +333,7 @@
         "cat",
         "inside-link"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "atomic A text\n",
       "stderr": "",
@@ -349,21 +349,21 @@
         "-o",
         "probe-app"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 54
+      "elapsedMs": 60
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/probe-app"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/probe-app"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "9\n",
       "stderr": "",
-      "elapsedMs": 166
+      "elapsedMs": 168
     },
     {
       "argv": [
@@ -375,39 +375,27 @@
         "-o",
         "probe-app"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b",
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 57
+      "elapsedMs": 86
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/probe-app"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/probe-app"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b",
       "exitCode": 0,
       "stdout": "7\n",
       "stderr": "",
-      "elapsedMs": 146
+      "elapsedMs": 180
     },
     {
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b/concurrent.txt",
-        "after",
-        "B\n"
-      ],
-      "code": null,
-      "signal": "SIGKILL",
-      "ready": true
-    },
-    {
-      "argv": [
-        "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
-        "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/concurrent.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/concurrent.txt",
         "after",
         "A\n"
       ],
@@ -417,9 +405,65 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/value.h",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/value.h"
+        "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
+        "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b/concurrent.txt",
+        "after",
+        "B\n"
+      ],
+      "code": null,
+      "signal": "SIGKILL",
+      "ready": true
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/value.h",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/value.h"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 4
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/main.c",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/main.c"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 4
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/README.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/README.txt"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 4
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/created.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/created.txt"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsedMs": 10
+    },
+    {
+      "argv": [
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/renamed-dir/nested.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/renamed-dir/nested.txt"
       ],
       "exitCode": 0,
       "stdout": "",
@@ -428,64 +472,20 @@
     },
     {
       "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/main.c",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/main.c"
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/clonefile",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/bytes.bin",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c/bytes.bin"
       ],
       "exitCode": 0,
       "stdout": "",
       "stderr": "",
-      "elapsedMs": 2
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/README.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/README.txt"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 3
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/created.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/created.txt"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 2
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/renamed-dir/nested.txt",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/renamed-dir/nested.txt"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 2
-    },
-    {
-      "argv": [
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/clonefile",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/bytes.bin",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c/bytes.bin"
-      ],
-      "exitCode": 0,
-      "stdout": "",
-      "stderr": "",
-      "elapsedMs": 2
+      "elapsedMs": 4
     },
     {
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/recovery.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/recovery.txt",
         "before",
         "unpublished\n"
       ],
@@ -498,7 +498,7 @@
         "cat",
         "recovery.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "old\n",
       "stderr": "",
@@ -508,7 +508,7 @@
       "argv": [
         "/opt/homebrew/lib/node_modules/bun/bin/bun.exe",
         "/Users/dhruv2mars/.t3/worktrees/javelin/test-layer-filesystem-contract/tools/workspace-probe/atomic-writer.mjs",
-        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a/recovery.txt",
+        "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a/recovery.txt",
         "after",
         "committed\n"
       ],
@@ -521,11 +521,11 @@
         "cat",
         "recovery.txt"
       ],
-      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
+      "cwd": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
       "exitCode": 0,
       "stdout": "committed\n",
       "stderr": "",
-      "elapsedMs": 3
+      "elapsedMs": 4
     }
   ],
   "checks": [
@@ -562,14 +562,6 @@
           {
             "name": "watch-create",
             "events": [
-              {
-                "type": "rename",
-                "name": "delete.txt"
-              },
-              {
-                "type": "rename",
-                "name": "README.txt"
-              },
               {
                 "type": "rename",
                 "name": "watch-create"
@@ -657,12 +649,12 @@
       "evidence": "no real sparse backend implementation and provenance supplied; behavior controls cannot close Gate 2"
     }
   ],
-  "ownedTemporaryRoot": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj",
+  "ownedTemporaryRoot": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO",
   "paths": {
-    "base": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/base",
-    "layerA": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/a",
-    "layerB": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/b",
-    "clone": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-1JZKfj/c"
+    "base": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/base",
+    "layerA": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/a",
+    "layerB": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/b",
+    "clone": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-fs-probe-pKSHHO/c"
   },
   "fixture": {
     "entries": 9,
@@ -727,5 +719,5 @@
   },
   "behaviorVerdict": "VERIFIED",
   "cleanup": "removed owned temporary fixture",
-  "finishedAt": "2026-10-13T16:13:14.026Z"
+  "finishedAt": "2026-10-13T16:20:40.973Z"
 }
