@@ -132,3 +132,74 @@ These choices preserve byte identity and ordering and keep the API sketch's
 responsibility assignments intact. The independent judge required final in-transaction
 candidate validation, graph snapshot reads, exact retry binding, kind separation,
 and non-clobbering init races; these are implementation and verification requirements.
+
+## Verification evidence
+
+Verified on Darwin arm64, rustc/cargo 1.93.0. Commands run from this worktree:
+
+```sh
+rtk cargo test --locked
+rtk proxy cargo fmt --check
+rtk proxy cargo clippy --all-targets --locked -- -D warnings
+rtk proxy cargo build --release --locked
+rtk git diff --check
+```
+
+The final suite passes 22 tests with one ignored child-process entry point and
+no failing tests. Formatting, Clippy with warnings denied, release build, and
+diff whitespace check pass. The independent Sol reviewer ran the preceding
+21-test suite and found no reproducible high/medium correctness gap. The added
+test proves rollback after a storage insertion error and an exact retry after
+reopen; the parent ran the full final suite. No reviewer assertion substitutes
+for these observed runs.
+
+- `tests/native_repository.rs` proves exact one-MiB binary/empty content and
+  canonical manifest bytes after reopen, kind separation, invalid paths and
+  duplicate/ancestor collisions, absent/corrupt proposed and accepted content,
+  malformed manifests with valid hashes, immutable SQL mutation refusal,
+  non-clobbering init, durable accepted/stale input binding, and storage-write
+  failure rollback. Unix tests also reject storage symlinks.
+- `tests/support/process.rs`, compiled into the library test binary, launches
+  independent OS processes behind pipe barriers. Eight simultaneous initializers
+  see one genesis. Eight different publishers produce one accepted result and
+  seven durable stale results. Eight identical retries append once. Different
+  inputs with one ID produce one acceptance and one identity error. A reader
+  sees zero new versions/outcomes while the writer blocks before commit; killing
+  it allows a clean exact retry. Kill after commit but before delivery retains
+  World 1 even after World 2, and a fresh-process retry returns World 1. Kill
+  after the acknowledged result also retains the exact outcome. Init survives
+  kills on both sides of commit. There are no artificial sleeps. Test hooks are
+  absent from the production library and CLI.
+- `tests/cli.rs` drives the actual CLI in temporary projects and proves structured
+  and ordinary output, restart, file preservation, corruption failures, exit 1
+  for repository errors, and exit 2 for usage errors. Successful JSON goes to
+  stdout; errors go to stderr with `ok: false` and a stable error code/message.
+
+The release binary was also driven outside the test suite:
+
+```sh
+rtk proxy target/release/javelin init /tmp/javelin-native-smoke.eSisDq --json
+rtk proxy target/release/javelin history /tmp/javelin-native-smoke.eSisDq --json
+rtk proxy target/release/javelin check /tmp/javelin-native-smoke.eSisDq --json
+rtk proxy target/release/javelin init /tmp/javelin-native-smoke.eSisDq
+```
+
+Init and history returned World 0 with empty-manifest ID
+`2169214789bd2b417d915c470c6d8d4de146200334bd19930a24ebce709e763e`.
+Integrity reported one World, one object, and zero operation outcomes. An existing
+file containing bytes `00 ff 2a` stayed unchanged after both init calls, checked
+with Python byte equality. This fixture is temporary; `tests/cli.rs` reproduces it.
+
+`rtk proxy rg -n 'Command::new|std::process|sleep|[.]git|\bgit\b' src tests`
+found only the test launches of the built Javelin CLI and current test executable.
+Production code starts no processes. Runtime/tests do not inspect Git data.
+The release binary also contains no `JAVELIN_TEST_BOUNDARY` control string,
+checked by reading its bytes with Python.
+
+The bounded result is VERIFIED for macOS process restart and native behavior.
+Power-loss tests were not performed; SQLite documentation and process kills do
+not prove hardware flush behavior. Linux and Windows were not exercised here;
+the hub's separate cross-platform CI PR will run the same source tests on actual
+runners. Non-Unix parent-directory sync is still unimplemented. Filesystem backend
+and normal Layer editor/compiler behavior were not tested in this workstream.
+No throughput, scale, network-filesystem, or GA platform support claim is made.

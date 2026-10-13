@@ -95,10 +95,16 @@ This work does not claim Layers, filesystem backends, or complete Layer Publish.
 - [x] Compare two storage/type sketches with read-only design subagents and cross-judge.
 - [x] Capture smallest runnable scaffold baseline, commit `7ec2e75`.
 - [x] Record chosen storage design and reconciliation in `docs/native-repository.md`.
-- [ ] Implement typed immutable objects, manifests, and repository initialization.
-- [ ] Implement ordered history and atomic idempotent compare-and-advance.
-- [ ] Implement minimal CLI init, history, and integrity inspection.
-- [ ] Prove exact binary data, path boundaries, missing/corrupt objects.
-- [ ] Prove process restart, contention, retries, and failure boundaries.
-- [ ] Independently inspect behavior and reconcile documentation.
-- [ ] Report commands, results, limitations, and verification status to hub.
+- [x] Implement typed immutable objects, manifests, and repository initialization.
+- [x] Implement ordered history and atomic idempotent compare-and-advance.
+- [x] Implement minimal CLI init, history, and integrity inspection.
+- [x] Prove exact binary data, path boundaries, missing/corrupt objects on macOS.
+- [x] Prove process restart, contention, retries, and failure boundaries on macOS.
+- [x] Independently inspect behavior and reconcile documentation.
+- [x] Report commands, results, limitations, and VERIFIED status to hub, message `native-foundation-final-evidence-v1`.
+
+Evidence is recorded in `docs/native-repository.md`. These checks apply only to
+this bounded foundation on Darwin arm64. Global GA items above remain unchanged.
+Linux/Windows behavior, hardware power-loss durability, Layer adoption, and the
+complete Layer Publish workflow remain unconfirmed follow-on work. PR #4 stays
+draft and unmerged, depending on the hub planning branch.
