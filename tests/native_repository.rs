@@ -348,6 +348,31 @@ fn manifest_preparation_rejects_missing_or_wrong_kind_references() {
     assert_eq!(repo.check().unwrap().attempts, 0);
 }
 
+#[test]
+fn metadata_write_failure_rolls_back_the_attempt_and_allows_exact_retry() {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let (_, manifest) = snapshot(&mut repo, b"candidate");
+    let db = raw(&root);
+    db.execute_batch("CREATE TRIGGER refuse_world BEFORE INSERT ON versions WHEN NEW.number=1 BEGIN SELECT RAISE(ABORT,'injected write failure'); END;").unwrap();
+    assert!(matches!(
+        repo.compare_and_advance(&op("write-failure"), version(0), manifest),
+        Err(Error::Storage(_))
+    ));
+    let report = repo.check().unwrap();
+    assert_eq!((report.versions, report.attempts), (1, 0));
+    db.execute_batch("DROP TRIGGER refuse_world;").unwrap();
+    drop(repo);
+    let mut repo = Repository::open(root.path()).unwrap();
+    assert!(matches!(
+        repo.compare_and_advance(&op("write-failure"), version(0), manifest)
+            .unwrap(),
+        AdvanceOutcome::Accepted { .. }
+    ));
+    let report = repo.check().unwrap();
+    assert_eq!((report.versions, report.attempts), (2, 1));
+}
+
 #[cfg(unix)]
 #[test]
 fn storage_symlinks_are_rejected_without_touching_the_target() {
