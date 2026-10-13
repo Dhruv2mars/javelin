@@ -207,6 +207,17 @@ PRs are never merged without explicit user instruction.
 - Selected representation: a complete sparse delta per immutable checkpoint, with
   transactional head history and retry outcomes. Format 2 distinguishes symlinks
   and rejects unshipped format 1. This is a reported design choice, not verified behavior.
+- Exact submitted source `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3` is based on
+  accepted CI head `0c8582d`. The hub's independent export on Darwin arm64,
+  Rust 1.93.0, passed 43 tests with one ignored process actor, formatting,
+  warnings-denied Clippy and a release build. The unchanged documented caller
+  compiled against the production library and its CLI check returned two Layers,
+  four objects, one World and zero World attempts. Test hooks are absent from the
+  release binary. This verifies local API execution; bounded acceptance awaits review.
+- Hub export: `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-layer-bd16d52-pfz39_ae`.
+  Independent review task `javelin-layer-state-review-hub-r1-bd16d52` is active.
+  Hosted run `38465628999` is handled by the owner's existing watcher; its results
+  require artifact inspection. Complete Layer filesystem workflows remain open.
 
 ### Windows projected Layer filesystem proof
 
@@ -233,6 +244,14 @@ PRs are never merged without explicit user instruction.
   INCONCLUSIVE. Unix-only verifier safety tests cannot count as Windows evidence.
 - Feature setup is limited to disposable CI, with no reboot or macOS host changes.
   Native database binding, autosave and product Gate 2 are outside this unit.
+- The hub inspected [prerequisite run 38465330661](https://github.com/Dhruv2mars/javelin/actions/runs/38465330661)
+  at `4d817c50f23c849635f07c1e33c552bbf69ea758` and downloaded artifact `11847982295`
+  to `/tmp/javelin-hub-windows-prereq-38465330661`. Windows Server 2022 build 20348
+  reports Client-ProjFS already enabled, administrator identity, Unix utilities,
+  and MSVC compiler discovery. The API probe failed with C2039 for `std::wprintf`.
+  This is a source error, not proof of an unavailable compiler. No projected root
+  or provider existed. The owner added `<cwchar>` at `648474c` and is rerunning
+  the same PR. API availability and backend behavior remain INCONCLUSIVE.
 
 ### Hub continuation and review
 
