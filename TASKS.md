@@ -81,6 +81,21 @@ PRs are never merged without explicit user instruction.
 - Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
 - Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
 
+## Workstream: native Layer checkpoints
+
+Owns one draft PR targeting `chore/native-cross-platform-ci`. Done is the bounded
+API/process outcome in `docs/layer-checkpoints.md`, including falsifiable sparse
+sharing, recovery, concurrency and corruption evidence. Filesystem binding and
+automatic capture remain required follow-on work. Do not change probes/workflows.
+
+- [x] Read instructions, latest hub contract, accepted core and source ownership.
+- [x] Ground the store and compare complete sparse deltas with checkpoint chains.
+- [ ] Create planning commit and immediately register the single draft PR.
+- [ ] Implement typed Layer bases, sparse checkpoints, clone, head updates and discard.
+- [ ] Add core stale-manifest/outcome regressions and Layer behavioral/process checks.
+- [ ] Run foundational tests, formatting, Clippy, release build and inherited CI.
+- [ ] Report exact source, artifacts, verdict and follow-on work to the hub.
+
 ## Workstream: native repository foundation
 
 Owns one draft PR based on `chore/ga-build-plan`. Done means a fresh non-Git
