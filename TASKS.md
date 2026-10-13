@@ -38,8 +38,9 @@ workflow may invoke or interpret Git.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
 - [ ] Verify the complete workflow on each supported operating system.
-- [ ] Run native formatting, lint, test, and release-build checks on hosted macOS,
-  Linux, and Windows runners, then repeat against the completed native implementation.
+- [ ] Run native formatting, lint, test, and release-build checks on development
+  GitHub Actions macOS, Linux, and Windows runners. Repeat against the exact native
+  PR #4 commit independently verified by the hub at Gate 1. This does not verify product CI.
 
 ## Prove hosting and collaboration
 
@@ -82,6 +83,8 @@ PRs are never merged without explicit user instruction.
 - Done: native initialization, exact immutable objects, ordered history, integrity checks,
   and proven publication metadata behavior across retries, concurrency, and restart.
 - Evidence so far: planning commit `3d4144b`; implementation and product verification pending.
+- Local baseline `7ec2e75` is committed but was not yet on the remote native branch
+  when CI started. The native owner has been asked to push it without rewriting it.
 - Bounded foundation decision: init creates empty immutable World 0 and preserves
   existing files. Existing-project adoption through a Layer is a follow-on gate.
 
@@ -96,6 +99,14 @@ PRs are never merged without explicit user instruction.
   host prerequisites, and a bounded evidence-backed recommendation.
 - Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
 - Host: macOS 26.6.2 build 25G83, arm64. Linux and Windows execution remains unverified.
+- Worker reports eleven normal-path checks pass on directory and clonefile controls,
+  with leakage detected by the hardlink negative control. Hub rerun remains pending.
+- The official FSKit sample build exited 69 because Xcode's license is unaccepted.
+  Zero valid signing identities were found. These are prerequisites, not an accepted
+  sparse backend, and no license or host security change has been made.
+- Handoff owner: the hub will commission real sparse backend implementation and
+  filesystem-probe execution for each OS after inspecting PR #5's evidence. PR #6
+  verifies native storage development CI only and does not own the sparse backend gate.
 
 ### Cross-platform verification CI
 
@@ -107,7 +118,13 @@ PRs are never merged without explicit user instruction.
   Linux, and Windows, with logs and explicit dependency status.
 - Baseline source: `7ec2e75`, `tests/scaffold.rs`. The single process assertion
   captures the original greeting and proves no VCS behavior.
-- Complete implementation checks remain pending until the native-core unit is ready.
+- Complete implementation checks remain pending until the hub independently verifies
+  PR #4's native initialization, exact objects, publication, corruption detection, and
+  restart/retry/concurrency checks at a named commit SHA, satisfying Gate 1.
+- The hub then sends `native-core-complete <SHA>` to the CI thread. That same PR
+  rebases onto the SHA and records actual platform results against the reviewed core.
+- GitHub Actions here is Javelin development infrastructure. Javelin's product CI
+  workflow syntax and execution design remain a separate, unchecked hosting item.
 
 ### Hub continuation and review
 
