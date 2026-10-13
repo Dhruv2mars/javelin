@@ -118,7 +118,7 @@ try {
     assert.equal(state.walkError, 0, 'physical enumeration of stopped root failed; clone inconclusive');
     const snapshotRoot = join(owned, 'snapshot'), changed = join(snapshotRoot, 'changed');
     await fs.mkdir(changed, { recursive: true });
-    const copied = [], deleted = [], metadata = [], aliases = [];
+    const copied = [], deleted = [], metadata = [], aliases = [], reusedSymlinks = [];
     const baseRows = await load('base-initial.json');
     const baseFiles = baseRows.filter(row => row[1] === 'file');
     for (const entry of state.entries) {
@@ -129,7 +129,12 @@ try {
         const source = join(a, entry.path), destination = join(changed, entry.path);
         const stat = await fs.lstat(source);
         if (stat.isDirectory()) await fs.mkdir(destination, { recursive: true });
-        else if (stat.isSymbolicLink()) throw new Error('full local symlink snapshot unsupported');
+        else if (stat.isSymbolicLink()) {
+          const target = await fs.readlink(source);
+          const original = baseRows.find(row => row[0] === entry.path && row[1] === 'symlink');
+          assert.ok(original && original[2] === target, 'changed local symlink snapshot unsupported');
+          reusedSymlinks.push({ path: entry.path, target, state: entry.state, reference: 'immutable base' });
+        }
         else {
           const bytes = await fs.readFile(source), digest = hash(bytes);
           const backing = baseFiles.find(row => row[3] === digest);
@@ -154,7 +159,7 @@ try {
     await fs.writeFile(join(snapshotRoot, 'aliases.txt'), aliases.map(row => `${row.path}\t${row.base}`).join('\n'));
     await fs.chmod(join(snapshotRoot, 'aliases.txt'), 0o444);
     const frozen = await snapshot(snapshotRoot); await save('snapshot-frozen.json', frozen);
-    result.evidence = { copied, deleted, aliases, metadata, totalChangedBytes: copied.reduce((n, row) => n + row.bytes, 0), metadataPreservation: 'INCONCLUSIVE' };
+    result.evidence = { copied, deleted, aliases, reusedSymlinks, metadata, totalChangedBytes: copied.reduce((n, row) => n + row.bytes, 0), metadataPreservation: 'INCONCLUSIVE' };
   } else if (phase === 'clone-verify') {
     assert.deepEqual(await snapshot(d), await load('clone-expected.json'));
     await fs.writeFile(join(a, 'README.txt'), 'source after clone\n');

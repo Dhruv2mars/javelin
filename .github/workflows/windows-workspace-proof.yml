@@ -3,7 +3,13 @@ name: Windows projected filesystem proof
 on:
   pull_request:
     paths:
-      - tools/windows-workspace-proof/**
+      - tools/windows-workspace-proof/run.ps1
+      - tools/windows-workspace-proof/feature.ps1
+      - tools/windows-workspace-proof/api-probe.cpp
+      - tools/windows-workspace-proof/provider.cpp
+      - tools/windows-workspace-proof/backend.ps1
+      - tools/windows-workspace-proof/user-run.ps1
+      - tools/windows-workspace-proof/checks.mjs
       - .github/workflows/windows-workspace-proof.yml
   workflow_dispatch:
 
