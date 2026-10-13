@@ -38,7 +38,7 @@ try {
     $permissions = Invoke-Bounded 'owned-user-acl' (Join-Path $env:SystemRoot 'System32/icacls.exe') @($owned, '/grant', "${username}:(OI)(CI)F")
     if ($permissions.exitCode -ne 0) { throw 'Could not grant proof user access to owned paths.' }
     $baseAcl = Invoke-Bounded 'base-readonly-acl' (Join-Path $env:SystemRoot 'System32/icacls.exe') @($base,
-        '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/T', '/L')
+        '/inheritance:r', '/grant:r', "${username}:RX", '*S-1-5-32-544:F', '*S-1-5-18:F', '/T', '/L')
     if ($baseAcl.exitCode -ne 0) { throw 'Could not make backing dataset read-only to actual proof user.' }
     $pwsh = (Get-Process -Id $PID).Path
     # Start the ordinary-user script inside the native kill-on-close job wrapper.
