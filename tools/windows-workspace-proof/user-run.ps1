@@ -63,6 +63,7 @@ function Check([string]$Phase) {
 try {
     & (Join-Path $env:SystemRoot 'System32/whoami.exe') /all | Set-Content -LiteralPath (Join-Path $Evidence 'ordinary-user-identity.txt')
     if ($admin -or $identity.Name -ne "$env:COMPUTERNAME\$Username") { throw 'Actual non-admin identity required; refusing admin substitute.' }
+    Check 'job-termination'
     Check 'base'
     $ids = @{}
     foreach ($name in @('a', 'b', 'c')) { $ids[$name] = Start-Provider $name; Stop-Provider $name; Audit $name 'initial' }
@@ -81,6 +82,7 @@ try {
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Evidence 'paths.json')
     & $Provider bounded 70000 $bun $probe --backend paths --paths (Join-Path $Evidence 'paths.json') --out (Join-Path $Evidence 'common-probe.json')
     $summary.commonProbeExit = $LASTEXITCODE
+    try { Check 'directory-rename' } catch { $summary.directoryRenameError = $_.ToString() }
     Check 'mutate'
     foreach ($name in @('a', 'b', 'c')) { Stop-Provider $name; Audit $name 'after-probe' }
     Audit 'a' 'after-mutate'

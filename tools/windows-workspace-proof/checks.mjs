@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import { watch } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join, dirname, relative } from 'node:path';
 
@@ -18,6 +18,11 @@ const read = name => fs.readFile(name, 'utf8');
 const save = (name, data) => fs.writeFile(join(evidence, name), JSON.stringify(data, null, 2) + '\n');
 const load = async name => JSON.parse(await read(join(evidence, name)));
 const result = { id: phase, verdict: 'INCONCLUSIVE', commands: [], evidence: {} };
+if (phase === 'hang-parent' || phase === 'hang-child') {
+  await save(`job-${phase}-pid.json`, { pid: process.pid });
+  if (phase === 'hang-parent') spawn(process.execPath, [process.argv[1], owned, evidence, 'hang-child'], { stdio: 'inherit' });
+  await new Promise(() => { setInterval(() => {}, 1000); });
+}
 async function snapshot(root) {
   const rows = [];
   async function visit(name) {
@@ -41,7 +46,17 @@ async function writeSynced(path, contents) {
   try { await file.writeFile(contents); await file.sync(); } finally { await file.close(); }
 }
 try {
-  if (phase === 'base') {
+  if (phase === 'job-termination') {
+    const provider = join(owned, 'provider.exe');
+    const child = spawnSync(provider, ['bounded', '1500', process.execPath, process.argv[1], owned, evidence, 'hang-parent'],
+      { encoding: 'utf8', timeout: 8000, maxBuffer: 16384 });
+    result.commands.push({ argv: [provider, 'bounded', '1500', process.execPath, process.argv[1], owned, evidence, 'hang-parent'],
+      exitCode: child.status, stdout: child.stdout, stderr: child.stderr });
+    assert.equal(child.status, 124);
+    assert.match(child.stderr, /timedOut=1 exit=124 activeAfterTermination=0/);
+    result.evidence = { parent: await load('job-hang-parent-pid.json'), child: await load('job-hang-child-pid.json'),
+      scope: 'actual suspended/assigned Windows job kills hung parent and child; active job processes reached zero' };
+  } else if (phase === 'base') {
     const frozen = await snapshot(base);
     await assert.rejects(fs.writeFile(join(base, 'README.txt'), 'forbidden'), error => ['EACCES', 'EPERM'].includes(error.code));
     assert.deepEqual(await snapshot(base), frozen);
@@ -56,6 +71,10 @@ try {
     assert.equal(run([join(a, 'native-build.exe')], a).replaceAll('\r', ''), '7\n');
   } else if (phase === 'build-clean') {
     await fs.unlink(join(a, 'native-build.exe'));
+  } else if (phase === 'directory-rename') {
+    await fs.rename(join(a, 'dir'), join(a, 'native-renamed-dir'));
+    assert.equal(await read(join(a, 'native-renamed-dir/nested.txt')), 'nested\n');
+    await fs.rename(join(a, 'native-renamed-dir'), join(a, 'dir'));
   } else if (phase === 'mutate') {
     const peer = await read(join(b, 'README.txt'));
     await writeSynced(join(a, 'native-saving.txt'), 'native atomic A\n');
@@ -64,7 +83,10 @@ try {
     const binary = await fs.readFile(join(a, 'bytes.bin')); binary[4096] = 99;
     await fs.writeFile(join(a, 'bytes.bin'), binary);
     await fs.writeFile(join(a, 'native-created.txt'), 'private creation\n');
-    if (await fs.stat(join(a, 'dir')).catch(() => null)) await fs.rename(join(a, 'dir'), join(a, 'native-renamed-dir'));
+    if (await fs.stat(join(a, 'dir')).catch(() => null)) {
+      await fs.unlink(join(a, 'dir/nested.txt'));
+      await fs.rmdir(join(a, 'dir'));
+    }
     if (await fs.stat(join(a, 'delete.txt')).catch(() => null)) await fs.unlink(join(a, 'delete.txt'));
     await assert.rejects(fs.stat(join(a, 'delete.txt')), { code: 'ENOENT' });
     await assert.rejects(fs.stat(join(a, 'dir')), { code: 'ENOENT' });
@@ -73,6 +95,10 @@ try {
     await fs.writeFile(join(a, 'inside-link'), 'native symlink A\n');
     assert.equal(await read(join(a, 'README.txt')), 'native symlink A\n');
     assert.equal(await read(join(b, 'README.txt')), peer);
+    assert.deepEqual(await fs.readFile(join(b, 'bytes.bin')), await fs.readFile(join(base, 'bytes.bin')));
+    assert.equal(await read(join(b, 'delete.txt')), 'delete only in A\n');
+    assert.equal(await read(join(b, 'dir/nested.txt')), 'nested\n');
+    await assert.rejects(fs.stat(join(b, 'native-created.txt')), { code: 'ENOENT' });
     assert.equal(await read(join(base, 'README.txt')), 'shared base text\n');
     const events = [], peerEvents = [];
     const watcher = watch(a, (type, name) => events.push({ type, name: String(name) }));
@@ -162,5 +188,8 @@ try {
     if (await fs.stat(join(evidence, 'snapshot-frozen.json')).catch(() => null)) assert.deepEqual(await snapshot(join(owned, 'snapshot')), await load('snapshot-frozen.json'));
   } else throw new Error(`unknown phase ${phase}`);
   result.verdict = 'VERIFIED';
-} catch (error) { result.verdict = 'INCONCLUSIVE'; result.error = error.stack; process.exitCode = 3; }
+} catch (error) {
+  result.verdict = 'INCONCLUSIVE'; result.error = { message: String(error), code: error.code,
+    syscall: error.syscall, path: error.path, stack: error.stack }; process.exitCode = 3;
+}
 await save(`native-${phase}.json`, result);
