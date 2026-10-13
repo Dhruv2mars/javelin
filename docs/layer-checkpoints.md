@@ -221,10 +221,49 @@ Source inspection for process calls, sleeps and Git references found only launch
 of the native CLI/current test executable in tests. Runtime and tests are
 Git-independent. These API/process checks do not verify ordinary-path binding.
 
-The local bounded state result is VERIFIED. Our three-OS CI is pending until its
-actual job logs are inspected. Filesystem paths, backend capture reconciliation,
+The bounded native state result is VERIFIED locally and through the compiled
+three-OS checks below. Filesystem paths, backend capture reconciliation,
 stable-change detection, automatic capture and interrupted materialization must
 be integrated and verified in a follow-on unit. Windows symlink materialization,
 platform naming limits, non-Unix parent-directory sync, hardware power loss,
 network filesystems and scale/performance remain unverified. No Gate2 or GA claim
 follows from this PR.
+
+## Hosted verification at the exact source
+
+[Native run 38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999)
+compiled exact commit `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3` with Rust
+1.99.0. All three native jobs succeeded. This evidence update changes only this
+document and the bounded TASKS section; the verified source and tests stay exact.
+
+- [Linux job 115531579426](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999/job/115531579426)
+  ran on Ubuntu 24.04 x86_64, image `20261004.327.1`, and passed 43 tests.
+- [macOS job 115531579792](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999/job/115531579792)
+  ran on macOS 15 arm64, image `20260907.0337.1`, and passed 43 tests.
+- [Windows job 115531579184](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999/job/115531579184)
+  ran on Windows 2025 x86_64, image `20260925.250.1`, and passed 41 tests.
+
+Each runner ignored only the process actor entry point. All 14 actual process
+tests, all nine Layer integration tests, both new inherited-validator regressions
+and missing-tail World protection passed. Windows omits the two inherited Unix
+tests for storage symlinks and deleted working directories. That omission does
+not prove equivalent Windows behavior. Symlink entries are preserved in native
+state on every runner; ordinary filesystem symlink materialization is untested.
+
+Downloaded and inspected each six-file artifact. Environment logs identify the
+exact commit, runner/architecture and compiler. Test logs identify all executed
+tests and passing suite totals. Formatting logs are empty, Clippy logs end in a
+successful dev build, and release logs end in a successful optimized build. The
+complete job log confirms the formatting, lint, test and release commands ran.
+GitHub's jobs API reported successful jobs but omitted step arrays; artifacts and
+the full job log supply the command evidence. The unrelated Macroscope check was
+skipped; no independent review is claimed from it.
+
+Artifact names and IDs are `native-logs-ubuntu-24.04-1` / `11849415012`,
+`native-logs-macos-15-1` / `11847574889`, and
+`native-logs-windows-2025-1` / `11848383630`. GitHub marks them unexpired with
+expiry on 2026-10-27 between 20:50:19 and 20:52:44 UTC. Downloaded copies and
+the full job log are at `/tmp/javelin-pr8-run38465628999`; that local directory
+is temporary. The workflow is inherited unchanged from accepted PR6 and checks
+native state only. Platform workflow isolation, autosave, hardware power loss,
+performance, full Layer Publish and GA remain outside this evidence.

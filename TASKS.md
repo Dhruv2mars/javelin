@@ -94,15 +94,18 @@ automatic capture remain required follow-on work. Do not change probes/workflows
 - [x] Implement typed Layer bases, sparse checkpoints, clone, head updates and discard.
 - [x] Add core stale-manifest/outcome regressions and Layer behavioral/process checks.
 - [x] Run all foundational tests, formatting, Clippy and release build locally.
-- [ ] Inspect our exact source's inherited three-OS CI and retained logs.
-- [ ] Report exact source, artifacts, verdict and follow-on work to the hub.
+- [x] Inspect our exact source's inherited three-OS CI and retained logs.
+- [x] Report exact source, artifacts, verdict and follow-on work to the hub.
 
 Local native API/process checks pass 43 tests, one ignored actor, on Darwin arm64
 Rust 1.93.0. The documented caller also ran against the production release library
 and release CLI integrity inspection. Sparse sharing and limits are recorded in
-`docs/layer-checkpoints.md`. Own platform results remain pending. The accepted
-PR6 base is `0c8582ddcb175d7bd4d2752e73f795651f810a6f`; its unchanged-core run
-does not verify these Layer changes. Filesystem binding/autosave remain follow-on.
+`docs/layer-checkpoints.md`. Exact source `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3`
+passed native CI run [38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999).
+Downloaded and inspected all three six-file log artifacts: Linux/macOS 43 tests,
+Windows 41 tests, one ignored actor each, all 14 process checks on every runner.
+The accepted PR6 base is `0c8582ddcb175d7bd4d2752e73f795651f810a6f`.
+Bounded native state is VERIFIED. Filesystem binding/autosave remain follow-on.
 
 ## Workstream: native repository foundation
 
