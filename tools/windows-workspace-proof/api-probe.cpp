@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <projectedfslib.h>
 #include <cstdio>
+#include <cwchar>
 
 int main() {
     std::printf("SDK PRJ_CALLBACKS=%zu PRJ_PLACEHOLDER_INFO=%zu\n",
