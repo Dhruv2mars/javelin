@@ -85,14 +85,19 @@ PRs are never merged without explicit user instruction.
 
 Owned by `test/layer-filesystem-contract`, based on `chore/ga-build-plan`.
 Done means a committed bounded probe that uses ordinary paths and external tools,
-reports per-capability verdicts, and records host evidence and a backend decision.
+reports per-capability verdicts, and records host prerequisites and a provisional
+next-step recommendation. A production backend recommendation remains unconfirmed
+until a real sparse Layer sharing immutable base content passes Gate 2. Directory
+and clonefile controls verify the probe only. This PR may finish with a VERIFIED
+probe and an INCONCLUSIVE sparse-backend result.
 Only this workstream's checklist is updated here. Global gates remain unverified.
 
 - [x] Read build instructions and define the self-verifiable outcome.
-- [ ] Open exactly one draft PR and register it with T3 Code.
-- [ ] Discover host filesystem, FSKit, SDK, signing, and installation prerequisites.
-- [ ] Build a backend-agnostic behavior probe and explicit directory/clonefile controls.
-- [ ] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption.
-- [ ] Verify the probe catches a broken isolation control and records unsupported capabilities.
+- [x] Open exactly one draft PR and register it with T3 Code: [#5](https://github.com/Dhruv2mars/javelin/pull/5).
+- [x] Discover host filesystem, FSKit, SDK, signing, and installation prerequisites. FSClient executes; Xcode build exits 69 for unaccepted license; zero valid signing identities. No Layer mounted.
+- [x] Build a backend-agnostic behavior probe and explicit directory/clonefile controls.
+- [x] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption. Both controls pass eleven checks on this host.
+- [x] Verify the probe catches a broken isolation control and records unsupported capabilities. Hardlink leakage fails; caller-prepared paths report clone provisioning INCONCLUSIVE.
+- [ ] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds.
 - [ ] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step.
 - [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
