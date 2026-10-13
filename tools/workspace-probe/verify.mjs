@@ -10,10 +10,10 @@ const execute = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const output = process.argv[2] ? resolve(process.argv[2]) : await fs.mkdtemp(join(tmpdir(), 'javelin-probe-evidence-'));
 await fs.mkdir(output, { recursive: true });
-async function run(name, args, expectedExit) {
+async function run(name, args, expectedExit, env) {
   const reportPath = join(output, `${name}.json`);
   let code = 0;
-  try { await execute(process.execPath, [join(here, 'probe.mjs'), ...args, '--out', reportPath], { timeout: 65000, maxBuffer: 16384 }); }
+  try { await execute(process.execPath, [join(here, 'probe.mjs'), ...args, '--out', reportPath], { env, timeout: 65000, maxBuffer: 16384 }); }
   catch (e) { code = e.code; }
   assert.equal(code, expectedExit, `${name} exit code`);
   const report = JSON.parse(await fs.readFile(reportPath, 'utf8'));
@@ -43,6 +43,27 @@ if (aborted.ownedTemporaryRoot) {
   await fs.chmod(join(aborted.ownedTemporaryRoot, 'base/dir'), 0o755);
   await fs.rm(aborted.ownedTemporaryRoot, { recursive: true, force: true });
 }
+const slowTool = await fs.mkdtemp(join(tmpdir(), 'javelin-slow-tool-'));
+try {
+  const pids = join(slowTool, 'pids');
+  await fs.writeFile(join(slowTool, 'cat'), '#!/bin/sh\nsleep 30 &\nchild=$!\nprintf "%s %s\\n" "$$" "$child" > "$PROBE_CHILD_PID_FILE"\nwait "$child"\n', { mode: 0o755 });
+  const stopped = await run('external-command-timeout-negative', ['--backend', 'directory', '--wall-ms', '2000'], 124,
+    { ...process.env, PATH: `${slowTool}:${process.env.PATH}`, PROBE_CHILD_PID_FILE: pids });
+  for (const pid of (await fs.readFile(pids, 'utf8')).trim().split(' ')) {
+    let state = '';
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try { state = (await execute('ps', ['-o', 'stat=', '-p', pid], { timeout: 1000 })).stdout.trim(); }
+      catch { state = ''; }
+      if (!state || state.startsWith('Z')) break;
+      await Bun.sleep(50);
+    }
+    assert.ok(!state || state.startsWith('Z'), `external command process ${pid} still running: ${state}`);
+  }
+  await fs.chmod(join(stopped.ownedTemporaryRoot, 'base'), 0o755);
+  await fs.chmod(join(stopped.ownedTemporaryRoot, 'base/dir'), 0o755);
+  await fs.rm(stopped.ownedTemporaryRoot, { recursive: true, force: true });
+  console.log('wall expiry stops the external tool and its child process');
+} finally { await fs.rm(slowTool, { recursive: true, force: true }); }
 const caller = await fs.mkdtemp(join(tmpdir(), 'javelin-caller-paths-'));
 try {
   const base = join(caller, 'base'); await fs.mkdir(base);
@@ -62,7 +83,11 @@ try {
   await rejectOutput(join(caller, 'alias/README.txt'));
   await fs.symlink(join(config.layerA, 'README.txt'), join(caller, 'report-link.json'));
   await rejectOutput(join(caller, 'report-link.json'));
-  console.log('rejected report destinations leave caller bytes intact, including symlink aliases');
+  await fs.link(join(config.layerA, 'README.txt'), join(caller, 'report-hardlink.json'));
+  await rejectOutput(join(caller, 'report-hardlink.json'));
+  await execute('mkfifo', [join(caller, 'report-fifo')], { timeout: 5000 });
+  await rejectOutput(join(caller, 'report-fifo'));
+  console.log('rejected report destinations leave caller bytes intact, including symlink aliases, hardlinks and FIFOs');
   const paths = await run('caller-paths', ['--backend', 'paths', '--paths', configPath], 1);
   assert.equal(paths.checks.filter(c => c.verdict === 'VERIFIED').length, 10);
   assert.equal(paths.checks.find(c => c.id === 'layer-clone-snapshot-isolation').verdict, 'INCONCLUSIVE');
