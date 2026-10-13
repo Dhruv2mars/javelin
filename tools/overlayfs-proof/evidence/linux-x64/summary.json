@@ -1,0 +1,47 @@
+{
+  "verdict": "VERIFIED",
+  "sourceSHA": "89d76df34bf85daee9852ffc9350109bd13b2daf",
+  "checks": [
+    {
+      "id": "initial",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "probe",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "clone",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "before-kill",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "before-remount",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "after-kill",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "after-remount",
+      "verdict": "VERIFIED"
+    },
+    {
+      "id": "final",
+      "verdict": "VERIFIED"
+    }
+  ],
+  "cleanup": {
+    "exitCode": 0,
+    "allUnmountedAndOwnedRootRemoved": true,
+    "root": "/home/runner/work/_temp/javelin-overlay-proof.r0yxd1"
+  },
+  "scope": "bounded native Linux sparse Layer filesystem proof",
+  "productGate2": "INCONCLUSIVE; hub acceptance, native DB integration, automatic checkpoints, permissions and production lifecycle remain open",
+  "machinePowerLoss": "NOT VERIFIED",
+  "absoluteSymlinkConfinement": "NOT VERIFIED"
+}

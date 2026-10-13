@@ -4,9 +4,51 @@ This is a bounded development proof, dependent on PR #5's ordinary-path probe.
 It implements actual Linux OverlayFS mounts for a small owned fixture. It does
 not integrate the native database or complete product Gate 2 or GA.
 
-Cloud execution is pending. Linux mount support, whiteout preservation in the
-frozen upper and normal runner access are **NOT VERIFIED** until retained cloud
-evidence passes the assertions below. No privileged operation runs on the laptop.
+The bounded sparse filesystem proof is **VERIFIED** in a real disposable hosted
+run at `89d76df34bf85daee9852ffc9350109bd13b2daf`. All eight backend phases passed.
+The common probe verified ten ordinary-path checks and kept its caller-path clone
+check INCONCLUSIVE; independent actual-backend evidence verified cloning.
+No privileged operation ran on the laptop. Product Gate 2 and GA remain open.
+
+## Observed cloud result
+
+[Run 38430385798](https://github.com/Dhruv2mars/javelin/actions/runs/38430385798)
+used Ubuntu 24.04.5, image `20261004.327.1`, Linux `6.17.0-1022-azure`, x64,
+Bun 1.3.13 and ordinary UID 1001. The exact checked-out source was
+`89d76df34bf85daee9852ffc9350109bd13b2daf`, including PR #5's final common probe
+source `bce352ec4e5f78eb98c71facba68b872d3e11118`.
+[Artifact 11830438463](https://github.com/Dhruv2mars/javelin/actions/runs/38430385798/artifacts/11830438463)
+has reported archive SHA-256
+`a7c1fa21d8040aeb33a0e3bf62f963bf7e92798f843680448db5bfc0a1f624dc`.
+Its 19 files are preserved unchanged under
+[`tools/overlayfs-proof/evidence/linux-x64`](../tools/overlayfs-proof/evidence/linux-x64/)
+with a separate cloud metadata manifest. This preserves evidence after the cloud
+artifact expires on 2026-10-27.
+
+The base's 8,339 regular-file bytes, hashes, metadata and inodes remained unchanged.
+A's frozen sparse snapshot stored 8,244 changed/new file bytes, including the full
+8-KiB file changed at one byte. Untouched `main.c` stayed absent from all uppers.
+The source continuation added 24 bytes and the clone added 17 bytes in fresh
+private uppers. The other two uppers held zero regular bytes. These byte counts
+exclude directory blocks and xattrs; raw inventories also retain allocated bytes.
+There is no storage-efficiency claim from this tiny fixture.
+
+Actual 0/0 whiteouts for `delete.txt` and `dir` and a
+`trusted.overlay.opaque=y` renamed directory survived the shared snapshot clone.
+The new source/clone uppers began empty. External compilers read the shared source
+through the mounted paths and produced private values 9 and 11. Both SIGKILL
+boundaries survived unmount/remount. Cleanup removed every owned mount and root.
+The observed absolute-symlink sibling access remains a documented sandbox limit.
+
+Verify the retained evidence and compare executable source hashes locally:
+
+```sh
+rtk proxy bun tools/overlayfs-proof/verify-evidence.mjs
+```
+
+This offline audit reads JSON and source files; it never mounts or invokes Git.
+The executable mount/probe sources still match the recorded cloud hashes. Later
+evidence/documentation commits do not change the exact SHA that was cloud-tested.
 
 ## Reproduce in disposable CI
 
@@ -113,4 +155,5 @@ and the official [checkout](https://github.com/actions/checkout),
 [setup-bun](https://github.com/oven-sh/setup-bun) repositories on 2026-10-13.
 Action pins came from each official repository's tag-ref API. Bun's version came
 from its [official release](https://github.com/oven-sh/bun/releases/tag/bun-v1.3.13).
-Hosted mount capability remains unconfirmed until actual cloud execution.
+The observed runner supports this exact fixture and mount-option combination.
+Other kernels, runner images and production hosts remain unconfirmed.
