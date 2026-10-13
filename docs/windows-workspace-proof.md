@@ -50,8 +50,11 @@ the entire root would copy cache and cannot prove a sparse Layer.
 Interface screening favored one owner over public SDK wrappers or a second storage
 subsystem. We accept NTFS state dependence to test the smallest provider first.
 Same-root kill/restart and fresh-root clone remain separate proof obligations.
-Implementation begins with prerequisite collection only; a blocked gate means no
-provider is written or started.
+Implementation began with prerequisite collection only. Run `38465691765` then
+confirmed the feature, compiler and extended APIs, allowing native implementation.
+The quiescent snapshot also records aliases to existing immutable bytes for renamed
+unchanged files; those bytes do not become copied private content. The prototype
+is bounded to this small fixture, 128 entries and 256 KiB per backing file.
 
 ## Source grounding
 
@@ -103,3 +106,44 @@ in evidence; elevated runner access is not an ordinary-user pass.
 Hosted source, job, artifact and exact raw results will be recorded after the attempt.
 Availability, backend ordinary-path behavior, sparse clone, storage cost, restart
 recovery, ordinary-user operation, product Gate 2 and GA are currently INCONCLUSIVE.
+
+## Rerun and audit
+
+The workflow runs on pull requests that change the owned Windows executable files
+or workflow. Its `workflow_dispatch` entry permits another bounded run on a selected
+source ref. Setup is confined to a `windows-2022` GitHub-hosted job with an eight-minute
+limit. Each external command has a 30- or 60-second bound. No native runtime Git
+command or repository metadata is involved; checkout is a development action pinned
+to the pull request's head SHA. The collected source hashes independently identify
+the executable and unchanged probe bytes.
+
+The script refuses local execution and exports a unique evidence directory before
+setup. It keeps raw command output and a summary, then removes only its owned GUID
+scratch directory after checking its sentinel and rejecting reparse entries.
+Collection uses the elevated runner identity if present and records that fact.
+Prerequisite command expiry requests Windows/.NET tree termination; a timeout fails
+the collection cleanup verdict because descendant exit was not independently proved.
+Runtime commands use a native Windows job object: create the child suspended, assign
+it before resuming, enforce a time limit, terminate remaining children, and record
+the active process count. The runtime audit must show that count reached zero.
+[Windows job objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+Runtime setup creates one uniquely named disposable non-admin account and grants
+access only to owned fixture paths. The shared backing tree retains administrator
+ownership and grants that user read/execute access. The user script records its
+real SID and admin membership, starts providers, and executes ordinary operations
+inside the Windows job wrapper. Setup removes its account after the wrapper exits.
+Owned projected roots are removed only after every provider stop is confirmed;
+cleanup never accepts an arbitrary caller location.
+
+After retaining a completed archive and its provenance, audit it offline with:
+
+```sh
+rtk proxy bun tools/windows-workspace-proof/verify-evidence.mjs
+```
+
+The audit checks original archive digest, raw file hashes, source hashes, exact run
+and artifact identity, job steps and label, prerequisite command outcomes, identity,
+scratch cleanup and explicit INCONCLUSIVE backend scopes. It never projects a root
+or invokes platform setup. Its success means the bounded collection evidence is
+consistent, not that Windows Layers work.

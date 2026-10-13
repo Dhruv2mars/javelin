@@ -142,7 +142,8 @@ Only owned Windows tools, documentation, workflow and this section may change.
 - [x] Open exactly one draft PR against `feat/linux-sparse-layer-proof`, link it immediately, and report planning SHA to the hub. PR #9; planning `387cbaa`; stable hub message `windows-pr9-planning-v1`.
 - [x] Apply architect and compare two source-backed native provider shapes before coding. Direct-tree/native root owner chosen over blob-index/per-root write manifest; retain only immutable changed/deleted snapshot model for clone. Same-model reviews have limited diversity.
 - [x] Implement bounded prerequisite capture for feature, API, compiler, identity and Unix utility availability. No provider or projection is present in this first unit.
-- [ ] Run actual hosted Windows job and inspect its raw artifact; stop on unavailable prerequisites or required reboot.
+- [x] Run actual hosted Windows prerequisite jobs and inspect raw archives. Initial `4d817c5` run `38465330661` exposed a missing `<cwchar>` include, not an unavailable compiler. Corrected source `648474c` run `38465691765` confirms enabled feature, native compiler and all required exports. Retain both original archives.
+- [ ] Run native provider and ordinary-path checks as a real non-admin disposable CI account; audit Windows job child termination independently of POSIX cleanup.
 - [ ] If available, implement and verify provider behavior, cache/private-state cost, sparse clone and kill/restart recovery; otherwise record these scopes INCONCLUSIVE.
 - [ ] Preserve original artifact, audit source hashes offline, and document exact evidence and gaps.
 - [ ] Report VERIFIED/NOT VERIFIED/INCONCLUSIVE scopes, dependencies and blockers to the hub; leave the single PR draft and unmerged.

@@ -1,4 +1,4 @@
-# Availability collector only. No projection, provider or ordinary-path fixture.
+# Bounded prerequisite gate and native Windows fixture. Hosted runner only.
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
     $env:RUNNER_OS -ne 'Windows' -or -not $IsWindows) {
@@ -82,6 +82,8 @@ try {
     $result.identity | ConvertTo-Json
     $sourcePaths = @('tools/windows-workspace-proof/run.ps1', 'tools/windows-workspace-proof/feature.ps1',
         'tools/windows-workspace-proof/api-probe.cpp', '.github/workflows/windows-workspace-proof.yml',
+        'tools/windows-workspace-proof/provider.cpp', 'tools/windows-workspace-proof/backend.ps1',
+        'tools/windows-workspace-proof/user-run.ps1', 'tools/windows-workspace-proof/checks.mjs',
         'tools/workspace-probe/probe.mjs', 'tools/workspace-probe/atomic-writer.mjs')
     foreach ($path in $sourcePaths) {
         $result.sources[$path] = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
@@ -135,16 +137,28 @@ try {
         } else { $result.blockers += 'Visual Studio native compiler development environment missing.' }
     } else { $result.blockers += 'Native compiler discovery unavailable.' }
     $result.available = $result.blockers.Count -eq 0
-    if ($result.available) { $result.blockers += 'Prerequisites available; actual provider implementation and verification still required.' }
+    if ($result.available) { . (Join-Path $PSScriptRoot 'backend.ps1') }
 } catch {
     $result.blockers += $_.ToString()
     $_ | Format-List * -Force
 } finally {
-    $cleanup = [ordered]@{ ownedRoot = $owned; providerStarted = $false; rootsProjected = 0;
+    $cleanup = [ordered]@{ ownedRoot = $owned; providerStarted = $result.providerStarted; rootsProjected = $result.rootsCreated;
         removed = $false; error = $null; children = @($commands | ForEach-Object { @{ pid = $_.pid; exitCode = $_.exitCode; timedOut = $_.timedOut } }) }
     try {
         if ([IO.Path]::GetDirectoryName($owned) -ne $tempParent -or
             (Get-Content -Raw -LiteralPath (Join-Path $owned 'owner.txt')).Trim() -ne $token) { throw 'Owned cleanup boundary mismatch.' }
+        if ($result.providerStarted -and -not $result.runtime.results.stoppedProviders) { throw 'Provider stop not confirmed; refusing root removal.' }
+        if ($result.runtime -and -not $result.runtime.accountRemoved) { throw 'Disposable account cleanup not confirmed.' }
+        # ProjFS roots and symlinks are owned reparse entries. Remove only after all providers stopped.
+        foreach ($name in @('a', 'b', 'c', 'd')) {
+            $root = Join-Path $owned $name
+            if (Test-Path -LiteralPath $root) {
+                & (Join-Path $env:SystemRoot 'System32/cmd.exe') /d /c "rmdir /s /q `"$root`""
+                if (Test-Path -LiteralPath $root) { throw "Owned projected root $name removal failed." }
+            }
+        }
+        $inside = Join-Path $owned 'base/inside-link'
+        if (Test-Path -LiteralPath $inside) { Remove-Item -LiteralPath $inside -Force }
         if ((Get-Item -LiteralPath $owned).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Owned root became a reparse point.' }
         foreach ($item in Get-ChildItem -LiteralPath $owned -Recurse -Force) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing cleanup with reparse entries.' }
@@ -159,11 +173,11 @@ try {
     foreach ($scope in @('ordinary-path-common-probe', 'read-write-atomic-save-delete', 'traversal-symlinks-watching',
         'projected-compiler', 'cross-root-isolation', 'sparse-delta-clone', 'provider-kill-restart',
         'cache-private-state-cost', 'base-immutability', 'non-admin-provider', 'product-Gate2', 'GA')) {
-        $result.scopes[$scope] = @{ verdict = 'INCONCLUSIVE'; reason = 'No provider started in prerequisite-only attempt.' }
+        $result.scopes[$scope] = @{ verdict = 'INCONCLUSIVE'; reason = 'See separate common probe and native phase evidence; no whole-backend acceptance.' }
     }
     $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $evidence 'summary.json')
     $commands | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath (Join-Path $evidence 'commands.json')
-    Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Windows backend: INCONCLUSIVE. Availability=$($result.available). No provider or ordinary-path checks ran. Inspect retained raw prerequisite artifact."
+    Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "Windows backend: INCONCLUSIVE. Availability=$($result.available). ProviderStarted=$($result.providerStarted). Inspect separate raw common and native evidence. No product Gate 2 acceptance."
     if ($transcriptStarted) { Stop-Transcript | Out-Null }
 }
 if (-not $result.cleanupVerified) { throw 'Owned cleanup failed; inspect artifact.' }
