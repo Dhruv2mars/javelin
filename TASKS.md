@@ -165,7 +165,8 @@ PRs are never merged without explicit user instruction.
 - Windows excludes Unix-only storage-symlink and deleted-cwd tests. Those behaviors,
   non-Unix directory syncing, hardware power loss and performance remain unverified.
   Native checks do not establish sparse Layers, installation, product CI or GA.
-  Retained artifacts expire 2026-10-27 UTC. PR #6 remains draft and unmerged; its
+  Final artifacts are Linux `11847496789`, macOS `11847466814` and Windows
+  `11848185219`, expiring 2026-10-27 UTC. PR #6 remains draft and unmerged; its
   owner stopped the watcher after the final handoff.
 
 ### Linux sparse Layer backend proof
@@ -211,7 +212,9 @@ PRs are never merged without explicit user instruction.
 
 - Thread: `t3-thread://v1/mcp:ab206657-bb50-427f-bc5a-2e93ef9843d1`.
 - Branch: `feat/windows-projfs-proof`, based on verified `feat/linux-sparse-layer-proof`
-  at `19224ef`. Draft PR registration is pending.
+  at `19224ef`.
+- PR: [#9](https://github.com/Dhruv2mars/javelin/pull/9), draft and linked to owner
+  and hub. Planning commit `387cbaa98c75e6b35c70c8358bfacf60e0b83604`.
 - Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-windows-projfs-proof`.
 - Owns `tools/windows-workspace-proof/`, `docs/windows-workspace-proof.md`, and
   `.github/workflows/windows-workspace-proof.yml`. Native code and existing probes
@@ -222,6 +225,9 @@ PRs are never merged without explicit user instruction.
 - ProjFS is provisional. Official Microsoft docs describe the optional feature and
   read hydration, not its availability on the hosted runner or production acceptance.
   The proof must distinguish read caches from private changes and measure both.
+  Sources: [feature enablement](https://learn.microsoft.com/en-us/windows/win32/projfs/enabling-windows-projected-file-system)
+  and [cache states](https://learn.microsoft.com/en-us/windows/win32/projfs/cache-state),
+  inspected by the hub on 2026-10-14 local time.
 - The unchanged caller-path probe needs Unix utilities on Windows. The owner will
   record their exact paths and versions; missing utilities leave affected checks
   INCONCLUSIVE. Unix-only verifier safety tests cannot count as Windows evidence.
