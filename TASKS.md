@@ -8,7 +8,8 @@ Implementation threads own one PR each and keep their own checklist in their wor
 Javelin reaches GA when a developer can install a released build, create a project,
 use ordinary tools in isolated Layers, recover history, and collaborate through
 hosted Publish Requests. The supported platforms, recovery behavior, concurrency,
-and installation paths must have reproducible verification. Public documentation
+and installation paths must have reproducible verification on macOS, Linux, and
+Windows. Public documentation
 must describe the actual product and its limits. No runtime, storage, test, or user
 workflow may invoke or interpret Git.
 
@@ -22,7 +23,8 @@ workflow may invoke or interpret Git.
 - [x] Launch one local-core thread and one filesystem-verification thread.
 - [x] Record their thread, branch, PR, and evidence links here.
 - [x] Arrange hourly persistent hub continuation without duplicating active work.
-- [ ] Independently review this plan against the accepted design.
+- [x] Independently review this plan against the accepted design with `claude-opus-5-5`.
+- [x] Strengthen the sparse-backend gate and record platform requirements from review.
 
 ## Prove the local VCS
 
@@ -30,6 +32,7 @@ workflow may invoke or interpret Git.
 - [ ] Implement initialization, durable immutable snapshots, history, and restore.
 - [ ] Prove ordinary filesystem behavior for sparse isolated Layers.
 - [ ] Implement Layer creation, cloning, checkpointing, discard, status, and diff.
+- [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [ ] Bind supplied agent traces to immutable work, with missing-trace override.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
@@ -64,7 +67,7 @@ workflow may invoke or interpret Git.
 ## Current work
 
 The hub owns branch `chore/ga-build-plan` and [PR #3](https://github.com/Dhruv2mars/javelin/pull/3).
-The initial implementation workstreams will start from this branch's recorded contract.
+The initial implementation workstreams are running from this branch's recorded contract.
 PRs are never merged without explicit user instruction.
 
 ### Native repository foundation
@@ -77,6 +80,8 @@ PRs are never merged without explicit user instruction.
 - Done: native initialization, exact immutable objects, ordered history, integrity checks,
   and proven publication metadata behavior across retries, concurrency, and restart.
 - Evidence so far: planning commit `3d4144b`; implementation and product verification pending.
+- Bounded foundation decision: init creates empty immutable World 0 and preserves
+  existing files. Existing-project adoption through a Layer is a follow-on gate.
 
 ### Layer filesystem verification
 
@@ -100,7 +105,18 @@ PRs are never merged without explicit user instruction.
 - Contract review round 1 failed before review with `Claude API rate limit reached. Try again later.`
 - Contract review round 2 uses provider `claude-work`, model `claude-opus-5-5`.
 - Review task: `node:delegated-task:command%3Amcp%3A3981ee7f-8fb4-4683-a0d3-78e3e74e0371%3Adelegate-task%3Ajavelin-ga-contract-review-r2-20261013`.
-- Review findings and acceptance remain pending.
+- Review completed. No high-severity contract contradictions were found. Accepted
+  corrections cover sparse-backend proof, mandatory filesystem checks, platform
+  requirements, traceable decision sources, and subagent Layer sharing.
+- Live workthread and PR ownership records were updated while review was running.
+- PR #4's checklist heading placement was returned to its owner for correction.
+- Product implementation, sparse backend behavior, and GA readiness remain unverified.
+
+### Superseded work
+
+PR #1 and PR #2 are historical work, not dependencies of the GA build. Their open
+state does not authorize merging them. Untracked `dist/` and `packages/` contain
+earlier artifacts and are excluded from this build's evidence and releases.
 
 ## Open engineering questions
 

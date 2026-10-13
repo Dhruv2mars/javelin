@@ -25,7 +25,8 @@ is the starting point. Reuse earlier work only after verifying it against this c
 - Layers share immutable content and store sparse changes. Full repository copies
   are not the production Layer model.
 - A Layer exposes ordinary filesystem paths usable by external tools.
-- One parent agent owns its Layer. The parent chooses when a child needs isolation.
+- One parent agent owns its Layer, and its subagents can share it. The parent chooses
+  when a child needs isolation.
   Human-only work also happens in a Layer. Human edits in an existing Layer belong
   to that Layer's work.
 - A Layer clone starts a separate isolated Layer from an immutable snapshot.
@@ -128,15 +129,21 @@ the local and hosted development workflows.
 
 1. Prove native immutable objects, initialization, World ordering, restart behavior,
    and rejection of invalid or missing objects with a runnable verification suite.
-2. Prove Layer filesystem behavior through normal file operations and existing tools.
-   Record unsupported capabilities and required host setup as unconfirmed work.
+2. Prove a sparse Layer backend that shares immutable base content through normal
+   filesystem paths. Read, write, atomic-save rename, delete, traversal, symlinks,
+   file watching, a compiler or test run, cross-Layer isolation, and interrupted
+   operation recovery must pass. Full-copy directories and clonefile controls can
+   validate the probe but cannot pass this gate. A backend recommendation remains
+   unconfirmed until the sparse backend passes. Unsupported capabilities and required
+   host setup remain open work, not a successful gate.
 3. Complete a real local project with externally managed parallel agents. Exercise
    checkpoints, Stack, conflicts, Publish, discard, history, restore, and supplied traces.
 4. Complete a hosted public and private repository workflow through CLI and browser.
    Exercise direct Publish, exact review approvals, revisions, upstream contributions,
    forks, permissions, retries, and outages.
-5. Verify installation, upgrade, recovery, and complete workflows on macOS, Linux,
-   and Windows before claiming support for those platforms.
+5. Initial GA requires macOS, Linux, and Windows support. Verify installation,
+   upgrade, recovery, and complete workflows on each. Record supported architectures
+   in the release manifest. A platform that has not passed remains a GA blocker.
 6. Measure hot-repository and many-repository workloads. Record fixtures, machines,
    backend, limits, errors, and cost assumptions. Set numerical release requirements
    from measured behavior. Do not equate simulated API throughput with filesystem throughput.
@@ -158,6 +165,9 @@ without explicit user instruction.
 
 - Final design and consistency review: `codex://threads/01a12eae-a899-7ad3-9462-5f95a64e76cc`.
 - Earlier product and hosting grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
-- Explicit fork-history answer: `t3-thread://v1/6bbb5b4b-899f-4bc7-b999-a78669bcc177`.
+- Explicit fork-history answer, "Inherit history through the selected version":
+  `t3-thread://v1/6bbb5b4b-899f-4bc7-b999-a78669bcc177` and
+  `codex://threads/01a12ebd-0de7-7113-b9ba-b99a0771ce30`.
 - Marathon authorization, replacement of earlier code, and one-PR-per-thread rule:
   `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`, user messages on 2026-10-13.
+  Local backing transcript: `codex://threads/01a135d7-d344-72c2-b0c3-331850d6b2ec`.
