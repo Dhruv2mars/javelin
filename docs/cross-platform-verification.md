@@ -51,12 +51,36 @@ PR is rebased onto that exact reviewed core. The diff from that commit contains
 only `native.yml`, this document, and the appended CI progress section in TASKS.
 Source, tests, Cargo manifest and lockfile are unchanged.
 
-**INCONCLUSIVE: actual core hosted checks are pending.** The full compiled suite
-will run on each OS. Two tests use `cfg(unix)`: storage symlink rejection and the
-explicit-project-directory CLI regression from a deleted cwd. Windows excludes
-those tests, so its passing count cannot equal the Unix count without changing
-reviewed source. Record the actual per-platform count and this gap in the result.
-No source changes or weakened validation are authorized by this CI workstream.
+**VERIFIED: reviewed core's compiled native suite on all three hosted OSes.**
+[Run 38462957668](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668)
+checked out exact PR head `bfd2a51d75430a419272549b0e209bda6badf9d1`, whose
+source and tests match reviewed core `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+Formatting, warnings-denied Clippy, native tests, release build, and log upload
+all passed on each runner. The unrelated Macroscope check was skipped and is
+not native verification evidence.
+
+| Job proof | Passing / ignored | Process / CLI / repository passing | Retained log artifact |
+| --- | --- | --- | --- |
+| [Linux x64](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/job/115522567286) | 26 / 1 | 8 / 4 / 14 | [11846411948](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/artifacts/11846411948) |
+| [macOS arm64](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/job/115522567157) | 26 / 1 | 8 / 4 / 14 | [11846911837](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/artifacts/11846911837) |
+| [Windows x64](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/job/115522567354) | 24 / 1 | 8 / 3 / 13 | [11846616918](https://github.com/Dhruv2mars/javelin/actions/runs/38462957668/artifacts/11846616918) |
+
+Downloaded and inspected all three artifacts on 2026-10-14 local time. Each
+contains the six expected log files and confirms the exact checked-out SHA,
+Rust `1.99.0`, and successful release compilation. The run completed on
+2026-10-13 UTC; artifacts expire on 2026-10-27 UTC. Observed hosts and image
+versions match the historical scaffold table below.
+
+The missing-tail retained-anchor regression, interrupted empty initialization,
+incidental-file preservation, binary object persistence, all eight concurrency
+and process recovery tests, and compiled CLI tests passed on every OS.
+The suite's one ignored test is the child-process entry point exercised by the
+parent process tests, not an omitted verification case.
+
+Two tests use `cfg(unix)`: storage symlink rejection and the explicit-project-
+directory CLI regression from a deleted cwd. Windows excludes both. Windows
+coverage of those two behaviors is **NOT VERIFIED**, and 26 passing tests on
+Windows cannot be claimed. Reviewed source and validation were not changed.
 
 Local macOS arm64 preflight passed with pinned Rust `1.99.0`: formatting,
 warnings-denied Clippy, 26 passing tests with one ignored process entry point,
@@ -111,8 +135,8 @@ and actions allowed. Both the availability read and actual run completed without
 an Actions permission error.
 
 Native immutable storage, World ordering and recovery are **NOT VERIFIED** by
-the scaffold. The reviewed-core follow-on above supersedes that baseline scope
-only after its actual checks are inspected. Native-owned files remain unchanged.
+the scaffold. The inspected reviewed-core run above supersedes that baseline
+scope for its compiled tests. Native-owned files remain unchanged.
 Sparse FSKit, OverlayFS, and ProjFS behavior is **NOT VERIFIED** by this gate.
 The current hub contract at `8db2a5b` requires ordinary filesystem operations,
 tool use, isolation, and recovery on a sparse backend. Full-copy controls do not
