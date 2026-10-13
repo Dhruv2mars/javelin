@@ -76,7 +76,8 @@ workflow may invoke or interpret Git.
 ## Current work
 
 The hub owns branch `chore/ga-build-plan` and [PR #3](https://github.com/Dhruv2mars/javelin/pull/3).
-The initial implementation workstreams are running from this branch's recorded contract.
+Bounded foundation and probe units have been verified. Follow-on workstreams run
+from reviewed, explicit dependencies; complete product workflows remain open.
 PRs are never merged without explicit user instruction.
 
 ### Native repository foundation
@@ -91,6 +92,8 @@ PRs are never merged without explicit user instruction.
 - VERIFIED bounded Darwin foundation: reviewed commit `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
   The hub ran 26 tests, formatting, warnings-denied Clippy, release build, and real
   CLI smoke in an isolated export. Full Layer workflows and other platforms remain open.
+- The original correction turn is terminal with T3 status `failed`; it left a clean
+  committed correction, which the hub verified independently. It is not a live writer.
 - Local baseline `7ec2e75` was initially unpublished when CI started. The native
   owner pushed it unchanged, and the hub confirmed the remote branch now names that SHA.
 - Bounded foundation decision: init creates empty immutable World 0 and preserves
@@ -171,6 +174,20 @@ PRs are never merged without explicit user instruction.
   audit and compared all nineteen downloaded files with the committed evidence;
   all are byte-identical. This bounded Linux primitive is VERIFIED; native Layer
   integration, production lifecycle and product Gate 2 remain open.
+
+### Native Layer and checkpoint foundation
+
+- Thread: `t3-thread://v1/mcp:4888671a-e20b-422b-b5d7-efcf07e19974`.
+- Branch: `feat/native-layer-checkpoints`, based on `chore/native-cross-platform-ci`.
+- PR: creation pending; one draft PR stacked on PR #6.
+- Owns native Layer/domain/storage additions, relevant tests and Cargo changes,
+  and `docs/layer-checkpoints.md`. Workflow and filesystem-proof sources are excluded.
+- Done: exact-base Layer metadata, immutable sparse changed/deleted-path checkpoints,
+  durable private heads, cheap immutable-snapshot clones, derived status/diff and discard
+  that preserves World and siblings, with restart/concurrency/corruption proofs.
+- Ordinary-path binding, automatic capture, Stack/refresh/full Publish and trace policy
+  are required follow-on work. API tests cannot verify a complete Layer user workflow.
+- This unit also owns the two inherited low validator-coverage regressions noted in review.
 
 ### Hub continuation and review
 
