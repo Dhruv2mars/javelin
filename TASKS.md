@@ -179,7 +179,7 @@ PRs are never merged without explicit user instruction.
 
 - Thread: `t3-thread://v1/mcp:4888671a-e20b-422b-b5d7-efcf07e19974`.
 - Branch: `feat/native-layer-checkpoints`, based on `chore/native-cross-platform-ci`.
-- PR: creation pending; one draft PR stacked on PR #6.
+- PR: [#8](https://github.com/Dhruv2mars/javelin/pull/8), draft, stacked on PR #6.
 - Owns native Layer/domain/storage additions, relevant tests and Cargo changes,
   and `docs/layer-checkpoints.md`. Workflow and filesystem-proof sources are excluded.
 - Done: exact-base Layer metadata, immutable sparse changed/deleted-path checkpoints,
@@ -188,6 +188,9 @@ PRs are never merged without explicit user instruction.
 - Ordinary-path binding, automatic capture, Stack/refresh/full Publish and trace policy
   are required follow-on work. API tests cannot verify a complete Layer user workflow.
 - This unit also owns the two inherited low validator-coverage regressions noted in review.
+- Selected representation: a complete sparse delta per immutable checkpoint, with
+  transactional head history and retry outcomes. Format 2 distinguishes symlinks
+  and rejects unshipped format 1. This is a reported design choice, not verified behavior.
 
 ### Hub continuation and review
 
