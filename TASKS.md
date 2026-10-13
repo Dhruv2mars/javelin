@@ -102,3 +102,22 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 - [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `eb3037c`; omitted-output run exits 0 into unique `javelin-probe-evidence-EfCkEZ`.
 - [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
 - [ ] Report final evidence and verdict to the hub, leaving the PR unmerged.
+
+## Linux sparse Layer proof workstream
+
+Owned by `feat/linux-sparse-layer-proof`, based on `test/layer-filesystem-contract`.
+Done means a bounded disposable GitHub-hosted Linux run uses native OverlayFS,
+one immutable lower tree and separate sparse upper/work directories, passes the
+committed ordinary-path probe and external compiler, and records clone semantics,
+process interruption, remount, cleanup, storage evidence and exact source SHA.
+This proof does not complete product Gate 2 or GA. Only this appended checklist
+is owned here. Privileged mounts are restricted to the ephemeral Linux CI job.
+
+- [x] Read instructions and latest hub contract; define verifiable scope.
+- [ ] Open and immediately link one draft PR against `test/layer-filesystem-contract`.
+- [ ] Confirm official kernel/runner prerequisites and record unresolved assumptions.
+- [ ] Implement guarded small fixtures, actual mounts and immutable sparse snapshot clones.
+- [ ] Drive common probe as ordinary runner user; verify bytes, storage and recovery.
+- [ ] Add owned workflow with pinned actions, bounded execution and retained artifacts.
+- [ ] Observe actual cloud run and record exact SHA, results and limitations.
+- [ ] Report evidence and blockers to hub; leave PR unmerged.
