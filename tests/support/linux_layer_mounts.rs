@@ -1581,3 +1581,140 @@ fn committed_capture_survives_a_transient_replay_failure() {
         &json!({"verdict": "VERIFIED", "commands": log}),
     );
 }
+
+fn kill_after_native_commit(env: &Env, s: &Setup, operation: &str) {
+    let mut actor = Actor::spawn(
+        env,
+        s.repo_dir.path(),
+        &s.root,
+        "capture",
+        "A",
+        operation,
+        "capture_committed",
+    );
+    actor.marker("BOUNDARY capture_committed");
+    actor.kill();
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn helper_misconfiguration_never_abandons_an_own_commit() {
+    let env = env();
+    let mut log = Vec::new();
+    let mut s = setup(&env, "misconfig");
+    sh(&s.view, "printf 'mine\\n' > mine.txt", &mut log);
+    kill_after_native_commit(&env, &s, "misconfig");
+    // The user's own state directory mode makes every helper verb refuse (exit 2).
+    let state = s.root.join("state");
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    let first = s.rt.recover(&mut s.repo).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    let second = s.rt.recover(&mut s.repo).unwrap();
+    let status = s.rt.status(&s.repo, &s.layer).unwrap();
+    save(
+        &env,
+        "misconfig-result",
+        &json!({"firstRecovery": first, "secondRecovery": second,
+        "bound": status.bound_revision, "frozen": status.frozen, "pending": status.pending}),
+    );
+    assert_eq!(
+        status.bound_revision, 1,
+        "own commit abandoned after a helper refusal"
+    );
+    assert!(!status.frozen && status.pending.is_none());
+    save(
+        &env,
+        "misconfig",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn direct_thaw_after_an_own_commit_still_adopts_it() {
+    let env = env();
+    let mut log = Vec::new();
+    let mut s = setup(&env, "thawedcommit");
+    sh(&s.view, "printf 'mine\\n' > mine.txt", &mut log);
+    kill_after_native_commit(&env, &s, "thawed-commit");
+    let slot = slot(&s.layer);
+    assert!(
+        direct(&env, &["thaw", s.root.to_str().unwrap(), "view", &slot])
+            .status
+            .success()
+    );
+    sh(&s.view, "printf 'later\\n' > later.txt", &mut log);
+    let report = s.rt.recover(&mut s.repo).unwrap();
+    let status = s.rt.status(&s.repo, &s.layer).unwrap();
+    save(
+        &env,
+        "thawedcommit-result",
+        &json!({"recovery": report, "bound": status.bound_revision,
+        "frozen": status.frozen, "pending": status.pending}),
+    );
+    assert_eq!(
+        status.bound_revision, 1,
+        "own commit treated as foreign after a direct thaw"
+    );
+    assert!(!status.frozen && status.pending.is_none());
+    assert_eq!(fs::read(s.view.join("later.txt")).unwrap(), b"later\n");
+    save(
+        &env,
+        "thawedcommit",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn foreign_same_id_commit_with_unlistable_upper_thaws() {
+    let env = env();
+    let mut log = Vec::new();
+    let mut s = setup(&env, "unlistable");
+    // More upper entries than the helper lists (a documented scale limit).
+    fs::create_dir(s.view.join("many")).unwrap();
+    for i in 0..200_001 {
+        fs::File::create(s.view.join("many").join(i.to_string())).unwrap();
+    }
+    log.push(json!({"created": "200001 empty files under many/"}));
+    let mut actor = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "capture",
+        "A",
+        "unlistable",
+        "capture_frozen",
+    );
+    actor.marker("BOUNDARY capture_frozen");
+    actor.kill();
+    let x = FileEntry::Regular {
+        content: s.repo.put_blob(b"x\n").unwrap(),
+        executable: false,
+    };
+    let changes = SparseChanges::new([(RepoPath::parse("x.txt").unwrap(), Some(x))]).unwrap();
+    let head = active(&s.repo, &s.layer);
+    applied(
+        &s.repo
+            .capture_layer(&op("unlistable"), &head, &changes)
+            .unwrap(),
+    );
+    let report = s.rt.recover(&mut s.repo).unwrap();
+    let status = s.rt.status(&s.repo, &s.layer).unwrap();
+    save(
+        &env,
+        "unlistable-result",
+        &json!({"recovery": report, "bound": status.bound_revision,
+        "frozen": status.frozen, "pending": status.pending}),
+    );
+    assert!(
+        !status.frozen && status.pending.is_none(),
+        "view frozen behind a foreign same-ID commit"
+    );
+    assert_eq!(status.bound_revision, 0);
+    save(
+        &env,
+        "unlistable",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
