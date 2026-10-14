@@ -1,0 +1,27 @@
+{
+  "api_object_digest_sha256": "ce53b3e27112fdd4f0d3845c477310fdc34aae0a36b0e19bce169e0afe588f4f",
+  "class_counts_and_bytes": {
+    "binary": {
+      "bytes": 1861172,
+      "files": 14
+    },
+    "source": {
+      "bytes": 1321646,
+      "files": 124
+    },
+    "text": {
+      "bytes": 2085624,
+      "files": 162
+    }
+  },
+  "content_digest_sha256": "3436edd1597664f0a0c50fc8d60ed58ad427ff8bab3a9ad1de8a66c680d5bf76",
+  "digest_notes": "content digest hashes generator output; api digest hashes path and the ObjectId returned by put_blob",
+  "files": 300,
+  "seed": 1,
+  "size_max": 238495,
+  "size_median": 2883,
+  "size_min": 69,
+  "total_content_bytes": 5268442,
+  "unique_objects": 270,
+  "unique_payload_bytes": 4631106
+}

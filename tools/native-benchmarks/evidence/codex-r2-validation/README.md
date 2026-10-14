@@ -47,6 +47,9 @@ Fresh local raw evidence, exact machine/source provenance and its command are in
 `fresh-ci-ebd3083/`. Fresh Codex `gpt-6.1-sol` read-only review of `ebd3083` found no actionable issues
 and confirmed all four audit findings are addressed. Its task identity, independent
 checks and limits are in `review.json`. It did not reproduce actual retry exhaustion;
-parent-resolution tests remain synthetic. Hosted validation is pending.
+parent-resolution tests remain synthetic. The owned hosted workflow passed at `3acc660` in run 38569138378. Both OSes passed
+debug/release tests and three `ci` runs each. Its artifacts were downloaded and
+independently verified; exact source/job/artifact proof and trimmed raw files are in
+`hosted-run-38569138378/`. All 17 retained raw directories pass the updated verifier.
 Windows measurement, stress, profiling of latency growth, mounted filesystem,
 power loss, realistic hot/many-repository workloads, Gate 6 and GA are NOT VERIFIED.

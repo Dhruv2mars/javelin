@@ -234,7 +234,7 @@ outcomes, defect-detecting regressions, honest recommendations. Windows unmeasur
 - [x] Hosted Linux and macOS runs and Windows compile-only via own workflow, run
   38507388389; downloaded artifacts re-verified locally.
 - [x] Write results, limits and recommendations in `docs/native-storage-baseline.md`.
-- [ ] Final doc review and hub handoff.
+- [x] Final doc review and hub handoff, followed by Codex r2 corrections below.
 
 Windows performance, mounted-Layer cost, hosted-service cost, power-loss durability,
 scale and GA thresholds are NOT VERIFIED and not claimed.
@@ -254,4 +254,14 @@ Gate 6 and GA remain open. Same draft PR #16 and owned paths only.
 - [x] Correct actual build-profile test and six doc values; document rounding and precise validation scope.
 - [x] Run formatting, clippy, debug/release tests, all 18 old evidence verifiers and one fresh release `ci` run at `ebd3083`.
 - [x] Get fresh Codex read-only review of exact `ebd3083` source; no actionable findings. Review task and limits are retained in `evidence/codex-r2-validation/review.json`.
-- [ ] Run owned hosted workflow, use one T3 watcher, and report exact source and evidence to hub.
+- [x] Run owned hosted workflow at `3acc660`, run 38569138378; both OSes pass debug/release 29 tests each and 3 x `ci` runs. Download and independently verify all 6 artifacts, then all 17 retained runs. Use one T3 watcher, stop it, and report exact source/evidence to hub.
+
+Codex r2 tool validation is VERIFIED within the bounded public-API scope.
+Hosted-tested head is `3acc6608199267ba97c950ec1793b1f20609d17f`; reviewed/local-tested
+tool source is `ebd30833974b08968271d3466eab0717773a5d00`. Later evidence/docs-only
+head preserves native `e56fc86`, fixtures and old raw/source labels. All 17 committed
+raw directories and 8 prior downloaded/audit copies verify, 25 proof directories.
+The four original P2 tamper accepts now fail by the named retry/reopen and disk
+checks. Windows measurement, stress, actual retry exhaustion, growth profiling,
+mounted filesystem, power loss, hot/many-repository workloads, Gate 6 and GA remain
+NOT VERIFIED. Same one linked draft PR16 remains unmerged; T3 watcher stopped.

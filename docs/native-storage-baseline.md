@@ -248,5 +248,21 @@ Fresh read-only Codex review of that exact source found no actionable issues and
 confirmed the four audit findings are addressed. Review identity and limitations,
 matched-summary regressions, local test logs and old-run verification results are in
 `evidence/codex-r2-validation/`. Exhausted worker-to-parent resolution is tested
-synthetically; actual retry exhaustion was not reproduced. Hosted validation of
-the corrected tool remains pending. All earlier scope limits, Gate 6 and GA remain open.
+synthetically; actual retry exhaustion was not reproduced.
+
+The owned hosted workflow passed on exact head
+`3acc6608199267ba97c950ec1793b1f20609d17f` in
+https://github.com/Dhruv2mars/javelin/actions/runs/38569138378. Ubuntu 24.04 and macOS 15
+each passed formatting, clippy, debug and release tests, a release build and three
+`ci` runs with 33 verifier checks. Each test profile passed 7 unit and 22 CLI tests.
+All six downloaded raw runs were independently verified locally, with unchanged
+file hashes and zero errors. Each has 100 contended advances and 80 blob puts;
+Ubuntu accepted/stale counts were 54/46, 56/44 and 53/47, and macOS counts were
+71/29, 61/39 and 62/38. Windows only compiled and linted the benchmark.
+
+Exact source/job/artifact proofs, logs, machine provenance and trimmed raw files are
+in `evidence/codex-r2-validation/hosted-run-38569138378/`. Tool and native source hashes
+match the reviewed/local-tested source. All 17 retained raw run directories pass.
+Later evidence and documentation commits are not new tested-source claims. The
+original performance table and its raw source labels are unchanged. All earlier
+scope limits, Gate 6 and GA remain open.

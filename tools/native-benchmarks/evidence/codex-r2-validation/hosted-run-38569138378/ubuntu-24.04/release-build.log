@@ -1,0 +1,5 @@
+   Compiling bitflags v2.13.2
+   Compiling rusqlite v0.40.2
+   Compiling javelin v0.1.0 (/home/runner/work/javelin/javelin)
+   Compiling javelin-native-benchmarks v0.1.0 (/home/runner/work/javelin/javelin/tools/native-benchmarks)
+    Finished `release` profile [optimized] target(s) in 6.52s
