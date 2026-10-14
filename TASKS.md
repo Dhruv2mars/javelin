@@ -398,6 +398,13 @@ This is a pure component, with no Stack, Publish, GA, or underlying core accepta
 - [x] Implement fixed metadata/byte/line/table/work admission and MergeError::Load/Resource, with call-wide Usage and sequential loader checks.
 - [x] Extend unchanged every-pair oracle with 30,000 moves: 2,682 clean, 22,291 ambiguous; original 20,000 remains 3,868 clean. Add ordinary fixtures, exhaustive mandatory-row masks and deterministic resource/boundary/adversarial cases.
 - [x] Local tested source `29abd0e`: debug/release 2+8+16+9 tests, fmt, Clippy -D warnings, native release example and 29/29 compiling mutations pass. All source restored exactly. Logs `/tmp/javelin-bounded-pr21/local-final`; old/new finite differential 592,620 changed cases, 3,432 identical clean outputs.
-- [ ] Obtain fresh independent Codex review, fix findings and verify restored hashes.
-- [ ] Inspect exact-head three-OS logs/artifacts using the single T3 watcher.
-- [ ] Report hashes, counts, limits, API compatibility, evidence and blockers to hub.
+- [x] Fresh independent Codex source review at `edc9293` found no material findings; no regression fix needed. Parent inspected report/harness/logs and source hashes. Independent mask pairs 30,770; changed triplets 1,727,880; clean 6,528; every-pair violations/skips zero. General claims remain INCONCLUSIVE.
+- [x] Inspect exact-head `884d51c` raw checkout logs and all three mechanical artifacts, run 38613209944. Ten hashes per OS, 35 debug/release tests and 29 compiling mutants each verify; Windows CRLF and ZIP digests verify. Native run 38613210052 also passed; no core acceptance claim.
+- [x] Report planning, implementation, limits, API compatibility and review progress to hub. Final evidence and final documentation-head hashes follow the final exact-head check.
+
+The final evidence commit changes documentation and this owned checklist only.
+Its component tree remains `4eafc41f4eca246a00f8cd85226c22cc34345607`.
+The single T3 watcher remains responsible for that head's hosted completion;
+no new implementation or review is pending. No merge is authorized. Hub acceptance
+is separate from this owner's completed verification. Later bounded native reads,
+production Stack and whole-Layer Publish remain outside this unit.

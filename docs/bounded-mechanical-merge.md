@@ -141,5 +141,85 @@ compiling mutations pass. Restored library SHA256 is
 c84959b77c7ae2e833adb2a0db9d17757c16391212024070b123d3f104f561ed;
 resources is 7c288610a7a26118418a41e6c18bf4e1abd60c031f82cb85e09af402d9283da2;
 matching is e22509c63576e3605b29f6ba09d0baccfce378e67ed1a9208776e39ed781f140.
-Independent implementation review and hosted exact-head verification are pending. General correctness beyond the small oracle is
+Independent implementation review and hosted evidence are recorded below.
+General correctness beyond the small oracle is
 INCONCLUSIVE. This is not production Stack or a product gate.
+
+## Independent source review
+
+Fresh read-only Codex review `bounded-merge-pr21-source-review-r1` examined
+`edc92938f422a26b5b78952c71e6d909603a35b1` in its own exported scratch. It found
+no material source findings, so no finding regression or source fix was needed.
+The three production modules and committed tests are byte-identical at reviewed
+source, local tested source `29abd0e` and hosted tested source `884d51c`.
+The parent checked the actual report, harness and logs at
+`/tmp/javelin-pr21-review-FgkoAb`, and compared the source bytes directly.
+
+The reviewer independently ran all 35 debug/release tests and Clippy for original
+targets. A separate subsequence-mask oracle checked the actual matching module
+for 30,770 base/side pairs. Its exhaustive public-API check covered 1,727,880
+changed triplets over three tokens through length four, with 6,528 clean outcomes
+and 9,264 minimal-script pairs. All clean pairs were independent and produced the
+exact emitted bytes and order; there were zero violations or oracle skips.
+Injected loader errors at each of the three positions preserved the payload and
+stopped the next call. The reviewer rechecked the exact production hashes above
+after execution. It did not certify hosted results or rerun mutations.
+
+This is independent execution by a separate Codex agent within the same model
+family. It is finite evidence, not a proof for arbitrary files or a claim that all
+previously accepted merges remain accepted. Those general claims are INCONCLUSIVE.
+
+## Hosted exact-source evidence
+
+[Mechanical merge run 38613209944](https://github.com/Dhruv2mars/javelin/actions/runs/38613209944),
+attempt 1, checked out exact PR head
+`884d51c24f584bbb38c08532bb65c58f5276fb3f`. The component tree is
+`4eafc41f4eca246a00f8cd85226c22cc34345607`. A later documentation-only
+head does not change these tested component bytes. Native Rust run
+[38613210052](https://github.com/Dhruv2mars/javelin/actions/runs/38613210052)
+also passed its three jobs at the same head. That is compatibility evidence for
+this branch, not independent acceptance of the underlying core.
+
+| Runner | Architecture | Job | Artifact |
+| --- | --- | ---: | ---: |
+| ubuntu-24.04 | X64 | 116021571030 | 11918793626 |
+| macos-15 | ARM64 | 116021570713 | 11918848764 |
+| windows-2025 | X64 | 116021570947 | 11917909187 |
+
+Each mechanical job passed fmt, all-target Clippy with `-D warnings`, 35 debug and
+35 release tests, the real native repository example, and all 29 compiling guard
+mutations. Every source module was restored to its original hash. Rust was 1.99.0
+and Bun was 1.3.13. The example stored clean manifest
+`f0d748da511a8540b64683e5855752dd4cb8f3b0c2a715b95523211c7e5c7d97` and reported
+`Content` for the conflicting path on all three runners.
+
+The owner downloaded raw checkout logs and all three artifacts to
+`/tmp/javelin-bounded-pr21/hosted-38613209944`. A repeatable Bun verifier at
+`/tmp/javelin-bounded-pr21/verify-hosted.mjs` checks the exact checkout, ten file
+hashes against the current component, debug/release counts, oracle counts, typed
+resource outcomes, all 29 compiled mutation failure logs, restored source hashes
+and the stored example result. The raw log is the adjacent
+`hosted-38613209944-raw.log`. Linux/macOS hashes match LF bytes; Windows hashes
+match the same committed text with CRLF. The verifier output is retained in
+`/tmp/javelin-bounded-pr21/verified-38613209944.json`.
+
+The independently downloaded artifact ZIP digests match GitHub metadata:
+
+- Linux: `dcc6fe9f824b9113283d9b9801ac29116811b0f3d92ed7c0644e592dbe3127af`.
+- macOS: `3826931b6f65706fb4c491d0aaa87f04b55217b536139676ab5ecb07ee8c6fda`.
+- Windows: `ee4e90419d33d31fcb46c253044881e2d5d6522092ed7163ba3b3d96aa0b2486`.
+
+Artifacts expire on 2026-10-28 UTC. Release scattered 2,000-line observations were
+29.166 ms on Linux, 65.872 ms on macOS and 66.718 ms on Windows, each reserving
+394,938,298 work units for the same 18,890/18,890/19,690 input bytes. These are
+single-run observations, not a latency guarantee. Larger admitted-size/work
+combinations refuse deterministically rather than relying on those timings.
+
+VERIFIED at this component boundary: fixed admission limits, typed whole-call
+resource refusal, tested exact matching/separator behavior, ordinary-file caller
+fixtures, the stated finite oracle domains, local and hosted checks and source
+restoration. No blocking finding remains in this unit's executed checks.
+INCONCLUSIVE: universal correctness or preservation outside the tested domains.
+NOT VERIFIED here: bounded repository reads before caller allocation, concurrent
+caller memory, production Stack/refresh, whole-Layer Publish, hosting, native core
+acceptance, additional architectures or GA. These require later hub-owned work.
