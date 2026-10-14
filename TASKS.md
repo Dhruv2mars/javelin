@@ -218,7 +218,7 @@ Done: a public caller computes canonical kind-tagged IDs before storage, roundtr
 
 - [x] Read local instructions and current hub TASKS, build contract and decisions.
 - [x] Open/link draft [PR #18](https://github.com/Dhruv2mars/javelin/pull/18); report planning `06a1093` to hub.
-- [ ] Compare metadata hints plus bounded verification with streamed verified lookup in independent Codex design review; settle types and guarantees.
+- [x] Compare both shapes in independent Codex design `native-object-access-design-r1-06a1093`; select streaming with kind-specific methods. Hub confirmed object-only guarantees.
 - [ ] Implement scoped native APIs and downstream public caller regressions.
 - [ ] Measure Rust allocation for 32 MiB blob, bounded 8 MiB read, manifests and referenced graphs; distinguish SQLite C buffers and RSS.
 - [ ] Run focused tests, fmt, Clippy with warnings denied, locked tests and release build.

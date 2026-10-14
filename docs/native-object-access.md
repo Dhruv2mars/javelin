@@ -14,14 +14,17 @@ content. A second bounded verification call adds another API and requires caller
 to understand when a hint is sufficient.
 
 Candidate B verifies the kind-tagged content hash through SQLite incremental
-BLOB reads, with a fixed chunk buffer. It returns the byte length only after hash
+BLOB reads, with a fixed chunk buffer. It reports presence only after hash
 verification. Work still grows with the object's byte length, but Rust payload
 memory does not. Bounded byte reads check the stored length before allocating;
 bounded manifest reads also decode and check their own canonical bytes.
 
 The selected shape is B. It needs only rusqlite's `blob` feature and no storage
 migration. A consistent read transaction covers row metadata, incremental reads
-and verification. An independent Codex design review compares both candidates.
+and verification. Independent Codex design review `native-object-access-design-r1-06a1093` compared
+both candidates and recommended dedicated kind-specific methods to avoid another
+public enum. The hub confirmed the object-only guarantee. The separate reviewer
+uses the same model family, which limits review diversity.
 
 The signatures proposed before implementation are:
 
@@ -33,11 +36,9 @@ impl ObjectId {
     pub const fn as_bytes(&self) -> &[u8; 32];
 }
 
-pub enum ObjectType { Blob, Manifest }
-
 impl Repository {
-    pub fn verified_object_size(&self, id: ObjectId, kind: ObjectType)
-        -> Result<usize>;
+    pub fn has_blob(&self, id: ObjectId) -> Result<bool>;
+    pub fn has_manifest(&self, id: ObjectId) -> Result<bool>;
     pub fn read_blob_bounded(&self, id: ObjectId, max_bytes: usize)
         -> Result<Vec<u8>>;
     pub fn manifest_bytes_bounded(&self, id: ObjectId, max_bytes: usize)
@@ -47,7 +48,7 @@ impl Repository {
 
 ## Verification boundaries
 
-`verified_object_size` verifies stored kind and byte identity only. It does not
+`has_blob` and `has_manifest` stream and verify stored kind and byte identity only. It does not
 decode manifests, inspect symlink targets or validate referenced objects. A
 correctly hashed noncanonical manifest, or a canonical manifest with missing or
 damaged references, can therefore have verified object bytes. That is insufficient
@@ -59,7 +60,8 @@ does not read referenced blobs or check symlink target contents. Its allocations
 grow with the capped manifest bytes and decoded entries, never with referenced
 blob payloads. The cap limits input byte length, not total allocator usage.
 
-Missing objects return `MissingObject`; wrong kinds and damaged bytes are errors.
+Missing objects return `false` from availability and `MissingObject` from reads.
+Wrong kinds and damaged bytes are errors.
 An over-limit read returns `ObjectTooLarge` before a payload-sized Rust allocation.
 Refusal does not certify the oversized object's hash or graph. Zero and exact
 limits are valid. SQLite errors remain storage errors.
