@@ -122,6 +122,37 @@ enum Action {
 struct Pending {
     operation: String,
     action: Action,
+    /// Written immediately before the native call: the exact head and delta this
+    /// view submits. Recovery adopts a durable native commit under this operation
+    /// ID only if it matches, so ownership never depends on re-reading the view.
+    #[serde(default)]
+    candidate: Option<Candidate>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Candidate {
+    expected: u64,
+    changes: String,
+}
+
+impl Pending {
+    fn is(&self, operation: &OperationId, action: Action) -> bool {
+        self.operation == operation.as_str() && self.action == action
+    }
+}
+
+/// Deterministic digest of a complete sparse delta (sorted paths, exact entries).
+fn changes_digest(changes: &SparseChanges) -> String {
+    let entries: BTreeMap<&str, &Option<FileEntry>> = changes
+        .entries()
+        .iter()
+        .map(|(path, entry)| (path.as_str(), entry))
+        .collect();
+    Sha256::digest(serde_json::to_vec(&entries).expect("delta encoding"))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Durable binding of one Layer to its view. `opened` and `lowers` stay fixed while
@@ -791,8 +822,13 @@ impl LinuxLayerRuntime {
         let this = Pending {
             operation: operation.as_str().into(),
             action: Action::Capture,
+            candidate: None,
         };
-        if record.pending.as_ref().is_some_and(|p| p != &this) {
+        if record
+            .pending
+            .as_ref()
+            .is_some_and(|p| !p.is(operation, Action::Capture))
+        {
             self.resolve(repo, layer, &slot, &mut record)?;
             record = self
                 .read_record(&slot, layer)?
@@ -822,7 +858,7 @@ impl LinuxLayerRuntime {
         let owned = record
             .pending
             .as_ref()
-            .is_some_and(|p| p.operation == operation.as_str() && p.action == Action::Capture);
+            .is_some_and(|p| p.is(operation, Action::Capture));
         let durable = match self.durable(repo, layer, operation, false) {
             Ok(durable) => durable,
             Err(error) => {
@@ -849,6 +885,30 @@ impl LinuxLayerRuntime {
                 CaptureOutcome {
                     update: attempt.outcome.clone(),
                     changed_paths: changed,
+                    unrepresented_directories: Vec::new(),
+                    replayed: true,
+                },
+            );
+        }
+        if let Some(attempt) = durable {
+            // Decide ownership from the recorded candidate alone. Without one, this
+            // view never reached its native call, so the commit is another caller's.
+            let candidate = record.pending.as_ref().and_then(|p| p.candidate.clone());
+            let changes = repo.read_checkpoint(attempt.checkpoint)?.changes().clone();
+            let ours = candidate.is_some_and(|c| {
+                c.expected == attempt.expected && c.changes == changes_digest(&changes)
+            });
+            if !ours {
+                self.abandon(slot, record)?;
+                return Err(Error::OperationIdReused(operation.clone()));
+            }
+            return self.settle_capture(
+                slot,
+                record,
+                true,
+                CaptureOutcome {
+                    update: attempt.outcome,
+                    changed_paths: changes.entries().len(),
                     unrepresented_directories: Vec::new(),
                     replayed: true,
                 },
@@ -883,41 +943,19 @@ impl LinuxLayerRuntime {
         let (changes, unrepresented, expected) = match attempt {
             Ok(values) => values,
             Err(error) => {
-                // Without a native attempt nothing committed, so thaw and keep the
-                // edits. With one, our own commit read this same frozen content, so
-                // only errors that content cannot cause again (permission, unsupported
-                // entries, invalid input) prove it is foreign. Transient failures keep
-                // the view frozen and pending so the next retry can still verify it.
-                let foreign = certain(&error)
-                    || matches!(&error, Error::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied);
-                if durable.is_none() || foreign {
-                    self.abandon(slot, record)?;
-                }
+                // No native attempt exists for this operation, so nothing committed:
+                // thaw and keep the edits.
+                self.abandon(slot, record)?;
                 return Err(error);
             }
         };
-        if let Some(attempt) = durable {
-            // The frozen view is unchanged since it froze for this operation. Adopt the
-            // native commit only if it is exactly this view's capture; otherwise another
-            // caller used the same ID and adopting it would overwrite their work.
-            let ours = attempt.expected == record.revision
-                && repo.read_checkpoint(attempt.checkpoint)?.changes() == &changes;
-            if !ours {
-                self.abandon(slot, record)?;
-                return Err(Error::OperationIdReused(operation.clone()));
-            }
-            return self.settle_capture(
-                slot,
-                record,
-                true,
-                CaptureOutcome {
-                    update: attempt.outcome,
-                    changed_paths: changes.entries().len(),
-                    unrepresented_directories: unrepresented,
-                    replayed: true,
-                },
-            );
+        if let Some(pending) = record.pending.as_mut() {
+            pending.candidate = Some(Candidate {
+                expected: expected.revision(),
+                changes: changes_digest(&changes),
+            });
         }
+        self.write_record(slot, record)?;
         let update = match repo.capture_layer(operation, &expected, &changes) {
             Ok(update) => update,
             Err(error) => {
@@ -962,8 +1000,13 @@ impl LinuxLayerRuntime {
         let this = Pending {
             operation: operation.as_str().into(),
             action: Action::Discard,
+            candidate: None,
         };
-        if record.pending.as_ref().is_some_and(|p| p != &this) {
+        if record
+            .pending
+            .as_ref()
+            .is_some_and(|p| !p.is(operation, Action::Discard))
+        {
             self.resolve(repo, layer, &slot, &mut record)?;
             record = self
                 .read_record(&slot, layer)?
@@ -1473,6 +1516,33 @@ mod tests {
         let found = repo.layer_operation(&discard_op).unwrap().unwrap();
         assert!(found.discard && found.expected == 1);
         assert_eq!(found.outcome, discarded);
+    }
+
+    #[test]
+    fn candidate_digest_is_exact_and_order_independent() {
+        let (_d, mut repo) = repo();
+        let a = FileEntry::Regular {
+            content: repo.put_blob(b"a").unwrap(),
+            executable: false,
+        };
+        let one = SparseChanges::new([(path("x"), Some(a.clone())), (path("y"), None)]).unwrap();
+        let two = SparseChanges::new([(path("y"), None), (path("x"), Some(a.clone()))]).unwrap();
+        assert_eq!(changes_digest(&one), changes_digest(&two));
+        let exec = SparseChanges::new([
+            (
+                path("x"),
+                Some(FileEntry::Regular {
+                    content: a.content(),
+                    executable: true,
+                }),
+            ),
+            (path("y"), None),
+        ])
+        .unwrap();
+        assert_ne!(changes_digest(&one), changes_digest(&exec));
+        let pending: Pending =
+            serde_json::from_str(r#"{"operation":"op","action":"capture"}"#).unwrap();
+        assert!(pending.candidate.is_none());
     }
 
     #[test]
