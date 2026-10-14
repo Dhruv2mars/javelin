@@ -33,6 +33,12 @@ pub enum Error {
     CorruptObject(ObjectId),
     #[error("object {0} has the wrong kind")]
     WrongObjectKind(ObjectId),
+    #[error("object {id} has {size} bytes, exceeding read limit {limit}")]
+    ObjectTooLarge {
+        id: ObjectId,
+        size: usize,
+        limit: usize,
+    },
     #[error("World version {0} does not exist")]
     MissingVersion(VersionNumber),
     #[error("corrupt repository: {0}")]
@@ -61,6 +67,7 @@ impl Error {
             Self::MissingObject(_) => "missing_object",
             Self::CorruptObject(_) => "corrupt_object",
             Self::WrongObjectKind(_) => "wrong_object_kind",
+            Self::ObjectTooLarge { .. } => "object_too_large",
             Self::MissingVersion(_) => "missing_version",
             Self::CorruptRepository(_) => "corrupt_repository",
             Self::UnsupportedFormat(_) => "unsupported_format",
