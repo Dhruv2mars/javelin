@@ -245,7 +245,9 @@ passes on hosted Linux, macOS, and Windows with downloaded logs inspected.
 - [x] Report file/directory-prefix structural conflicts.
 - [x] Real caller example and integration tests over actual repository objects.
 - [x] Adversarial regressions that fail when guards are removed.
-- [ ] Independent read-only review; record findings and limits.
+- [x] Independent read-only review; record findings and limits.
+- [ ] Follow-up review of the diff3 fix against prior findings.
+- [ ] Three-OS evidence at the fixed head.
 - [x] Three-OS workflow evidence with inspected artifacts.
 - [x] Document the future gated adapter to SparseChanges, refresh, and Publish.
 - [ ] Final hub handoff with VERIFIED, NOT VERIFIED, and INCONCLUSIVE scopes.
@@ -262,6 +264,17 @@ manifest `f0d748da511a8540b64683e5855752dd4cb8f3b0c2a715b95523211c7e5c7d97` and 
 `Content` conflict, and 9/9 guard mutations killed. Linux and macOS source hashes
 equal the committed bytes. Windows hashes equal the committed bytes after CRLF
 checkout conversion, verified locally for all six files.
+
+Independent review (native Claude Opus 5.5 subagent, read-only, at `d6d3079`) found
+F1 HIGH: diffy produced wrong clean merges with repeated lines, an invented
+line, and a dropped deletion. It also found F2 MEDIUM, doc claims false under F1,
+and F3 LOW, conflicted paths not naming collisions. All three are fixed in
+`b53e41f` and the following doc commit. diffy was replaced by diff3 anchor
+chunking over `similar`. Two exact regressions and a 20,000-case property test
+were added, and the mutation guards went from nine to twelve. The reviewer's
+`git merge-file` comparison was a /tmp review aid only. No product test invokes Git.
+The `a4275025` CI evidence above predates this fix and is superseded by the
+rerun at the fixed head.
 
 Review limits: the delegated Codex implementation review r1 failed on a provider
 usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
