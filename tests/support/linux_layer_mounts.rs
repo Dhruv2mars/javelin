@@ -1515,3 +1515,69 @@ fn recover_thaws_a_frozen_view_without_pending_work() {
     fs::write(view.join("writable.txt"), "ok").unwrap();
     save(&env, "orphanfreeze", &json!({"verdict": "VERIFIED"}));
 }
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn committed_capture_survives_a_transient_replay_failure() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        repo_dir,
+        _source,
+    } = setup(&env, "transient");
+    sh(&view, "printf 'mine\\n' > mine.txt", &mut log);
+    let mut actor = Actor::spawn(
+        &env,
+        repo_dir.path(),
+        &root,
+        "capture",
+        "A",
+        "committed",
+        "capture_committed",
+    );
+    actor.marker("BOUNDARY capture_committed");
+    actor.kill();
+    assert_eq!(
+        repo.layer_history(&layer).unwrap().len(),
+        2,
+        "native commit happened"
+    );
+    // Another writer holds the database, so replay verification fails transiently.
+    let blocker =
+        rusqlite::Connection::open(repo_dir.path().join(".javelin/repository.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let first = rt.recover(&mut repo).unwrap();
+    let status = rt.status(&repo, &layer).unwrap();
+    blocker.execute_batch("COMMIT").unwrap();
+    let second = rt.recover(&mut repo).unwrap();
+    let after = rt.status(&repo, &layer).unwrap();
+    save(
+        &env,
+        "transient-result",
+        &json!({"firstRecovery": first, "frozenAfterFirst": status.frozen,
+        "pendingAfterFirst": status.pending, "secondRecovery": second,
+        "boundAfterSecond": after.bound_revision, "frozenAfterSecond": after.frozen}),
+    );
+    assert_eq!(first.failures.len(), 1);
+    assert!(
+        status.frozen && status.pending.as_deref() == Some("committed"),
+        "own commit abandoned"
+    );
+    assert_eq!(second.pending_resolved, 1);
+    assert_eq!(
+        after.bound_revision, 1,
+        "own commit not adopted after the transient failure"
+    );
+    assert!(!after.frozen && after.pending.is_none());
+    assert_eq!(repo.layer_history(&layer).unwrap().len(), 2);
+    save(
+        &env,
+        "transient",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
