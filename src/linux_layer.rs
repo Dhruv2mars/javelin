@@ -136,26 +136,6 @@ struct ViewRecord {
     revision: u64,
     head: String,
     pending: Option<Pending>,
-    /// The last completed capture, so a caller that lost the reply can retry it.
-    #[serde(default)]
-    last: Option<Completed>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Completed {
-    operation: String,
-    applied: bool,
-    revision: u64,
-    changed_paths: usize,
-    unrepresented: Vec<String>,
-}
-
-fn state_revision(state: &LayerState) -> u64 {
-    match state {
-        LayerState::Active { head } => head.revision(),
-        LayerState::Discarded { revision, .. } => *revision,
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,7 +151,10 @@ pub struct CaptureOutcome {
     /// Paths in the complete delta relative to the exact base World.
     pub changed_paths: usize,
     /// Empty directories exist only on disk; native state cannot represent them.
+    /// Replays report only native data, so this is empty for them.
     pub unrepresented_directories: Vec<String>,
+    /// The outcome came from the operation's durable native record.
+    pub replayed: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -417,9 +400,11 @@ pub(crate) fn materialize(
     Ok(())
 }
 
-fn parse_upper(output: &str) -> Result<HashSet<Vec<u8>>> {
+/// Parses a frozen upper listing and the helper epoch it was taken in.
+fn parse_upper(output: &str) -> Result<(u64, HashSet<Vec<u8>>)> {
     let bad = || Error::Io(std::io::Error::other("malformed helper listing"));
     let value: Value = serde_json::from_str(output).map_err(|_| bad())?;
+    let epoch = value["epoch"].as_u64().ok_or_else(bad)?;
     let mut paths = HashSet::new();
     for entry in value["entries"].as_array().ok_or_else(bad)? {
         let kind = entry["kind"].as_str().ok_or_else(bad)?;
@@ -435,7 +420,7 @@ fn parse_upper(output: &str) -> Result<HashSet<Vec<u8>>> {
             paths.insert(bytes);
         }
     }
-    Ok(paths)
+    Ok((epoch, paths))
 }
 
 fn hash_only(bytes: &[u8]) -> Result<ObjectId> {
@@ -614,14 +599,15 @@ impl LinuxLayerRuntime {
             #[cfg(test)]
             crate::repository::test_boundary("cache_staged");
             self.helper("freeze", &["stage", key])?;
-            let upper = parse_upper(&self.helper("list", &["stage", key])?)?;
+            let (epoch, upper) = parse_upper(&self.helper("list", &["stage", key])?)?;
             let snap = snapshot(&stage, &upper, lower, &mut hash_only)?;
             if &snap.entries != target.entries() || !snap.unrepresented.is_empty() {
                 return Err(Error::CorruptRepository(
                     "staged cache differs from its immutable source".into(),
                 ));
             }
-            self.helper("seal", &[key]).map(|_| ())
+            // The helper refuses if any verb ran since the verified listing.
+            self.helper("seal", &[key, &epoch.to_string()]).map(|_| ())
         })();
         if result.is_err() {
             let _ = self.helper("abort", &[key]);
@@ -696,7 +682,6 @@ impl LinuxLayerRuntime {
                     revision: head.revision(),
                     head: checkpoint,
                     pending: None,
-                    last: None,
                 };
                 self.write_record(&slot, &record)?;
                 record
@@ -723,8 +708,74 @@ impl LinuxLayerRuntime {
         self.helper("unmount-view", &[&slot]).map(|_| ())
     }
 
+    fn ensure_thawed(&self, slot: &str) -> Result<()> {
+        if mount_state(&self.root.join("views").join(slot))? == Some(true) {
+            self.helper("thaw", &["view", slot])?;
+        }
+        Ok(())
+    }
+
+    fn epoch(&self) -> Result<u64> {
+        let value: Value = serde_json::from_str(&self.helper("epoch", &[])?)
+            .map_err(|_| Error::Io(std::io::Error::other("malformed epoch reply")))?;
+        value["epoch"]
+            .as_u64()
+            .ok_or_else(|| Error::Io(std::io::Error::other("malformed epoch reply")))
+    }
+
+    /// The durable native outcome already recorded for this operation, if any.
+    /// Native attempt rows are the authority for whether an operation committed.
+    fn durable(
+        &self,
+        repo: &Repository,
+        layer: &LayerId,
+        operation: &OperationId,
+        discard: bool,
+    ) -> Result<Option<(CheckpointId, LayerUpdate)>> {
+        match repo.layer_operation(operation)? {
+            None => Ok(None),
+            Some((owner, was_discard, checkpoint, update)) => {
+                if &owner != layer || was_discard != discard {
+                    return Err(Error::OperationIdReused(operation.clone()));
+                }
+                Ok(Some((checkpoint, update)))
+            }
+        }
+    }
+
+    /// Records an outcome in the binding (never moving it backwards) and thaws.
+    fn settle_capture(
+        &self,
+        slot: &str,
+        record: &mut ViewRecord,
+        update: LayerUpdate,
+        changed_paths: usize,
+        unrepresented_directories: Vec<String>,
+        replayed: bool,
+    ) -> Result<CaptureOutcome> {
+        if let LayerUpdate::Applied {
+            state: LayerState::Active { head },
+        } = &update
+            && head.revision() > record.revision
+        {
+            record.revision = head.revision();
+            record.head = head.checkpoint().object().to_string();
+        }
+        record.pending = None;
+        self.write_record(slot, record)?;
+        self.ensure_thawed(slot)?;
+        Ok(CaptureOutcome {
+            update,
+            changed_paths,
+            unrepresented_directories,
+            replayed,
+        })
+    }
+
     /// Freezes the view, captures its complete delta through the native API, and
-    /// thaws. `busy` means a writer held a file open; nothing changed.
+    /// thaws. `busy` means a writer held a file open or the freeze was not owned
+    /// for the whole read; nothing changed. Retrying any completed operation ID of
+    /// this Layer returns its durable native outcome.
     pub fn capture(
         &mut self,
         repo: &mut Repository,
@@ -746,30 +797,7 @@ impl LinuxLayerRuntime {
                 .read_record(&slot, layer)?
                 .ok_or_else(|| Error::InvalidInput("Layer was discarded".into()))?;
         }
-        if record.pending.is_none() {
-            if let Some(last) = record
-                .last
-                .as_ref()
-                .filter(|l| l.operation == operation.as_str())
-            {
-                // A completed capture retried after a lost reply returns its outcome.
-                let state = usize::try_from(last.revision)
-                    .ok()
-                    .and_then(|r| repo.layer_history(layer).ok()?.into_iter().nth(r))
-                    .ok_or_else(|| {
-                        Error::CorruptRepository("completed capture missing from history".into())
-                    })?;
-                let update = if last.applied {
-                    LayerUpdate::Applied { state }
-                } else {
-                    LayerUpdate::Stale { state }
-                };
-                return Ok(CaptureOutcome {
-                    update,
-                    changed_paths: last.changed_paths,
-                    unrepresented_directories: last.unrepresented.clone(),
-                });
-            }
+        if record.pending.is_none() && self.durable(repo, layer, operation, false)?.is_none() {
             if mount_state(&self.root.join("views").join(&slot))?.is_none() {
                 return Err(Error::InvalidInput("Layer view is not mounted".into()));
             }
@@ -790,6 +818,10 @@ impl LinuxLayerRuntime {
         record: &mut ViewRecord,
         operation: &OperationId,
     ) -> Result<CaptureOutcome> {
+        if let Some((checkpoint, update)) = self.durable(repo, layer, operation, false)? {
+            let changed = repo.read_checkpoint(checkpoint)?.changes().entries().len();
+            return self.settle_capture(slot, record, update, changed, Vec::new(), true);
+        }
         match mount_state(&self.root.join("views").join(slot))? {
             None => self.mount_view(slot, record, true)?,
             Some(false) => {
@@ -798,13 +830,20 @@ impl LinuxLayerRuntime {
             Some(true) => {}
         }
         let attempt = (|| {
-            let upper = parse_upper(&self.helper("list", &["view", slot])?)?;
+            let (epoch, upper) = parse_upper(&self.helper("list", &["view", slot])?)?;
             #[cfg(test)]
             crate::repository::test_boundary("capture_listed");
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
             let base = repo.read_manifest(opened.base().manifest())?;
             let view = self.root.join("views").join(slot);
             let snap = snapshot(&view, &upper, opened.manifest(), &mut |b| repo.put_blob(b))?;
+            // Every mutating helper verb advances the epoch, so equality proves no
+            // thaw, remount or unmount happened between the listing and the last read.
+            if self.epoch()? != epoch {
+                return Err(Error::Busy(
+                    "view was thawed or remounted during capture".into(),
+                ));
+            }
             let changes = complete_changes(&base, &snap.entries)?;
             let expected = self.head(repo, layer, record)?;
             Ok((changes, snap.unrepresented, expected))
@@ -812,63 +851,36 @@ impl LinuxLayerRuntime {
         let (changes, unrepresented, expected) = match attempt {
             Ok(values) => values,
             Err(error) => {
-                // No native call happened in this attempt. An earlier crashed attempt
-                // can only matter if it advanced the head; otherwise thaw so the user
-                // can repair the view instead of staying frozen behind a retry.
-                let unadvanced = repo
-                    .layer_history(layer)
-                    .is_ok_and(|h| h.len() as u64 == record.revision + 1);
-                if certain(&error) || unadvanced {
-                    record.pending = None;
-                    self.write_record(slot, record)?;
-                    self.helper("thaw", &["view", slot])?;
-                }
+                // No native attempt exists for this operation (checked above under
+                // the runtime lock), so nothing committed: thaw and keep the edits.
+                record.pending = None;
+                self.write_record(slot, record)?;
+                self.ensure_thawed(slot)?;
                 return Err(error);
             }
         };
         let update = match repo.capture_layer(operation, &expected, &changes) {
             Ok(update) => update,
             Err(error) => {
+                // Uncertain storage errors stay frozen; the retry consults the
+                // durable native record before recomputing anything.
                 if certain(&error) {
                     record.pending = None;
                     self.write_record(slot, record)?;
-                    self.helper("thaw", &["view", slot])?;
+                    self.ensure_thawed(slot)?;
                 }
                 return Err(error);
             }
         };
         #[cfg(test)]
         crate::repository::test_boundary("capture_committed");
-        if let LayerUpdate::Applied {
-            state: LayerState::Active { head },
-        } = &update
-        {
-            record.revision = head.revision();
-            record.head = head.checkpoint().object().to_string();
-        }
-        record.pending = None;
-        record.last = Some(Completed {
-            operation: operation.as_str().into(),
-            applied: matches!(update, LayerUpdate::Applied { .. }),
-            revision: match &update {
-                LayerUpdate::Applied { state } | LayerUpdate::Stale { state } => {
-                    state_revision(state)
-                }
-            },
-            changed_paths: changes.entries().len(),
-            unrepresented: unrepresented.clone(),
-        });
-        self.write_record(slot, record)?;
-        self.helper("thaw", &["view", slot])?;
-        Ok(CaptureOutcome {
-            update,
-            changed_paths: changes.entries().len(),
-            unrepresented_directories: unrepresented,
-        })
+        let changed = changes.entries().len();
+        self.settle_capture(slot, record, update, changed, unrepresented, false)
     }
 
     /// Terminal native discard, then bounded removal of this view's private storage.
     /// A busy view refuses before any state changes. World and siblings are untouched.
+    /// A view bound to a stale head gets `Stale` back and keeps its edits.
     pub fn discard(
         &mut self,
         repo: &mut Repository,
@@ -909,9 +921,13 @@ impl LinuxLayerRuntime {
         operation: &OperationId,
     ) -> Result<LayerUpdate> {
         self.helper("unmount-view", &[slot])?;
-        let update = self
-            .head(repo, layer, record)
-            .and_then(|expected| repo.discard_layer(operation, &expected));
+        let update = match self.durable(repo, layer, operation, true) {
+            Ok(Some((_, update))) => Ok(update),
+            Ok(None) => self
+                .head(repo, layer, record)
+                .and_then(|expected| repo.discard_layer(operation, &expected)),
+            Err(error) => Err(error),
+        };
         let update = match update {
             Ok(update) => update,
             Err(error) => {
@@ -1342,15 +1358,63 @@ mod tests {
     }
 
     #[test]
+    fn native_attempt_rows_decide_whether_operations_committed() {
+        let (_d, mut repo) = repo();
+        let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+        let layer = LayerId::parse("work").unwrap();
+        let head = repo.create_layer(&layer, &base).unwrap();
+        let capture = OperationId::parse("capture").unwrap();
+        assert!(repo.layer_operation(&capture).unwrap().is_none());
+        let changes = SparseChanges::new([(
+            path("f"),
+            Some(FileEntry::Regular {
+                content: repo.put_blob(b"x").unwrap(),
+                executable: false,
+            }),
+        )])
+        .unwrap();
+        let applied = repo.capture_layer(&capture, &head, &changes).unwrap();
+        let (owner, discard, checkpoint, update) = repo.layer_operation(&capture).unwrap().unwrap();
+        assert_eq!(
+            (owner, discard, update),
+            (layer.clone(), false, applied.clone())
+        );
+        assert_eq!(
+            repo.read_checkpoint(checkpoint).unwrap().changes(),
+            &changes
+        );
+        // A stale attempt is durable too and keeps its exact original outcome.
+        let stale_op = OperationId::parse("stale").unwrap();
+        let stale = repo.capture_layer(&stale_op, &head, &changes).unwrap();
+        assert!(matches!(stale, LayerUpdate::Stale { .. }));
+        assert_eq!(repo.layer_operation(&stale_op).unwrap().unwrap().3, stale);
+        let LayerUpdate::Applied {
+            state: LayerState::Active { head: next },
+        } = applied
+        else {
+            panic!("capture not applied")
+        };
+        let discard_op = OperationId::parse("discard").unwrap();
+        let discarded = repo.discard_layer(&discard_op, &next).unwrap();
+        let found = repo.layer_operation(&discard_op).unwrap().unwrap();
+        assert!(found.1);
+        assert_eq!(found.3, discarded);
+    }
+
+    #[test]
     fn records_reject_unknown_fields() {
         let json = r#"{"format":1,"layer":"a","opened":"x","lowers":[],"revision":0,"head":"x","pending":null,"extra":1}"#;
         assert!(serde_json::from_str::<ViewRecord>(json).is_err());
         let parsed = parse_upper(
-            r#"{"entries":[{"path":"612f62","kind":"file"},{"path":"63","kind":"whiteout"}]}"#,
+            r#"{"epoch":7,"entries":[{"path":"612f62","kind":"file"},{"path":"63","kind":"whiteout"}]}"#,
         )
         .unwrap();
-        assert_eq!(parsed, HashSet::from([b"a/b".to_vec()]));
-        assert!(parse_upper(r#"{"entries":[{"path":"6","kind":"file"}]}"#).is_err());
+        assert_eq!(parsed, (7, HashSet::from([b"a/b".to_vec()])));
+        assert!(parse_upper(r#"{"epoch":1,"entries":[{"path":"6","kind":"file"}]}"#).is_err());
+        assert!(
+            parse_upper(r#"{"entries":[]}"#).is_err(),
+            "listing without epoch"
+        );
     }
 
     #[test]
