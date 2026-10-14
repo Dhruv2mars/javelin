@@ -1,7 +1,9 @@
 # macOS sparse Layer backend attempt
 
-Status: bounded hosted attempt complete. Results below come only from downloaded run archives.
-This document does not claim CLI, native database binding, autosave, Gate 2 or GA.
+Status: bounded hosted feasibility evidence collected. The hub has not promoted
+this implementation as the macOS backend or accepted Gate 2.
+Results below come from downloaded run archives. Source findings and untested
+capabilities are listed separately. CLI, native database binding, autosave and GA remain open.
 
 ## Source and dependencies
 
@@ -61,7 +63,8 @@ FSKit sources:
 
 NFS sources: the [`nfsserve`](https://github.com/huggingface/nfsserve) README and
 `src/vfs.rs` (trait and macOS `mount_nfs` example), and local `man mount_nfs`.
-Whether FSEvents delivers events for NFS volumes was UNCONFIRMED before the run.
+FSEvents delivery on NFS remains UNCONFIRMED. The attempt exercised Bun `fs.watch`
+and an explicit kqueue check, without an FSEvents API test.
 
 ## Selected design
 
@@ -81,7 +84,8 @@ Layer gives independent kill and remount, and a lock file per Layer.
   whose server holds its lock. Hard links are unsupported by `nfsserve`.
 
 On the hosted runner, the base is owned by `root:wheel`, so the server user cannot
-write it. Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft,rdirplus`.
+write it. Mounting requires `sudo -n /sbin/mount_nfs`; this is not a non-admin setup proof.
+Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft,rdirplus`.
 `rdirplus` is required: `nfsserve` 0.11.0 ignores the cookie for plain READDIR.
 
 ## Run
@@ -115,22 +119,38 @@ The first run's stale handles came from a rename bookkeeping bug that stored the
 renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.
 The first run's watch failure did not recur; its cause is UNCONFIRMED.
 
-### Loopback NFS sparse overlay: VERIFIED for the bounded fixture
+### Loopback NFS sparse overlay: bounded fixture evidence
 
-Run 38507420049 passed all 19 required checks with zero cleanup errors, and 25 local tests
-passed on the runner. Run 38506206609 on `1c503a2` produced the same check results:
+Run 38507420049's `nfs/summary.json` contains 19 entries: 18 required checks are
+VERIFIED and one common-probe clone check is INCONCLUSIVE. `attempt.mjs` excludes
+that clone check by design when computing its aggregate VERIFIED verdict.
+Cleanup reports no remaining mounts, servers or errors. The runner's trait-level
+suite reports 25 passed tests and two ignored child-test entry points.
+These results establish bounded feasibility, not backend correctness or Gate 2 acceptance.
+
+The raw mounted fixture records the following results:
 
 - Real `nfs` mounts of three Layers over one `root:wheel` base the server user cannot write.
-- The pinned probe's complete report: reads, in-place writes, create, atomic-save
+- Ten behavior checks in the pinned common probe are VERIFIED: reads, in-place writes, create, atomic-save
   rename, delete, directory rename, traversal, relative symlink, Bun `fs.watch`,
   `cc` build and run, independent process writes, writer SIGKILL interruption,
-  and final base and peer integrity. Its own clone check is INCONCLUSIVE by design
-  in paths mode; it exited 1 only for that reason.
-- kqueue `NOTE_WRITE` on a mounted directory.
+  and final base and peer integrity. Its eleventh check, clone, is INCONCLUSIVE
+  in paths mode. The complete report has `behaviorVerdict: INCONCLUSIVE` and exit 1.
+  Its separate `pathBoundary` is NOT VERIFIED: an absolute symlink read a sibling
+  view. Its four contract checks are INCONCLUSIVE. Report completeness does not
+  mean the entire probe passed.
+- Bun `fs.watch` with a fresh top-level watcher per operation and kqueue
+  `NOTE_WRITE` on a mounted directory. FSEvents, recursive watching and event
+  ordering remain untested.
 - Busy-Layer clone refusal; quiescent clone after unmount, identical remount and
   independent divergence, including a compiler run in the clone.
-- Server SIGKILL with the mount active, forced unmount, restart and remount keep fsynced state.
-- Storage: the base digest is unchanged. Layers B and C hold no private files.
+- Server SIGKILL with the mount active, followed by forced unmount, restart and
+  remount, keeps the fixture's fsynced state. The attempt does not test continued
+  I/O through the same mount or existing open handles after restart.
+- Storage: the base digest is unchanged. B wrote a compiler output and a concurrent
+  file, then removed them, so it has zero private file bytes at the end. C was
+  untouched and has zero private file bytes. This is an end-state measurement,
+  not proof that B never created private state.
   A holds 8,263 private bytes against an 8,339-byte base, and the clone holds 8,245.
   Unchanged `main.c` was never copied. A 1-byte write copied the whole 8,192-byte
   `bytes.bin`, and the directory rename materialized `renamed-dir/nested.txt`.
@@ -154,8 +174,8 @@ passthrough sample is not sparse, so a future FSKit mount would need its own ove
 
 ## Review
 
-Independent read-only review used `gpt-6.1-sol` at high effort over six rounds.
-Every fix has a regression that fails when the fix is reverted.
+Earlier read-only review used `gpt-6.1-sol` at high effort over six rounds.
+Those rounds and their regressions do not close the gaps found by the hub audit below.
 
 - r1 on `25033c0`: four P1 and seven P2 issues. Nine were fixed in `1c503a2`:
   rename ordering, symlink-handle writes, CREATE truncation, probe completeness,
@@ -164,21 +184,68 @@ Every fix has a regression that fails when the fix is reverted.
 - r2 to r5: stale or misdirected handles and whiteout memory when a sync or
   persistence step failed after a rename or delete, plus relative clone paths and
   partial clone rollback. Fixed in `84f3402`, `96a28bc`, `1a6b774` and `39a065b`.
-- r6 on `39a065b`: no blocking issue. It swept every NFS operation for errors
+- r6 on `39a065b` reported no blocking issue within its review scope. It swept every NFS operation for errors
   that leave handles or whiteouts inconsistent with disk. Mounted I/O failure
   injection was not exercised.
 
-## Limits
+The hub's independent audit of `39a065b`, staged at
+`/tmp/javelin-hub-audit-pr11`, found evidence overclaims and correctness/setup gaps.
+This docs-only correction checks the raw `nfs/summary.json`, `nfs/probe-paths.json`,
+`nfs/commands.jsonl`, `environment.log` and `cargo.log` in artifact `11868946498`
+against the source. All seven component file hashes in `environment.log` match
+the unchanged local component. The audit recommends bounded feasibility after
+these corrections; the hub still owns acceptance.
 
-- The hosted work volume is case-insensitive. Different spellings of one name can
-  bypass a whiteout or receive separate handles. Production needs case-sensitive
-  backing storage or consistent name resolution.
-- `nfsserve` 0.11.0 drops the plain READDIR cookie; large directories need `rdirplus`.
-- Copy-up is per file. A small write to a large base file copies the whole file.
-- An interruption after a rename moves private bytes, before whiteouts persist,
-  can re-expose the old base name as a duplicate. Data is not lost.
-- One process serves one Layer under a global lock. Throughput was not measured.
+## Limits and next units
+
+These gaps remain open in the tested source. This correction changes no backend
+code and runs no new mounted attempt. Source findings below come from
+`tools/macos-sparse-backend/src/lib.rs`, `src/main.rs`, `attempt.mjs`, and the
+locked `nfsserve` 0.11.0 source. They are not new hosted runtime proofs.
+
+- Restart changes `nfsserve`'s handle generation and resets the overlay's in-memory
+  file IDs. Existing handles on the same mount become stale and I/O can return
+  ESTALE. `vfs.rs` derives the generation from startup time; `Overlay::open`
+  recreates the ID maps. The recorded kill proof forcibly unmounts and remounts.
+  Same-mount recovery is an unresolved correctness unit.
+- The fixture requires sudo for mounting, unmounting and base ownership. Normal
+  user setup remains an unresolved unit. Passwordless sudo on this runner does
+  not establish that setup on a developer Mac.
+- Loopback binding does not isolate local users. `nfsserve` parses AUTH_UNIX but
+  does not enforce its identity in the NFS operations. Its ACCESS handler returns
+  requested rights for this read-write export. Any local user who connects to
+  the port can access the Layer under the server process's OS permissions.
+  Authentication and permission enforcement remain unresolved correctness work.
+- The hosted work volume is case-insensitive. `base_visible` compares exact path
+  spellings while APFS accepts case and Unicode-normalization aliases. An alias
+  can bypass a whiteout and re-expose a deleted base entry or receive a separate
+  handle. Consistent name resolution is an unresolved correctness unit. The raw
+  host check measures case sensitivity only; normalization behavior was not
+  exercised by the mounted fixture.
+- `nfsserve` drops the plain READDIR cookie, so the fixture uses `rdirplus`.
+  The overlay's paginated listing also returns `NFS3ERR_BAD_COOKIE` if the entry
+  identified by the resume cookie has been removed. Listing during mutation
+  remains unresolved even with `rdirplus`.
+- Overlay filesystem operations hold one global mutex across filesystem I/O. Each WRITE calls
+  `sync_data`, and copy-up calls `sync_all`. Writes copy the whole base file,
+  including before a truncate through `setattr` or CREATE. Throughput, latency
+  and large-file cost are unmeasured.
+- `add_whiteouts` clones, serializes and replaces the entire whiteout set for
+  each new deletion. Mass deletion of N base entries has O(N²) cumulative work
+  in the number of entries, before path-length and tree-operation costs.
+- Delete persists a whiteout before removing an upper entry, and `locate` prefers
+  the upper entry over that whiteout. A crash between these steps can leave the
+  file visible after restart and lose the intended delete. Rename interruption
+  before whiteout persistence can also re-expose the old base name. Crash-safe
+  mutation recovery remains unresolved; the current kill fixture does not
+  exercise either window.
+- `nfsserve` returns RPC procedure-unavailable for LINK and COMMIT. Directory
+  rename copies the visible subtree. Hard links are unsupported; xattrs, ACLs
+  and FSEvents compatibility are unverified.
 - Product integration, automatic checkpoints, native storage and the CLI are absent.
 - The NFS client and server are on one host. Remote NFS, sleep and network loss are untested.
-- Directory rename materializes its subtree. Hard links, xattrs and ACLs are unsupported.
-- Whiteouts and copy-ups survive process kill. Power loss is untested.
+- The selected process-kill and trait-level crash fixtures cover only their
+  recorded operations. Power loss and mounted I/O failure injection are untested.
+
+The hub commissions the next disposable-host unit after this handoff. These
+correctness and setup gaps are work to scope and verify, not fixes made by this PR head.

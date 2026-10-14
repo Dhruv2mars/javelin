@@ -461,12 +461,30 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - [x] Run bounded disposable hosted macOS attempts and archive raw evidence:
   runs `38505212596` (NOT VERIFIED, rename bug), then `38505779476`, `38506206609`
   and `38507420049` (VERIFIED). Artifact `11868946498` expires 2026-10-28.
-- [x] VERIFIED bounded fixture: real NFS sparse Layers at tested source `39a065b`
-  pass the pinned PR #5 probe plus clone, kill-recovery, storage and cleanup checks.
+- [x] Collect bounded real-NFS fixture evidence at tested source `39a065b`: ten
+  pinned PR #5 behavior checks are VERIFIED; common probe overall INCONCLUSIVE,
+  exit 1, clone INCONCLUSIVE by design, pathBoundary NOT VERIFIED. The collector
+  has 19 entries: 18 required VERIFIED checks plus the excluded INCONCLUSIVE clone.
+  Separate quiescent clone, forced-unmount/remount recovery, storage and cleanup
+  checks are VERIFIED for the fixture. Watching covers fs.watch and kqueue only.
+  B wrote and cleaned private files; C was untouched; both ended at zero private bytes.
 - [x] FSKit INCONCLUSIVE: ad-hoc sample registered and elected, mount exit 69,
   `Module … is disabled!`. Missing per-user enablement and paid-team profile.
-- [x] Independent review r1 to r6 (`gpt-6.1-sol` high): all blocking findings fixed with
-  regressions; r6 on `39a065b` reports no blocking issue.
+- [x] Earlier independent review r1 to r6 (`gpt-6.1-sol` high): fixes and regressions
+  recorded; r6 reported no blocking issue in its scope. Hub audit later found
+  unresolved correctness/setup gaps; the earlier review does not close them.
 - [x] Hub handoff.
-- [ ] Open: case-insensitive host volume, plain READDIR cookie in `nfsserve`, per-file
-  copy-up, native storage binding, automatic checkpoints, CLI, product Gate 2.
+- [x] Verify docs-only audit correction against `/tmp/javelin-hub-audit-pr11` raw
+  artifact `11868946498` and tested code; all seven archived component hashes match.
+- [x] Push corrected docs/TASKS-only head without a cloud rerun and send exact
+  source/diff scope to the hub. Backend and Gate 2 have not been promoted.
+- [ ] Next correctness units: same-mount restart/open-handle ESTALE; AUTH_UNIX and
+  ACCESS enforcement against other local users; APFS case/normalization whiteout
+  aliases; crash after persisted whiteout but before upper removal can lose delete;
+  rename crash window; paginated cookies fail when the resume entry is removed.
+- [ ] Next setup/capability units: sudo mount requirement and normal-user setup;
+  LINK/COMMIT unsupported; xattrs, ACLs and FSEvents unverified.
+- [ ] Next cost units: global mutex across I/O; sync per WRITE; whole-file copy-up
+  even before truncation; directory-rename copy; O(N²) whiteout mass deletion.
+- [ ] Open integration: native storage binding, automatic checkpoints, CLI,
+  product Gate 2 and GA. Power loss, mounted I/O failure injection and scale untested.
