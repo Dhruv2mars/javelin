@@ -209,3 +209,29 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Workstream: review and permission model
+
+Owner: review-permission-model thread, draft PR against `feat/native-layer-checkpoints`.
+Source: worktree starts at exact `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`
+(hub-accepted Layer state dependency, not merged). This PR depends on that
+unmerged base and cannot claim independent acceptance.
+Owned paths: `crates/javelin-collaboration/**`, `docs/review-permission-model.md`,
+`.github/workflows/review-permission-model.yml`, and this section.
+
+Done means: a pure deterministic Rust library (own Cargo.lock, empty `[workspace]`,
+path dependency on the root crate) with no SQLite, HTTP, identity provider,
+durable store, or World advance; tests exercise a real repository-backed revision
+reference, author takeover refusal, approval invalidation on code/context/base change,
+role, revocation, and public-contributor limits, operation-ID retry binding, stale
+expected revisions, reordered commands, and immutable comment/revision history;
+fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
+
+- [x] Read worktree and root instructions, contract, decisions, and public core API.
+- [ ] Open and register exactly one draft PR; report plan to the hub.
+- [ ] Compare at least two caller API candidates with an architecture review.
+- [ ] Implement the selected state machine and `check_publishable`.
+- [ ] Add behavior tests with a repository-backed fixture and property tests.
+- [ ] Add the three-OS workflow and inspect actual hosted artifacts.
+- [ ] Run an independent read-only review and fix material findings.
+- [ ] Hand off exact tested source, scopes, and retained limits to the hub.
