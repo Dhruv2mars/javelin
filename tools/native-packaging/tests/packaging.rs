@@ -357,8 +357,12 @@ fn archive_bytes_are_deterministic_for_the_same_binary_and_epoch() {
                 ),
                 (2026, 6, 9, 10, 13, 20)
             );
-            let mode = file.unix_mode().unwrap() & 0o777;
-            assert!(matches!(mode, 0o755 | 0o644), "{mode:o}");
+            // zip records the writing host as DOS on Windows, so unix modes are not
+            // meaningful there (and executable bits do not exist on Windows).
+            if !cfg!(windows) {
+                let mode = file.unix_mode().unwrap() & 0o777;
+                assert!(matches!(mode, 0o755 | 0o644), "{mode:o}");
+            }
             count += 1;
         }
     } else {
