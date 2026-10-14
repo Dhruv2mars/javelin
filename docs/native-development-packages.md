@@ -172,5 +172,62 @@ cargo test --locked --manifest-path tools/native-packaging/Cargo.toml
 
 ## Evidence
 
-Pending hosted run. Results, exact tested source, artifact names, and retained limits
-are recorded here after the three-OS jobs finish.
+Tested source: `b0383ff52658618ed840d9b5449eea892fa4f337` on PR #17, based on accepted
+`e56fc86`. Relative to `e56fc86` the branch changes only this document, `TASKS.md`,
+`.github/workflows/native-packaging.yml`, and `tools/native-packaging/**`; root
+`Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, and `LICENSE` are byte-identical (checked
+with a file-level diff). Later commits on the PR are documentation or `TASKS.md` only.
+
+Hosted run: https://github.com/Dhruv2mars/javelin/actions/runs/38507762765, all six jobs
+succeeded (three `Package`, three `Download smoke`). Artifacts expire 2026-10-28:
+`native-package-<os>` (archive and `.sha256`), `native-packaging-logs-<os>-1`,
+`native-download-smoke-logs-<os>-1`. An earlier run failed on Windows twice for test
+assumptions (a gzip-only archive-metadata test, then zip unix-mode bits that do not
+exist for Windows-written zips); both were test fixes with no product change.
+
+| | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| Runner image | `ubuntu24` 20261004.327.1 | `macos15` 20260907.0337.1 | `win25-vs2026` 20260925.250.1 |
+| Architecture, target | X64, `x86_64-unknown-linux-gnu` | ARM64, `aarch64-apple-darwin` | X64, `x86_64-pc-windows-msvc` |
+| Toolchain | rustc/cargo 1.99.0 | same | same |
+| Archive | `.tar.gz` | `.tar.gz` | `.zip` |
+| Packager tests (real CLI) | 16 passed | 16 passed | 15 passed, 1 Unix-only test not compiled |
+| Package job `install` + `smoke` | 18 checks passed | 18 passed | 18 passed |
+| Download job: native checksum then native extract (`tar`/`Expand-Archive`), smoke | 18 passed | 18 passed | 18 passed |
+| Download job: packager `install` of the same download, smoke | 18 passed | 18 passed | 18 passed |
+| Binary-declared floor (informational) | glibc symbol version up to 2.34 | `minos 11.0` | not inspected |
+| Two-directory rebuild identical | **yes** (`8f1832...`) | **yes** (`fdfb14...`) | **no** |
+
+Independent hash cross-check, done outside CI on the downloaded artifacts: all three
+`.sha256` files verify with `shasum -a 256 -c`; the Linux archive's `PACKAGE.json`,
+extracted binary hash, and shipped `LICENSE` match (`LICENSE` is byte-identical to the
+repository file); the Windows zip's `PACKAGE.json` binary hash equals the hash of the
+extracted `javelin.exe` and the download job's smoke hash.
+
+### Verdicts
+
+| Scope | Verdict |
+| --- | --- |
+| Packager builds the locked release CLI on Linux x86_64, macOS arm64, Windows x86_64 and packages archive, checksum, manifest, licenses | VERIFIED (run above) |
+| Clean-temp install into a fresh path, with checksum verification and rejection of tampered, traversing, linked, duplicate, oversized archives | VERIFIED on all three OS by the packager tests; hostile-archive fixtures use crafted tar and zip, not external tools |
+| Downloaded artifact verified with OS-native checksum and extraction tools, then smoked through `PATH` in a new non-Git project | VERIFIED on all three OS |
+| `init`/`history`/`check` JSON success, damaged-storage exit 1, preexisting binary bytes preserved | VERIFIED on all three OS for the packaged binary |
+| Git never invoked by the packaged CLI during smoke | VERIFIED on all three OS with a validated `git` shim; the negative fixture (a binary that does call Git) runs on Unix only, so Windows shim sensitivity is shown only by its positive probe |
+| Side-by-side install, upgrade, rollback of the minimal development binary | VERIFIED on all three OS (test), development binary only |
+| Release binary excludes test hooks | VERIFIED by marker scan of all three release binaries plus refusal regression; marker strings are a proxy for the compiled-out hook code |
+| Reproducible binary | VERIFIED identical on Linux and macOS for two directories on one runner each; **NOT reproducible on Windows** (two rebuilds differ in 24 bytes starting at offset 264 of 2,245,632, in the PE header region; the packaged Windows binary differs from both). Determinism is not claimed for Windows, across runners, or across toolchains |
+| Deterministic archive layer | VERIFIED by test for identical input; does not imply a reproducible binary |
+| Minimum OS versions, other architectures (Linux arm64, macOS x86_64, Windows arm64) | NOT VERIFIED / unconfirmed |
+| Public release, signing, provenance attestation, npm or GitHub release, upgrade across real versions, Gate 5 | NOT VERIFIED; not attempted |
+| Content-level corruption detection by the packaged CLI | NOT VERIFIED here; the smoke damages SQLite pages only |
+
+### Retained limits
+
+- Development distribution proof only. No signed or published artifact exists.
+- The CLI has no `--version`; the binary is identified by hash and `PACKAGE.json`.
+- Each OS was tested on one hosted image; older and newer OS releases are untested.
+- The Windows destination claim-and-rename is not atomic against a concurrent writer.
+- The Git shim is the packager copied to `git[.exe]`; it detects a spawned `git`
+  found through the child's `PATH`, not Git linked as a library.
+- Third-party notices come from `Cargo.lock` metadata and crate sources and are not a
+  legal audit; the notices list is a conservative superset including proc-macro crates.

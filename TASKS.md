@@ -214,16 +214,16 @@ unverified. No source changes were made.
 
 - [x] Read `AGENTS.md`, `RTK.md`, root `TASKS.md`, `docs/build-contract.md`, and `decisions.tsv`.
 - [x] Open the draft PR, link it to T3 Code, and report PR, planning SHA, and owned paths to the hub.
-- [ ] Compare archive and installer shapes; select the simplest per-OS caller API (see `docs/native-development-packages.md`).
-- [ ] Inspect dependencies and license obligations; ship the actual `LICENSE` plus generated third-party notices.
-- [ ] Build the release CLI from the accepted source with `--locked --release` and no test hooks.
-- [ ] Package `tar.gz` (Linux, macOS) and `zip` (Windows) with `SHA256` and a manifest naming source SHA, toolchain, dependency hashes, target triple, and development/pre-GA channel.
-- [ ] Install with checksum verification, owned temporary extraction, and a rename into a fresh path; reject tampered, traversing, absolute, symlink, and duplicate entries.
-- [ ] Smoke the unpacked binary through `PATH` in a new non-Git project: `init`, `history`, `check` JSON, corruption exit code, preexisting binary bytes preserved.
-- [ ] Test side-by-side install, upgrade, and rollback of the minimal development binary only.
-- [ ] Attempt a reproducible build twice with `--remap-path-prefix` and `SOURCE_DATE_EPOCH`; record the outcome without claiming determinism it does not show.
-- [ ] Run all three OS jobs; download the artifacts on a second job and smoke them with native tools; inspect raw logs.
-- [ ] Obtain independent read-only review; add defect-detecting regressions; record limits.
+- [x] Compare archive and installer shapes; select the simplest per-OS caller API (see `docs/native-development-packages.md`).
+- [x] Inspect dependencies and license obligations; ship the actual `LICENSE` plus generated third-party notices.
+- [x] Build the release CLI from the accepted source with `--locked --release` and no test hooks.
+- [x] Package `tar.gz` (Linux, macOS) and `zip` (Windows) with `SHA256` and a manifest naming source SHA, toolchain, dependency hashes, target triple, and development/pre-GA channel.
+- [x] Install with checksum verification, owned temporary extraction, and a rename into a fresh path; reject tampered, traversing, absolute, symlink, and duplicate entries.
+- [x] Smoke the unpacked binary through `PATH` in a new non-Git project: `init`, `history`, `check` JSON, corruption exit code, preexisting binary bytes preserved.
+- [x] Test side-by-side install, upgrade, and rollback of the minimal development binary only.
+- [x] Attempt a reproducible build twice with `--remap-path-prefix` and `SOURCE_DATE_EPOCH`; record the outcome without claiming determinism it does not show.
+- [x] Run all three OS jobs; download the artifacts on a second job and smoke them with native tools; inspect raw logs.
+- [x] Obtain independent read-only review; add defect-detecting regressions; record limits.
 - [ ] Hand off the exact tested source, doc-only head, proofs, VERIFIED/NOT VERIFIED/INCONCLUSIVE scopes, and limits to the hub.
 
 Owner: thread `t3-thread://v1/mcp:6ebbed40-380a-4bc8-8330-96e51b8c89e4`.
@@ -239,3 +239,13 @@ release CLI, produce archive plus checksum plus manifest, and a separate job
 downloads each artifact, verifies the checksum, extracts into a fresh path, and
 runs the `PATH` smoke above Git-free. The result is a development distribution
 and clean-temp installation proof, not a public release or Gate 5.
+
+Evidence (see `docs/native-development-packages.md`): tested source
+`b0383ff52658618ed840d9b5449eea892fa4f337`, hosted run
+https://github.com/Dhruv2mars/javelin/actions/runs/38507762765, six jobs green.
+Archives, checksums, native-tool download smoke, and packager install smoke are
+VERIFIED on Linux x86_64, macOS arm64, and Windows x86_64. Binary reproducibility is
+VERIFIED identical on Linux and macOS and NOT reproducible on Windows. Minimum OS
+versions, other architectures, signing, publishing, and Gate 5 remain unverified.
+Independent review r1 (gpt-6.1-sol) found six issues, all fixed with regressions; a
+follow-up review is recorded in the doc when complete.
