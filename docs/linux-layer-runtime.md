@@ -89,7 +89,7 @@ view, not host-wide `fsfreeze`, lazy detach or forced unmount.
 
 ```rust
 // Linux only. The helper is a root-owned executable invoked as `sudo -n <helper>`.
-let helper = LayerMountHelper::sudo("/usr/local/libexec/javelin/javelin-linux-layer-helper")?;
+let helper = LayerMountHelper::sudo("/usr/libexec/javelin-ci/javelin-linux-layer-helper")?;
 let mut runtime = LinuxLayerRuntime::open(&repo, runtime_root, helper)?;
 let path = runtime.mount(&mut repo, &layer)?;          // ordinary path for tools
 match runtime.capture(&mut repo, &layer, &operation)? { // owned frozen boundary
@@ -143,3 +143,143 @@ mount tests as the ordinary runner user, runs the unchanged common probe pinned 
 uploads raw inventories, mount tables, commands and source hashes.
 
 Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope.
+
+## Implementation
+
+- `src/bin/javelin-linux-layer-helper.rs` is the bounded root helper. It requires
+  real and effective UID 0 plus a non-root `SUDO_UID/SUDO_GID`, validates every
+  ancestor as root-owned and not group/other writable, checks the exact layout,
+  owners and modes against a root-owned owner marker, and accepts only
+  `b|c<64 hex>` cache keys and 64-hex slots. Mounts use `mount(2)` with
+  `MS_NOSUID|MS_NODEV` and the proof's options; freeze/thaw use `MS_REMOUNT` with
+  or without `MS_RDONLY`; unmount uses `umount2(UMOUNT_NOFOLLOW)` without
+  `MNT_DETACH` or `MNT_FORCE`. `EBUSY` exits 3. Upper listing is metadata-only and
+  refused unless the overlay is frozen read-only. Removal only targets hidden
+  stage/view directories with no mounts beneath them.
+- `src/linux_layer.rs` is the ordinary-user runtime: `LayerMountHelper::sudo`
+  accepts only a canonical root-owned helper and `/usr/bin/sudo`;
+  `LinuxLayerRuntime::{init, open, mount, unmount, capture, discard,
+  mount_checkpoint, unmount_checkpoint, status, recover}`. One `flock` per runtime
+  serializes operations and returns `busy` to concurrent callers. `Error::Busy`
+  and `Error::Unsupported` are the only parent API additions, plus a crate-private
+  repository identity accessor used to bind a runtime to one repository.
+- Capture reads the frozen merged view: entries named by the upper listing are
+  hashed from the view (`O_NOFOLLOW`, inode re-check, `readlink` for symlinks);
+  all other entries must equal the opened checkpoint exactly or capture fails as
+  corruption. Absent base paths become exact tombstones. Unsupported entries
+  refuse capture with no native change: special files, setuid/setgid/sticky modes,
+  non-UTF-8 names and names outside the native path model such as `:` or
+  `.javelin`. Only the owner execute bit is represented. Empty directories are
+  reported as `unrepresented_directories` and are not restored in clones.
+- Pre-native errors that are certain (`invalid_input`, `unsupported`,
+  `operation_id_reused`) clear the pending record and thaw. Other errors keep the
+  view frozen with the pending operation so `capture`, `mount` or `recover` retry
+  the identical frozen delta under the same operation ID.
+
+## Trust model and limits
+
+- The helper trusts `sudo` for caller identity and an administrator-written,
+  root-owned `/etc/javelin/linux-layer-parents` for permitted runtime parents.
+  Every helper verb takes a root-only per-runtime lock, so a view cannot be
+  thawed while its frozen upper is listed.
+- Cache content is verified by the ordinary-user library before sealing. The
+  root helper does not re-verify it, so the invoking user's own processes can
+  deliberately seal arbitrary content under a cache key by calling the helper
+  directly. Sealed caches are unreachable for writes afterwards, and other users
+  cannot read views or caches because uppers and cache roots are `0700`. This is
+  protection against accidental tool writes, not against the same user.
+- Ordinary paths provide private copy-up, not a sandbox. Absolute symlinks can
+  reach sibling views, as the common probe records.
+- Copy-up is whole-file: a one-byte edit stores the whole file in the upper and in
+  later checkpoint caches. Capture performs one metadata walk of the view.
+- Directory renames of lower directories fall back to copy because
+  `redirect_dir=nofollow` is kept from the verified proof.
+- Writers that open files during the short frozen window get `EROFS`. Continuous
+  editing during capture, stable-change detection and autosave remain follow-on.
+- If another caller advances a Layer outside the runtime, its view's captures stay
+  stale until it is discarded; re-binding a view to a newer head is follow-on.
+- A retry of a completed discard reports that the view no longer exists; the
+  native `discard_layer` retry returns the original outcome.
+- Caches and retained checkpoint mounts have no collection policy yet.
+- Production installation, a non-sudo privilege model, mount namespaces, other
+  kernels, power loss, network filesystems and scale remain unverified.
+
+## Independent review
+
+A read-only Claude Opus 5.5 (medium effort) review of `34f6312` reported six
+defects and one unconfirmed kernel risk. Fixed in `4c9b894..93f9eaa`:
+
+1. A failed read during capture (for example a `chmod 000` file) kept the view
+   frozen forever and stopped `recover`. Pre-native failures now thaw unless the
+   native head advanced, and `recover` continues past a failing view, reporting it.
+2. A concurrent direct `thaw` could change the upper while root listed it. Every
+   helper verb now holds a per-runtime lock and the listing rechecks the freeze.
+3. Cache sealing trusts the invoking user; documented above.
+4. Views and caches were world-readable. Uppers and cache roots are now `0700`.
+5. `init` accepted any root-owned parent. Parents now come from a root-owned list.
+6. Retrying a completed capture after a lost reply returned `operation_id_reused`.
+   The binding now returns the original outcome.
+7. Shared writable mappings might bypass the freeze on newer kernels. Hosted runs
+   now test this directly: a `MAP_SHARED|PROT_WRITE` mapping whose descriptor was
+   closed made the freeze fail with `EBUSY` on kernel `6.17.0-1022-azure`, so the
+   capture refused. Other kernels remain unverified.
+
+## Hosted evidence
+
+Executable source `93f9eaa00421f3c5efbaac79449bc22699c464b1` (later commits change
+only this document and `TASKS.md`):
+
+- [Linux Layer runtime run 38503434985](https://github.com/Dhruv2mars/javelin/actions/runs/38503434985),
+  attempt 1 job failed: the unchanged common probe's `watch-notifications` check
+  saw no event for `watch-create` within its 2-second window. All other checks
+  passed. Attempt 2, [job 115655951380](https://github.com/Dhruv2mars/javelin/actions/runs/38503434985/job/115655951380),
+  and a dispatched [run 38503753472](https://github.com/Dhruv2mars/javelin/actions/runs/38503753472),
+  job 115656408546, both passed everything. Watch delivery is therefore
+  VERIFIED in 2 of 3 runs, with 1 flake; it is not proven reliable. The previous
+  source `34f6312` also passed in [run 38502015959](https://github.com/Dhruv2mars/javelin/actions/runs/38502015959).
+- Ubuntu 24.04 image `20261004.327.1`, kernel `6.17.0-1022-azure`, x86_64, Rust
+  1.99.0, Bun 1.3.13, ordinary UID 1001. Installed helper SHA-256
+  `6083a828d63956d94e53479f418b699b99c98b8a43e3e24882f31a485b5b3de4`, root:root
+  0755 in a root-owned directory. Common probe source pinned to `19224ef` and its
+  hash checked against the proof's recorded `617f009e…`.
+- Artifacts `11867140370` (`sha256:207b4ace…`) and `11867140559`
+  (`sha256:b5a08b0f…`), expiring 2026-10-28. Each `summary.json` is VERIFIED:
+  4 of 4 gated tests (3 mount tests plus the actor entry), flow, recovery and probe
+  VERIFIED, all mounts removed and the runtime parent deleted. Downloaded copies
+  are in `/tmp/javelin-pr10-run38503434985-final` and
+  `/tmp/javelin-pr10-run38503753472-final` (temporary).
+- [Native run 38503434805](https://github.com/Dhruv2mars/javelin/actions/runs/38503434805):
+  Linux and macOS passed 63 tests and Windows passed 50. Linux ignores five
+  gated or actor entries; macOS and Windows ignore one actor each. Windows does not
+  compile the Unix-only binding.
+
+What the runs prove, against `34f6312` inventories (sizes unchanged in `93f9eaa`):
+
+- Fresh A/B/clone uppers have zero entries. A shared 8,344-byte base cache keeps
+  identical inodes and hashes before capture, after capture, after clone and at
+  the end.
+- The checkpoint cache holds only the 7 changed entries (24,180 bytes, mostly the
+  compiled `app` and the whole-file `bytes.bin` copy-up), plus kernel whiteouts for
+  `delete.txt` and `dir`; untouched `main.c` is absent.
+- Real `sh/mv/dd/rm/chmod/ln/cc/find` edits become an exact native diff: changed
+  bytes, an execute-bit change, a new symlink target, a compiled binary, and
+  per-entry tombstones for a removed directory. An empty directory is reported as
+  unrepresented.
+- A held writer and a shared writable mapping each make capture `busy` with no
+  pending record. Unfrozen listing, unlisted parents, write bypass of an unmounted
+  view (`EACCES`), writes to checkpoint and base views (`EROFS`) and hidden
+  backing traversal (`EACCES`) are all refused.
+- Clones of an older checkpoint after later edits match it exactly and compile 7
+  and 11 independently. Stale external head advances keep edits. Discard removes
+  only the clone's view and storage and keeps World and sibling Layers.
+- Kills before native capture, after native commit, while staging a cache and
+  during discard all recover to exactly one native outcome. Incomplete caches are
+  never selected. A lock-holding capture makes a concurrent caller `busy`.
+- The unchanged common probe reports 10 VERIFIED checks and keeps its caller-path
+  clone check INCONCLUSIVE. Captured probe edits then clone into a separate view
+  (values 9 and 11).
+
+Verdicts: bounded Linux runtime binding VERIFIED on this runner image and kernel.
+File-watch reliability is INCONCLUSIVE (one flake in three runs). The following
+are NOT VERIFIED: other kernels and distributions, the production privilege
+model, autosave, Stack and Publish, macOS/Windows bindings, Gate 2 and GA.

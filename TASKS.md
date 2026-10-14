@@ -221,10 +221,23 @@ No autosave, Stack/Publish, macOS/Windows binding, Gate 2 or GA claim.
 
 - [x] Read instructions, latest hub contract, native Layer state and the read-only Linux proof.
 - [x] Compare three materialization/capture shapes and record caller types and recovery boundaries.
-- [ ] Create planning commit, open and register the single draft PR.
-- [ ] Implement the bounded root mount helper with validated layout, tokens and owners.
-- [ ] Implement the ordinary-user runtime: caches, views, frozen capture, discard, recovery.
-- [ ] Add platform-independent capture/mapping/validation unit tests and local preflight.
-- [ ] Add gated Linux mount/process tests and the hosted runtime workflow with raw evidence.
-- [ ] Inspect actual hosted results and artifacts; record exact executable SHA and verdicts.
+- [x] Create planning commit `e25819c`, open and register the single draft PR [#10](https://github.com/Dhruv2mars/javelin/pull/10).
+- [x] Implement the bounded root mount helper with validated layout, tokens and owners.
+- [x] Implement the ordinary-user runtime: caches, views, frozen capture, discard, recovery.
+- [x] Add platform-independent capture/mapping/validation unit tests and local preflight.
+- [x] Add gated Linux mount/process tests and the hosted runtime workflow with raw evidence.
+- [x] Run an independent read-only review and fix its verified findings (see the doc).
+- [x] Inspect actual hosted results and artifacts; record exact executable SHA and verdicts.
 - [ ] Report PR, source and proof completion to the hub.
+
+Executable source `93f9eaa00421f3c5efbaac79449bc22699c464b1` is VERIFIED for the
+bounded Linux binding in hosted runs 38503434985 (attempt 2) and 38503753472.
+Each reported 4/4 gated tests, flow/recovery/probe VERIFIED and full cleanup.
+Attempt 1 of 38503434985 failed only the unchanged common probe's file-watch check,
+so watch reliability is INCONCLUSIVE (one flake in three runs). Native run
+38503434805 passed 63/63/50 tests on Linux/macOS/Windows. Local Darwin preflight
+passes 63 tests with one ignored actor, plus fmt, Clippy and release build. The
+release binaries contain no test-boundary hooks. Evidence and limits are in
+`docs/linux-layer-runtime.md`. Gate 2 and GA are not claimed. Follow-on work:
+autosave/stable capture, continuous editing during capture, re-binding stale views,
+cache collection, the production privilege model, and macOS/Windows bindings.
