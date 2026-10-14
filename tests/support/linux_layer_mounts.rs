@@ -1291,3 +1291,131 @@ fn init_never_deletes_a_runtime_named_like_staging() {
     ));
     save(&env, "init-names", &json!({"verdict": "VERIFIED"}));
 }
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn replaying_a_foreign_operation_never_rebinds_the_view() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        _source,
+        repo_dir: _repo_dir,
+        ..
+    } = setup(&env, "foreign");
+    sh(&view, "printf 'one\\n' > one.txt", &mut log);
+    applied(&rt.capture(&mut repo, &layer, &op("f-1")).unwrap().update);
+    // Another caller captures natively; its head adds x.txt that this view lacks.
+    let x = FileEntry::Regular {
+        content: repo.put_blob(b"x\n").unwrap(),
+        executable: false,
+    };
+    let changes = SparseChanges::new([(RepoPath::parse("x.txt").unwrap(), Some(x))]).unwrap();
+    applied(
+        &repo
+            .capture_layer(&op("f-ext"), &active(&repo, &layer), &changes)
+            .unwrap(),
+    );
+    let replay = rt.capture(&mut repo, &layer, &op("f-ext"));
+    let bound = rt.status(&repo, &layer).unwrap().bound_revision;
+    sh(&view, "printf 'two\\n' > two.txt", &mut log);
+    let next = rt.capture(&mut repo, &layer, &op("f-2"));
+    let head_has_x = repo
+        .layer_diff(&active(&repo, &layer))
+        .unwrap()
+        .iter()
+        .any(|d| d.path.as_str() == "x.txt");
+    save(
+        &env,
+        "foreign-result",
+        &json!({"replay": format!("{replay:?}"), "boundAfterReplay": bound,
+        "nextCapture": format!("{next:?}"), "headHasX": head_has_x}),
+    );
+    assert!(replay.unwrap().replayed);
+    assert_eq!(bound, 1, "replay of a foreign operation rebound the view");
+    assert!(
+        matches!(next.unwrap().update, LayerUpdate::Stale { .. }),
+        "foreign work overwritten"
+    );
+    assert!(head_has_x);
+    assert_eq!(fs::read(view.join("two.txt")).unwrap(), b"two\n");
+    save(
+        &env,
+        "foreign",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn reused_pending_capture_id_thaws_the_view() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        repo_dir,
+        _source,
+    } = setup(&env, "reused");
+    let other = id("other");
+    let base = repo.layer_base(VersionNumber::new(1).unwrap()).unwrap();
+    let other_head = repo.create_layer(&other, &base).unwrap();
+    sh(&view, "printf 'edit\\n' > edit.txt", &mut log);
+    let mut actor = Actor::spawn(
+        &env,
+        repo_dir.path(),
+        &root,
+        "capture",
+        "A",
+        "shared-id",
+        "capture_frozen",
+    );
+    actor.marker("BOUNDARY capture_frozen");
+    actor.kill();
+    // The pending ID is then used natively for a different Layer.
+    applied(
+        &repo
+            .capture_layer(
+                &op("shared-id"),
+                &other_head,
+                &SparseChanges::new([]).unwrap(),
+            )
+            .unwrap(),
+    );
+    let report = rt.recover(&mut repo).unwrap();
+    let status = rt.status(&repo, &layer).unwrap();
+    save(
+        &env,
+        "reused-result",
+        &json!({"recovery": report, "frozen": status.frozen,
+        "pending": status.pending}),
+    );
+    assert!(
+        !status.frozen && status.pending.is_none(),
+        "reused pending ID left the view frozen"
+    );
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(fs::read(view.join("edit.txt")).unwrap(), b"edit\n");
+    let captured = applied(
+        &rt.capture(&mut repo, &layer, &op("after-reuse"))
+            .unwrap()
+            .update,
+    );
+    assert!(
+        repo.layer_diff(&captured)
+            .unwrap()
+            .iter()
+            .any(|d| d.path.as_str() == "edit.txt")
+    );
+    save(
+        &env,
+        "reused",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}

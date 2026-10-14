@@ -65,7 +65,7 @@ import hashlib, json, os, platform, subprocess, sys
 from pathlib import Path
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 sources = sorted(str(p) for pattern in ["src/**/*.rs", "tests/support/linux_layer_mounts.rs",
-    "tools/linux-layer-runtime/*", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-layer-runtime.yml"]
+    "tools/linux-layer-runtime/*.*", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-layer-runtime.yml"]
     for p in Path(".").glob(pattern))
 probe = Path(os.environ["JAVELIN_COMMON_PROBE"])
 json.dump({
