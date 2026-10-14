@@ -209,3 +209,22 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Workstream: Linux Layer runtime binding
+
+Owns one draft PR targeting `feat/native-layer-checkpoints` at exact native state
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`. Done is the bounded outcome in
+`docs/linux-layer-runtime.md`: real tools edit mounted sparse OverlayFS Layer views,
+owned read-only freeze feeds complete native captures, checkpoints open as sparse
+clones, and restart/busy/cleanup behavior is proven in disposable hosted Linux CI.
+No autosave, Stack/Publish, macOS/Windows binding, Gate 2 or GA claim.
+
+- [x] Read instructions, latest hub contract, native Layer state and the read-only Linux proof.
+- [x] Compare three materialization/capture shapes and record caller types and recovery boundaries.
+- [ ] Create planning commit, open and register the single draft PR.
+- [ ] Implement the bounded root mount helper with validated layout, tokens and owners.
+- [ ] Implement the ordinary-user runtime: caches, views, frozen capture, discard, recovery.
+- [ ] Add platform-independent capture/mapping/validation unit tests and local preflight.
+- [ ] Add gated Linux mount/process tests and the hosted runtime workflow with raw evidence.
+- [ ] Inspect actual hosted results and artifacts; record exact executable SHA and verdicts.
+- [ ] Report PR, source and proof completion to the hub.
