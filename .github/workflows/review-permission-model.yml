@@ -1,8 +1,6 @@
 name: Review permission model
 
 on:
-  push:
-    branches: [feat/review-permission-model]
   pull_request:
     paths:
       - crates/javelin-collaboration/**
@@ -76,7 +74,9 @@ jobs:
           out="$RUNNER_TEMP/review-flow-repo"
           rm -rf "$out" && mkdir -p "$out"
           ./target/release/examples/review_flow "$out" | tr -d '\r' | tee ci-logs/example-output.log
-          diff -u examples/review_flow.expected ci-logs/example-output.log 2>&1 | tee ci-logs/example-diff.log
+          # Checkout may convert the oracle to CRLF on Windows; compare LF text.
+          tr -d '\r' < examples/review_flow.expected > ci-logs/example-expected.log
+          diff -u ci-logs/example-expected.log ci-logs/example-output.log 2>&1 | tee ci-logs/example-diff.log
 
       - name: Retain check logs
         if: ${{ !cancelled() }}
