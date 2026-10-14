@@ -98,8 +98,9 @@ The codec enforces each limit at its boundary:
 - Counts are checked against their limit before decoding. Collections grow only as
   elements decode, so decode memory stays proportional to the received frame.
 - Lengths are checked before bytes are copied.
-- `encode` computes the exact size and checks every count, length, depth and the
-  total before it allocates the output.
+- `encode` computes the size before it allocates the output: exact for every message
+  except Error, where it reserves the maximum detail length. It checks every count,
+  length, depth and the total first.
 
 `tests/alloc.rs` uses a counting allocator to show that each refusal allocates less
 than 4 KiB. Blobs above 8 MiB cannot transfer in version 1; streaming or chunking
@@ -108,12 +109,15 @@ needs a new version.
 These limits bound protocol buffers only. Native reads of objects that are already
 stored are not bounded. Want probes read whole objects. A sender reads each source
 blob before checking its size. A receiver repository that holds a large blob can
-therefore be made to allocate that blob's size by a small Want. This is retained
-API gap 3; the public API has no bounded read or existence check.
+therefore be made to allocate that blob's size by a small Want. A manifest probe holds
+roughly twice the manifest's bytes, the decoded manifest, and the largest blob it
+references. The receiver refuses duplicate Want items, so one frame cannot probe the
+same object repeatedly. Repeated frames and many distinct objects still cost a full
+read each. This is retained API gap 3; the public API has no bounded read or existence check.
 
 ## Receiver rules
 
-- Want probes with the typed public readers. Only `missing_object` for that exact ID
+- Want must not repeat an item. Each item is probed with the typed public readers. Only `missing_object` for that exact ID
   counts as missing. A wrong-kind or corrupt object refuses the session.
 - Blobs are stored with `put_blob`. The returned ID must equal the claim, otherwise
   `id_mismatch`.
@@ -138,11 +142,17 @@ API gap 3; the public API has no bounded read or existence check.
 ## Evidence
 
 Local, macOS arm64, Rust 1.99.0, `cargo test --locked --all-targets` in
-`crates/javelin-protocol`: 20 tests passed, with formatting and Clippy `-D warnings` clean.
+`crates/javelin-protocol`: 21 tests passed, with formatting and Clippy `-D warnings` clean.
 
 Review r1 by Codex `gpt-6.1-sol` (high) on `58fadbf` found no unverified World
 reference. It raised one high, three medium and two low findings. All were addressed
 in this PR, except the high native-read allocation, which is retained as API gap 3.
+Codex's round 2 attempt failed on a provider usage limit before reviewing. Claude
+`claude-opus-5-5` (high) ran round 2 on `d2530fe`. It confirmed responses 2 to 6, the
+23/23 mutation claim and exact encoder sizing. It found duplicate Want probe
+amplification (medium). It also found three low items: a positive control colocated
+with the shim, sizing and memory wording, and stale TASKS counts. All are fixed here.
+The follow-up round was single-model.
 
 - `tests/process.rs` builds two separate repositories and runs the actual binary as
   separate sender and receiver processes. The test only relays frames. It drops the
@@ -165,13 +175,13 @@ in this PR, except the high native-read allocation, which is retained as API gap
   that are not beyond `expected`.
 - `tests/alloc.rs` measures allocation with a counting allocator. Oversize encode,
   decode, frame header and count refusals each allocate less than 4 KiB.
-- `bun scripts/mutate.ts` removes each of 23 protocol guards in turn, and the suite fails
-  for every one. The guards cover:
+- `bun scripts/mutate.ts` removes each of 24 protocol guards in turn. It first requires
+  that the mutant compiles, then requires that the suite fails, and it does so for every one. The guards cover:
   - blob and manifest ID comparisons;
   - decoder count, frame, blob, path and depth limits;
   - encoder total, blob and depth limits;
   - path order, trailing bytes and header truncation;
-  - required negotiation, version refusal and Want kind separation;
+  - required negotiation, version refusal, Want kind separation and duplicate refusal;
   - sender Missing deduplication and subset checks;
   - the Accepted number, manifest and operation checks, and the Stale bound.
   An earlier count-versus-remaining guard was unobservable because preallocation was
@@ -179,8 +189,9 @@ in this PR, except the high native-read allocation, which is retained as API gap
 
 Hosted evidence: `.github/workflows/repository-protocol.yml` runs the same checks on
 Linux, macOS and Windows. It compiles a native failing `git` shim (`git.exe` on
-Windows) and places it first on PATH. A positive control first proves that Rust's
-`Command::new("git")` resolves the shim. The test step then requires that the shim
+Windows) and places it first on PATH. A probe in a separate directory runs Rust's
+`Command::new("git")`. It must not reach the shim without the PATH prefix, and must
+reach it with the prefix. The test step then requires that the shim
 never ran. The earlier shell-script shim at `58fadbf` could not intercept on Windows.
 
 ## API gaps for the hub
@@ -208,7 +219,8 @@ Every limit below is retained explicitly; none is claimed as solved.
 
 - Every object must fit in one frame. Batches may hold many objects up to the frame
   and count limits. There is no streaming, resumable transfer or large-file support.
-- Want probe memory is bounded only by the largest stored object (API gap 3).
+- Want probe memory and work are bounded only by stored object sizes and the number
+  of distinct objects requested (API gap 3). Rate limiting is transport work.
 - Whole-manifest transfer only. There is no delta or history negotiation, and no
   multi-version fetch or clone.
 - No transport security, authentication, authorization, rate limiting or quotas.

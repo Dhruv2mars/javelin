@@ -282,10 +282,13 @@ checkpoint, trace or collaboration format is claimed.
 - [x] Refuse malicious, malformed, oversize and truncated input, and changed input under a reused operation ID; identical replay returns the durable outcome.
 - [x] Prove separate-process transfer, lost reply and retry between two repositories.
 - [x] Record API gaps for the hub instead of copying private native internals.
-- [ ] Obtain independent review and hosted three-platform evidence.
+- [x] Obtain independent review and hosted three-platform evidence.
+- [ ] Hub: public bounded read or existence check, content-ID and raw ObjectId byte APIs (gaps 1-3).
 
 Draft PR: https://github.com/Dhruv2mars/javelin/pull/15, linked in T3 Code.
 Binary candidate B was selected over JSON candidate A; the rationale and fixture sizes
-are in `docs/repository-protocol.md`. Locally, Rust 1.99.0 passes 14 tests with
-formatting and Clippy clean. Removing any of 13 guards fails the suite. Independent
-review and hosted results are pending.
+are in `docs/repository-protocol.md`. Locally, Rust 1.99.0 passes 21 tests with
+formatting and Clippy clean. `bun scripts/mutate.ts` reports 24/24 guard removals
+detected. Hosted runs passed on all three OSes for `58fadbf` (38505510520) and
+`d2530fe` (38507397981). Review r1 (Codex) and r2 (Claude, after a Codex usage-limit
+failure) are addressed. Native read allocation remains hub API gap 3.

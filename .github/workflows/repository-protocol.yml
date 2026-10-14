@@ -59,20 +59,28 @@ jobs:
       - name: Lint protocol targets
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee ci-logs/clippy.log
 
-      - name: Install failing git shim and prove Rust resolves it
+      - name: Install failing git shim and prove Rust resolves it through PATH
         run: |
           shim="$PWD/ci-git-shim"
-          mkdir -p "$shim"
+          probe="$PWD/ci-git-probe"
+          mkdir -p "$shim" "$probe"
           printf '%s\n' 'fn main() {' \
             '    let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();' \
             '    std::fs::write(dir.join("invoked"), b"git was invoked").unwrap();' \
-            '    std::process::exit(97);' '}' > "$PWD/ci-git-shim/git_shim.rs"
+            '    std::process::exit(97);' '}' > "$probe/git_shim.rs"
           printf '%s\n' 'fn main() {' \
-            '    let status = std::process::Command::new("git").arg("--version").status().unwrap();' \
-            '    assert_eq!(status.code(), Some(97), "Rust did not resolve the git shim");' '}' > "$PWD/ci-git-shim/git_probe.rs"
-          rustc -o "$shim/git$EXE_SUFFIX" "$PWD/ci-git-shim/git_shim.rs"
-          rustc -o "$PWD/ci-git-shim/git_probe$EXE_SUFFIX" "$PWD/ci-git-shim/git_probe.rs"
-          PATH="$shim:$PATH" "$PWD/ci-git-shim/git_probe$EXE_SUFFIX"
+            '    let status = std::process::Command::new("git").arg("--version").status();' \
+            '    std::process::exit(status.ok().and_then(|s| s.code()).unwrap_or(1));' '}' > "$probe/git_probe.rs"
+          rustc -o "$shim/git$EXE_SUFFIX" "$probe/git_shim.rs"
+          # The probe lives outside the shim directory, so only PATH can resolve the shim.
+          rustc -o "$probe/git_probe$EXE_SUFFIX" "$probe/git_probe.rs"
+          set +e
+          "$probe/git_probe$EXE_SUFFIX"; without=$?
+          PATH="$shim:$PATH" "$probe/git_probe$EXE_SUFFIX"; with=$?
+          set -e
+          echo "probe exit without shim=$without with shim=$with"
+          test "$without" -ne 97
+          test "$with" -eq 97
           test -e "$shim/invoked"
           rm "$shim/invoked"
           echo "shim=$shim" >> "$GITHUB_ENV"
