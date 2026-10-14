@@ -275,11 +275,17 @@ separate repositories with a lost reply and retry. The same suite passes in its 
 hosted workflow. No HTTP, authentication, public endpoint, provider deployment,
 checkpoint, trace or collaboration format is claimed.
 
-- [ ] Open the draft PR, link it, and report planning source and owned paths to the hub.
-- [ ] Compare JSON framing and compact binary candidates with the actual caller.
-- [ ] Implement negotiation, have/want, bounded blob and manifest batches, and publish.
-- [ ] Use validated wire DTOs; never deserialize native serialize-only types.
-- [ ] Refuse malicious, malformed, oversize, truncated, replayed and changed input.
-- [ ] Prove separate-process transfer, lost reply and retry between two repositories.
-- [ ] Record API gaps for the hub instead of copying private native internals.
+- [x] Open the draft PR, link it, and report planning source and owned paths to the hub.
+- [x] Compare JSON framing and compact binary candidates with the actual caller.
+- [x] Implement negotiation, have/want, bounded blob and manifest batches, and publish.
+- [x] Use validated wire DTOs; never deserialize native serialize-only types.
+- [x] Refuse malicious, malformed, oversize, truncated, replayed and changed input.
+- [x] Prove separate-process transfer, lost reply and retry between two repositories.
+- [x] Record API gaps for the hub instead of copying private native internals.
 - [ ] Obtain independent review and hosted three-platform evidence.
+
+Draft PR: https://github.com/Dhruv2mars/javelin/pull/15, linked in T3 Code.
+Binary candidate B was selected over JSON candidate A; the rationale and fixture sizes
+are in `docs/repository-protocol.md`. Locally, Rust 1.99.0 passes 14 tests with
+formatting and Clippy clean. Removing any of 13 guards fails the suite. Independent
+review and hosted results are pending.
