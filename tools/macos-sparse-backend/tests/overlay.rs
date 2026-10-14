@@ -620,3 +620,32 @@ fn failed_clone_removes_partial_output_with_read_only_directories() {
     assert!(!err.to_string().contains("not removed"), "{err}");
     assert!(!fx.upper("c").exists(), "partial clone must be removed");
 }
+
+#[tokio::test]
+async fn rename_handles_follow_bytes_when_directory_sync_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    a.mkdir(root, &b"sub".as_slice().into()).await.unwrap();
+    write_new(&a, "sub", "x", b"moved\n").await;
+    write_new(&a, "sub", "y", b"old\n").await;
+    let sub = id(&a, "sub").await.unwrap();
+    let moved = id(&a, "sub/x").await.unwrap();
+    let replaced = id(&a, "sub/y").await.unwrap();
+    let dir = fx.upper("a").join("tree/sub");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let result = a
+        .rename(sub, &b"x".as_slice().into(), sub, &b"y".as_slice().into())
+        .await;
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        result.is_err(),
+        "unreadable directory must make the sync fail"
+    );
+    assert_eq!(a.read(moved, 0, 100).await.unwrap().0, b"moved\n");
+    assert_eq!(
+        a.getattr(replaced).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_STALE as u32
+    );
+}

@@ -733,10 +733,10 @@ impl NFSFileSystem for Overlay {
         // re-expose the old base name but never loses the destination.
         let dst = self.tree(&to);
         fs::rename(self.tree(&from), &dst).map_err(io_err)?;
+        // Handles follow the moved bytes even if a later sync or whiteout write fails.
+        Self::rekey(&mut st, &from, &to);
         sync_dir(dst.parent().unwrap()).map_err(io_err)?;
         sync_dir(self.tree(from.parent().unwrap()).as_path()).map_err(io_err)?;
-        // Handles follow the moved bytes even if whiteout persistence fails next.
-        Self::rekey(&mut st, &from, &to);
         crash_at("rename");
         self.add_whiteouts(&mut st, &[&from, &to])
     }
