@@ -97,6 +97,9 @@ try {
         @("call `"$dev`" -no_logo -arch=x64", 'if errorlevel 1 exit /b 2', 'cd',
             "cl $flags `"$source`" /Fe:`"$(Join-Path $owned "$($build[0]).exe")`" /Fo:`"$(Join-Path $owned "$($build[0]).obj")`" $($build[1])") |
             Set-Content -LiteralPath $batch -Encoding ascii
+        Copy-Item -LiteralPath $batch -Destination (Join-Path $evidence "build-$($build[0]).cmd.txt")
+        [void](Invoke-Bounded "cmd-echo-$($build[0])" "$system/cmd.exe" @('/d', '/c', 'echo', 'cmd-ok'))
+        [void](Invoke-Bounded "cmd-type-$($build[0])" "$system/cmd.exe" @('/d', '/c', 'type', $batch))
         $compile = Invoke-Bounded "compile-$($build[0])" "$system/cmd.exe" @('/d', '/c', $batch) 90000
         if ($compile.exitCode -ne 0) { throw "Native $($build[0]) compile failed; this is a source failure, not a platform verdict." }
         $result.sources["binary/$($build[0]).exe"] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $owned "$($build[0]).exe")).Hash.ToLowerInvariant()
