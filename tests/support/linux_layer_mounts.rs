@@ -1024,3 +1024,270 @@ fn common_probe_against_runtime_views() {
         rt.unmount(&id(name)).unwrap();
     }
 }
+
+struct Setup {
+    _source: TempDir,
+    repo_dir: TempDir,
+    repo: Repository,
+    rt: LinuxLayerRuntime,
+    root: PathBuf,
+    layer: LayerId,
+    view: PathBuf,
+}
+
+fn setup(env: &Env, name: &str) -> Setup {
+    let source = TempDir::new().unwrap();
+    fixture_tree(source.path());
+    let (repo_dir, mut repo) = repository_from(source.path());
+    let root = runtime_root(env, name);
+    let mut rt = LinuxLayerRuntime::init(&repo, &root, helper(env)).unwrap();
+    let base = repo.layer_base(VersionNumber::new(1).unwrap()).unwrap();
+    let layer = id("A");
+    repo.create_layer(&layer, &base).unwrap();
+    let view = rt.mount(&mut repo, &layer).unwrap();
+    Setup {
+        _source: source,
+        repo_dir,
+        repo,
+        rt,
+        root,
+        layer,
+        view,
+    }
+}
+
+/// Invokes the root helper directly, as any process of the same user could.
+fn direct(env: &Env, args: &[&str]) -> std::process::Output {
+    Command::new("/usr/bin/sudo")
+        .arg("-n")
+        .arg(&env.helper)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn stale_view_with_unreadable_entry_thaws_and_keeps_edits() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        _source,
+        repo_dir: _repo_dir,
+        ..
+    } = setup(&env, "stale");
+    sh(&view, "printf 'one\\n' > one.txt", &mut log);
+    applied(&rt.capture(&mut repo, &layer, &op("s-1")).unwrap().update);
+    // Another caller advances the Layer natively; the view's bound head is now stale.
+    let external = repo
+        .capture_layer(
+            &op("s-external"),
+            &active(&repo, &layer),
+            &SparseChanges::new([]).unwrap(),
+        )
+        .unwrap();
+    applied(&external);
+    sh(
+        &view,
+        "printf 'kept\\n' > kept.txt && printf s > secret && chmod 000 secret",
+        &mut log,
+    );
+    let failed = rt.capture(&mut repo, &layer, &op("s-unreadable"));
+    let status = rt.status(&repo, &layer).unwrap();
+    save(
+        &env,
+        "stale-unreadable",
+        &json!({
+            "captureResult": format!("{failed:?}"), "frozen": status.frozen,
+            "pending": status.pending, "boundRevision": status.bound_revision,
+            "nativeRevisions": repo.layer_history(&layer).unwrap().len(),
+        }),
+    );
+    assert!(matches!(failed, Err(Error::Io(_))), "{failed:?}");
+    assert!(
+        !status.frozen && status.pending.is_none(),
+        "view left frozen behind a pending retry"
+    );
+    assert_eq!(fs::read(view.join("kept.txt")).unwrap(), b"kept\n");
+    sh(&view, "chmod 644 secret", &mut log);
+    let stale = rt.capture(&mut repo, &layer, &op("s-2")).unwrap();
+    assert!(matches!(stale.update, LayerUpdate::Stale { .. }));
+    let report = rt.recover(&mut repo).unwrap();
+    assert!(report.failures.is_empty() && report.pending_resolved == 0);
+    // Documented limit: the runtime cannot discard a view bound to a stale head.
+    let refused = rt.discard(&mut repo, &layer, &op("s-discard")).unwrap();
+    assert!(matches!(refused, LayerUpdate::Stale { .. }));
+    assert_eq!(fs::read(view.join("kept.txt")).unwrap(), b"kept\n");
+    // Escape: discard natively at the current head; recovery removes the view.
+    repo.discard_layer(&op("s-native-discard"), &active(&repo, &layer))
+        .unwrap();
+    let report = rt.recover(&mut repo).unwrap();
+    assert_eq!(report.views_removed, 1);
+    assert!(!view.exists());
+    inventory(&env, &root, "stale-inventory-final");
+    save(
+        &env,
+        "stale",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn thaw_between_listing_and_reading_is_refused() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        repo_dir,
+        _source,
+        ..
+    } = setup(&env, "race");
+    let slot = slot(&layer);
+    let mut actor = Actor::spawn(
+        &env,
+        repo_dir.path(),
+        &root,
+        "capture",
+        "A",
+        "race-capture",
+        "capture_listed",
+    );
+    actor.marker("BOUNDARY capture_listed");
+    // Same-user direct helper calls change a lower-only file during the capture.
+    assert!(
+        direct(&env, &["thaw", root.to_str().unwrap(), "view", &slot])
+            .status
+            .success()
+    );
+    sh(&view, "printf '/* edited */\\n' >> main.c", &mut log);
+    assert!(
+        direct(&env, &["freeze", root.to_str().unwrap(), "view", &slot])
+            .status
+            .success()
+    );
+    let result = actor.release();
+    let main_in_head = repo
+        .layer_diff(&active(&repo, &layer))
+        .unwrap()
+        .iter()
+        .any(|d| d.path.as_str() == "main.c");
+    save(
+        &env,
+        "race-result",
+        &json!({"captureResult": result, "mainCInCapturedHead": main_in_head,
+        "revisions": repo.layer_history(&layer).unwrap().len()}),
+    );
+    assert!(
+        result.starts_with("Err(Busy"),
+        "incoherent capture accepted: {result}"
+    );
+    assert_eq!(repo.layer_history(&layer).unwrap().len(), 1);
+    let status = rt.status(&repo, &layer).unwrap();
+    assert!(!status.frozen && status.pending.is_none());
+    let captured = applied(
+        &rt.capture(&mut repo, &layer, &op("race-retry"))
+            .unwrap()
+            .update,
+    );
+    assert!(
+        repo.layer_diff(&captured)
+            .unwrap()
+            .iter()
+            .any(|d| d.path.as_str() == "main.c")
+    );
+    save(
+        &env,
+        "race",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn completed_captures_replay_exactly_and_thaw() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        _source,
+        repo_dir: _repo_dir,
+        ..
+    } = setup(&env, "replay");
+    sh(&view, "printf 'one\\n' > one.txt", &mut log);
+    let first = applied(&rt.capture(&mut repo, &layer, &op("r-1")).unwrap().update);
+    sh(&view, "printf 'two\\n' > two.txt", &mut log);
+    let second = applied(&rt.capture(&mut repo, &layer, &op("r-2")).unwrap().update);
+    // A prior thaw failure leaves the view frozen without a pending operation.
+    let slot = slot(&layer);
+    assert!(
+        direct(&env, &["freeze", root.to_str().unwrap(), "view", &slot])
+            .status
+            .success()
+    );
+    let replay_second = rt.capture(&mut repo, &layer, &op("r-2"));
+    let frozen_after = rt.status(&repo, &layer).unwrap().frozen;
+    let replay_first = rt.capture(&mut repo, &layer, &op("r-1"));
+    save(
+        &env,
+        "replay-result",
+        &json!({"replaySecond": format!("{replay_second:?}"),
+        "frozenAfterReplay": frozen_after, "replayFirst": format!("{replay_first:?}")}),
+    );
+    assert_eq!(applied(&replay_second.unwrap().update), second);
+    assert!(!frozen_after, "replay left the view frozen");
+    assert_eq!(
+        applied(&replay_first.unwrap().update),
+        first,
+        "older operation not replayed"
+    );
+    assert_eq!(repo.layer_history(&layer).unwrap().len(), 3);
+    sh(&view, "printf 'three\\n' > three.txt", &mut log);
+    save(
+        &env,
+        "replay",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn init_never_deletes_a_runtime_named_like_staging() {
+    let env = env();
+    let source = TempDir::new().unwrap();
+    fixture_tree(source.path());
+    let (_dir, repo) = repository_from(source.path());
+    let victim = env.parent.join(".rt-y.javelin-init");
+    let created = LinuxLayerRuntime::init(&repo, &victim, helper(&env)).is_ok();
+    let other = LinuxLayerRuntime::init(&repo, env.parent.join("rt-y"), helper(&env));
+    let survived = victim.join("owner").exists();
+    save(
+        &env,
+        "init-names-result",
+        &json!({"stagingLikeNameAccepted": created,
+        "victimSurvived": survived, "otherInit": format!("{:?}", other.map(|_| ()))}),
+    );
+    assert!(
+        !created || survived,
+        "init deleted an existing runtime named like its staging"
+    );
+    assert!(!created, "staging-like runtime name accepted");
+    assert!(matches!(
+        LinuxLayerRuntime::init(&repo, env.parent.join("rt.z"), helper(&env)),
+        Err(Error::InvalidInput(_))
+    ));
+    save(&env, "init-names", &json!({"verdict": "VERIFIED"}));
+}

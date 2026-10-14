@@ -799,6 +799,8 @@ impl LinuxLayerRuntime {
         }
         let attempt = (|| {
             let upper = parse_upper(&self.helper("list", &["view", slot])?)?;
+            #[cfg(test)]
+            crate::repository::test_boundary("capture_listed");
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
             let base = repo.read_manifest(opened.base().manifest())?;
             let view = self.root.join("views").join(slot);
