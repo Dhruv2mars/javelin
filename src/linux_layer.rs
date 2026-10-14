@@ -883,9 +883,16 @@ impl LinuxLayerRuntime {
         let (changes, unrepresented, expected) = match attempt {
             Ok(values) => values,
             Err(error) => {
-                // Nothing this view owns can be lost: either no native attempt exists,
-                // or the existing one is adopted only after an exact match below.
-                self.abandon(slot, record)?;
+                // Without a native attempt nothing committed, so thaw and keep the
+                // edits. With one, our own commit read this same frozen content, so
+                // only errors that content cannot cause again (permission, unsupported
+                // entries, invalid input) prove it is foreign. Transient failures keep
+                // the view frozen and pending so the next retry can still verify it.
+                let foreign = certain(&error)
+                    || matches!(&error, Error::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied);
+                if durable.is_none() || foreign {
+                    self.abandon(slot, record)?;
+                }
                 return Err(error);
             }
         };
