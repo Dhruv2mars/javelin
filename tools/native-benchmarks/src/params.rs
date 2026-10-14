@@ -1,0 +1,163 @@
+//! Bounded profiles and the hard caps that keep every run small and safe.
+use serde::{Deserialize, Serialize};
+
+use crate::fixture::Fixture;
+
+pub const MAX_FILES: usize = 5000;
+pub const MAX_HISTORY: usize = 200;
+pub const MAX_LAYER_FILES: usize = 2000;
+pub const MAX_CLONES: usize = 64;
+pub const MAX_PROCS: usize = 8;
+pub const MAX_OPS: usize = 200;
+pub const MAX_BLOBS: usize = 200;
+pub const MAX_BIG_BLOB: usize = 16 * 1024 * 1024;
+pub const MAX_INGEST_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_MANIFEST_ENTRIES: usize = 200_000;
+pub const MAX_LAYER_CHANGES_TOTAL: usize = 4000;
+pub const MAX_BUDGET_SECS: u64 = 3600;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Params {
+    pub profile: String,
+    pub seed: u64,
+    pub files: usize,
+    pub binary_max: usize,
+    pub history: usize,
+    pub changed_per_version: usize,
+    pub layer_files: usize,
+    pub layer_rounds: usize,
+    pub layer_changed: usize,
+    pub clones: usize,
+    pub big_blob_bytes: usize,
+    pub procs: usize,
+    pub ops: usize,
+    pub blobs: usize,
+    pub budget_secs: u64,
+}
+
+impl Params {
+    pub fn profile(name: &str, seed: u64) -> Result<Self, String> {
+        let (
+            files,
+            binary_max,
+            history,
+            changed,
+            lf,
+            lr,
+            lc,
+            clones,
+            big,
+            procs,
+            ops,
+            blobs,
+            budget,
+        ) = match name {
+            "smoke" => (20, 8192, 4, 3, 12, 2, 3, 3, 4096, 3, 4, 4, 60),
+            "ci" => (
+                300,
+                262_144,
+                30,
+                10,
+                200,
+                6,
+                10,
+                24,
+                1 << 20,
+                4,
+                25,
+                20,
+                600,
+            ),
+            "local" => (
+                2000,
+                262_144,
+                100,
+                20,
+                500,
+                8,
+                25,
+                24,
+                1 << 20,
+                8,
+                50,
+                40,
+                1200,
+            ),
+            other => return Err(format!("unknown profile {other:?}; use smoke, ci or local")),
+        };
+        Ok(Self {
+            profile: name.into(),
+            seed,
+            files,
+            binary_max,
+            history,
+            changed_per_version: changed,
+            layer_files: lf,
+            layer_rounds: lr,
+            layer_changed: lc,
+            clones,
+            big_blob_bytes: big,
+            procs,
+            ops,
+            blobs,
+            budget_secs: budget,
+        })
+    }
+
+    /// Rejects anything beyond the documented hard caps instead of clamping silently.
+    pub fn validate(&self) -> Result<(), String> {
+        let within = |name: &str, value: usize, min: usize, max: usize| {
+            if (min..=max).contains(&value) {
+                Ok(())
+            } else {
+                Err(format!("{name}={value} outside hard cap {min}..={max}"))
+            }
+        };
+        within("files", self.files, 1, MAX_FILES)?;
+        within("history", self.history, 1, MAX_HISTORY)?;
+        within(
+            "changed-per-version",
+            self.changed_per_version,
+            1,
+            self.files,
+        )?;
+        within("layer-files", self.layer_files, 1, MAX_LAYER_FILES)?;
+        within("layer-rounds", self.layer_rounds, 1, 16)?;
+        within("layer-changed", self.layer_changed, 1, MAX_LAYER_FILES)?;
+        within("clones", self.clones, 1, MAX_CLONES)?;
+        within("big-blob-bytes", self.big_blob_bytes, 1, MAX_BIG_BLOB)?;
+        within("procs", self.procs, 2, MAX_PROCS)?;
+        within("ops", self.ops, 1, MAX_OPS)?;
+        within("blobs", self.blobs, 1, MAX_BLOBS)?;
+        within("binary-max", self.binary_max, 2, 4 << 20)?;
+        within(
+            "budget-secs",
+            self.budget_secs as usize,
+            1,
+            MAX_BUDGET_SECS as usize,
+        )?;
+        if self.layer_changed * self.layer_rounds > self.layer_files {
+            return Err("layer-changed * layer-rounds exceeds layer-files".into());
+        }
+        if self.layer_changed * self.layer_rounds * (self.layer_rounds + 1) / 2
+            > MAX_LAYER_CHANGES_TOTAL
+        {
+            return Err(format!(
+                "cumulative Layer changes exceed {MAX_LAYER_CHANGES_TOTAL}"
+            ));
+        }
+        if self.files * self.history > MAX_MANIFEST_ENTRIES {
+            return Err(format!(
+                "files * history exceeds {MAX_MANIFEST_ENTRIES} manifest entries"
+            ));
+        }
+        let fixture = Fixture::new(self.seed, self.binary_max);
+        let bytes: u64 = (0..self.files).map(|i| fixture.size(i) as u64).sum();
+        if bytes > MAX_INGEST_BYTES {
+            return Err(format!(
+                "fixture payload {bytes} bytes exceeds {MAX_INGEST_BYTES}"
+            ));
+        }
+        Ok(())
+    }
+}
