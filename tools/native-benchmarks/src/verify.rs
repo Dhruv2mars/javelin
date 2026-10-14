@@ -175,7 +175,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         (Some(b), Some(l)) => {
             let n = clones.len() as u64;
             let payload = b.payload_bytes.unwrap_or(0);
-            let growth = l.logical_bytes.saturating_sub(b.logical_bytes);
+            let growth = l.stored_bytes.saturating_sub(b.stored_bytes);
             if payload * n < 64 * 1024 {
                 (
                     true,
@@ -186,7 +186,9 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
             } else {
                 (
                     growth < payload * n / 2,
-                    format!("{n} clones grew logical bytes by {growth}; payload {payload}"),
+                    format!(
+                        "{n} clones grew stored bytes by {growth} in total; shared payload {payload}"
+                    ),
                 )
             }
         }
@@ -201,7 +203,10 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         .filter(|s| {
             matches!(
                 s.op.as_str(),
-                "compare_and_advance" | "resolve_unresolved" | "prefill_compare_and_advance"
+                "compare_and_advance"
+                    | "resolve_unresolved"
+                    | "prefill_compare_and_advance"
+                    | "baseline_compare_and_advance"
             )
         })
         .filter(|s| s.scenario == "contention")
@@ -367,6 +372,134 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
             read.len(),
             ids_by_key.len()
         ),
+    ));
+    let contention_errors: Vec<_> = samples
+        .iter()
+        .filter(|s| s.scenario == "contention" && s.outcome == "error")
+        .collect();
+    let busy_only = contention_errors.iter().all(|s| {
+        s.sqlite_code
+            .as_deref()
+            .is_some_and(|c| c.starts_with("DatabaseBusy") || c.starts_with("DatabaseLocked"))
+    });
+    out.push(check(
+        "contention_errors_are_only_busy",
+        busy_only,
+        format!(
+            "{} error samples; any non-busy storage error or reused operation ID fails the run",
+            contention_errors.len()
+        ),
+    ));
+    let heads: BTreeMap<(Option<u32>, u64), Option<u64>> = samples
+        .iter()
+        .filter(|s| s.op == "read_head" && s.scenario == "contention")
+        .map(|s| ((s.process, s.index), s.result))
+        .collect();
+    let observed = samples
+        .iter()
+        .filter(|s| s.op == "compare_and_advance" && s.scenario == "contention" && s.attempt == 0)
+        .all(|s| {
+            heads
+                .get(&(s.process, s.index))
+                .is_some_and(|h| *h == s.expected)
+        });
+    out.push(check(
+        "advance_expected_matches_observed_head",
+        observed && !heads.is_empty(),
+        "each first attempt used the head its worker had just read",
+    ));
+    let end = |s: &Sample| s.start_unix_ns.unwrap_or(0) + s.ns;
+    let ordered = finals
+        .iter()
+        .filter(|(_, f)| f.outcome == "stale")
+        .all(|(_, st)| {
+            accepted
+                .iter()
+                .all(|(_, a)| end(a) > st.start_unix_ns.unwrap_or(0) || st.result >= a.result)
+        });
+    out.push(check(
+        "stale_actual_respects_real_time_order",
+        ordered,
+        "stale actual is at least every version acknowledged before that attempt started",
+    ));
+    let put_ops = [
+        "put_blob",
+        "prep_put_blob",
+        "prep_put_manifest",
+        "prefill_put_blob",
+        "prefill_put_manifest",
+        "baseline_put_blob",
+        "baseline_put_manifest",
+    ];
+    let recorded: std::collections::BTreeSet<_> = samples
+        .iter()
+        .filter(|s| {
+            s.scenario == "contention" && put_ops.contains(&s.op.as_str()) && s.outcome == "ok"
+        })
+        .filter_map(|s| s.object.as_deref())
+        .collect();
+    out.push(check(
+        "integrity_objects_match_recorded_puts",
+        integrity["objects"].as_u64() == Some(recorded.len() as u64 + 1),
+        format!(
+            "{} distinct recorded objects plus the World 0 manifest vs check() {}",
+            recorded.len(),
+            integrity["objects"]
+        ),
+    ));
+    let unchanged: Vec<_> = samples
+        .iter()
+        .filter(|s| s.op == "replay_database_unchanged")
+        .collect();
+    out.push(check(
+        "replay_left_repository_files_unchanged",
+        unchanged.len() == 1 && unchanged[0].outcome == "ok",
+        "repository file hash before and after replaying every operation",
+    ));
+    let ends: Vec<_> = samples.iter().filter(|s| s.op == "worker_end").collect();
+    let executed: u64 = ends.iter().filter_map(|s| s.param).sum();
+    let worker_ops = groups
+        .keys()
+        .filter(|k| k.starts_with('w') && k.contains("-i"))
+        .count() as u64;
+    out.push(check(
+        "workers_completed_and_all_operations_recorded",
+        ends.len() == procs && executed == worker_ops,
+        format!(
+            "{} worker_end markers; {executed} executed vs {worker_ops} recorded operations",
+            ends.len()
+        ),
+    ));
+    let truncated = records
+        .iter()
+        .any(|r| matches!(r, Record::Note { message, .. } if message.contains("budget exhausted")));
+    out.push(check(
+        "not_truncated_by_budget",
+        !truncated
+            && summary["truncated_scenarios"]
+                .as_array()
+                .is_some_and(|a| a.is_empty()),
+        "a truncated run is incomplete evidence",
+    ));
+    let mismatches = samples.iter().filter(|s| s.outcome == "mismatch").count();
+    out.push(check(
+        "no_mismatch_outcomes",
+        mismatches == 0,
+        format!("{mismatches} mismatch samples"),
+    ));
+    let clone_checks = samples
+        .iter()
+        .filter(|s| s.op == "clone_state_check")
+        .count();
+    let layer_count = samples
+        .iter()
+        .filter(|s| s.op == "layer_count_check" && s.outcome == "ok")
+        .count();
+    out.push(check(
+        "clone_heads_and_layer_count_checked",
+        clone_checks as u64 == run["params"]["clones"].as_u64().unwrap_or(u64::MAX)
+            && layer_count == 1,
+        format!("{clone_checks} clone checks, {layer_count} layer count checks"),
     ));
     Ok(out)
 }

@@ -184,6 +184,7 @@ version = "0.1.0"
 dependencies = [
  "javelin",
  "libc",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

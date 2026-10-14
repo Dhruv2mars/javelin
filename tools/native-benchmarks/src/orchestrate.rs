@@ -55,6 +55,7 @@ pub fn parse_params(args: &[String]) -> R<Params> {
     number(args, "--blobs", &mut p.blobs)?;
     number(args, "--prefill-versions", &mut p.prefill_versions)?;
     number(args, "--prefill-files", &mut p.prefill_files)?;
+    number(args, "--baseline-ops", &mut p.baseline_ops)?;
     number(args, "--budget-secs", &mut p.budget_secs)?;
     p.validate()?;
     Ok(p)
@@ -107,6 +108,9 @@ pub fn run(args: &[String]) -> R<bool> {
             "contention_retries": contention::MAX_RETRIES,
             "os_cache": "not dropped; samples are warm-cache unless the operation writes",
         },
+        "estimated_validation_bytes": params.estimated_validation_bytes(),
+        "estimate_note": "estimate of stored bytes a write may re-read, from reading the source; not measured, not a stated cause of any latency",
+        "procs_exceed_logical_cpus": std::thread::available_parallelism().map(|n| params.procs > n.get()).ok(),
         "started_unix_ns": started,
         "limits": [
             "public API only; no filesystem-throughput, hosted-provider, free-tier, scale or power-loss claim",
@@ -166,7 +170,7 @@ pub fn run(args: &[String]) -> R<bool> {
         "layers": {"base_files": params.layer_files, "rounds": params.layer_rounds, "changed_per_round": params.layer_changed,
                    "clones": params.clones, "shared_blob_bytes": params.big_blob_bytes, "change_blob_max_bytes": 16384},
         "contention": {"processes": params.procs, "advance_ops_per_process": params.ops, "blobs_per_process": params.blobs,
-                       "blob_bytes": 4096, "prefill_versions": params.prefill_versions, "prefill_files": params.prefill_files, "shared_blobs": "even indexes identical across processes; odd indexes unique"},
+                       "blob_bytes": 4096, "prefill_versions": params.prefill_versions, "prefill_files": params.prefill_files, "baseline_ops": params.baseline_ops, "shared_blobs": "even indexes identical across processes; odd indexes unique"},
     });
     fs::write(
         out.join("fixture-inventory.json"),

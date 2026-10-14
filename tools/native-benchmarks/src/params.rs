@@ -15,6 +15,8 @@ pub const MAX_INGEST_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_MANIFEST_ENTRIES: usize = 200_000;
 pub const MAX_LAYER_CHANGES_TOTAL: usize = 4000;
 pub const MAX_BUDGET_SECS: u64 = 3600;
+pub const MAX_VALIDATION_BYTES: u64 = 32 << 30;
+pub const CONTENTION_BLOB_BYTES: usize = 4096;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Params {
@@ -34,6 +36,7 @@ pub struct Params {
     pub blobs: usize,
     pub prefill_versions: usize,
     pub prefill_files: usize,
+    pub baseline_ops: usize,
     pub budget_secs: u64,
 }
 
@@ -56,6 +59,7 @@ impl Params {
             blobs: 4,
             prefill_versions: 0,
             prefill_files: 0,
+            baseline_ops: 2,
             budget_secs: 60,
         };
         Ok(match name {
@@ -75,13 +79,14 @@ impl Params {
                 blobs: 20,
                 prefill_versions: 10,
                 prefill_files: 100,
+                baseline_ops: 8,
                 budget_secs: 600,
                 ..base
             },
             "local" => Self {
-                files: 2000,
+                files: 1000,
                 binary_max: 262_144,
-                history: 100,
+                history: 30,
                 changed_per_version: 20,
                 layer_files: 500,
                 layer_rounds: 8,
@@ -89,29 +94,31 @@ impl Params {
                 clones: 24,
                 big_blob_bytes: 1 << 20,
                 procs: 8,
-                ops: 50,
+                ops: 40,
                 blobs: 40,
-                prefill_versions: 30,
-                prefill_files: 200,
+                prefill_versions: 20,
+                prefill_files: 100,
+                baseline_ops: 10,
                 budget_secs: 1200,
                 ..base
             },
             // Heavier contention to try to reach the 5 s busy timeout; not run in CI.
             "stress" => Self {
-                files: 300,
-                binary_max: 262_144,
-                history: 30,
+                files: 100,
+                binary_max: 65_536,
+                history: 10,
                 changed_per_version: 10,
-                layer_files: 200,
-                layer_rounds: 6,
+                layer_files: 60,
+                layer_rounds: 3,
                 layer_changed: 10,
-                clones: 24,
+                clones: 8,
                 big_blob_bytes: 1 << 20,
                 procs: 8,
-                ops: 50,
-                blobs: 40,
-                prefill_versions: 100,
+                ops: 20,
+                blobs: 20,
+                prefill_versions: 80,
                 prefill_files: 300,
+                baseline_ops: 8,
                 budget_secs: 1800,
                 ..base
             },
@@ -149,6 +156,7 @@ impl Params {
         within("ops", self.ops, 1, MAX_OPS)?;
         within("blobs", self.blobs, 1, MAX_BLOBS)?;
         within("binary-max", self.binary_max, 2, 4 << 20)?;
+        within("baseline-ops", self.baseline_ops, 0, 50)?;
         within(
             "budget-secs",
             self.budget_secs as usize,
@@ -177,6 +185,28 @@ impl Params {
                 "fixture payload {bytes} bytes exceeds {MAX_INGEST_BYTES}"
             ));
         }
+        let cost = self.estimated_validation_bytes();
+        if cost > MAX_VALIDATION_BYTES {
+            return Err(format!(
+                "estimated whole-repository validation work {cost} bytes exceeds cap {MAX_VALIDATION_BYTES}"
+            ));
+        }
         Ok(())
+    }
+
+    /// Order-of-magnitude bytes of stored content a write may re-read and re-hash, from
+    /// reading the source (every write validates the accepted history and Layer graph).
+    /// It bounds fixture growth; it is an estimate, not a measured cost or a claimed cause.
+    pub fn estimated_validation_bytes(&self) -> u64 {
+        let fixture = Fixture::new(self.seed, self.binary_max);
+        let bytes = |n: usize| -> u64 { (0..n).map(|i| fixture.size(i) as u64).sum() };
+        let h = self.history as u64;
+        let history = bytes(self.files) * h * (h + 1) / 2;
+        let (c, r) = (self.clones as u64, self.layer_rounds as u64);
+        let layers = bytes(self.layer_files) * (r + (c + 1) * (c + 2) / 2 + 8);
+        let ops = (self.procs * self.ops + self.prefill_versions + self.baseline_ops) as u64;
+        let prefilled =
+            (self.prefill_files * CONTENTION_BLOB_BYTES) as u64 * self.prefill_versions as u64;
+        history + layers + ops * prefilled
     }
 }

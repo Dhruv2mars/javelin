@@ -377,7 +377,19 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
         let mut s = ctx.sample("clone_layer", n as u64, ns, &cloned);
         s.param = Some(n as u64);
         ctx.push(s);
-        clone_heads.push(cloned?);
+        let cloned = cloned?;
+        let verified = cloned.revision() == 0
+            && cloned.checkpoint() == checkpoint
+            && repo.layer_state(&id)?
+                == LayerState::Active {
+                    head: cloned.clone(),
+                };
+        let mut check = ctx.sample("clone_state_check", n as u64, 0, &Ok(()));
+        if !verified {
+            check.outcome = "mismatch".into();
+        }
+        ctx.push(check);
+        clone_heads.push(cloned);
         ctx.disk(&format!("after_clone_{n}"), Some(big.len() as u64), None);
     }
     for (n, clone) in [
@@ -407,6 +419,12 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
     history?;
     let (ns, check) = timed(|| repo.check());
     ctx.push(ctx.sample("check", 1, ns, &check));
-    check?;
+    let check = check?;
+    let mut count = ctx.sample("layer_count_check", 0, 0, &Ok(()));
+    count.result = Some(check.layers as u64);
+    if check.layers != clone_heads.len() + 1 {
+        count.outcome = "mismatch".into();
+    }
+    ctx.push(count);
     Ok(())
 }

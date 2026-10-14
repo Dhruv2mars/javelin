@@ -148,7 +148,7 @@ fn smoke_run_passes_every_check_with_real_processes() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|d| d["physical_bytes"].is_u64() && d["logical_bytes"].is_u64())
+                .all(|d| d["physical_bytes"].is_u64() && d["stored_bytes"].is_u64())
         );
     }
 }
@@ -381,6 +381,7 @@ fn verifier_accepts_a_genuine_busy_retry_of_the_exact_same_input() {
     busy["outcome"] = json!("error");
     busy["error_code"] = json!("storage_error");
     busy["error"] = json!("database is locked");
+    busy["sqlite_code"] = json!("DatabaseBusy/5");
     busy["result"] = Value::Null;
     lines[i]["attempt"] = json!(1);
     lines.insert(i, busy);
@@ -419,6 +420,7 @@ fn verifier_detects_failed_retry_reuse_blob_and_integrity_evidence() {
         write_lines(d, &lines);
     });
     assert_fails(&blob, "acknowledged_blobs_read_back_exactly");
+    assert_fails(&blob, "no_mismatch_outcomes");
     let shared = tampered(|d| {
         let mut lines = read_lines(d);
         let puts: Vec<_> = contention_ops(&lines, "put_blob")
@@ -544,9 +546,8 @@ fn clone_storage_check_passes_for_references_and_fails_for_copied_payload() {
     ]);
     assert!(result.status.success(), "{}", text(&result));
     assert!(
-        text(&result).contains(
-            "PASS clone_storage_not_payload_proportional: 4 clones grew logical bytes by"
-        ),
+        text(&result)
+            .contains("PASS clone_storage_not_payload_proportional: 4 clones grew stored bytes by"),
         "{}",
         text(&result)
     );
@@ -560,8 +561,8 @@ fn clone_storage_check_passes_for_references_and_fails_for_copied_payload() {
                     .is_some_and(|x| x.starts_with("after_clone_"))
         })
         .unwrap();
-    let grown = lines[last]["logical_bytes"].as_u64().unwrap() + 4 * 262_144;
-    lines[last]["logical_bytes"] = json!(grown);
+    let grown = lines[last]["stored_bytes"].as_u64().unwrap() + 4 * 262_144;
+    lines[last]["stored_bytes"] = json!(grown);
     write_lines(&out, &lines);
     let verified = text(&bench(&["verify", out.to_str().unwrap()]));
     assert_fails(&verified, "clone_storage_not_payload_proportional");
@@ -605,5 +606,125 @@ fn prefilled_world_is_part_of_the_verified_ordered_history() {
     assert_fails(
         &text(&bench(&["verify", out.to_str().unwrap()])),
         "history_matches_acknowledged_accepts",
+    );
+}
+
+#[test]
+fn verifier_detects_non_busy_errors_head_misuse_and_real_time_violations() {
+    let non_busy = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "compare_and_advance")[0];
+        let mut bad = lines[i].clone();
+        bad["outcome"] = json!("error");
+        bad["error_code"] = json!("storage_error");
+        bad["sqlite_code"] = json!("DiskFull/13");
+        bad["result"] = Value::Null;
+        lines[i]["attempt"] = json!(1);
+        lines.insert(i, bad);
+        write_lines(d, &lines);
+    });
+    assert_fails(&non_busy, "contention_errors_are_only_busy");
+    let reused = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "compare_and_advance")[0];
+        lines[i]["outcome"] = json!("error");
+        lines[i]["error_code"] = json!("operation_id_reused");
+        write_lines(d, &lines);
+    });
+    assert_fails(&reused, "contention_errors_are_only_busy");
+    let head = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "read_head")[0];
+        lines[i]["result"] = json!(9999);
+        write_lines(d, &lines);
+    });
+    assert_fails(&head, "advance_expected_matches_observed_head");
+    let time = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "compare_and_advance")
+            .into_iter()
+            .find(|&i| lines[i]["outcome"] == "stale")
+            .unwrap();
+        lines[i]["start_unix_ns"] = json!(u64::MAX / 4);
+        write_lines(d, &lines);
+    });
+    assert_fails(&time, "stale_actual_respects_real_time_order");
+}
+
+#[test]
+fn verifier_detects_object_count_replay_worker_truncation_and_clone_evidence() {
+    let objects = tampered(|d| {
+        let mut v = read_json(&d.join("integrity.json"));
+        v["objects"] = json!(v["objects"].as_u64().unwrap() + 1);
+        fs::write(d.join("integrity.json"), v.to_string()).unwrap();
+    });
+    assert_fails(&objects, "integrity_objects_match_recorded_puts");
+    let replay = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "replay_database_unchanged")[0];
+        lines[i]["outcome"] = json!("mismatch");
+        write_lines(d, &lines);
+    });
+    assert_fails(&replay, "replay_left_repository_files_unchanged");
+    assert_fails(&replay, "no_mismatch_outcomes");
+    let workers = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "worker_end")[0];
+        lines.remove(i);
+        write_lines(d, &lines);
+    });
+    assert_fails(&workers, "workers_completed_and_all_operations_recorded");
+    let truncated = tampered(|d| {
+        let mut lines = read_lines(d);
+        lines.push(json!({"kind": "note", "scenario": "history", "message": "budget exhausted during history build; run is truncated"}));
+        write_lines(d, &lines);
+    });
+    assert_fails(&truncated, "not_truncated_by_budget");
+    let clones = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = lines
+            .iter()
+            .position(|l| l["op"] == "clone_state_check")
+            .unwrap();
+        lines.remove(i);
+        write_lines(d, &lines);
+    });
+    assert_fails(&clones, "clone_heads_and_layer_count_checked");
+    let wrong_head = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = lines
+            .iter()
+            .position(|l| l["op"] == "layer_count_check")
+            .unwrap();
+        lines[i]["outcome"] = json!("mismatch");
+        write_lines(d, &lines);
+    });
+    assert_fails(&wrong_head, "clone_heads_and_layer_count_checked");
+}
+
+#[test]
+fn derived_validation_cost_cap_rejects_quadratic_fixtures() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = bench(&[
+        "run",
+        "--profile",
+        "smoke",
+        "--out",
+        tmp.path().join("x").to_str().unwrap(),
+        "--allow-debug-build",
+        "--procs",
+        "8",
+        "--ops",
+        "200",
+        "--prefill-versions",
+        "200",
+        "--prefill-files",
+        "1000",
+    ]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(
+        text(&result).contains("estimated whole-repository validation work"),
+        "{}",
+        text(&result)
     );
 }

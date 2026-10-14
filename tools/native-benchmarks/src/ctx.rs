@@ -42,6 +42,12 @@ impl Ctx {
 
     /// A sample whose outcome reflects the API result; callers add operation details.
     pub fn sample<T>(&self, op: &str, index: u64, ns: u64, result: &javelin::Result<T>) -> Sample {
+        let sqlite_code = match result {
+            Err(javelin::Error::Storage(rusqlite::Error::SqliteFailure(f, _))) => {
+                Some(format!("{:?}/{}", f.code, f.extended_code))
+            }
+            _ => None,
+        };
         let (outcome, error_code, error) = match result {
             Ok(_) => ("ok".to_string(), None, None),
             Err(e) => (
@@ -59,6 +65,7 @@ impl Ctx {
             outcome,
             error_code,
             error,
+            sqlite_code,
             ..Default::default()
         }
     }
@@ -73,7 +80,7 @@ impl Ctx {
             scenario: self.name.clone(),
             label: label.into(),
             physical_bytes: usage.physical,
-            logical_bytes: usage.logical,
+            stored_bytes: usage.logical,
             files: usage.files,
             payload_bytes: payload,
             objects,
