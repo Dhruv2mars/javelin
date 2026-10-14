@@ -376,3 +376,28 @@ architectures; arbitrary large-file resource bounds; acceptance of unmerged
 native source baseline `e56fc86`.
 INCONCLUSIVE: general correctness outside the small oracle inputs and fresh
 independent review, which remains hub-owned and pending. No GA claim.
+## Workstream: bounded pure mechanical merge
+
+Owns `perf/bounded-mechanical-merge`, based on `61ecdd9`, with one draft PR
+targeting `feat/mechanical-merge-engine`. Owned paths are `crates/javelin-merge/**`,
+`docs/bounded-mechanical-merge.md`, the existing mechanical merge workflow when
+needed for focused verification, and this appended checklist. No native/core,
+protocol, collaboration, probes, or other worktree changes.
+
+Done means deterministic CPU, input and memory limits with typed resource refusal;
+every accepted merge preserves the existing mandatory separator and every minimal
+diff guarantees. Ordinary Rust, config and Markdown distant edits still combine.
+Local debug/release, fmt, Clippy, compiling mutations, independent read-only Codex
+review, and exact-head three-OS raw evidence must verify the restored source.
+This is a pure component, with no Stack, Publish, GA, or underlying core acceptance.
+
+- [x] Recover interrupted run, clean base, instructions and hub contract/decisions.
+- [ ] Open and immediately T3-link the one draft PR; report planning SHA to hub.
+- [ ] Ground API, loader, matching and refusal; compare two shapes with Codex architect.
+- [ ] Reproduce exact old-source resource issue in private scratch.
+- [ ] Implement smallest deterministic bounded design and public resource outcome.
+- [ ] Extend every-pair oracle, ordinary fixtures, adversarial and boundary tests.
+- [ ] Run debug/release, fmt, Clippy and compiling guard/correctness mutations.
+- [ ] Obtain fresh independent Codex review, fix findings and verify restored hashes.
+- [ ] Inspect exact-head three-OS logs/artifacts using the single T3 watcher.
+- [ ] Report hashes, counts, limits, API compatibility, evidence and blockers to hub.
