@@ -202,16 +202,17 @@ fn merge_lines(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A region's changing side (true is ours), its merged lines, and the anchor after it.
-type Step<'a, 'r> = (Option<bool>, &'r [&'a [u8]], Option<&'a [u8]>);
+type Step<'a, 'r> = (Option<bool>, &'r [&'a [u8]], Option<usize>);
 
 /// diff3 without convergence: base lines matched unchanged on both sides are
 /// anchors. Each region between anchors is taken whole from the only side that
 /// changed it; a region both sides changed conflicts, even if identically.
 ///
-/// With repeated lines a change can be matched at several places, so only an anchor
-/// line that occurs exactly once in base, ours, and theirs separates the two sides'
-/// changes. Across any other anchor one side's edit could equally sit on the other
-/// side, and merging it could drop, duplicate, or reorder an edit.
+/// A change can often be matched at several places, so only an anchor that every
+/// minimal diff of both sides keeps unchanged, and that occurs exactly once in base,
+/// ours, and theirs, separates the two sides' changes. Across any other anchor one
+/// side's edit could equally sit on the other side, through repeated lines or moved
+/// blocks, and merging could drop, duplicate, or reorder an edit.
 fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Option<Vec<&'a [u8]>> {
     let (in_ours, in_theirs) = (matches(base, ours), matches(base, theirs));
     let mut steps: Vec<Step> = Vec::new();
@@ -228,7 +229,7 @@ fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Optio
         };
         let line = anchor.map(|(nb, no, nt)| {
             debug_assert!(base[nb] == ours[no] && base[nb] == theirs[nt]);
-            base[nb]
+            nb
         });
         steps.push((side, taken, line));
         let Some((nb, no, nt)) = anchor else { break };
@@ -240,6 +241,12 @@ fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Optio
             .iter()
             .all(|lines| lines.iter().filter(|l| **l == line).count() == 1)
     };
+    let (ours_lcs, theirs_lcs) = (lcs(base, ours), lcs(base, theirs));
+    // Every minimal diff keeps base line `i` iff dropping it shortens the LCS.
+    let kept = |i: usize| {
+        let without: Vec<&[u8]> = [&base[..i], &base[i + 1..]].concat();
+        lcs(&without, ours) < ours_lcs && lcs(&without, theirs) < theirs_lcs
+    };
     let (mut last, mut separated) = (None, false);
     let mut out = Vec::new();
     for (side, taken, line) in steps {
@@ -250,9 +257,9 @@ fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Optio
             (last, separated) = (side, false);
         }
         out.extend_from_slice(taken);
-        if let Some(line) = line {
-            separated = separated || unique(line);
-            out.push(line);
+        if let Some(i) = line {
+            separated = separated || (unique(base[i]) && kept(i));
+            out.push(base[i]);
         }
     }
     Some(out)
@@ -263,11 +270,22 @@ fn lines(bytes: &[u8]) -> Vec<&[u8]> {
     bytes.split_inclusive(|byte| *byte == b'\n').collect()
 }
 
-/// For each base line, the index of the line it is matched to as unchanged.
-/// No deadline is passed, so the result never depends on time.
+/// Length of the longest common subsequence, from an exact minimal diff.
+fn lcs(base: &[&[u8]], other: &[&[u8]]) -> usize {
+    capture_diff_slices(Algorithm::RawMyers, base, other)
+        .iter()
+        .map(|op| match op {
+            DiffOp::Equal { len, .. } => *len,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// For each base line, the index of the line it is matched to as unchanged, from an
+/// exact minimal diff. No deadline is passed, so the result never depends on time.
 fn matches(base: &[&[u8]], other: &[&[u8]]) -> Vec<Option<usize>> {
     let mut matched = vec![None; base.len()];
-    for op in capture_diff_slices(Algorithm::Myers, base, other) {
+    for op in capture_diff_slices(Algorithm::RawMyers, base, other) {
         if let DiffOp::Equal {
             old_index,
             new_index,

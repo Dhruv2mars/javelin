@@ -65,7 +65,7 @@ fn identical_lines_inserted_near_a_replacement_are_not_merged_away() {
 }
 
 #[test]
-fn a_shared_edit_in_a_run_of_identical_lines_is_never_applied_twice() {
+fn edits_separated_only_by_ambiguous_anchors_conflict() {
     for (base, ours, theirs) in [
         (
             &b"fn f() {\n    g();\n}\n}\n}\n"[..],
@@ -74,6 +74,8 @@ fn a_shared_edit_in_a_run_of_identical_lines_is_never_applied_twice() {
         ),
         (b"a\n\n\n\n", b"a\n\n\n", b"x\na\n\n\n"),
         (b"}\n}\n}\n", b"}\n}\ny\n", b"a\n}\n}\n"),
+        // Theirs swaps two blocks; which one "moved" depends on the matching.
+        (b"x\ny\nU\nV\n", b"x\nS\ny\nU\nV\n", b"U\nV\nx\ny\n"),
     ] {
         let outcome = merge_text(base, ours, theirs);
         assert_eq!(
