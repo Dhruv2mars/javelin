@@ -209,3 +209,24 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Workstream: native storage baseline measurement
+
+Owner thread: independent implementation worker for hub e659350e. Owns only
+`tools/native-benchmarks/**`, `docs/native-storage-baseline.md`,
+`.github/workflows/native-storage-baseline.yml` and this section. Draft PR targets
+`feat/native-layer-checkpoints`. Measured source is the unmerged dependency
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; this PR cannot claim independent
+acceptance. Done: committed rerunnable release tool, raw macOS and hosted Linux runs
+with fixture inventory and host/source provenance, `verify` re-checking recorded
+outcomes, defect-detecting regressions, honest recommendations. Windows unmeasured.
+
+- [ ] Read instructions, contract, TASKS and decisions at `e56fc86`.
+- [x] Compare two designs and select the standalone driver (see doc).
+- [ ] Open and register exactly one draft PR; report planning SHA to hub.
+- [ ] Independent read-only plan review; record limitations.
+- [ ] Build tool, fixtures, scenarios, verify command, regressions.
+- [ ] Real macOS runs with raw artifacts.
+- [ ] Hosted Linux (and macOS) run via own workflow; inspect downloaded artifacts.
+- [ ] Independent code review; fix findings.
+- [ ] Write recommendations and handoff; report to hub.
