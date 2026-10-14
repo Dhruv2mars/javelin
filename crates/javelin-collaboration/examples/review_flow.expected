@@ -1,0 +1,8 @@
+open accepted replayed=false
+approve-1 accepted replayed=false
+takeover refused not_author
+revise-2 accepted replayed=false
+approve-2 accepted replayed=false
+approve-2 accepted replayed=true
+publishable revision manifest=38d26c69188d75ee99069a59277276d69bb1203391d48491335ab7e30189fd1c -> Err("revision_mismatch")
+publishable revision manifest=76a833735c638b4b85442cacdf3261d01c8ad8855ac945303338bb015870e44b -> Ok(2)
