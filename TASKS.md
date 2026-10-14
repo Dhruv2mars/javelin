@@ -209,3 +209,40 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Workstream: mechanical merge engine
+
+Owner: T3 implementation thread commissioned by hub
+`e659350e-23d8-4473-98e8-d3609b784340`. Branch `feat/mechanical-merge-engine`,
+draft PR against `feat/native-layer-checkpoints`. Source baseline is exact
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`, the hub-accepted bounded Layer state
+dependency. That dependency is unmerged; this PR depends on it and cannot claim
+independent acceptance.
+
+Owned paths: `crates/javelin-merge/**`, `docs/mechanical-merge.md`,
+`.github/workflows/mechanical-merge.yml`, and this section only.
+
+Done means: an independently compiled `crates/javelin-merge` library (own
+`Cargo.lock`, empty `[workspace]`, path dependency on the root crate) performs a
+pure deterministic three-way merge of native `Manifest`s through a caller-supplied
+content loader. It returns retained `FileEntry` references, new merged bytes plus
+executable bit for the caller to persist with `Repository::put_blob`, and explicit
+deterministic conflict records. It never writes files, mints object IDs, persists
+Stack state, invents semantic resolutions, or emits textual conflict markers.
+A real caller example and integration tests use actual repository-produced
+manifests and blobs. Adversarial tests cover the cases below, and the new workflow
+passes on hosted Linux, macOS, and Windows with downloaded logs inspected.
+
+- [ ] Planning commit, draft PR, T3 registration, hub report.
+- [ ] Ground the design and compare at least two candidate shapes; record the choice.
+- [ ] Compare a mature Rust merge crate with a bespoke line merge from primary docs.
+- [ ] Implement manifest-level merge: retain, add, delete, modify, convergent.
+- [ ] Implement within-file line merge with CRLF and missing-final-newline safety.
+- [ ] Refuse binary content merge; report symlink, type, and executable conflicts.
+- [ ] Report file/directory-prefix structural conflicts.
+- [ ] Real caller example and integration tests over actual repository objects.
+- [ ] Adversarial regressions that fail when guards are removed.
+- [ ] Independent read-only review; record findings and limits.
+- [ ] Three-OS workflow evidence with inspected artifacts.
+- [ ] Document the future gated adapter to SparseChanges, refresh, and Publish.
+- [ ] Final hub handoff with VERIFIED, NOT VERIFIED, and INCONCLUSIVE scopes.
