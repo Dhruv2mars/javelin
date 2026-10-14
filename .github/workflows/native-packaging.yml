@@ -92,7 +92,7 @@ jobs:
 
       - name: Install into a fresh path and smoke through PATH
         run: |
-          archive=$(ls work/dist/javelin-development-*.tar.gz work/dist/javelin-development-*.zip 2>/dev/null | head -1)
+          archive=$(find work/dist -maxdepth 1 -name 'javelin-development-*' ! -name '*.sha256' | head -1)
           $PACK install --archive "$archive" --checksum "$archive.sha256" --dest work/install/javelin 2>&1 | tee ci-logs/install.log
           $PACK smoke --bin-dir work/install/javelin/bin 2>&1 | tee ci-logs/smoke.log
 
@@ -184,7 +184,7 @@ jobs:
 
       - name: Install the same download with the packager and smoke it
         run: |
-          archive=$(ls downloaded/javelin-development-*.tar.gz downloaded/javelin-development-*.zip 2>/dev/null | head -1)
+          archive=$(find downloaded -maxdepth 1 -name 'javelin-development-*' ! -name '*.sha256' | head -1)
           $PACK install --archive "$archive" --checksum "$archive.sha256" --dest "$RUNNER_TEMP/packager-install/javelin" 2>&1 | tee ci-logs/packager-install.log
           $PACK smoke --bin-dir "$RUNNER_TEMP/packager-install/javelin/bin" 2>&1 | tee ci-logs/packager-install-smoke.log
 
