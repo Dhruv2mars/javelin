@@ -112,7 +112,8 @@ runtime.discard(&mut repo, &layer, &discard_op)?;     // native terminal discard
 ```
 <root>/            root 0755, every ancestor root-owned and not group/other writable
   owner            root marker containing the canonical root path and user ID
-  hidden/          root 0700: empty/, cache/<b|c><hex>/, stage/<key>/, views/<slot>/{upper,work}
+  hidden/          root 0700: empty/, cache/<b|c><hex>/, stage/<key>/, views/<slot>/{upper,work},
+                   .lock (helper verb lock), epoch (advanced by every mutating verb)
   mnt/stage/<key>  root 0555 staging mountpoints
   mnt/ro/<hex>     root 0555 read-only checkpoint mountpoints
   views/<slot>     root 0555 live view mountpoints
@@ -125,10 +126,16 @@ runtime.discard(&mut repo, &layer, &discard_op)?;     // native terminal discard
 - Cache selection is only `hidden/cache/<key>`, renamed there after verification.
   Staging leftovers are discarded and rebuilt; they are never selected.
 - Binding records are written atomically before the upper is created and before
-  each native capture/discard call, with the pending operation ID.
-- A pending capture keeps the view frozen. Recovery remounts it read-only if needed,
-  recomputes the identical delta and retries the same operation, so the native
-  outcome converges. A pending discard retries after a non-lazy unmount.
+  each native capture/discard call, with the pending operation ID. Immediately
+  before the native capture call the pending record also stores a candidate: the
+  expected head revision and a digest of the exact complete delta.
+- Native attempt rows decide whether a pending operation committed. On retry, a
+  durable attempt is adopted only if it matches the recorded candidate exactly;
+  otherwise it belongs to another caller and the pending work is abandoned
+  (cleared and thawed) with `operation_id_reused`. Without a durable attempt,
+  nothing committed, so any failure before the native call thaws. Only uncertain
+  errors from the native call itself keep the view frozen for a later retry. A
+  pending discard retries after a non-lazy unmount.
 - Reopen reuses the recorded lowers and existing upper, so uncheckpointed edits
   survive and are never overwritten by a newer head.
 
@@ -161,8 +168,10 @@ Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope
   `LinuxLayerRuntime::{init, open, mount, unmount, capture, discard,
   mount_checkpoint, unmount_checkpoint, status, recover}`. One `flock` per runtime
   serializes operations and returns `busy` to concurrent callers. `Error::Busy`
-  and `Error::Unsupported` are the only parent API additions, plus a crate-private
-  repository identity accessor used to bind a runtime to one repository.
+  and `Error::Unsupported` are the only public API additions. Two crate-private
+  accessors were added: the repository identity, which binds a runtime to one
+  repository, and `layer_operation`, which reads a durable Layer attempt row and
+  its exact outcome so recovery never guesses whether an operation committed.
 - Capture reads the frozen merged view: entries named by the upper listing are
   hashed from the view (`O_NOFOLLOW`, inode re-check, `readlink` for symlinks);
   all other entries must equal the opened checkpoint exactly or capture fails as
@@ -171,10 +180,19 @@ Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope
   non-UTF-8 names and names outside the native path model such as `:` or
   `.javelin`. Only the owner execute bit is represented. Empty directories are
   reported as `unrepresented_directories` and are not restored in clones.
-- Pre-native errors that are certain (`invalid_input`, `unsupported`,
-  `operation_id_reused`) clear the pending record and thaw. Other errors keep the
-  view frozen with the pending operation so `capture`, `mount` or `recover` retry
-  the identical frozen delta under the same operation ID.
+- Freeze ownership through the reads uses the helper epoch: the upper listing
+  returns it and capture re-reads it after the last content read. A thaw, remount
+  or unmount in between (even a direct helper call) makes capture `busy` with no
+  native change. Cache sealing passes the listed epoch the same way.
+- Retrying any completed capture operation ID of the Layer returns its durable
+  native outcome with `replayed: true`. Only this view's own pending capture can
+  move the head the view is bound to; replaying another caller's operation never
+  rebinds it. Replays report `unrepresented_directories` as empty.
+- `recover` aborts staging leftovers, resolves pending work per view (continuing
+  past failures, which it reports), removes views of discarded Layers and thaws
+  frozen views that have no pending work.
+- Runtime names match `[A-Za-z0-9][A-Za-z0-9_-]*` and parents must be listed in
+  the root-owned `/etc/javelin/linux-layer-parents`.
 
 ## Trust model and limits
 
@@ -196,90 +214,101 @@ Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope
   `redirect_dir=nofollow` is kept from the verified proof.
 - Writers that open files during the short frozen window get `EROFS`. Continuous
   editing during capture, stable-change detection and autosave remain follow-on.
-- If another caller advances a Layer outside the runtime, its view's captures stay
-  stale until it is discarded; re-binding a view to a newer head is follow-on.
+- If another caller advances a Layer outside the runtime, the view stays bound to
+  its old head: captures return `Stale` and keep edits, and runtime `discard` also
+  returns `Stale`. The escape is a native `discard_layer` at the current head
+  followed by `recover`, which removes the view; its uncaptured edits are lost.
+  Re-binding a view to a newer head is follow-on work.
+- Direct helper calls by the same user are trusted, like cache sealing. Thawing a
+  pending view directly while a writer keeps a file open makes later freezes
+  `busy` until the writer closes it.
+- When resolving another operation's pending work fails or is abandoned, the
+  unrelated `capture`/`mount` call returns that error; retrying succeeds.
 - A retry of a completed discard reports that the view no longer exists; the
   native `discard_layer` retry returns the original outcome.
+- The helper lists at most 200,000 upper entries; larger uppers cannot be
+  captured. Capture also hashes upper files and walks the view once, and the
+  native graph check runs on each lookup. Scale is unmeasured.
 - Caches and retained checkpoint mounts have no collection policy yet.
 - Production installation, a non-sudo privilege model, mount namespaces, other
   kernels, power loss, network filesystems and scale remain unverified.
 
-## Independent review
+## Independent review and hub hold
 
-A read-only Claude Opus 5.5 (medium effort) review of `34f6312` reported six
-defects and one unconfirmed kernel risk. Fixed in `4c9b894..93f9eaa`:
+All reviews below are read-only Claude Opus 5.5 (medium effort) passes. Every
+finding after the first round was reproduced on hosted Linux against unchanged
+production source before it was fixed (the round-one race repro adds only a
+`#[cfg(test)]` boundary). Raw repro files are kept under
+`tools/linux-layer-runtime/evidence/repro-run*`.
 
-1. A failed read during capture (for example a `chmod 000` file) kept the view
-   frozen forever and stopped `recover`. Pre-native failures now thaw unless the
-   native head advanced, and `recover` continues past a failing view, reporting it.
-2. A concurrent direct `thaw` could change the upper while root listed it. Every
-   helper verb now holds a per-runtime lock and the listing rechecks the freeze.
-3. Cache sealing trusts the invoking user; documented above.
-4. Views and caches were world-readable. Uppers and cache roots are now `0700`.
-5. `init` accepted any root-owned parent. Parents now come from a root-owned list.
-6. Retrying a completed capture after a lost reply returned `operation_id_reused`.
-   The binding now returns the original outcome.
-7. Shared writable mappings might bypass the freeze on newer kernels. Hosted runs
-   now test this directly: a `MAP_SHARED|PROT_WRITE` mapping whose descriptor was
-   closed made the freeze fail with `EBUSY` on kernel `6.17.0-1022-azure`, so the
-   capture refused. Other kernels remain unverified.
+- Round 1 (`34f6312`): six findings, fixed or documented in `4c9b894..93f9eaa`.
+  The hub held `93f9eaa`; its "fixed" claims for the list race and frozen
+  recovery were incomplete, as the hub review and later repros showed.
+- Hub hold (`93f9eaa`, repro [run 38505477176](https://github.com/Dhruv2mars/javelin/actions/runs/38505477176)):
+  a stale-bound view with an unreadable file stayed frozen forever; a direct
+  thaw/edit/refreeze between listing and reading was captured with the old blob;
+  replay left the view frozen and older operations were not replayable; `init`
+  root-deleted a runtime named `.rt-y.javelin-init`. Fixed in `e2a8000`.
+- Round 2 (repro [run 38506377158](https://github.com/Dhruv2mars/javelin/actions/runs/38506377158)):
+  replaying a foreign operation rebound the view and the next capture dropped
+  foreign work; a pending ID reused on another Layer froze the view. Fixed in
+  `a279a84`.
+- Round 3 (repro [run 38506956046](https://github.com/Dhruv2mars/javelin/actions/runs/38506956046)):
+  a pending capture adopted a same-Layer foreign commit under its ID; recovery
+  ignored frozen views without pending work. Fixed in `654970f`.
+- Round 4 (repro [run 38507609759](https://github.com/Dhruv2mars/javelin/actions/runs/38507609759)):
+  a transient database lock during re-verification abandoned the view's own
+  commit. Fixed in `d61648e`.
+- Round 5 (repros [run 38508346755](https://github.com/Dhruv2mars/javelin/actions/runs/38508346755)
+  and [run 38508564838](https://github.com/Dhruv2mars/javelin/actions/runs/38508564838)):
+  a helper refusal and a direct thaw both abandoned the view's own commit, and a
+  foreign same-ID commit plus an over-limit upper froze the view. The first
+  misconfiguration repro was INCONCLUSIVE because the test failed earlier in
+  `recover`; the corrected test reproduced it. Rounds 2-5 all came from deciding
+  ownership by re-reading the view, so `d802d9b` replaced that with the recorded
+  candidate design above.
+- Round 6 (`d802d9b`): no source defects. It found the transient test had become
+  vacuous; `8137111` makes it block reads, and it now fails the first recovery,
+  keeps the view frozen and pending, then adopts the commit.
 
 ## Hosted evidence
 
-Executable source `93f9eaa00421f3c5efbaac79449bc22699c464b1` (later commits change
-only this document and `TASKS.md`):
+Executable source `8137111cb00a227f0f225ef4debe7ca1bf891e98`. Later commits
+change only this document and `TASKS.md`.
 
-- [Linux Layer runtime run 38503434985](https://github.com/Dhruv2mars/javelin/actions/runs/38503434985),
-  attempt 1 job failed: the unchanged common probe's `watch-notifications` check
-  saw no event for `watch-create` within its 2-second window. All other checks
-  passed. Attempt 2, [job 115655951380](https://github.com/Dhruv2mars/javelin/actions/runs/38503434985/job/115655951380),
-  and a dispatched [run 38503753472](https://github.com/Dhruv2mars/javelin/actions/runs/38503753472),
-  job 115656408546, both passed everything. Watch delivery is therefore
-  VERIFIED in 2 of 3 runs, with 1 flake; it is not proven reliable. The previous
-  source `34f6312` also passed in [run 38502015959](https://github.com/Dhruv2mars/javelin/actions/runs/38502015959).
+- [Linux Layer runtime run 38509261390](https://github.com/Dhruv2mars/javelin/actions/runs/38509261390)
+  (job 115673748698, artifact `11868883074`, `sha256:80fa249a…`) and dispatched
+  [run 38509461412](https://github.com/Dhruv2mars/javelin/actions/runs/38509461412)
+  (job 115674389087, artifact `11868493900`, `sha256:14f85c84…`), expiring
+  2026-10-28. Each passed 16 of 16 gated tests (15 mount tests plus the actor
+  entry), all 15 summary checks VERIFIED, the shared-mapping freeze refusal
+  VERIFIED, and all mounts removed with the runtime parent deleted.
 - Ubuntu 24.04 image `20261004.327.1`, kernel `6.17.0-1022-azure`, x86_64, Rust
   1.99.0, Bun 1.3.13, ordinary UID 1001. Installed helper SHA-256
-  `6083a828d63956d94e53479f418b699b99c98b8a43e3e24882f31a485b5b3de4`, root:root
-  0755 in a root-owned directory. Common probe source pinned to `19224ef` and its
-  hash checked against the proof's recorded `617f009e…`.
-- Artifacts `11867140370` (`sha256:207b4ace…`) and `11867140559`
-  (`sha256:b5a08b0f…`), expiring 2026-10-28. Each `summary.json` is VERIFIED:
-  4 of 4 gated tests (3 mount tests plus the actor entry), flow, recovery and probe
-  VERIFIED, all mounts removed and the runtime parent deleted. Downloaded copies
-  are in `/tmp/javelin-pr10-run38503434985-final` and
-  `/tmp/javelin-pr10-run38503753472-final` (temporary).
-- [Native run 38503434805](https://github.com/Dhruv2mars/javelin/actions/runs/38503434805):
-  Linux and macOS passed 63 tests and Windows passed 50. Linux ignores five
-  gated or actor entries; macOS and Windows ignore one actor each. Windows does not
-  compile the Unix-only binding.
+  `08edd4663aec1ba94c332c910643c4ed7e35fbeaff6513f81e4a62d70c4b15bb`.
+- [Native run 38509261520](https://github.com/Dhruv2mars/javelin/actions/runs/38509261520):
+  Linux and macOS passed 65 tests, Windows 50. Linux ignores 17 gated or actor
+  entries; macOS and Windows ignore one actor each. Local Darwin debug and release
+  suites pass 65 tests with one ignored actor, plus fmt, Clippy, release build and
+  `git diff --check`. Release binaries contain no test-boundary string.
+  `native.yml`, the build contract and the existing probes are unchanged.
+- File watching: the unchanged common probe's `watch-notifications` check failed
+  in 2 of 23 hosted probe executions on this branch (`93f9eaa` run 38503434985
+  attempt 1 and `83751fb` run 38506552843 attempt 1, each "no watch event for
+  watch-create" within 2 seconds). It passed in the other 21. It is INCONCLUSIVE,
+  not reliable.
 
-What the runs prove, against `34f6312` inventories (sizes unchanged in `93f9eaa`):
+What the runs prove: shared base and checkpoint caches stay byte- and
+inode-identical; fresh uppers start empty; real tools' edits become exact
+complete native deltas; clones of older checkpoints match exactly; held writers
+and shared writable mappings make capture `busy`; bypass writes, read-only views
+and hidden backing are refused; kills before and after native commit, during cache
+staging and during discard converge to exactly one native outcome; stale bindings,
+foreign or reused operation IDs, direct helper thaws, helper refusals, transient
+database locks, unreadable files and over-limit uppers never freeze a view
+forever, never adopt foreign work and never abandon the view's own commit.
 
-- Fresh A/B/clone uppers have zero entries. A shared 8,344-byte base cache keeps
-  identical inodes and hashes before capture, after capture, after clone and at
-  the end.
-- The checkpoint cache holds only the 7 changed entries (24,180 bytes, mostly the
-  compiled `app` and the whole-file `bytes.bin` copy-up), plus kernel whiteouts for
-  `delete.txt` and `dir`; untouched `main.c` is absent.
-- Real `sh/mv/dd/rm/chmod/ln/cc/find` edits become an exact native diff: changed
-  bytes, an execute-bit change, a new symlink target, a compiled binary, and
-  per-entry tombstones for a removed directory. An empty directory is reported as
-  unrepresented.
-- A held writer and a shared writable mapping each make capture `busy` with no
-  pending record. Unfrozen listing, unlisted parents, write bypass of an unmounted
-  view (`EACCES`), writes to checkpoint and base views (`EROFS`) and hidden
-  backing traversal (`EACCES`) are all refused.
-- Clones of an older checkpoint after later edits match it exactly and compile 7
-  and 11 independently. Stale external head advances keep edits. Discard removes
-  only the clone's view and storage and keeps World and sibling Layers.
-- Kills before native capture, after native commit, while staging a cache and
-  during discard all recover to exactly one native outcome. Incomplete caches are
-  never selected. A lock-holding capture makes a concurrent caller `busy`.
-- The unchanged common probe reports 10 VERIFIED checks and keeps its caller-path
-  clone check INCONCLUSIVE. Captured probe edits then clone into a separate view
-  (values 9 and 11).
-
-Verdicts: bounded Linux runtime binding VERIFIED on this runner image and kernel.
-File-watch reliability is INCONCLUSIVE (one flake in three runs). The following
-are NOT VERIFIED: other kernels and distributions, the production privilege
-model, autosave, Stack and Publish, macOS/Windows bindings, Gate 2 and GA.
+Verdicts: bounded Linux runtime binding VERIFIED at `8137111` on this runner image
+and kernel. File-watch reliability INCONCLUSIVE. NOT VERIFIED: other kernels and
+distributions, the production privilege model, autosave, re-binding stale views,
+Stack and Publish, macOS/Windows bindings, Gate 2 and GA.

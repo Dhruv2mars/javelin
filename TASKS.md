@@ -241,3 +241,24 @@ release binaries contain no test-boundary hooks. Evidence and limits are in
 `docs/linux-layer-runtime.md`. Gate 2 and GA are not claimed. Follow-on work:
 autosave/stable capture, continuous editing during capture, re-binding stale views,
 cache collection, the production privilege model, and macOS/Windows bindings.
+
+### Hub hold of `93f9eaa` and follow-up review rounds
+
+The hub held acceptance on a frozen-forever recovery bug and other findings. Each
+item was first reproduced in a hosted run against unchanged production source,
+then fixed, then re-reviewed. Details are in `docs/linux-layer-runtime.md`.
+
+- [x] Reproduce the hub findings (run 38505477176) and fix them in `e2a8000`.
+- [x] Round 2: reproduce (38506377158) and fix foreign-replay rebinding and reused-ID freeze (`a279a84`).
+- [x] Round 3: reproduce (38506956046) and fix same-ID adoption and orphan freeze (`654970f`).
+- [x] Round 4: reproduce (38507609759) and fix transient abandonment of an own commit (`d61648e`).
+- [x] Round 5: reproduce (38508346755, 38508564838) and replace view re-verification with recorded candidates (`d802d9b`).
+- [x] Round 6: no source defects; make the transient test non-vacuous (`8137111`).
+- [x] Verify `8137111`: hosted runs 38509261390 and 38509461412 pass 16/16; native 38509261520 passes 65/65/50.
+- [ ] Report the corrected source and evidence to the hub.
+
+Executable source `8137111cb00a227f0f225ef4debe7ca1bf891e98` is VERIFIED for the
+bounded Linux binding. File-watch reliability remains INCONCLUSIVE (2 failures in
+23 hosted probe executions). Stale-bound views can only be escaped by a native
+discard followed by `recover`; re-binding them is follow-on work. Gate 2 and GA
+are not claimed.
