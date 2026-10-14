@@ -1,6 +1,6 @@
 # macOS sparse Layer backend attempt
 
-Status: bounded hosted attempt. Results are recorded below only from actual runs.
+Status: bounded hosted attempt complete. Results below come only from downloaded run archives.
 This document does not claim CLI, native database binding, autosave, Gate 2 or GA.
 
 ## Source and dependencies
@@ -81,7 +81,8 @@ Layer gives independent kill and remount, and a lock file per Layer.
   whose server holds its lock. Hard links are unsupported by `nfsserve`.
 
 On the hosted runner, the base is owned by `root:wheel`, so the server user cannot
-write it. Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft`.
+write it. Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft,rdirplus`.
+`rdirplus` is required: `nfsserve` 0.11.0 ignores the cookie for plain READDIR.
 
 ## Run
 
@@ -99,10 +100,75 @@ and runs the pinned probe plus clone, kill-recovery and storage checks.
 
 ## Results
 
-Pending the first hosted run.
+Tested executable source is `1c503a2660a0a7b952c35395971776d84c548e90`. Every run
+used `macos-26` image `20260907.0351.1`, macOS 26.6.2 (25G83) on arm64, Xcode 26.6
+(17F113), MacOSX 26.5 SDK, Rust 1.99.0 and Bun 1.3.13. Archives expire 2026-10-28.
+
+| Run | Source | Artifact (digest) | Result |
+| --- | --- | --- | --- |
+| [38505212596](https://github.com/Dhruv2mars/javelin/actions/runs/38505212596) | `25033c0` | `11867613085` (`eb1e50b1…39a1`) | NOT VERIFIED: stale handle after file rename |
+| [38505779476](https://github.com/Dhruv2mars/javelin/actions/runs/38505779476) | `4847a18` | `11866888720` (`53d01202…6c40`) | VERIFIED, before review fixes |
+| [38506206609](https://github.com/Dhruv2mars/javelin/actions/runs/38506206609) | `1c503a2` | `11867809729` (`3a22fa6a…632b`) | VERIFIED on the final source |
+
+The first run's stale handles came from a rename bookkeeping bug that stored the
+renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.
+The first run's watch failure did not recur; its cause is UNCONFIRMED.
+
+### Loopback NFS sparse overlay: VERIFIED for the bounded fixture
+
+Run 38506206609 passed all 19 required checks with zero cleanup errors:
+
+- Real `nfs` mounts of three Layers over one `root:wheel` base the server user cannot write.
+- The pinned probe's complete report: reads, in-place writes, create, atomic-save
+  rename, delete, directory rename, traversal, relative symlink, Bun `fs.watch`,
+  `cc` build and run, independent process writes, writer SIGKILL interruption,
+  and final base and peer integrity. Its own clone check is INCONCLUSIVE by design
+  in paths mode; it exited 1 only for that reason.
+- kqueue `NOTE_WRITE` on a mounted directory.
+- Busy-Layer clone refusal; quiescent clone after unmount, identical remount and
+  independent divergence, including a compiler run in the clone.
+- Server SIGKILL with the mount active, forced unmount, restart and remount keep fsynced state.
+- Storage: the base digest is unchanged. Layers B and C hold no private files.
+  A holds 8,263 private bytes against an 8,339-byte base, and the clone holds 8,245.
+  Unchanged `main.c` was never copied. A 1-byte write copied the whole 8,192-byte
+  `bytes.bin`, and the directory rename materialized `renamed-dir/nested.txt`.
+
+### FSKit: INCONCLUSIVE, missing per-user module enablement
+
+Recorded on every run: `xcodebuild -license check` exit 0, 0 valid code-signing
+identities, FSKit headers including `FSPathURLResource`, and three system FSKit
+modules. Apple's sample downloaded with the expected SHA-256 and built ad-hoc.
+The extension carries `com.apple.developer.fskit.fsmodule` with an ad-hoc
+signature and no provisioning profile. `pluginkit -a` registered it, and
+`pluginkit -e use` exited 0 and marked it elected. `mount -F -t passthrough` then
+exited 69: `Module com.example.apple-samplecode.Passthrough.AppEx is disabled!`
+
+The runner image reports SIP disabled, and AMFI logs `developer mode is force
+enabled` and `Enforcement disabled`. This unit did not change those settings and
+does not rely on them. Even so, FSKit refused the module. The missing prerequisite
+is the per-user File System Extensions enablement. Apple documents only the System
+Settings toggle, plus a paid-team profile for the restricted entitlement. The
+passthrough sample is not sparse, so a future FSKit mount would need its own overlay.
+
+## Review
+
+Independent read-only review by `gpt-6.1-sol` (high) on `25033c0` found four P1 and
+seven P2 issues. `1c503a2` fixes nine, each with a regression that fails when the
+fix is reverted: rename ordering, symlink-handle writes, CREATE truncation, probe
+completeness, whiteout publication, durability syncs, cleanup tracking, nested
+clones and mode bits. Plain READDIR pagination and case-insensitive storage remain
+limits. Round 2 status is recorded in `TASKS.md`.
 
 ## Limits
 
+- The hosted work volume is case-insensitive. Different spellings of one name can
+  bypass a whiteout or receive separate handles. Production needs case-sensitive
+  backing storage or consistent name resolution.
+- `nfsserve` 0.11.0 drops the plain READDIR cookie; large directories need `rdirplus`.
+- Copy-up is per file. A small write to a large base file copies the whole file.
+- An interruption after a rename moves private bytes, before whiteouts persist,
+  can re-expose the old base name as a duplicate. Data is not lost.
+- One process serves one Layer under a global lock. Throughput was not measured.
 - Product integration, automatic checkpoints, native storage and the CLI are absent.
 - The NFS client and server are on one host. Remote NFS, sleep and network loss are untested.
 - Directory rename materializes its subtree. Hard links, xattrs and ACLs are unsupported.

@@ -454,8 +454,17 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - Owns `tools/macos-sparse-backend/**`, `docs/macos-sparse-backend.md`,
   `.github/workflows/macos-sparse-backend.yml`, and this section.
 - PR #5/#7 are unmerged dependencies used at most as pinned developer checkouts.
-- [ ] Compare FSKit and at least one alternative sparse ordinary-path approach from sources.
-- [ ] Record hosted SDK, compiler, license, signing and activation prerequisites raw.
-- [ ] Run one bounded disposable hosted macOS attempt and archive raw evidence.
-- [ ] Mount checks only if documented prerequisites are satisfied; else INCONCLUSIVE.
-- [ ] Independent read-only review and handoff to the hub.
+- PR: [#11](https://github.com/Dhruv2mars/javelin/pull/11), draft. Planning commit `a7727b0`.
+- [x] Compare FSKit and at least one alternative sparse ordinary-path approach from sources.
+  Selected loopback NFSv3 (`nfsserve` 0.11.0); FSKit, macFUSE, FUSE-T and union mounts compared.
+- [x] Record hosted SDK, compiler, license, signing and activation prerequisites raw.
+- [x] Run bounded disposable hosted macOS attempts and archive raw evidence:
+  runs `38505212596` (NOT VERIFIED, rename bug), `38505779476` and `38506206609` (VERIFIED).
+- [x] VERIFIED bounded fixture: real NFS sparse Layers at tested source `1c503a2`
+  pass the pinned PR #5 probe plus clone, kill-recovery, storage and cleanup checks.
+- [x] FSKit INCONCLUSIVE: ad-hoc sample registered and elected, mount exit 69,
+  `Module … is disabled!`. Missing per-user enablement and paid-team profile.
+- [x] Independent review r1 (`gpt-6.1-sol` high): nine of eleven findings fixed with regressions.
+- [ ] Independent review r2 on `1c503a2` and hub handoff.
+- [ ] Open: case-insensitive host volume, plain READDIR cookie in `nfsserve`, per-file
+  copy-up, native storage binding, automatic checkpoints, CLI, product Gate 2.
