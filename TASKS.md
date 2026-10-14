@@ -392,7 +392,7 @@ review, and exact-head three-OS raw evidence must verify the restored source.
 This is a pure component, with no Stack, Publish, GA, or underlying core acceptance.
 
 - [x] Recover interrupted run, clean base, instructions and hub contract/decisions.
-- [ ] Open and immediately T3-link the one draft PR; report planning SHA to hub.
+- [x] Open and immediately T3-link draft PR #21; report planning `935f38a` to hub.
 - [ ] Ground API, loader, matching and refusal; compare two shapes with Codex architect.
 - [ ] Reproduce exact old-source resource issue in private scratch.
 - [ ] Implement smallest deterministic bounded design and public resource outcome.
