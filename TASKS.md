@@ -357,6 +357,13 @@ PRs are never merged without explicit user instruction.
   storage; base ACL protection is separate. Multiple snapshot clones, metadata
   edits and mid-write recovery remain unverified. These limits preserve the
   bounded fixture evidence without accepting the Windows Layer backend.
+- Review wording/checklist corrections are closed at final head
+  `cc94e22b8a316b4308305218aab003c172c96e42`. The hub inspected the exact diff:
+  only owned docs and TASKS changed from `3ad8241`; executable and eight archives
+  are unchanged. The offline audit still passes. Failed ordinary-path behavior,
+  broader restart recovery and clone/storage guarantees are explicitly unchecked.
+  The owner is stopped again. This accepts the bounded collection handoff, while
+  all Windows backend limitations above remain open.
 
 ### Native Linux Layer filesystem binding
 
