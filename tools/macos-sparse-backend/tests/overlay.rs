@@ -551,3 +551,72 @@ fn clone_rejects_destination_nested_in_source() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
     assert!(!nested.exists());
 }
+
+#[tokio::test]
+async fn rename_handles_follow_bytes_when_whiteout_persistence_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    write_new(&a, "", ".README.saving", b"saved\n").await;
+    let moved = id(&a, ".README.saving").await.unwrap();
+    let replaced = id(&a, "README.txt").await.unwrap();
+    let tmp = fx.upper("a").join("tmp");
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = a
+        .rename(
+            root,
+            &b".README.saving".as_slice().into(),
+            root,
+            &b"README.txt".as_slice().into(),
+        )
+        .await;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        result.is_err(),
+        "whiteout persistence failure must be reported"
+    );
+    assert_eq!(a.read(moved, 0, 100).await.unwrap().0, b"saved\n");
+    assert_eq!(
+        a.getattr(replaced).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_STALE as u32
+    );
+    assert_eq!(read(&a, "README.txt").await, b"saved\n");
+}
+
+#[test]
+fn clone_accepts_bare_relative_destination() {
+    let fx = Fixture::new();
+    drop(fx.open("a"));
+    let out = Command::new(env!("CARGO_BIN_EXE_macos-sparse-backend"))
+        .current_dir(&fx.root)
+        .args(["clone", "--from", "a", "--to", "c"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(fx.upper("c").join("tree").is_dir());
+}
+
+#[test]
+fn failed_clone_removes_partial_output_with_read_only_directories() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    drop(fx.open("a"));
+    let ro = fx.upper("a").join("tree/ro");
+    fs::create_dir(&ro).unwrap();
+    fs::write(ro.join("child"), "x").unwrap();
+    fs::set_permissions(&ro, fs::Permissions::from_mode(0o555)).unwrap();
+    let whiteouts = fx.upper("a").join("whiteouts");
+    fs::write(&whiteouts, "keep.txt\n").unwrap();
+    fs::set_permissions(&whiteouts, fs::Permissions::from_mode(0o000)).unwrap();
+    let result = clone_upper(&fx.upper("a"), &fx.upper("c"));
+    fs::set_permissions(&whiteouts, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).unwrap();
+    let err = result.unwrap_err();
+    assert!(!err.to_string().contains("not removed"), "{err}");
+    assert!(!fx.upper("c").exists(), "partial clone must be removed");
+}

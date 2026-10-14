@@ -439,10 +439,11 @@ fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
 /// Only private changes are copied; the base stays shared.
 pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
     let from = from.canonicalize()?;
-    let parent = to
-        .parent()
-        .ok_or(io::ErrorKind::InvalidInput)?
-        .canonicalize()?;
+    let parent = match to.parent().ok_or(io::ErrorKind::InvalidInput)? {
+        p if p.as_os_str().is_empty() => Path::new("."),
+        p => p,
+    }
+    .canonicalize()?;
     let to = parent.join(to.file_name().ok_or(io::ErrorKind::InvalidInput)?);
     if to.starts_with(&from) || from.starts_with(&to) {
         return Err(io::Error::new(
@@ -460,10 +461,29 @@ pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
         File::open(&to)?.sync_all()?;
         File::open(&parent)?.sync_all()
     })();
-    if copied.is_err() {
-        let _ = fs::remove_dir_all(&to);
+    if let Err(e) = copied {
+        return Err(match force_remove(&to) {
+            Ok(()) => e,
+            Err(c) => io::Error::other(format!("{e}; partial clone not removed: {c}")),
+        });
     }
-    copied
+    Ok(())
+}
+
+/// Removes a partial clone, first restoring owner access to copied read-only directories.
+fn force_remove(path: &Path) -> io::Result<()> {
+    fn unlock(p: &Path) -> io::Result<()> {
+        let meta = fs::symlink_metadata(p)?;
+        if meta.is_dir() {
+            fs::set_permissions(p, fs::Permissions::from_mode(meta.mode() & 0o7777 | 0o700))?;
+            for e in fs::read_dir(p)? {
+                unlock(&e?.path())?;
+            }
+        }
+        Ok(())
+    }
+    unlock(path)?;
+    fs::remove_dir_all(path)
 }
 
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
@@ -715,10 +735,10 @@ impl NFSFileSystem for Overlay {
         fs::rename(self.tree(&from), &dst).map_err(io_err)?;
         sync_dir(dst.parent().unwrap()).map_err(io_err)?;
         sync_dir(self.tree(from.parent().unwrap()).as_path()).map_err(io_err)?;
-        crash_at("rename");
-        self.add_whiteouts(&mut st, &[&from, &to])?;
+        // Handles follow the moved bytes even if whiteout persistence fails next.
         Self::rekey(&mut st, &from, &to);
-        Ok(())
+        crash_at("rename");
+        self.add_whiteouts(&mut st, &[&from, &to])
     }
 
     async fn readdir(
