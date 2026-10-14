@@ -173,6 +173,36 @@ async fn atomic_save_rename_and_delete_persist_across_reopen() {
 }
 
 #[tokio::test]
+async fn renamed_file_handle_and_name_stay_valid_without_reopen() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    write_new(&a, "", ".README.saving", b"saved\n").await;
+    let moved = id(&a, ".README.saving").await.unwrap();
+    let replaced = id(&a, "README.txt").await.unwrap();
+    a.rename(
+        root,
+        &b".README.saving".as_slice().into(),
+        root,
+        &b"README.txt".as_slice().into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        a.getattr(moved).await.unwrap().size,
+        6,
+        "moved handle must follow the file"
+    );
+    assert_eq!(a.read(moved, 0, 100).await.unwrap().0, b"saved\n");
+    assert_eq!(id(&a, "README.txt").await.unwrap(), moved);
+    assert_eq!(read(&a, "README.txt").await, b"saved\n");
+    assert_eq!(
+        a.getattr(replaced).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_STALE as u32
+    );
+}
+
+#[tokio::test]
 async fn directory_rename_moves_base_children_and_hides_old_name() {
     let fx = Fixture::new();
     let before = fx.base_listing();

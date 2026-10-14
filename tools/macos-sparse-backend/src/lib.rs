@@ -187,7 +187,13 @@ impl Overlay {
             .collect();
         for (p, id) in moved {
             st.paths.remove(&p);
-            let np = to.join(p.strip_prefix(from).unwrap());
+            // Joining an empty suffix would add a trailing slash and break file lookups.
+            let rest = p.strip_prefix(from).unwrap();
+            let np = if rest.as_os_str().is_empty() {
+                to.to_path_buf()
+            } else {
+                to.join(rest)
+            };
             st.ids.insert(id, np.clone());
             st.paths.insert(np, id);
         }

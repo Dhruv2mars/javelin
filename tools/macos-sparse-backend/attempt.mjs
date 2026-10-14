@@ -124,6 +124,24 @@ try {
       evidence: c.id === 'layer-clone-snapshot-isolation' ? 'paths mode cannot clone; see quiescent-clone-and-remount' : c.evidence ?? null });
   }
 
+  // Distinguishes kernel kqueue vnode events from the probe's fs.watch result.
+  await check('kqueue-directory-write-event', () => {
+    const script = `import os, select, sys
+d = sys.argv[1]
+fd = os.open(d, os.O_RDONLY)
+kq = select.kqueue()
+ev = select.kevent(fd, filter=select.KQ_FILTER_VNODE, flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR, fflags=select.KQ_NOTE_WRITE)
+kq.control([ev], 0, 0)
+open(os.path.join(d, 'kqueue-probe'), 'w').close()
+got = kq.control(None, 4, 2.0)
+os.unlink(os.path.join(d, 'kqueue-probe'))
+print(len(got), [hex(e.fflags) for e in got])
+sys.exit(0 if got else 1)`;
+    const r = run(['python3', '-I', '-c', script, mnt('a')], { timeoutMs: 15000 });
+    assert(r.exitCode === 0, `no kqueue NOTE_WRITE: ${r.stdout}${r.stderr}`);
+    return r.stdout.trim();
+  });
+
   await check('busy-layer-clone-refused', () => {
     const r = run([binary, 'clone', '--from', upper('b'), '--to', upper('x')]);
     assert(r.exitCode === 2 && r.stderr.includes('clone refused'), `exit ${r.exitCode}: ${r.stderr}`);
