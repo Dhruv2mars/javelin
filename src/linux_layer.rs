@@ -136,6 +136,26 @@ struct ViewRecord {
     revision: u64,
     head: String,
     pending: Option<Pending>,
+    /// The last completed capture, so a caller that lost the reply can retry it.
+    #[serde(default)]
+    last: Option<Completed>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Completed {
+    operation: String,
+    applied: bool,
+    revision: u64,
+    changed_paths: usize,
+    unrepresented: Vec<String>,
+}
+
+fn state_revision(state: &LayerState) -> u64 {
+    match state {
+        LayerState::Active { head } => head.revision(),
+        LayerState::Discarded { revision, .. } => *revision,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -159,6 +179,8 @@ pub struct RecoveryReport {
     pub stages_aborted: usize,
     pub pending_resolved: usize,
     pub views_removed: usize,
+    /// Views that could not be recovered; others are still processed.
+    pub failures: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -674,6 +696,7 @@ impl LinuxLayerRuntime {
                     revision: head.revision(),
                     head: checkpoint,
                     pending: None,
+                    last: None,
                 };
                 self.write_record(&slot, &record)?;
                 record
@@ -724,6 +747,29 @@ impl LinuxLayerRuntime {
                 .ok_or_else(|| Error::InvalidInput("Layer was discarded".into()))?;
         }
         if record.pending.is_none() {
+            if let Some(last) = record
+                .last
+                .as_ref()
+                .filter(|l| l.operation == operation.as_str())
+            {
+                // A completed capture retried after a lost reply returns its outcome.
+                let state = usize::try_from(last.revision)
+                    .ok()
+                    .and_then(|r| repo.layer_history(layer).ok()?.into_iter().nth(r))
+                    .ok_or_else(|| {
+                        Error::CorruptRepository("completed capture missing from history".into())
+                    })?;
+                let update = if last.applied {
+                    LayerUpdate::Applied { state }
+                } else {
+                    LayerUpdate::Stale { state }
+                };
+                return Ok(CaptureOutcome {
+                    update,
+                    changed_paths: last.changed_paths,
+                    unrepresented_directories: last.unrepresented.clone(),
+                });
+            }
             if mount_state(&self.root.join("views").join(&slot))?.is_none() {
                 return Err(Error::InvalidInput("Layer view is not mounted".into()));
             }
@@ -764,7 +810,13 @@ impl LinuxLayerRuntime {
         let (changes, unrepresented, expected) = match attempt {
             Ok(values) => values,
             Err(error) => {
-                if certain(&error) {
+                // No native call happened in this attempt. An earlier crashed attempt
+                // can only matter if it advanced the head; otherwise thaw so the user
+                // can repair the view instead of staying frozen behind a retry.
+                let unadvanced = repo
+                    .layer_history(layer)
+                    .is_ok_and(|h| h.len() as u64 == record.revision + 1);
+                if certain(&error) || unadvanced {
                     record.pending = None;
                     self.write_record(slot, record)?;
                     self.helper("thaw", &["view", slot])?;
@@ -793,6 +845,17 @@ impl LinuxLayerRuntime {
             record.head = head.checkpoint().object().to_string();
         }
         record.pending = None;
+        record.last = Some(Completed {
+            operation: operation.as_str().into(),
+            applied: matches!(update, LayerUpdate::Applied { .. }),
+            revision: match &update {
+                LayerUpdate::Applied { state } | LayerUpdate::Stale { state } => {
+                    state_revision(state)
+                }
+            },
+            changed_paths: changes.entries().len(),
+            unrepresented: unrepresented.clone(),
+        });
         self.write_record(slot, record)?;
         self.helper("thaw", &["view", slot])?;
         Ok(CaptureOutcome {
@@ -964,25 +1027,38 @@ impl LinuxLayerRuntime {
             if slot == "runtime" {
                 continue;
             }
-            let bytes = fs::read(self.root.join("state").join(&name))?;
-            let mut record: ViewRecord = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
-            let layer = LayerId::parse(&record.layer)
-                .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
-            if self::slot(&layer) != slot {
-                return Err(Error::CorruptRepository("view record slot mismatch".into()));
-            }
-            if record.pending.is_some() {
-                self.resolve(repo, &layer, slot, &mut record)?;
-                report.pending_resolved += 1;
-            } else if matches!(repo.layer_state(&layer)?, LayerState::Discarded { .. }) {
-                self.helper("unmount-view", &[slot])?;
-                self.helper("remove-view", &[slot])?;
-                self.remove_record(slot)?;
-                report.views_removed += 1;
+            if let Err(error) = self.recover_view(repo, slot, &name, &mut report) {
+                report.failures.push(format!("{slot}: {error}"));
             }
         }
         Ok(report)
+    }
+
+    fn recover_view(
+        &self,
+        repo: &mut Repository,
+        slot: &str,
+        name: &str,
+        report: &mut RecoveryReport,
+    ) -> Result<()> {
+        let bytes = fs::read(self.root.join("state").join(name))?;
+        let mut record: ViewRecord = serde_json::from_slice(&bytes)
+            .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
+        let layer = LayerId::parse(&record.layer)
+            .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
+        if self::slot(&layer) != slot {
+            return Err(Error::CorruptRepository("view record slot mismatch".into()));
+        }
+        if record.pending.is_some() {
+            self.resolve(repo, &layer, slot, &mut record)?;
+            report.pending_resolved += 1;
+        } else if matches!(repo.layer_state(&layer)?, LayerState::Discarded { .. }) {
+            self.helper("unmount-view", &[slot])?;
+            self.helper("remove-view", &[slot])?;
+            self.remove_record(slot)?;
+            report.views_removed += 1;
+        }
+        Ok(())
     }
 }
 
