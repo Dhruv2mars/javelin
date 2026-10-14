@@ -33,6 +33,9 @@ impl Fixture {
         let id = repo.put_manifest(&manifest).unwrap();
         repo.compare_and_advance(&op("world-1"), VersionNumber::new(0).unwrap(), id)
             .unwrap();
+        // World 2 has the same tree as World 1, so equal edits differ only by base.
+        repo.compare_and_advance(&op("world-2"), VersionNumber::new(1).unwrap(), id)
+            .unwrap();
         Self {
             _dir: dir,
             repo,

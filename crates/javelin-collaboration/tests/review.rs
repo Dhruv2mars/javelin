@@ -503,3 +503,46 @@ fn optional_reviews_still_require_current_publish_role() {
         Err(Refusal::NotOpen)
     );
 }
+
+#[test]
+fn base_only_change_is_a_different_revision() {
+    let mut fx = Fixture::new();
+    let on1 = fx.proposal(1, "same", Some(b"ctx"));
+    let on2 = fx.proposal(2, "same", Some(b"ctx"));
+    // Real native proposals with identical manifest and context, different base.
+    assert_eq!(
+        (on1.manifest(), on1.context()),
+        (on2.manifest(), on2.context())
+    );
+    assert_ne!(on1.base(), on2.base());
+
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(on1)), &p);
+    assert_eq!(
+        refused(&r, cmd("a2", "rita", approve(1, on2)), &p),
+        Refusal::RevisionMismatch
+    );
+    let approved = ok(&r, cmd("a1", "rita", approve(1, on1)), &p);
+    assert_eq!(
+        check_publishable(&approved, &on2, &p, &who("mona")),
+        Err(Refusal::RevisionMismatch)
+    );
+    // Same operation ID and actor, base-only different input.
+    assert_eq!(
+        refused(&approved, cmd("o1", "alice", open(on2)), &p),
+        Refusal::OperationIdReused(op("o1"))
+    );
+    // Rebased resubmission is accepted as a new revision and invalidates approval.
+    let rebased = ok(&approved, cmd("v2", "alice", revise(1, on2)), &p);
+    assert_eq!(
+        check_publishable(&rebased, &on2, &p, &who("mona")),
+        Err(Refusal::NotEnoughApprovals {
+            required: 1,
+            current: 0
+        })
+    );
+    assert_eq!(
+        check_publishable(&rebased, &on1, &p, &who("mona")),
+        Err(Refusal::RevisionMismatch)
+    );
+}

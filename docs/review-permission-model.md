@@ -14,6 +14,9 @@ evaluation against the repository's currently applied permissions.
   crate is for `ObjectId`, `VersionNumber`, and `OperationId` only. It compiles
   the root crate's SQLite dependency transitively, but this library never opens storage.
 - No Git. Tests build proposals with the public native repository API.
+- Exception for fixtures only: the tests and the `review_flow` example open a
+  temporary native repository and advance its World to seed real proposals.
+  The library itself never does either.
 - `check_publishable` evaluates the supplied current state only. It is not an
   authorization token or ticket and does not make remote Publish atomic.
 - Durable storage, provider integration, protocol mapping, and credential
@@ -79,8 +82,10 @@ Further rules:
 - Operation IDs are scoped to one Publish Request state. The store keys state by
   `(repository, request)`, so an `Open` retry loads the existing state and replays.
   The node must namespace or check operation IDs across requests.
-- Each state records the highest permissions epoch it applied and refuses lower
-  epochs in both `apply` and `check_publishable`. Equal epochs are accepted.
+- Each state records the permissions epoch of its last accepted, non-replayed
+  transition. Lower epochs are refused by new transitions and by `check_publishable`.
+  Equal epochs are accepted. An identical retry of an accepted command replays
+  before any permission check, so it succeeds unchanged even with an older epoch.
   Node-wide epoch monotonicity belongs to integration.
 
 ## Integration obligations
@@ -120,20 +125,27 @@ Local commands, run from `crates/javelin-collaboration` with Rust 1.99.0:
 `cargo test --locked --all-targets`, and the compiled `review_flow` example
 compared with `examples/review_flow.expected`.
 
-- 12 behavior tests use a real temporary native repository. Each proposal comes from
-  a Layer capture whose checkpoint manifest is stored through `put_manifest`, plus
-  a context blob.
+- 13 behavior tests. Twelve use a real temporary native repository with Worlds 1
+  and 2 sharing one tree. Each proposal comes from a Layer capture whose
+  checkpoint manifest is stored through `put_manifest`, plus a context blob. The
+  base-only test changes only the base and checks approval, invalidation,
+  publish check, and retry binding. The thirteenth test validates boundary input.
 - A deterministic property test runs 400 seeds × 60 commands. It covers random
   permissions, epoch regressions, verbatim retries, and same-ID different-input
   commands. It checks append-only history, a fixed author, no self-approval, unique
   operation IDs, author-only revisions, determinism, and soundness of every allowed
   publish result.
-- A manual mutation check reverted 13 guards one at a time: author check,
-  self-approval, current-role filter, replay input comparison, epoch, approval
-  reset, approval index, revise expectation, publish role, exact revision,
-  public-role ceiling, repository match, and refusal-before-binding. The suite caught all 13.
+- `scripts/mutations.sh` reverts 16 guards one at a time and fails if any change
+  survives the suite. The guards are: author check, self-approval, current-role
+  filter, replay input comparison, epoch, approval reset, approval index, revise
+  expectation, publish role, exact revision, public-role ceiling, repository match,
+  refusal-before-binding, revision equality on base, revision equality on context,
+  and the unchanged-revision refusal. It runs on the Linux CI job. The base
+  equality mutation came from independent review r1. It survived the earlier suite
+  and is caught only by the base-only test.
 
-Hosted three-OS results are recorded in `TASKS.md`.
+Hosted three-OS results and tested heads are recorded in `TASKS.md`. CI tests the
+PR head, not a merge with its base.
 
 ## Limits
 

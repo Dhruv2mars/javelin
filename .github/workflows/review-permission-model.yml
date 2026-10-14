@@ -5,6 +5,7 @@ on:
     paths:
       - crates/javelin-collaboration/**
       - .github/workflows/review-permission-model.yml
+      - docs/review-permission-model.md
       - src/**
       - Cargo.toml
       - Cargo.lock
@@ -53,7 +54,7 @@ jobs:
         run: |
           {
             printf 'commit=%s\nrunner=%s\narchitecture=%s\nimage=%s\nimage_version=%s\n' "$CHECKED_OUT_COMMIT" "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" "$ImageVersion"
-            sha256sum src/lib.rs tests/*.rs tests/support/mod.rs examples/review_flow.rs examples/review_flow.expected Cargo.toml Cargo.lock
+            sha256sum src/lib.rs scripts/mutations.sh tests/*.rs tests/support/mod.rs examples/review_flow.rs examples/review_flow.expected Cargo.toml Cargo.lock
             rustc --version --verbose
             cargo --version
           } 2>&1 | tee ci-logs/environment.log
@@ -77,6 +78,10 @@ jobs:
           # Checkout may convert the oracle to CRLF on Windows; compare LF text.
           tr -d '\r' < examples/review_flow.expected > ci-logs/example-expected.log
           diff -u ci-logs/example-expected.log ci-logs/example-output.log 2>&1 | tee ci-logs/example-diff.log
+
+      - name: Require tests to catch reverted guards
+        if: ${{ runner.os == 'Linux' }}
+        run: ./scripts/mutations.sh 2>&1 | tee ci-logs/mutations.log
 
       - name: Retain check logs
         if: ${{ !cancelled() }}

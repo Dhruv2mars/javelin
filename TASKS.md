@@ -228,10 +228,13 @@ expected revisions, reordered commands, and immutable comment/revision history;
 fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
 
 - [x] Read worktree and root instructions, contract, decisions, and public core API.
-- [ ] Open and register exactly one draft PR; report plan to the hub.
-- [ ] Compare at least two caller API candidates with an architecture review.
-- [ ] Implement the selected state machine and `check_publishable`.
-- [ ] Add behavior tests with a repository-backed fixture and property tests.
+- [x] Open and register exactly one draft PR; report plan to the hub.
+- [x] Compare at least two caller API candidates with an architecture review.
+- [x] Implement the selected state machine and `check_publishable`.
+- [x] Add behavior tests with a repository-backed fixture and property tests.
 - [ ] Add the three-OS workflow and inspect actual hosted artifacts.
 - [ ] Run an independent read-only review and fix material findings.
+- [x] Review r1 (Codex gpt-6.1-sol high, read-only, `363a3e3`): no high findings.
+  Fixed Windows CRLF oracle comparison (`64d6436`); added base-only binding test
+  and committed 16-guard `scripts/mutations.sh`; corrected doc claims.
 - [ ] Hand off exact tested source, scopes, and retained limits to the hub.
