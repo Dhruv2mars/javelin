@@ -338,6 +338,10 @@ impl Review {
         command: &Command,
         permissions: &AppliedPermissions,
     ) -> Result<Applied, Refusal> {
+        // Replays still require permissions for this repository.
+        if permissions.repository != self.repository {
+            return Err(Refusal::RepositoryMismatch);
+        }
         if let Some(prior) = self
             .history
             .iter()
@@ -470,10 +474,7 @@ pub fn check_publishable(
     publisher: &PrincipalId,
 ) -> Result<Publishable, Refusal> {
     review.check_permissions(permissions)?;
-    let current = review.current_open()?;
-    if current.revision != *exact {
-        return Err(Refusal::RevisionMismatch);
-    }
+    // Refuse unauthorized publishers before revealing request or revision state.
     if permissions.role(publisher).is_none() {
         return Err(Refusal::NoAccess);
     }
@@ -481,6 +482,10 @@ pub fn check_publishable(
         return Err(Refusal::InsufficientRole {
             required: Role::Maintain,
         });
+    }
+    let current = review.current_open()?;
+    if current.revision != *exact {
+        return Err(Refusal::RevisionMismatch);
     }
     let approvals: Vec<PrincipalId> = current
         .approvals

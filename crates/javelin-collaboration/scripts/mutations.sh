@@ -51,10 +51,12 @@ mutate revise_no_expected 's/if \*expected != current\.index \{/if false {/'
 mutate publish_role 's/permissions\.has\(publisher, Role::Maintain\)/permissions.has(publisher, Role::Read)/'
 mutate exact_mismatch 's/if current\.revision != \*exact \{/if false {/'
 mutate public_reviewer 's/Visibility::Public => granted\.or\(Some\(Role::Read\)\)/Visibility::Public => granted.or(Some(Role::Review))/'
-mutate repo_mismatch 's/if permissions\.repository != self\.repository \{/if false {/'
+mutate repo_mismatch 's/if permissions\.repository != self\.repository \{/if false {/g'
 mutate skip_permission_validation 's/self\.check_permissions\(permissions\)\?;\n        let actor/let actor/'
 mutate equality_ignores_base 's/#\[derive\(Clone, Copy, Debug, Eq, PartialEq\)\]\npub struct RevisionRef/#[derive(Clone, Copy, Debug, Eq)]\npub struct RevisionRef/; s/(impl RevisionRef \{)/impl PartialEq for RevisionRef {\n    fn eq(&self, o: &Self) -> bool {\n        self.manifest == o.manifest && self.context == o.context\n    }\n}\n\n$1/'
 mutate equality_ignores_context 's/#\[derive\(Clone, Copy, Debug, Eq, PartialEq\)\]\npub struct RevisionRef/#[derive(Clone, Copy, Debug, Eq)]\npub struct RevisionRef/; s/(impl RevisionRef \{)/impl PartialEq for RevisionRef {\n    fn eq(&self, o: &Self) -> bool {\n        self.manifest == o.manifest && self.base == o.base\n    }\n}\n\n$1/'
 mutate unchanged_revision_allowed 's/if current\.revision == \*revision \{/if false {/'
+mutate publish_state_before_access 's/    let current = review\.current_open\(\)\?;\n    if current\.revision != \*exact \{\n        return Err\(Refusal::RevisionMismatch\);\n    \}\n//; s/(    review\.check_permissions\(permissions\)\?;\n)/$1    let current = review.current_open()?;\n    if current.revision != *exact {\n        return Err(Refusal::RevisionMismatch);\n    }\n/'
+mutate replay_before_repository 's/        \/\/ Replays still require permissions for this repository\.\n        if permissions\.repository != self\.repository \{\n            return Err\(Refusal::RepositoryMismatch\);\n        \}\n//'
 
 exit $survived

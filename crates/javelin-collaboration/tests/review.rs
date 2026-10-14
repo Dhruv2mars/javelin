@@ -393,6 +393,62 @@ fn operation_ids_replay_exactly_and_refuse_different_input() {
 }
 
 #[test]
+fn publish_access_refusal_does_not_reveal_revision_state() {
+    let mut fx = Fixture::new();
+    let (a, b) = (fx.proposal(1, "a", None), fx.proposal(1, "b", None));
+    let p = team(1);
+    let empty = review();
+    let opened = ok(&empty, cmd("o1", "alice", open(a)), &p);
+    let approved = ok(&opened, cmd("a1", "rita", approve(1, a)), &p);
+
+    for state in [&empty, &opened, &approved] {
+        for exact in [a, b] {
+            assert_eq!(
+                check_publishable(state, &exact, &p, &who("outsider")),
+                Err(Refusal::NoAccess)
+            );
+            for actor in ["alice", "rita"] {
+                assert_eq!(
+                    check_publishable(state, &exact, &p, &who(actor)),
+                    Err(Refusal::InsufficientRole {
+                        required: Role::Maintain
+                    })
+                );
+            }
+            let public = perms(1, Visibility::Public, &[], 0);
+            assert_eq!(
+                check_publishable(state, &exact, &public, &who("outsider")),
+                Err(Refusal::InsufficientRole {
+                    required: Role::Maintain
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn identical_replay_requires_same_repository_but_not_current_grants_or_epoch() {
+    let mut fx = Fixture::new();
+    let rev = fx.proposal(1, "a", None);
+    let command = cmd("o1", "alice", open(rev));
+    let r = ok(&review(), command.clone(), &team(5));
+
+    for epoch in [0, 5, 6] {
+        let same_repo = perms(epoch, Visibility::Private, &[], 0);
+        let mut foreign = same_repo.clone();
+        foreign.repository = RepositoryId::parse("repo-2").unwrap();
+        assert_eq!(
+            refused(&r, command.clone(), &foreign),
+            Refusal::RepositoryMismatch
+        );
+        let replay = r.apply(&command, &same_repo).unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.review, r);
+        assert_eq!(replay.review.epoch(), 5);
+    }
+}
+
+#[test]
 fn reordered_commands_refuse_then_succeed_in_order() {
     let mut fx = Fixture::new();
     let (a, b) = (fx.proposal(1, "a", None), fx.proposal(1, "b", None));

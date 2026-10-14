@@ -74,7 +74,8 @@ Further rules:
 ## Retries, ordering, and epochs
 
 - Operation IDs bind accepted commands only. An identical retry returns the
-  unchanged state with `replayed = true`, even after permissions change. The same
+  unchanged state with `replayed = true`, even after permissions change, provided
+  the supplied permissions name the same repository. The same
   ID with any different actor or action is refused with `operation_id_reused`.
 - Refused commands are not recorded and do not change state. A retry is evaluated
   again, so it can succeed after a permission grant or after a missing revision arrives.
@@ -87,7 +88,8 @@ Further rules:
 - Each state records the permissions epoch of its last accepted, non-replayed
   transition. Lower epochs are refused by new transitions and by `check_publishable`.
   Equal epochs are accepted. An identical retry of an accepted command replays
-  before any permission check, so it succeeds unchanged even with an older epoch.
+  after the repository check but before epoch and role checks, so it succeeds
+  unchanged even with an older epoch or revoked grants.
   Node-wide epoch monotonicity belongs to integration.
 
 ## Integration obligations
@@ -113,6 +115,9 @@ At the publication correctness boundary, later integration must:
      new revision, which starts without approvals.
 4. Steps 2 and 3 happen within the same publication correctness boundary as the
    World advance.
+5. Record publication or close the request within that same boundary. This model
+   has no published or closed state, so `check_publishable` keeps allowing an
+   already published revision when its permissions and approvals still qualify.
 
 Example. Alice's revision is approved with base World 4. A maintainer publishes
 while the World is at 6, and Worlds 5 and 6 touched only unrelated paths.
@@ -151,23 +156,27 @@ Local commands, run from `crates/javelin-collaboration` with Rust 1.99.0:
 `cargo test --locked --all-targets`, and the compiled `review_flow` example
 compared with `examples/review_flow.expected`.
 
-- 13 behavior tests. Twelve use a real temporary native repository with Worlds 1
+- 15 behavior tests. Fourteen use a real temporary native repository with Worlds 1
   and 2 sharing one tree. Each proposal comes from a Layer capture whose
   checkpoint manifest is stored through `put_manifest`, plus a context blob. The
   base-only test changes only the base and checks approval, invalidation,
-  publish check, and retry binding. The thirteenth test validates boundary input.
+  publish check, and retry binding. One test validates boundary input. The access
+  test checks identical refusals across unopened, current, and mismatched revisions.
+  The replay test rejects foreign permissions while preserving same-repository
+  retries after revocation and epoch regression.
 - A deterministic property test runs 400 seeds × 60 commands. It covers random
   permissions, epoch regressions, verbatim retries, and same-ID different-input
   commands. It checks append-only history, a fixed author, no self-approval, unique
   operation IDs, author-only revisions, determinism, and soundness of every allowed
   publish result.
-- `scripts/mutations.sh` requires a passing baseline, then reverts 16 guards one
+- `scripts/mutations.sh` requires a passing baseline, then reverts 18 guards one
   at a time. Each mutation must compile and then fail at least one named test;
   a mutation that survives, does not compile, or does not apply fails the script. The guards are: author check, self-approval, current-role
   filter, replay input comparison, epoch, approval reset, approval index, revise
   expectation, publish role, exact revision, public-role ceiling, repository match,
   transition permission validation, revision equality on base, revision equality on context,
-  and the unchanged-revision refusal. It runs on the Linux CI job. The base
+  the unchanged-revision refusal, publisher access before revision inspection,
+  and repository validation before replay. It runs on the Linux CI job. The base
   equality mutation came from independent review r1. It survived the earlier suite
   and is caught only by the base-only test.
 

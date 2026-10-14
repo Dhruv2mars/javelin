@@ -263,6 +263,32 @@ fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
   https://github.com/Dhruv2mars/javelin/actions/runs/38507448220 passed on
   Linux x64, macOS ARM64, and Windows x64. Artifacts record that commit, 13
   behavior + 1 property test passing, empty oracle diff; Linux 16/16 mutations
-  caught. Linux and macOS logged SHA256 values match all 7 source files; Windows
+  caught. Linux and macOS logged SHA256 values match all nine hashed files; Windows
   matches after CRLF conversion.
 - [x] Hand off exact tested source, scopes, and retained limits to the hub.
+
+### PR #13 low-finding follow-up
+
+Done means both ordering regressions fail without their fixes, legitimate
+same-repository retries retain their semantics, local checks pass, and raw hosted
+Linux, macOS, and Windows logs verify the pushed source head. Prior bounded
+acceptance at `87f2acd` remains separate from this follow-up.
+
+- [x] Inspect interrupted edits and keep changes within this unit's owned paths.
+- [x] Check publisher access and Maintain role before request/revision inspection.
+- [x] Check permission repository identity before accepted-command replay.
+- [x] Add both regression tests and preserve retries after revoked grants/older epochs.
+- [x] Correct nine-file wording and document publication/closure integration obligation.
+- [x] Prove each regression fails when its corresponding fix is reverted.
+  `publish_state_before_access` is caught by
+  `publish_access_refusal_does_not_reveal_revision_state`;
+  `replay_before_repository` is caught by
+  `identical_replay_requires_same_repository_but_not_current_grants_or_epoch`.
+- [x] Run formatting, warnings-denied Clippy, full tests, example diff, and mutations.
+  Rust 1.99.0 on local macOS passed fmt, Clippy `-D warnings`, 15 behavior tests
+  plus one 400-seed property test, and the compiled release example with an empty
+  oracle diff. All 18 mutations compiled and failed named tests. Evidence is in
+  `/tmp/javelin-pr13-low-fixes/`. The example needs an existing fixture directory;
+  the first invocation lacked it, and the corrected invocation passed.
+- [ ] Push tested source and inspect raw three-OS hosted logs at that exact head.
+- [ ] Stop the single T3 watcher, confirm draft PR linkage, and report evidence to hub.
