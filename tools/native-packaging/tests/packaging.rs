@@ -1041,3 +1041,39 @@ fn stream_cut_exactly_on_a_header_boundary_is_not_mistaken_for_a_clean_end() {
     assert!(!dest.exists());
     assert_eq!(fs::read_dir(temp.path().join("prefix")).unwrap().count(), 0);
 }
+
+#[test]
+fn repro_builds_two_directories_and_reports_honestly() {
+    let temp = tempfile::tempdir().unwrap();
+    let report_path = temp.path().join("report.json");
+    ok(&pack(&[
+        "repro",
+        "--source",
+        root(),
+        "--work",
+        s(&temp.path().join("work")),
+        "--report",
+        s(&report_path),
+        "--source-date-epoch",
+        EPOCH,
+    ]));
+    let report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    let (a, b) = (&report["a"], &report["b"]);
+    assert_ne!(
+        a["source_dir"], b["source_dir"],
+        "builds must come from different directories"
+    );
+    // The reported verdict must agree with the hashes it reports; it may be either value.
+    assert_eq!(
+        report["identical"].as_bool().unwrap(),
+        a["binary_sha256"] == b["binary_sha256"]
+    );
+    if report["identical"] == false {
+        assert!(
+            !report["note"]
+                .as_str()
+                .unwrap()
+                .contains("identical binary bytes")
+        );
+    }
+}

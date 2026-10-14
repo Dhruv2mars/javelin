@@ -176,8 +176,9 @@ fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
 }
 
-/// SHA-256 over `Cargo.toml`, `Cargo.lock`, `LICENSE`, any `.cargo/config*`, and `src/**` (path and content hashes, Git-free).
-pub fn source_files_hash(source: &Path) -> Result<(String, usize)> {
+/// The files that define a build: `Cargo.toml`, `Cargo.lock`, `LICENSE`, any
+/// `.cargo/config*`, and `src/**`, as `/`-joined relative paths.
+pub fn source_files(source: &Path) -> Result<Vec<String>> {
     let mut files = vec![
         "Cargo.toml".to_string(),
         "Cargo.lock".to_string(),
@@ -193,6 +194,12 @@ pub fn source_files_hash(source: &Path) -> Result<(String, usize)> {
             .into_iter()
             .map(|f| format!("src/{f}")),
     );
+    Ok(files)
+}
+
+/// SHA-256 over [`source_files`] (path and content hashes, Git-free).
+pub fn source_files_hash(source: &Path) -> Result<(String, usize)> {
+    let files = source_files(source)?;
     let mut listing = String::new();
     for file in &files {
         listing.push_str(&format!("{file}\n{}\n", sha256_file(&source.join(file))?));

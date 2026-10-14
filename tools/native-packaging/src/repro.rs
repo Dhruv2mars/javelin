@@ -3,7 +3,11 @@ use std::{fs, path::Path};
 
 use serde::Serialize;
 
-use crate::{Result, build::build, read, util::list_files};
+use crate::{
+    Result,
+    build::{build, source_files},
+    read,
+};
 
 #[derive(Serialize)]
 pub struct Side {
@@ -26,14 +30,10 @@ pub struct ReproReport {
 }
 
 fn copy_source(source: &Path, dest: &Path) -> Result<()> {
-    fs::create_dir_all(dest.join("src"))?;
-    for file in ["Cargo.toml", "Cargo.lock"] {
-        fs::copy(source.join(file), dest.join(file))?;
-    }
-    for file in list_files(&source.join("src"))? {
-        let target = dest.join("src").join(&file);
+    for file in source_files(source)? {
+        let target = dest.join(&file);
         fs::create_dir_all(target.parent().unwrap())?;
-        fs::copy(source.join("src").join(&file), target)?;
+        fs::copy(source.join(&file), target)?;
     }
     Ok(())
 }
