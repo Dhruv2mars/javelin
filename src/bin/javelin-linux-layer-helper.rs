@@ -77,6 +77,8 @@ mod helper {
     const OVERLAY_OPTIONS: &str = "index=off,metacopy=off,redirect_dir=nofollow";
     const MAX_LIST: usize = 200_000;
     const OWNER: &str = "javelin-linux-layer-runtime v1";
+    /// Root-owned list of directories that may contain runtimes, one path per line.
+    const PARENTS: &str = "/etc/javelin/linux-layer-parents";
 
     #[derive(Clone, Copy)]
     pub struct User {
@@ -110,11 +112,16 @@ mod helper {
         };
         let user = invoking_user()?;
         let root = root_syntax(root)?;
+        allowed_parent(&root)?;
         if verb == "init" && tokens.is_empty() {
             init(&root, user)?;
             return Ok(None);
         }
         let rt = Runtime::open(root, user)?;
+        // Serializes every helper verb on this runtime, including direct sudo
+        // invocations that bypass the library lock, so a view cannot be thawed
+        // while its frozen upper is being listed.
+        let _lock = rt.lock()?;
         let tokens: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let none = |r: R<()>| r.map(|()| None);
         match (verb.as_str(), tokens.as_slice()) {
@@ -194,6 +201,28 @@ mod helper {
             [b] if b.starts_with('b') => Ok(keys),
             [c, b] if c.starts_with('c') && b.starts_with('b') => Ok(keys),
             _ => invalid("lower keys must be [b...] or [c..., b...]"),
+        }
+    }
+
+    /// Runtimes may only be created or used beneath an administrator-listed parent.
+    fn allowed_parent(root: &Path) -> R<()> {
+        let config = Path::new(PARENTS);
+        trusted_ancestors(config.parent().unwrap())?;
+        let meta = fs::symlink_metadata(config)?;
+        if !meta.file_type().is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
+            return invalid(format!("{PARENTS} must be a root-owned regular file"));
+        }
+        let parent = root.parent().unwrap_or(root);
+        if fs::read_to_string(config)?
+            .lines()
+            .any(|line| !line.is_empty() && Path::new(line) == parent)
+        {
+            Ok(())
+        } else {
+            invalid(format!(
+                "{} is not a permitted runtime parent",
+                parent.display()
+            ))
         }
     }
 
@@ -472,6 +501,20 @@ mod helper {
             Ok(Self { root, user })
         }
 
+        fn lock(&self) -> R<fs::File> {
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(self.root.join("hidden/.lock"))?;
+            file.lock()?;
+            Ok(file)
+        }
+
         fn stage_dir(&self, key: &str) -> PathBuf {
             self.root.join("hidden/stage").join(key)
         }
@@ -548,7 +591,7 @@ mod helper {
             self.abort(key)?;
             let dir = self.stage_dir(key);
             make_dir(&dir, 0o700, None)?;
-            make_dir(&dir.join("upper"), 0o755, Some(self.user))?;
+            make_dir(&dir.join("upper"), 0o700, Some(self.user))?;
             make_dir(&dir.join("work"), 0o700, None)?;
             let target = self.stage_mount(key);
             self.mountpoint(&target)?;
@@ -587,6 +630,9 @@ mod helper {
             }
             let mut entries = Vec::new();
             list_tree(upper, Path::new(""), &mut entries)?;
+            if !self.overlay_at(target)?.readonly {
+                return invalid("overlay thawed during upper listing");
+            }
             Ok(json!({ "entries": entries }).to_string())
         }
 
@@ -641,7 +687,7 @@ mod helper {
                 return Ok(json!({"already": true, "readonly": row.readonly}).to_string());
             }
             self.ensure_dir(&dir, 0o700, false)?;
-            self.ensure_dir(&upper, 0o755, true)?;
+            self.ensure_dir(&upper, 0o700, true)?;
             self.ensure_dir(&work, 0o700, false)?;
             self.mountpoint(&target)?;
             mount_overlay(&target, &data, readonly)?;
