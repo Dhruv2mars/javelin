@@ -16,6 +16,8 @@ const MAX_ENTRIES: usize = 10_000;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Decompressed tar stream cap, covering headers and PAX/GNU metadata as well as payloads.
 const MAX_TAR_STREAM: u64 = MAX_TOTAL_BYTES + 16 * 1024 * 1024;
+const MAX_TAR_METADATA: u64 = 64 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES: u64 = MAX_TAR_STREAM;
 
 pub struct Installed {
     pub dest: PathBuf,
@@ -39,7 +41,13 @@ impl Drop for Owned {
 }
 
 pub fn install(archive: &Path, checksum_file: &Path, dest: &Path) -> Result<Installed> {
-    let bytes = read(archive)?;
+    let mut bytes = Vec::new();
+    fs::File::open(archive)?
+        .take(MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
+        bail!("archive exceeds the {MAX_ARCHIVE_BYTES} byte compressed input cap");
+    }
     let name = archive
         .file_name()
         .ok_or_else(|| Error("archive has no file name".into()))?
@@ -57,8 +65,6 @@ pub fn install(archive: &Path, checksum_file: &Path, dest: &Path) -> Result<Inst
     let parent = dest
         .parent()
         .ok_or_else(|| Error("destination has no parent directory".into()))?;
-    fs::create_dir_all(parent)?;
-
     let entries = if name.ends_with(".tar.gz") {
         read_tar_gz(&bytes)?
     } else if name.ends_with(".zip") {
@@ -67,6 +73,7 @@ pub fn install(archive: &Path, checksum_file: &Path, dest: &Path) -> Result<Inst
         bail!("unsupported archive type {name:?}; expected .tar.gz or .zip");
     };
     let top = validate(&entries)?;
+    fs::create_dir_all(parent)?;
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -141,7 +148,9 @@ fn verify_checksum(bytes: &[u8], name: &str, checksum_text: &str) -> Result<()> 
 
 fn read_limited(reader: &mut impl Read, total: &mut u64) -> Result<Vec<u8>> {
     let mut data = Vec::new();
-    reader.take(MAX_TOTAL_BYTES + 1).read_to_end(&mut data)?;
+    reader
+        .take(MAX_TOTAL_BYTES - *total + 1)
+        .read_to_end(&mut data)?;
     *total += data.len() as u64;
     if *total > MAX_TOTAL_BYTES {
         bail!("archive expands past {MAX_TOTAL_BYTES} bytes");
@@ -150,6 +159,7 @@ fn read_limited(reader: &mut impl Read, total: &mut u64) -> Result<Vec<u8>> {
 }
 
 fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
+    check_tar_headers_and_trailer(bytes)?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes).take(MAX_TAR_STREAM));
     let (mut out, mut total) = (Vec::new(), 0);
     for entry in archive.entries()? {
@@ -191,8 +201,77 @@ fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
     Ok(out)
 }
 
+/// Inspect extension records before tar's normal iterator hides them. Draining the
+/// same bounded decoder validates CRC/ISIZE even when tar stops at its zero blocks.
+fn check_tar_headers_and_trailer(bytes: &[u8]) -> Result<()> {
+    let mut decoder = flate2::bufread::GzDecoder::new(bytes).take(MAX_TAR_STREAM);
+    let mut archive = tar::Archive::new(&mut decoder);
+    for (count, entry) in archive.entries()?.raw(true).enumerate() {
+        if count >= MAX_ENTRIES {
+            bail!("archive has more than {MAX_ENTRIES} raw entries");
+        }
+        let mut entry = entry?;
+        let kind = entry.header().entry_type();
+        if kind.is_gnu_sparse() {
+            bail!("unsupported sparse tar entry");
+        }
+        if kind.is_dir() && entry.header().size()? != 0 {
+            bail!("directory entry carries a payload");
+        }
+        if kind.is_pax_local_extensions() || kind.is_pax_global_extensions() {
+            if entry.header().size()? > MAX_TAR_METADATA {
+                bail!("tar extension exceeds the {MAX_TAR_METADATA} byte metadata cap");
+            }
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)?;
+            for extension in tar::PaxExtensions::new(&data) {
+                let extension = extension?;
+                let key = extension.key_bytes();
+                if key.starts_with(b"GNU.sparse.")
+                    || key == b"SCHILY.realsize"
+                    || (key == b"SCHILY.filetype" && extension.value_bytes() == b"sparse")
+                {
+                    bail!("unsupported sparse tar extension");
+                }
+            }
+        }
+    }
+    let _ = archive.into_inner();
+    std::io::copy(&mut decoder, &mut std::io::sink())?;
+    if decoder.limit() == 0 {
+        bail!("archive expands past the {MAX_TAR_STREAM} byte decompressed stream cap");
+    }
+    if !decoder.into_inner().into_inner().is_empty() {
+        bail!("trailing data or additional gzip members are unsupported");
+    }
+    Ok(())
+}
+
 fn read_zip(bytes: &[u8]) -> Result<Vec<Extracted>> {
+    // rawzip iterates every central record without allocating a deduplicated map.
+    let raw = rawzip::ZipArchive::from_slice(bytes)?;
+    if raw.entries_hint() > MAX_ENTRIES as u64 {
+        bail!("archive has more than {MAX_ENTRIES} raw entries");
+    }
+    let mut names = HashSet::new();
+    let mut count = 0;
+    for entry in raw.entries() {
+        let entry = entry?;
+        count += 1;
+        if count > MAX_ENTRIES {
+            bail!("archive has more than {MAX_ENTRIES} raw entries");
+        }
+        if !names.insert(entry.file_path().as_bytes()) {
+            bail!("duplicate ZIP central-directory entry");
+        }
+    }
+    if count as u64 != raw.entries_hint() {
+        bail!("ZIP raw record count differs from its declared count");
+    }
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    if archive.len() != count || archive.central_directory_start() != raw.directory_offset() {
+        bail!("ZIP readers disagree on the central directory");
+    }
     let (mut out, mut total) = (Vec::new(), 0);
     if archive.len() > MAX_ENTRIES {
         bail!("archive has more than {MAX_ENTRIES} entries");
@@ -201,12 +280,27 @@ fn read_zip(bytes: &[u8]) -> Result<Vec<Extracted>> {
         let mut file = archive.by_index(index)?;
         let path = file.name()?.to_string();
         let mode = file.unix_mode().unwrap_or(0o644);
-        if mode & 0o170000 == 0o120000 {
+        let kind = mode & 0o170000;
+        if kind == 0o120000 {
             bail!("entry {path:?} is a symlink; only files and directories are allowed");
         }
+        if !matches!(kind, 0 | 0o100000 | 0o040000) {
+            bail!("entry {path:?} has unsupported type; only files and directories are allowed");
+        }
         let is_dir = file.is_dir();
+        if (kind == 0o040000 && !is_dir) || (kind == 0o100000 && is_dir) {
+            bail!("entry {path:?} has inconsistent directory marking");
+        }
+        if is_dir && file.size() != 0 {
+            bail!("directory entry {path:?} carries a payload");
+        }
         let data = if is_dir {
-            Vec::new()
+            // Validate even an empty directory's compressed stream and CRC.
+            let data = read_limited(&mut file, &mut total)?;
+            if !data.is_empty() {
+                bail!("directory entry {path:?} carries a payload");
+            }
+            data
         } else {
             read_limited(&mut file, &mut total)?
         };

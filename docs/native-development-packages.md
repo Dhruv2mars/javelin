@@ -80,8 +80,10 @@ Known versus unconfirmed:
 
 ## Safe install
 
-`install` refuses to proceed unless all of these hold, and on any failure removes only
-its own temp directory and leaves the destination absent:
+`install` checks bounded archive input and its checksum before writing. It refuses
+existing destinations without modifying them. Archive-format refusals create no
+destination parent or scratch tree. Later manifest-validation failures remove
+only the owned temporary tree and leave the new destination absent:
 
 - The checksum file is exactly `<64 hex>  <archive name>` and matches the archive bytes.
 - The destination does not exist (file, directory, or symlink); an existing install,
@@ -90,7 +92,23 @@ its own temp directory and leaves the destination absent:
   absolute, backslash, drive/ADS `:`, Windows device names, trailing dot or space,
   control characters, case-insensitive duplicates, file-versus-directory conflicts, a
   second top-level directory, symlinks, hardlinks, or devices.
-- Entry count, file payload bytes, and the whole decompressed tar stream (including PAX/GNU metadata) are capped; a directory entry with a payload is refused.
+- Compressed input is capped at 272 MiB. File payloads total at most 256 MiB. The
+  decompressed tar stream, including headers, extensions and trailing padding,
+  is capped at 272 MiB; an individual PAX record is capped at 64 MiB.
+- At most 10,000 raw tar headers or ZIP central-directory records are allowed,
+  including extension and directory records. ZIP records are checked before the
+  extraction library deduplicates names, and their actual count must agree with
+  the footer. A directory's declared nonzero payload is refused before decompression.
+- GNU sparse headers and `GNU.sparse.*`, `SCHILY.realsize` or
+  `SCHILY.filetype=sparse` PAX extensions are unsupported and refused in raw
+  headers. Sparse data is never silently treated as a regular file.
+- ZIP Unix types permit only regular files and directories. FIFO, character/block
+  devices, sockets and symlinks are refused. When the writing host supplies no
+  Unix type, including DOS archives, the name and directory attributes determine
+  the file/directory shape; absent type bits do not imply a verified Unix type.
+- The bounded gzip decoder is drained through CRC/ISIZE trailer validation before
+  any destination writes. Truncated trailers, bad CRC, trailing data and multiple
+  gzip members are refused. These are format restrictions of this development installer.
 - The extracted `PACKAGE.json` is development/pre-GA, names `bin/javelin[.exe]`, and
   its binary hash matches the extracted binary; `LICENSE` is present.
 - The final step claims the destination and renames the verified tree into it. On Unix
@@ -174,11 +192,12 @@ cargo test --locked --manifest-path tools/native-packaging/Cargo.toml
 
 ## Evidence
 
-Tested source: `b9243f54750a1f3ba1b2c6196b07d8fda811a472` (PR #17 code head), based on
+Historical tested source: `b9243f54750a1f3ba1b2c6196b07d8fda811a472`, based on
 accepted `e56fc86`. Relative to `e56fc86` the branch changes only this document,
 `TASKS.md`, `.github/workflows/native-packaging.yml`, and `tools/native-packaging/**`;
 root `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `LICENSE`, and `native.yml` are
-byte-identical (file-level diff). Later commits are documentation or `TASKS.md` only.
+byte-identical at that source. The Codex audit corrections below supersede its
+archive-rejection claims; original build and downloaded smoke proofs remain valid.
 
 Hosted run: https://github.com/Dhruv2mars/javelin/actions/runs/38509714612, six jobs
 succeeded (three `Package`, three `Download smoke`). Artifacts expire 2026-10-28:
@@ -194,7 +213,7 @@ the newly fingerprinted `LICENSE`; none changed the packaged binary.
 | Architecture, target | X64, `x86_64-unknown-linux-gnu` | ARM64, `aarch64-apple-darwin` | X64, `x86_64-pc-windows-msvc` |
 | Toolchain | rustc/cargo 1.99.0 | same | same |
 | Archive | `.tar.gz` | `.tar.gz` | `.zip` |
-| Packager tests (real CLI) | 18 passed | 18 passed | 17 passed, 1 Unix-only test not compiled |
+| Packager tests | 18 integration + 1 unit passed | 18 integration + 1 unit passed | 17 integration + 1 unit passed, 1 Unix-only integration test not compiled |
 | Package job `install` + `smoke` | 18 checks passed | 18 passed | 18 passed |
 | Download job: native checksum, native extract (`tar` / `Expand-Archive`), smoke | 18 passed | 18 passed | 18 passed |
 | Download job: packager `install` of the same download, smoke | 18 passed | 18 passed | 18 passed |
@@ -211,16 +230,15 @@ The `core.autocrlf false` step matters: the previous run's Windows checkout had 
 sources, a different `Cargo.lock` hash, and a CRLF `LICENSE`, which review round 2 caught.
 
 Windows rebuilds differ at 20 byte positions of 2,245,632: offset 264, three isolated
-offsets near 1,986,9xx, and 16 consecutive bytes at 1,987,324 to 1,987,339. This pattern is
-consistent with linker timestamps and a PDB GUID; the cause was not confirmed by
-disassembling the PE. The packaged Windows binary differs from both rebuilds.
+offsets near 1,986,9xx, and 16 consecutive bytes at 1,987,324 to 1,987,339. The hub Codex r2 audit confirmed the differing bytes are PE timestamp fields
+and the PDB GUID. `/Brepro` is a candidate only and was not tested or applied here. The packaged Windows binary differs from both rebuilds.
 
 ### Verdicts
 
 | Scope | Verdict |
 | --- | --- |
 | Packager builds the locked release CLI on Linux x86_64, macOS arm64, Windows x86_64 and packages archive, checksum, manifest, licenses | VERIFIED (run above) |
-| Clean-temp install into a fresh path, with checksum verification and rejection of tampered, traversing, linked, duplicate, oversized, and truncated archives | VERIFIED on all three OS by the packager tests; hostile-archive fixtures are crafted tar and zip, not other tools' output |
+| Original archive rejection guarantees | HELD by the hub Codex r2 audit; valid-checksum ZIP duplicates, raw count overflow, directory payload, sparse PAX, special ZIP modes and gzip trailer damage were accepted. Corrected-source verification is tracked below |
 | Downloaded artifact verified with OS-native checksum and extraction tools, then smoked through `PATH` in a new non-Git project | VERIFIED on all three OS |
 | `init`/`history`/`check` JSON success, damaged-storage exit 1, preexisting binary bytes preserved | VERIFIED on all three OS for the packaged binary |
 | Git never invoked by the packaged CLI during smoke | VERIFIED on all three OS with a validated `git` shim; the negative fixture (a binary that does call Git) runs on Unix only, so Windows shim sensitivity is shown only by its positive probe |
@@ -262,3 +280,33 @@ Independent read-only reviews, used instead of self-assessment:
 - A user's `~/.cargo/config.toml` is not neutralized by `build`.
 - Third-party notices come from `Cargo.lock` metadata and crate sources and are not a
   legal audit; the list is a conservative superset including proc-macro crates.
+
+### Codex audit corrections
+
+Hub acceptance remains HELD pending fresh exact-source review and hosted evidence.
+The owner copied the reviewer fixtures into `/tmp/javelin-pr17-owner-r3/fixtures`
+and exported unchanged `b9243f5` into owner scratch. Reviewer scratch was read only.
+All ten fixture installs returned success before fixes, including the real macOS
+archive with its eight-byte gzip trailer removed and its CRC damaged. Results
+are retained in `prior-results.json`; corrected refusals are in `fixed-results.json`.
+
+ZIP choices inspected were the existing library's configuration, a second
+metadata reader, and custom format parsing. `zip` 9.0.3 has no strict duplicate
+configuration and deduplicates central records before exposing them. The selected
+[rawzip 0.5.2](https://docs.rs/rawzip/0.5.2/rawzip/) preflight iterates raw central
+records with no internal name deduplication or new transitive dependencies.
+`rc-zip-sync` was inspected and rejected because metadata-only use would add 30
+locked dependencies. The original ZIP writer and decompression remain unchanged,
+so the valid development-package format is preserved.
+
+The new portable regression fixtures name the host's actual binary path. They
+check malformed archives with correct checksums, bad-checksum precedence over
+parsing and destination checks, existing binary/scratch byte preservation, and
+absence of new directories or owned temporary residue. Clean tar and DOS ZIP
+controls still install. Regressions are run against the unchanged prior installer
+as well as the corrected one, without invoking Git under test.
+
+Local and hosted corrected-source counts and review results will be recorded here
+when complete. Minimum OS versions, other architectures, Windows concurrent
+installation atomicity, Windows binary reproducibility, signing and GA remain
+unverified. No root sources, Cargo files or native workflow are changed.

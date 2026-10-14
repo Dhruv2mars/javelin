@@ -543,6 +543,7 @@ fn try_install_bytes(file_name: &str, bytes: &[u8]) -> (String, PathBuf, tempfil
     let sum = temp.path().join("in").join(format!("{file_name}.sha256"));
     fs::write(&sum, format!("{}  {file_name}\n", sha(bytes))).unwrap();
     let dest = temp.path().join("prefix").join("javelin");
+    fs::create_dir_all(dest.parent().unwrap()).unwrap();
     let err = fail(&pack(&[
         "install",
         "--archive",

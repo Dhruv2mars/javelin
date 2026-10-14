@@ -249,3 +249,21 @@ VERIFIED identical on Linux and macOS and NOT reproducible on Windows. Minimum O
 versions, other architectures, signing, publishing, and Gate 5 remain unverified.
 Independent reviews (r1 gpt-6.1-sol; r2 Claude Opus 5.5 after a Codex usage limit)
 found eight issues, all fixed with regressions; the final head was not reviewed again.
+
+### PR #17 Codex audit corrections
+
+Acceptance is HELD following the independent hub Codex r2 audit. Done means
+reproducing the supplied valid-checksum fixtures against unchanged `b9243f5`,
+fixing raw ZIP record limits/duplicates, directory payloads, PAX sparse metadata,
+ZIP special modes and gzip trailer validation in owned paths, then passing
+defect-detecting regressions, local fmt/Clippy/tests and real installation smoke,
+a fresh exact-source Codex review, and the hosted three-OS workflow with raw
+artifact inspection. No root changes or Windows reproducibility work.
+
+- [x] Reproduce supplied fixtures in owner scratch against unchanged `b9243f5`.
+- [x] Add minimal installer fixes and regressions proving prior failure and refusal byte preservation.
+- [x] Correct historical test counts and document format exceptions and remaining limits.
+- [ ] Pass local fmt, Clippy, tests and real install smoke.
+- [ ] Obtain independent Codex review of the exact corrected source and resolve findings.
+- [ ] Push the same PR and use the single T3 watcher for the hosted three-OS workflow.
+- [ ] Inspect raw head artifacts, report exact source/evidence/limits to the hub, and unwatch.
