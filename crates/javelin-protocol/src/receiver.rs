@@ -2,6 +2,7 @@
 //! accepted only when the returned ID equals the claimed ID. World references are
 //! written only by `compare_and_advance`, which revalidates the whole graph.
 
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
 use javelin::Repository;
@@ -58,6 +59,10 @@ fn negotiate(message: Message) -> Result<Message, ProtocolError> {
 fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolError> {
     match message {
         Message::Want(items) => {
+            // Each probe reads a whole stored object, so repeats would amplify work.
+            if items.iter().collect::<BTreeSet<_>>().len() != items.len() {
+                return Err(ProtocolError::new("malformed", "duplicate Want item"));
+            }
             let mut missing = Vec::new();
             for (kind, id) in items {
                 let found = match kind {

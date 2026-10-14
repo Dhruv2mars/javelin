@@ -4,6 +4,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
+// Never run concurrently with another mutation run in the same worktree.
+
 const mutations: [string, string, string, string][] = [
  [
   "src/receiver.rs",
@@ -85,6 +87,12 @@ const mutations: [string, string, string, string][] = [
  ],
  [
   "src/receiver.rs",
+  "if items.iter().collect::<BTreeSet<_>>().len() != items.len() {",
+  "if false {",
+  "want dedup"
+ ],
+ [
+  "src/receiver.rs",
   "Err(javelin::Error::MissingObject(missing_id)) if missing_id == id =>",
   "Err(_) =>",
   "want kind separation"
@@ -97,7 +105,7 @@ const mutations: [string, string, string, string][] = [
  ],
  [
   "src/sender.rs",
-  "if items.iter().all(|item| chunk.contains(item))",
+  "if items.iter().all(|item| chunk_set.contains(item))",
   "if true",
   "missing subset"
  ],
@@ -151,6 +159,13 @@ for (const [path, from, to, name] of mutations) {
   if (source.split(from).length !== 2) throw new Error(`selector not unique: ${name}`);
   writeFileSync(path, source.replace(from, to));
   try {
+    // A mutant that does not compile proves nothing about the tests.
+    const build = spawnSync("cargo", ["test", "-q", "--no-run"], { stdio: "ignore" });
+    if (build.status !== 0) {
+      survived++;
+      console.log(`BUILD-FAILED ${name}`);
+      continue;
+    }
     const run = spawnSync("cargo", ["test", "-q"], { stdio: "ignore" });
     const detected = run.status !== 0;
     if (!detected) survived++;

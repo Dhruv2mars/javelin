@@ -38,10 +38,11 @@ pub fn push(
 
     let mut missing = Vec::new();
     for chunk in offered.chunks(MAX_WANT) {
+        let chunk_set: BTreeSet<_> = chunk.iter().collect();
         match call(Message::Want(chunk.to_vec()))? {
             // Only offered objects, each at most once: a receiver cannot amplify transfer.
             Message::Missing(items)
-                if items.iter().all(|item| chunk.contains(item))
+                if items.iter().all(|item| chunk_set.contains(item))
                     && items.iter().collect::<BTreeSet<_>>().len() == items.len() =>
             {
                 missing.extend(items)

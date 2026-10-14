@@ -414,3 +414,20 @@ fn encoder_refuses_messages_the_receiver_would_refuse() {
     let many = Message::Want(vec![(Kind::Blob, id); MAX_WANT + 1]);
     assert_eq!(encode(&many).unwrap_err().code, "limit_exceeded");
 }
+
+#[test]
+fn refuses_duplicate_want_items() {
+    let (_s, mut source) = repo();
+    let (id, blobs, manifest) = fixture(&mut source);
+    let (_d, mut dest) = repo();
+    let mut input = transfer(&blobs, id, &manifest);
+    input.extend(msg(&Message::Want(vec![(Kind::Blob, blobs[0].0); 2])));
+    refused(&mut dest, &input, "malformed");
+    // The same ID under both kinds is two distinct items, not a duplicate.
+    let mut input = hello();
+    input.extend(msg(&Message::Want(vec![
+        (Kind::Blob, id),
+        (Kind::Manifest, id),
+    ])));
+    refused(&mut dest, &input, "wrong_object_kind");
+}
