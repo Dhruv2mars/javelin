@@ -144,7 +144,8 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     let resolved = which("javelin", &path);
     s.check(
         "javelin resolves to the unpacked binary through PATH",
-        resolved.as_deref().map(|p| fs::canonicalize(p).ok()) == Some(Some(binary.clone())),
+        resolved.as_deref().map(|p| fs::canonicalize(p).ok())
+            == Some(fs::canonicalize(&binary).ok()),
         format!("{resolved:?}"),
     );
     let help = run(&path, &marker, &project, &["--help"])?;

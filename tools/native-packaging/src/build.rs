@@ -57,9 +57,9 @@ pub fn build(
     source_date_epoch: u64,
     extra_rustflags: &[String],
 ) -> Result<BuildRecord> {
-    let source = std::fs::canonicalize(source)?;
+    let source = crate::simplify(std::fs::canonicalize(source)?);
     fs::create_dir_all(out)?;
-    let out = std::fs::canonicalize(out)?;
+    let out = crate::simplify(std::fs::canonicalize(out)?);
     let target_dir = out.join("target");
     let host = host_triple()?;
     let sysroot = capture(Command::new("rustc").args(["--print", "sysroot"]))?;

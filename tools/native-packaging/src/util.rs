@@ -169,3 +169,13 @@ pub fn list_files(dir: &Path) -> Result<Vec<String>> {
     out.sort();
     Ok(out)
 }
+
+/// Strip the Windows verbatim `\\?\` prefix that `canonicalize` adds; rustc and cargo
+/// path remapping and many tools compare against the plain form.
+pub fn simplify(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy().into_owned();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with(r"UNC\") => PathBuf::from(rest),
+        _ => path,
+    }
+}

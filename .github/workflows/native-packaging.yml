@@ -156,12 +156,13 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd downloaded
-          ls -l | tee ../ci-logs/downloaded-files.log
+          find . -maxdepth 1 -type f -exec wc -c {} + | tee ../ci-logs/downloaded-files.log
           if command -v sha256sum >/dev/null; then sha256sum -c ./*.sha256; else shasum -a 256 -c ./*.sha256; fi 2>&1 | tee ../ci-logs/native-checksum.log
           fresh="$RUNNER_TEMP/native-extract"
           mkdir "$fresh"
           tar -xzf ./*.tar.gz -C "$fresh"
-          echo "BIN_DIR=$fresh/$(ls "$fresh")/bin" >> "$GITHUB_ENV"
+          top=$(find "$fresh" -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BIN_DIR=$top/bin" >> "$GITHUB_ENV"
 
       - name: Verify checksum and extract with native tools (Windows)
         if: runner.os == 'Windows'
