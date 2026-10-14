@@ -82,14 +82,19 @@ sparse move|hold|flush-directory|unregister|bounded ...
   frozen snapshot.
 
 Bounds: fixtures at most 128 entries and 256 KiB per file. Symlinks below the root level fail
-closed (untested). Snapshot blobs do not preserve original timestamps.
+closed (untested). Snapshot blobs do not preserve original timestamps. `capture` resolves
+identities against the base only, so it refuses a root served from a snapshot; capturing a clone
+(a snapshot of a snapshot) is not supported. A case-only rename is not distinguished. Quiescence
+during capture is the caller's responsibility (the provider is stopped first), not enforced.
+The administrator owns the scratch root's children; the proof user may add entries there but has
+no delete-child right, so it cannot rename or replace the frozen container.
 
 ## Attempts
 
 Every attempt ran as a `pull_request` job on `windows-2022`. Original archives and cloud
 run/job/artifact records are under `tools/windows-sparse-backend/evidence/<attempt>/`. The
-planned bound was six attempts; it was extended to seven because every failure was a harness
-defect, not a platform refusal.
+planned bound was six attempts; it was extended to eight because every failure was a harness
+defect, not a platform refusal. Attempt 8 applies the independent review findings below.
 
 | Attempt | Source | Run | Outcome |
 | --- | --- | --- | --- |
@@ -99,18 +104,22 @@ defect, not a platform refusal.
 | 4 | `60fdf62` | `38506542313` | Backslash path fixed cmd; `CF_SIZE_OF_OP_PARAM` undefined |
 | 5 | `e738c3f` | `38506681907` | Both compiled; recursive inheritance grants left files with empty DACLs |
 | 6 | `ee23f17` | `38506890542` | All phases ran; traversal hydrated the slow file; renamed unchanged file copied |
-| **7** | **`4588385`** | **`38507282143`** | **Final; all native phases VERIFIED** |
+| 7 | `4588385` | `38507282143` | All native phases passed; reviewed as `fdd0f4b` (`evidence/7-pre-review/`) |
+| **8** | **`8712866`** | **`38508454070`** | **Final; review fixes; all native phases VERIFIED** |
 
-The final tested source is exactly `45883857262afb0f47520a8de8f862fece5bc1a0`. Artifact
-`windows-sparse-backend-38507282143-1` has digest
-`sha256:ae50ed33d004526d9deb26a573931b2810eb064406faf20ef15d762548827692`; its 96 raw files are
-extracted in `evidence/7-final/raw/`. Owned files are checked out without line-ending conversion
+The final tested source is exactly `8712866f0272f6cb12907fc0352002163fa61a1d`, job
+`115671233319`. Artifact `windows-sparse-backend-38508454070-1` (id `11869270547`, expires
+2026-10-28) has digest
+`sha256:c7b9b68d9f677946edf068f5ba0a4d08b1b271ec58e7cd4196533e411f95d999`; its 96 raw files are
+extracted in `evidence/8-final/raw/`. Owned files are checked out without line-ending conversion
 (`.gitattributes`), so their runner hashes equal the committed bytes. The workflow and unchanged
 common probe received Windows CRLF conversion; the verifier applies that transform explicitly.
 Host: Windows Server 2022 Datacenter build 20348, image `20261004.326.1`. The Cloud Files
 filter `cldflt` was present, running and automatic before setup, so no component was started.
-Client-ProjFS was already enabled. Cost: seven jobs totalling 328 seconds of runner time
-(final job `115667565200`, 75 seconds) on a public repository's hosted runner.
+Client-ProjFS was already enabled. Cost: eight jobs totalling about 408 seconds of runner time
+(final job 80 seconds) on a public repository's hosted runner. The Unix tools on the proof user's
+PATH (`cat`, `cp`, `mv` and others used by the common probe) are MSYS binaries shipped in the
+runner's Git for Windows directory; Git itself is never run.
 
 ## Verdicts (final run)
 
@@ -129,32 +138,54 @@ unregistered, the account was removed and the owned scratch tree was deleted.
   external `cc` compile and run, file `fsync`, and peer isolation. Compiler output was CRLF
   (`39 0d 0a`); the native check normalises it explicitly. A Win32 directory flush succeeded.
 - Permission-enforced protection: the base and the frozen snapshot are Administrators-owned
-  with read/execute for the user. The user's `attrib -R`, `icacls /grant`, `takeown`, write,
-  delete, rename, create and container rename were all refused, and the attribute stayed set.
+  (set by `/setowner`; no owner readback) with read/execute for the user. The user's
+  `attrib -R`, `icacls /grant <self>:F`, `takeown`, write, delete, rename, create, container
+  rename and rename of the whole frozen root were all refused, and the attribute stayed set.
 - Two clones of one frozen snapshot each showed the captured tree exactly, private writes stayed
-  isolated between clones and from the source, and the snapshot was unchanged at the end.
+  isolated between clones and from the source, and the snapshot was unchanged at the end. Clone
+  provider logs show changed files served from `frozen\snap\blobs\<sha256>` and unchanged
+  files from the frozen base.
 - Mid-hydration provider kill: a reader blocked on hydration failed when the provider was killed;
   the placeholder stayed dehydrated (state 57, 0 allocated bytes); after restart it hydrated to
   the base bytes.
-- Mid-write kill vs closed handle: writers holding open handles and the provider were killed
-  together. The in-place write left a torn file (new 13-byte prefix, original tail), the
-  atomic-save target kept its previous content and the temporary held the partial bytes. A
+- Mid-write kill vs closed handle: two writers, confirmed alive with open write handles, were
+  killed in turn and then the provider was killed. The file had hydrated before the kill. The
+  in-place write left a torn file (new 13-byte prefix, original tail). The atomic-save temporary
+  held its partial bytes; its target was untouched, trivially, because the rename never ran. A
   write completed and closed before the kill survived intact.
 - Sparse private state: untouched peer placeholders kept 0 allocated bytes. The snapshot holds
-  5 private blobs (the files actually changed), references for unchanged and renamed files, 4
-  deletions and 3 new directories.
+  5 private blobs (the files actually changed) and base references for unchanged files,
+  including a renamed hydrated file, a renamed never-read file and a renamed never-opened
+  directory subtree (both dehydrated at capture), plus 6 deletions and 5 new directories.
 
-**NOT VERIFIED (unchanged common probe on its own fixture):** external compiler (expects
-`9\n`, got CRLF), independent writer and writer interruption (Bun `fsync` on a directory
-returns EPERM), final base/peer integrity (writer leftovers) and the path boundary (an absolute
-symlink can read a sibling view). Create/atomic-save/rename/delete and traversal now pass,
-unlike PR #9. These are probe portability gaps, not changed here.
+**Unchanged common probe on its own fixture:** VERIFIED text/binary read, private in-place
+writes, create/atomic-save/rename/delete, directory traversal, relative symlink and watch
+notifications. Create/atomic-save/rename/delete and traversal failed under ProjFS in PR #9. NOT VERIFIED: external compiler
+(expects `9\n`, got CRLF), independent writer and writer interruption (Bun `fsync` on a
+directory returns EPERM), final base/peer integrity (writer leftovers) and the path boundary
+(an absolute symlink can read a sibling view). INCONCLUSIVE by design: caller-path clone
+isolation. These are probe portability gaps, not changed here.
 
 **INCONCLUSIVE:** storage cost at scale (allocation is cluster-rounded, placeholder header
 overhead not measured, clone verification hashed every file and hydrated it), metadata
 preservation, symlinks below the root, antivirus/indexer hydration, power loss, concurrent
-writers, separate provider-only and writer-only kills, production registration and upgrade,
+writers, a provider-only kill during a write, simultaneous kills, capture of clones,
+production registration and upgrade,
 native database binding, autosave, Windows product acceptance, Gate 2 and GA.
+
+## Independent review
+
+Reviewers were read-only and executed only the offline verifier. Codex `gpt-6.1-sol` (high)
+failed at its provider usage limit before reviewing, so the review round used Claude Opus 5.5
+(high), the same model family as the implementer; diversity is limited. It found no blocking
+evidence defects and confirmed the ProjFS, rename, identity, kill, snapshot, peer, cleanup and
+source claims. Its findings were applied in attempt 8: capture refuses snapshot-served roots,
+the frozen root can no longer be renamed by the user, the kill checks and verifier now assert
+the reader failure and post-kill state, the partial-directory and dehydrated-rename capture
+paths are exercised with a size check, the ACL probe targets the proof user, providers log
+source paths, writer liveness is recorded, capture checks its writes and the verifier pins the
+final digest, run, phases and sources. Documented rather than changed: case-only renames,
+unvalidated manifest paths (protected by ACL only) and unenforced capture quiescence.
 
 ## Rerun and audit
 
@@ -167,6 +198,6 @@ invokes or reads Git.
 rtk proxy bun tools/windows-sparse-backend/verify-evidence.mjs
 ```
 
-The audit checks all seven archive digests against GitHub's recorded digests, every final raw
+The audit checks all eight archive digests against GitHub's recorded digests, every final raw
 file against the archive, tested source hashes, identity, cleanup and the recorded verdicts
 above. A one-byte change to a raw file makes it exit 1. It never projects a root or runs setup.
