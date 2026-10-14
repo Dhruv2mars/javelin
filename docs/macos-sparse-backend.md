@@ -100,7 +100,7 @@ and runs the pinned probe plus clone, kill-recovery and storage checks.
 
 ## Results
 
-Tested executable source is `1c503a2660a0a7b952c35395971776d84c548e90`. Every run
+Tested executable source is `39a065b075f2a55688628eb7b3fd64f75b05334e`. Every run
 used `macos-26` image `20260907.0351.1`, macOS 26.6.2 (25G83) on arm64, Xcode 26.6
 (17F113), MacOSX 26.5 SDK, Rust 1.99.0 and Bun 1.3.13. Archives expire 2026-10-28.
 
@@ -108,7 +108,8 @@ used `macos-26` image `20260907.0351.1`, macOS 26.6.2 (25G83) on arm64, Xcode 26
 | --- | --- | --- | --- |
 | [38505212596](https://github.com/Dhruv2mars/javelin/actions/runs/38505212596) | `25033c0` | `11867613085` (`eb1e50b1…39a1`) | NOT VERIFIED: stale handle after file rename |
 | [38505779476](https://github.com/Dhruv2mars/javelin/actions/runs/38505779476) | `4847a18` | `11866888720` (`53d01202…6c40`) | VERIFIED, before review fixes |
-| [38506206609](https://github.com/Dhruv2mars/javelin/actions/runs/38506206609) | `1c503a2` | `11867809729` (`3a22fa6a…632b`) | VERIFIED on the final source |
+| [38506206609](https://github.com/Dhruv2mars/javelin/actions/runs/38506206609) | `1c503a2` | `11867809729` (`3a22fa6a…632b`) | VERIFIED after review r1 fixes |
+| [38507420049](https://github.com/Dhruv2mars/javelin/actions/runs/38507420049) | `39a065b` | `11868946498` (`f456a51d…f0cf`) | VERIFIED on the tested source |
 
 The first run's stale handles came from a rename bookkeeping bug that stored the
 renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.
@@ -116,7 +117,8 @@ The first run's watch failure did not recur; its cause is UNCONFIRMED.
 
 ### Loopback NFS sparse overlay: VERIFIED for the bounded fixture
 
-Run 38506206609 passed all 19 required checks with zero cleanup errors:
+Run 38507420049 passed all 19 required checks with zero cleanup errors, and 25 local tests
+passed on the runner. Run 38506206609 on `1c503a2` produced the same check results:
 
 - Real `nfs` mounts of three Layers over one `root:wheel` base the server user cannot write.
 - The pinned probe's complete report: reads, in-place writes, create, atomic-save
@@ -152,12 +154,19 @@ passthrough sample is not sparse, so a future FSKit mount would need its own ove
 
 ## Review
 
-Independent read-only review by `gpt-6.1-sol` (high) on `25033c0` found four P1 and
-seven P2 issues. `1c503a2` fixes nine, each with a regression that fails when the
-fix is reverted: rename ordering, symlink-handle writes, CREATE truncation, probe
-completeness, whiteout publication, durability syncs, cleanup tracking, nested
-clones and mode bits. Plain READDIR pagination and case-insensitive storage remain
-limits. Round 2 status is recorded in `TASKS.md`.
+Independent read-only review used `gpt-6.1-sol` at high effort over six rounds.
+Every fix has a regression that fails when the fix is reverted.
+
+- r1 on `25033c0`: four P1 and seven P2 issues. Nine were fixed in `1c503a2`:
+  rename ordering, symlink-handle writes, CREATE truncation, probe completeness,
+  whiteout publication, durability syncs, cleanup tracking, nested clones and mode
+  bits. Plain READDIR pagination and case-insensitive storage remain limits.
+- r2 to r5: stale or misdirected handles and whiteout memory when a sync or
+  persistence step failed after a rename or delete, plus relative clone paths and
+  partial clone rollback. Fixed in `84f3402`, `96a28bc`, `1a6b774` and `39a065b`.
+- r6 on `39a065b`: no blocking issue. It swept every NFS operation for errors
+  that leave handles or whiteouts inconsistent with disk. Mounted I/O failure
+  injection was not exercised.
 
 ## Limits
 
