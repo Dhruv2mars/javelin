@@ -474,7 +474,40 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Draft PR: [#14](https://github.com/Dhruv2mars/javelin/pull/14), linked to owner and hub; unmerged.
 - Owns: tools/windows-sparse-backend/**; docs/windows-sparse-backend.md; windows-sparse-backend.yml and its own appended TASKS section.
 - Done: One bounded real sparse-backend attempt addressing rename and permission-enforced snapshot gaps, with honest refusal evidence.
-- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- Hub audit `javelin-hub-audit-pr14-8712866-r1` on tested `8712866`, head `2565598`:
+  offline verifier passes on 8 archives and 96 raw files and fails on a flipped
+  byte; the hub re-downloaded run `38508454070` artifact and matched digest
+  `c7b9b68d…d999` and all 96 raw files byte for byte; tested executable differs
+  from head only in the verifier. ProjFS base-directory rename refusal (error 50,
+  three states), Cloud Files seven rename cases, non-admin ordinary operations,
+  Administrators-owned base/snapshot refusals, two-clone isolation with unchanged
+  snapshot, kill-mid-download recovery, torn in-place write after writer kill,
+  zero allocated bytes for untouched placeholders, and five-file capture are
+  VERIFIED from raw files. The four common-probe failures are honestly reported.
+- Returned for docs/TASKS-only correction in the same PR: the doc says the ACL
+  probe ran `icacls /grant <self>:F` as the proof user, but the raw argv in both
+  protection probes is `runneradmin:F` because `userInfo().username` returned the
+  parent's name under `Start-Process -Credential` (hub confirmed in
+  `native-protect-base.json` and `native-protect-snapshot.json`; proof user is
+  `jvs127c2b16d4c6`). The denial still holds since any grant needs WRITE_DAC.
+  Attempt 5 `e738c3f` concluded `failure`, which the attempts table omits.
+- Recorded limits for the next Windows unit, not fixed here: capture writes
+  whatever `bytes()` returned with no PARTIAL guard (`sparse.cpp:77-81, 321-327`),
+  so a renamed partial placeholder could be recorded truncated; capture and
+  audit walk directory junctions as plain directories (`sparse.cpp:304, 326,
+  377-378`) with no entry or size bound; manifest blob names and link targets
+  are trusted and blob bytes are never checked against their digest name; the
+  snapshot-served-root marker is owner-editable. Production Cloud Files facts
+  confirmed from code and Microsoft docs: per-user `CfRegisterSyncRoot` needs no
+  admin, Windows 10 1709 / Server 2016 minimum, NTFS only, dehydrated placeholders
+  unreadable without a provider. Unconfirmed: reboot/logoff persistence without
+  `StorageProviderSyncRootManager`, antivirus or indexer hydration, OneDrive
+  coexistence, packaging expectations.
+- Bounded verdict: acceptable as Windows feasibility evidence once the wording
+  correction lands. Not Gate 2, not Windows product acceptance, not GA. Next
+  bounded Windows unit: capture hardening (PARTIAL guard, junction refusal,
+  manifest path and digest validation, bounds) with a rerun, then a
+  Windows-portable common probe (CRLF-tolerant compiler check, file-only fsync).
 
 #### Javelin macOS sparse filesystem feasibility
 
