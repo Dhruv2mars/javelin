@@ -743,19 +743,20 @@ impl LinuxLayerRuntime {
         }
     }
 
-    /// Records an outcome in the binding (never moving it backwards) and thaws.
+    /// Records an outcome and thaws. Only an operation this view froze for (its
+    /// pending capture) may move the bound head, and never backwards; replaying
+    /// another caller's operation must not adopt that caller's head.
     fn settle_capture(
         &self,
         slot: &str,
         record: &mut ViewRecord,
-        update: LayerUpdate,
-        changed_paths: usize,
-        unrepresented_directories: Vec<String>,
-        replayed: bool,
+        owned: bool,
+        outcome: CaptureOutcome,
     ) -> Result<CaptureOutcome> {
         if let LayerUpdate::Applied {
             state: LayerState::Active { head },
-        } = &update
+        } = &outcome.update
+            && owned
             && head.revision() > record.revision
         {
             record.revision = head.revision();
@@ -764,18 +765,14 @@ impl LinuxLayerRuntime {
         record.pending = None;
         self.write_record(slot, record)?;
         self.ensure_thawed(slot)?;
-        Ok(CaptureOutcome {
-            update,
-            changed_paths,
-            unrepresented_directories,
-            replayed,
-        })
+        Ok(outcome)
     }
 
     /// Freezes the view, captures its complete delta through the native API, and
     /// thaws. `busy` means a writer held a file open or the freeze was not owned
     /// for the whole read; nothing changed. Retrying any completed operation ID of
-    /// this Layer returns its durable native outcome.
+    /// this Layer returns its durable native outcome; only this view's own pending
+    /// capture can move the head it is bound to.
     pub fn capture(
         &mut self,
         repo: &mut Repository,
@@ -818,9 +815,35 @@ impl LinuxLayerRuntime {
         record: &mut ViewRecord,
         operation: &OperationId,
     ) -> Result<CaptureOutcome> {
-        if let Some((checkpoint, update)) = self.durable(repo, layer, operation, false)? {
+        let owned = record
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.operation == operation.as_str() && p.action == Action::Capture);
+        let durable = match self.durable(repo, layer, operation, false) {
+            Ok(durable) => durable,
+            Err(error) => {
+                // The ID was used natively elsewhere; this capture can never commit.
+                if certain(&error) && owned {
+                    record.pending = None;
+                    self.write_record(slot, record)?;
+                    self.ensure_thawed(slot)?;
+                }
+                return Err(error);
+            }
+        };
+        if let Some((checkpoint, update)) = durable {
             let changed = repo.read_checkpoint(checkpoint)?.changes().entries().len();
-            return self.settle_capture(slot, record, update, changed, Vec::new(), true);
+            return self.settle_capture(
+                slot,
+                record,
+                owned,
+                CaptureOutcome {
+                    update,
+                    changed_paths: changed,
+                    unrepresented_directories: Vec::new(),
+                    replayed: true,
+                },
+            );
         }
         match mount_state(&self.root.join("views").join(slot))? {
             None => self.mount_view(slot, record, true)?,
@@ -875,7 +898,17 @@ impl LinuxLayerRuntime {
         #[cfg(test)]
         crate::repository::test_boundary("capture_committed");
         let changed = changes.entries().len();
-        self.settle_capture(slot, record, update, changed, unrepresented, false)
+        self.settle_capture(
+            slot,
+            record,
+            true,
+            CaptureOutcome {
+                update,
+                changed_paths: changed,
+                unrepresented_directories: unrepresented,
+                replayed: false,
+            },
+        )
     }
 
     /// Terminal native discard, then bounded removal of this view's private storage.
