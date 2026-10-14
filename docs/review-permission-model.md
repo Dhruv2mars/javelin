@@ -68,7 +68,8 @@ Further rules:
 - `required_approvals` may be zero, which makes reviews optional. A `Maintain`
   role is always required.
 - `check_publishable` does not compare `exact.base()` with the current World. A
-  World advance does not invalidate approvals; only a new revision does.
+  World advance does not change review state; only a new revision clears
+  approvals. Publication still rechecks against the current World.
 
 ## Retries, ordering, and epochs
 
@@ -107,19 +108,19 @@ At the publication correctness boundary, later integration must:
      publisher composes the disjoint delta onto the current head and publishes.
      This does not force the author to refresh, and it never mutates the approved
      revision.
-   - If the World advanced with intersecting changes, the publisher rechecks and
-     reports explicit conflicts. The owner decides whether to refresh and submit a
+   - If the World advanced with intersecting changes, the publisher rechecks
+     before acceptance and reports any explicit conflicts. The owner decides whether to refresh and submit a
      new revision, which starts without approvals.
 4. Steps 2 and 3 happen within the same publication correctness boundary as the
    World advance.
 
 Example. Alice's revision is approved with base World 4. A maintainer publishes
 while the World is at 6, and Worlds 5 and 6 touched only unrelated paths.
-`check_publishable(review, &rev, &perms_now, &mona)` is evaluated now. The
+`check_publishable(&review, &rev, &perms_now, &mona)` is evaluated now. The
 publisher composes Alice's frozen delta onto World 6 and calls compare-and-advance
 with `expected = 6`. No new revision or approval is needed, and the review state
-still names base 4. If World 5 had edited a path Alice changed, the publisher
-would report the conflict, and only Alice could submit a replacement revision.
+still names base 4. If World 5 had made a change intersecting Alice's, the
+publisher would recheck and report any conflict, and only Alice could submit a replacement revision.
 
 This library does not implement the publisher, composition, or conflict detection.
 

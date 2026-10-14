@@ -254,4 +254,15 @@ fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
 - [x] Hub audit: integration doc now separates the immutable proposal base from
   the publication-locked World head; nonintersecting advances do not force
   refresh or invalidate approvals (`681be58`, doc-only).
-- [ ] Hand off exact tested source, scopes, and retained limits to the hub.
+- [x] Review r4: Codex hit its usage limit (task failed, no output). Replaced
+  by a Claude Opus 5.5 medium-effort read-only subagent on `87f2acd`: no high or
+  medium findings; r3 fix closed (abort probe exit 1, full script 16/16); three
+  low wording fixes applied (doc-only). Limitation: r4 was not by the Codex
+  reviewer used in r1-r3.
+- [x] Tested source `87f2acd`: run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38507448220 passed on
+  Linux x64, macOS ARM64, and Windows x64. Artifacts record that commit, 13
+  behavior + 1 property test passing, empty oracle diff; Linux 16/16 mutations
+  caught. Linux and macOS logged SHA256 values match all 7 source files; Windows
+  matches after CRLF conversion.
+- [x] Hand off exact tested source, scopes, and retained limits to the hub.
