@@ -92,8 +92,10 @@ try {
         @('projfs-provider', 'ProjectedFSLib.lib Ole32.lib', '/DNTDDI_VERSION=0x0A000008'))) {
         $flags = "/nologo /Bv /std:c++20 /W4 /WX /EHsc /D_WIN32_WINNT=0x0A00 $($build[2])"
         $batch = Join-Path $owned "build-$($build[0]).cmd"
-        @('@echo off', "call `"$dev`" -no_logo -arch=x64", 'if errorlevel 1 exit /b 2',
-            "cl $flags `"$here/$($build[0]).cpp`" /Fe:`"$(Join-Path $owned "$($build[0]).exe")`" /Fo:`"$(Join-Path $owned "$($build[0]).obj")`" $($build[1])") |
+        $source = Join-Path $PSScriptRoot "$($build[0]).cpp"
+        # Command echo stays on so a failing batch line is visible in raw evidence.
+        @("call `"$dev`" -no_logo -arch=x64", 'if errorlevel 1 exit /b 2', 'cd',
+            "cl $flags `"$source`" /Fe:`"$(Join-Path $owned "$($build[0]).exe")`" /Fo:`"$(Join-Path $owned "$($build[0]).obj")`" $($build[1])") |
             Set-Content -LiteralPath $batch -Encoding ascii
         $compile = Invoke-Bounded "compile-$($build[0])" "$system/cmd.exe" @('/d', '/c', $batch) 90000
         if ($compile.exitCode -ne 0) { throw "Native $($build[0]) compile failed; this is a source failure, not a platform verdict." }
