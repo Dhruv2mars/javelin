@@ -26,9 +26,16 @@ use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
 const ROOT: fileid3 = 1;
 
-/// Test-only fault injection: abort the process after a copy-up is staged but
-/// before it is published, to prove interrupted copy-ups leave base bytes visible.
-pub const CRASH_AFTER_STAGE_ENV: &str = "JAVELIN_OVERLAY_CRASH_AFTER_STAGE";
+/// Test-only fault injection: abort the process at a named point. `stage`
+/// aborts after a copy-up is staged but before it is published; `rename`
+/// aborts after a rename moved private bytes but before whiteouts persist.
+pub const CRASH_AT_ENV: &str = "JAVELIN_OVERLAY_CRASH_AT";
+
+fn crash_at(point: &str) {
+    if std::env::var_os(CRASH_AT_ENV).is_some_and(|v| v == point) {
+        std::process::abort();
+    }
+}
 
 pub struct Overlay {
     base: PathBuf,
@@ -204,25 +211,27 @@ impl Overlay {
         let meta = fs::symlink_metadata(loc.path()).map_err(io_err)?;
         let id = Self::id_of(st, rel);
         let mut a = metadata_to_fattr3(id, &meta);
+        // The library helper forces owner-write and drops special bits.
+        a.mode = meta.mode() & 0o7777;
         a.fsid = 0x4a41_5645;
         Ok(a)
     }
 
-    /// Persists the whiteout set atomically. Whiteouts are written before an
-    /// operation hides base content, and an upper entry always wins over a
-    /// whiteout, so an interruption never exposes a half-applied change.
+    /// Persists the whiteout set atomically before publishing it in memory.
+    /// An upper entry always wins over a whiteout, so a whiteout written ahead
+    /// of an interrupted delete or rename never hides surviving private bytes.
     fn add_whiteouts(&self, st: &mut State, rels: &[&Path]) -> Result<(), nfsstat3> {
-        let mut changed = false;
+        let mut next = st.whiteouts.clone();
         for rel in rels {
             if self.base.join(rel).symlink_metadata().is_ok() && Self::base_visible(st, rel) {
-                changed |= st.whiteouts.insert(rel.to_path_buf());
+                next.insert(rel.to_path_buf());
             }
         }
-        if !changed {
+        if next.len() == st.whiteouts.len() {
             return Ok(());
         }
         let mut body = Vec::new();
-        for w in &st.whiteouts {
+        for w in &next {
             body.extend_from_slice(w.as_os_str().as_bytes());
             body.push(b'\n');
         }
@@ -231,7 +240,9 @@ impl Overlay {
         f.write_all(&body).map_err(io_err)?;
         f.sync_all().map_err(io_err)?;
         fs::rename(&tmp, self.upper.join("whiteouts")).map_err(io_err)?;
-        sync_dir(&self.upper).map_err(io_err)
+        sync_dir(&self.upper).map_err(io_err)?;
+        st.whiteouts = next;
+        Ok(())
     }
 
     /// Creates upper directories for every ancestor, copying base modes.
@@ -258,6 +269,7 @@ impl Overlay {
             };
             fs::create_dir(&up).map_err(io_err)?;
             fs::set_permissions(&up, fs::Permissions::from_mode(mode)).map_err(io_err)?;
+            sync_dir(up.parent().unwrap()).map_err(io_err)?;
         }
         Ok(())
     }
@@ -277,6 +289,7 @@ impl Overlay {
             fs::create_dir(&dst).map_err(io_err)?;
             fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
                 .map_err(io_err)?;
+            sync_dir(dst.parent().unwrap()).map_err(io_err)?;
             return Ok(dst);
         }
         let stage = self.upper.join("tmp").join(format!(
@@ -297,9 +310,7 @@ impl Overlay {
                 .map_err(io_err)?;
             to.sync_all().map_err(io_err)?;
         }
-        if std::env::var_os(CRASH_AFTER_STAGE_ENV).is_some() {
-            std::process::abort();
-        }
+        crash_at("stage");
         fs::rename(&stage, &dst).map_err(io_err)?;
         sync_dir(dst.parent().unwrap()).map_err(io_err)?;
         Ok(dst)
@@ -343,6 +354,19 @@ impl Overlay {
             Some(_) => Err(nfsstat3::NFS3ERR_NOTDIR),
             None => Err(nfsstat3::NFS3ERR_STALE),
         }
+    }
+
+    /// Data operations act only on regular files, never through symlinks.
+    fn regular_file(&self, st: &State, rel: &Path) -> Result<(), nfsstat3> {
+        let loc = self.locate(st, rel).ok_or(nfsstat3::NFS3ERR_STALE)?;
+        let meta = fs::symlink_metadata(loc.path()).map_err(io_err)?;
+        if meta.is_dir() {
+            return Err(nfsstat3::NFS3ERR_ISDIR);
+        }
+        if !meta.is_file() {
+            return Err(nfsstat3::NFS3ERR_INVAL);
+        }
+        Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -414,12 +438,32 @@ fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
 /// Copies a quiescent Layer's private state into a new upper directory.
 /// Only private changes are copied; the base stays shared.
 pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
-    fs::create_dir(to)?;
-    copy_tree(&from.join("tree"), &to.join("tree"))?;
-    if from.join("whiteouts").exists() {
-        fs::copy(from.join("whiteouts"), to.join("whiteouts"))?;
+    let from = from.canonicalize()?;
+    let parent = to
+        .parent()
+        .ok_or(io::ErrorKind::InvalidInput)?
+        .canonicalize()?;
+    let to = parent.join(to.file_name().ok_or(io::ErrorKind::InvalidInput)?);
+    if to.starts_with(&from) || from.starts_with(&to) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "clone destination must not nest with its source",
+        ));
     }
-    File::open(to)?.sync_all()
+    fs::create_dir(&to)?;
+    let copied = (|| {
+        copy_tree(&from.join("tree"), &to.join("tree"))?;
+        if from.join("whiteouts").exists() {
+            fs::copy(from.join("whiteouts"), to.join("whiteouts"))?;
+            File::open(to.join("whiteouts"))?.sync_all()?;
+        }
+        File::open(&to)?.sync_all()?;
+        File::open(&parent)?.sync_all()
+    })();
+    if copied.is_err() {
+        let _ = fs::remove_dir_all(&to);
+    }
+    copied
 }
 
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
@@ -432,7 +476,8 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
             let e = e?;
             copy_tree(&e.path(), &to.join(e.file_name()))?;
         }
-        fs::set_permissions(to, meta.permissions())
+        fs::set_permissions(to, meta.permissions())?;
+        File::open(to)?.sync_all()
     } else {
         fs::copy(from, to)?;
         File::open(to)?.sync_all()
@@ -501,6 +546,7 @@ impl NFSFileSystem for Overlay {
     ) -> Result<(Vec<u8>, bool), nfsstat3> {
         let st = self.lock();
         let rel = Self::path_of(&st, id)?;
+        self.regular_file(&st, &rel)?;
         let loc = self.locate(&st, &rel).ok_or(nfsstat3::NFS3ERR_STALE)?;
         let mut f = File::open(loc.path()).map_err(io_err)?;
         let len = f.metadata().map_err(io_err)?.len();
@@ -513,6 +559,7 @@ impl NFSFileSystem for Overlay {
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
         let mut st = self.lock();
         let rel = Self::path_of(&st, id)?;
+        self.regular_file(&st, &rel)?;
         let up = self.copy_up(&st, &rel)?;
         let mut f = OpenOptions::new().write(true).open(&up).map_err(io_err)?;
         f.seek(SeekFrom::Start(offset)).map_err(io_err)?;
@@ -535,19 +582,24 @@ impl NFSFileSystem for Overlay {
         {
             return Err(nfsstat3::NFS3ERR_ISDIR);
         }
-        self.ensure_upper_dir(&st, rel.parent().unwrap())?;
-        let up = self.tree(&rel);
-        if up.is_symlink() {
-            fs::remove_file(&up).map_err(io_err)?;
-        }
-        let f = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&up)
-            .map_err(io_err)?;
-        f.sync_all().map_err(io_err)?;
-        sync_dir(up.parent().unwrap()).map_err(io_err)?;
+        // UNCHECKED CREATE of an existing name keeps its bytes unless the
+        // request sets a size (RFC 1813 section 3.3.8).
+        let up = if self.locate(&st, &rel).is_some() {
+            self.regular_file(&st, &rel)?;
+            self.copy_up(&st, &rel)?
+        } else {
+            self.ensure_upper_dir(&st, rel.parent().unwrap())?;
+            let up = self.tree(&rel);
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&up)
+                .map_err(io_err)?
+                .sync_all()
+                .map_err(io_err)?;
+            sync_dir(up.parent().unwrap()).map_err(io_err)?;
+            up
+        };
         apply_sattr(&up, &attr).map_err(io_err)?;
         let a = self.attr(&mut st, &rel)?;
         Ok((a.fileid, a))
@@ -656,14 +708,15 @@ impl NFSFileSystem for Overlay {
             self.copy_up(&st, &from).map(|_| ())?
         };
         self.ensure_upper_dir(&st, to.parent().unwrap())?;
-        self.add_whiteouts(&mut st, &[&from, &to])?;
+        // Move private bytes first; rename(2) replaces an empty directory or a
+        // file atomically. Whiteouts follow, so an interruption can briefly
+        // re-expose the old base name but never loses the destination.
         let dst = self.tree(&to);
-        if src_dir && dst.is_dir() {
-            fs::remove_dir(&dst).map_err(io_err)?;
-        }
         fs::rename(self.tree(&from), &dst).map_err(io_err)?;
         sync_dir(dst.parent().unwrap()).map_err(io_err)?;
         sync_dir(self.tree(from.parent().unwrap()).as_path()).map_err(io_err)?;
+        crash_at("rename");
+        self.add_whiteouts(&mut st, &[&from, &to])?;
         Self::rekey(&mut st, &from, &to);
         Ok(())
     }

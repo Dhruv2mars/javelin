@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use macos_sparse_backend::{CRASH_AFTER_STAGE_ENV, Overlay, clone_upper};
+use macos_sparse_backend::{CRASH_AT_ENV, Overlay, clone_upper};
 use nfsserve::nfs::{fileid3, nfsstat3, sattr3};
 use nfsserve::vfs::NFSFileSystem;
 
@@ -338,7 +338,7 @@ async fn interrupted_copy_up_leaves_base_bytes_and_is_cleaned_on_reopen() {
             "child_crash_during_copy_up",
             "--nocapture",
         ])
-        .env(CRASH_AFTER_STAGE_ENV, "1")
+        .env(CRASH_AT_ENV, "stage")
         .env("JAVELIN_TEST_BASE", fx.base())
         .env("JAVELIN_TEST_UPPER", fx.upper("a"))
         .stdout(Stdio::null())
@@ -396,4 +396,158 @@ fn clone_refuses_a_layer_that_is_being_served() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Child entry point: aborts after a rename moved private bytes, before whiteouts persist.
+#[tokio::test]
+#[ignore]
+async fn child_crash_during_rename() {
+    let base = PathBuf::from(std::env::var("JAVELIN_TEST_BASE").unwrap());
+    let upper = PathBuf::from(std::env::var("JAVELIN_TEST_UPPER").unwrap());
+    let a = Overlay::open(&base, &upper).unwrap();
+    write_new(&a, "", ".README.saving", b"saved\n").await;
+    let root = a.root_dir();
+    let _ = a
+        .rename(
+            root,
+            &b".README.saving".as_slice().into(),
+            root,
+            &b"README.txt".as_slice().into(),
+        )
+        .await;
+    unreachable!("rename should have aborted");
+}
+
+#[tokio::test]
+async fn interrupted_rename_never_loses_the_destination() {
+    let fx = Fixture::new();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "child_crash_during_rename",
+            "--nocapture",
+        ])
+        .env(CRASH_AT_ENV, "rename")
+        .env("JAVELIN_TEST_BASE", fx.base())
+        .env("JAVELIN_TEST_UPPER", fx.upper("a"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!status.success(), "child must be killed by abort");
+    let a = fx.open("a");
+    assert_eq!(read(&a, "README.txt").await, b"saved\n");
+    assert!(id(&a, ".README.saving").await.is_err());
+}
+
+#[tokio::test]
+async fn unchecked_create_of_existing_file_keeps_bytes() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    a.create(root, &b"README.txt".as_slice().into(), sattr3::default())
+        .await
+        .unwrap();
+    assert_eq!(read(&a, "README.txt").await, b"base text\n");
+    let truncate = sattr3 {
+        size: nfsserve::nfs::set_size3::size(0),
+        ..Default::default()
+    };
+    a.create(root, &b"keep.txt".as_slice().into(), truncate)
+        .await
+        .unwrap();
+    assert_eq!(read(&a, "keep.txt").await, b"");
+}
+
+#[tokio::test]
+async fn data_operations_refuse_symlink_handles_and_base_stays_unchanged() {
+    let fx = Fixture::new();
+    let before = fx.base_listing();
+    let a = fx.open("a");
+    let target = fx.base().join("keep.txt");
+    let (link, _) = a
+        .symlink(
+            a.root_dir(),
+            &b"escape".as_slice().into(),
+            &target.as_os_str().as_encoded_bytes().into(),
+            &sattr3::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        a.write(link, 0, b"X").await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_INVAL as u32
+    );
+    assert_eq!(
+        a.read(link, 0, 10).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_INVAL as u32
+    );
+    let inside = id(&a, "inside-link").await.unwrap();
+    assert!(a.write(inside, 0, b"X").await.is_err());
+    assert_eq!(fx.base_listing(), before);
+}
+
+#[tokio::test]
+async fn failed_whiteout_persistence_keeps_base_entry_visible() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let tmp = fx.upper("a").join("tmp");
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = a.remove(a.root_dir(), &b"keep.txt".as_slice().into()).await;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        result.is_err(),
+        "remove must report the persistence failure"
+    );
+    assert_eq!(read(&a, "keep.txt").await, b"unchanged\n");
+    a.remove(a.root_dir(), &b"keep.txt".as_slice().into())
+        .await
+        .unwrap();
+    assert!(
+        id(&fx.open("a"), "keep.txt").await.is_err(),
+        "retry must persist the whiteout"
+    );
+}
+
+#[tokio::test]
+async fn getattr_reports_actual_mode_bits() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let fid = id(&a, "README.txt").await.unwrap();
+    let mode = sattr3 {
+        mode: nfsserve::nfs::set_mode3::mode(0o444),
+        ..Default::default()
+    };
+    assert_eq!(a.setattr(fid, mode).await.unwrap().mode, 0o444);
+    assert_eq!(a.getattr(fid).await.unwrap().mode, 0o444);
+}
+
+#[tokio::test]
+async fn directory_rename_replaces_an_empty_directory() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    a.mkdir(root, &b"empty".as_slice().into()).await.unwrap();
+    a.rename(
+        root,
+        &b"dir".as_slice().into(),
+        root,
+        &b"empty".as_slice().into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read(&a, "empty/nested.txt").await, b"nested\n");
+    assert!(id(&a, "dir").await.is_err());
+}
+
+#[test]
+fn clone_rejects_destination_nested_in_source() {
+    let fx = Fixture::new();
+    drop(fx.open("a"));
+    let nested = fx.upper("a").join("tree").join("new");
+    let err = clone_upper(&fx.upper("a"), &nested).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
+    assert!(!nested.exists());
 }

@@ -46,7 +46,7 @@ function tree(root) {
 const digest = rows => createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-const servers = new Map(), mounts = new Set();
+const servers = new Map(), mounts = new Set(), cleanupErrors = [];
 const port = { a: 12051, b: 12052, c: 12053, d: 12054 };
 const upper = name => join(work, `upper-${name}`);
 const mnt = name => join(work, `mnt-${name}`);
@@ -55,25 +55,29 @@ const base = join(work, 'base');
 async function serve(name) {
   const child = Bun.spawn([binary, 'serve', '--base', base, '--upper', upper(name), '--port', String(port[name])],
     { stdout: 'pipe', stderr: Bun.file(join(out, `server-${name}.stderr`)) });
+  servers.set(name, child);
   const reader = child.stdout.getReader();
   const line = await Promise.race([reader.read().then(r => new TextDecoder().decode(r.value ?? new Uint8Array())),
     Bun.sleep(10000).then(() => 'timeout')]);
   reader.releaseLock();
   fs.appendFileSync(commandLog, JSON.stringify({ server: name, pid: child.pid, firstLine: line }) + '\n');
   assert(line.startsWith('listening 127.0.0.1:'), `server ${name} not ready: ${line}`);
-  servers.set(name, child);
 }
+// A server stays tracked until its exit is observed; SIGKILL follows a timeout.
 async function stop(name, signal = 'SIGINT') {
-  const child = servers.get(name); servers.delete(name);
-  child.kill(signal);
-  const code = await Promise.race([child.exited, Bun.sleep(10000).then(() => 'timeout')]);
-  fs.appendFileSync(commandLog, JSON.stringify({ server: name, signal, exited: code }) + '\n');
-  assert(code !== 'timeout', `server ${name} did not exit`);
+  const child = servers.get(name);
+  for (const sig of [signal, 'SIGKILL']) {
+    child.kill(sig);
+    const code = await Promise.race([child.exited, Bun.sleep(10000).then(() => 'timeout')]);
+    fs.appendFileSync(commandLog, JSON.stringify({ server: name, signal: sig, exited: code }) + '\n');
+    if (code !== 'timeout') { servers.delete(name); assert(sig === signal, `server ${name} needed SIGKILL`); return; }
+  }
+  throw new Error(`server ${name} did not exit`);
 }
 function mount(name) {
   fs.mkdirSync(mnt(name), { recursive: true });
   const p = port[name];
-  must(['sudo', '-n', '/sbin/mount_nfs', '-o', `vers=3,tcp,port=${p},mountport=${p},locallocks,noac,nonegnamecache,soft`,
+  must(['sudo', '-n', '/sbin/mount_nfs', '-o', `vers=3,tcp,port=${p},mountport=${p},locallocks,noac,nonegnamecache,soft,rdirplus`,
     '127.0.0.1:/', mnt(name)], { timeoutMs: 30000 });
   mounts.add(name);
 }
@@ -88,6 +92,13 @@ let fatal;
 try {
   summary.host = Object.fromEntries([['sw_vers', ['sw_vers']], ['uname', ['uname', '-a']], ['csrutil', ['csrutil', 'status']],
     ['mount_nfs', ['ls', '-l', '/sbin/mount_nfs']], ['user', ['id']]].map(([k, argv]) => [k, run(argv).stdout.trim()]));
+  summary.host.workVolumeCaseSensitive = (() => {
+    const probePath = join(work, 'CaseProbe');
+    fs.writeFileSync(probePath, '');
+    const insensitive = fs.existsSync(join(work, 'caseprobe'));
+    fs.unlinkSync(probePath);
+    return !insensitive;
+  })();
   summary.source = { binarySha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),
     probeSha256: createHash('sha256').update(fs.readFileSync(probe)).digest('hex') };
 
@@ -119,6 +130,18 @@ try {
     '--out', join(out, 'probe-paths.json')], { timeoutMs: 90000 });
   summary.probe = { exitCode: probeRun.exitCode, stdout: probeRun.stdout };
   const probeReport = JSON.parse(fs.readFileSync(join(out, 'probe-paths.json'), 'utf8'));
+  // Every expected probe check must appear exactly once in a complete report.
+  const expected = ['text-and-binary-read', 'private-in-place-writes', 'create-atomic-save-rename-delete',
+    'directory-traversal', 'relative-symlink', 'watch-notifications', 'external-compiler-access',
+    'independent-process-writes', 'layer-clone-snapshot-isolation', 'writer-process-interruption',
+    'final-base-and-peer-integrity'];
+  await check('probe-report-complete', () => {
+    const ids = probeReport.checks.map(c => c.id);
+    assert(!probeReport.fatal && probeReport.finishedAt, `probe incomplete: ${probeReport.fatal}`);
+    assert(probeRun.exitCode === 0 || probeRun.exitCode === 1, `probe exit ${probeRun.exitCode}`);
+    assert(JSON.stringify(ids) === JSON.stringify(expected), `probe checks ${JSON.stringify(ids)}`);
+    return { exitCode: probeRun.exitCode, behaviorVerdict: probeReport.behaviorVerdict };
+  });
   for (const c of probeReport.checks) {
     summary.checks.push({ id: `probe:${c.id}`, verdict: c.verdict,
       evidence: c.id === 'layer-clone-snapshot-isolation' ? 'paths mode cannot clone; see quiescent-clone-and-remount' : c.evidence ?? null });
@@ -151,7 +174,7 @@ sys.exit(0 if got else 1)`;
 
   const beforeA = tree(mnt('a'));
   await check('quiescent-clone-and-remount', async () => {
-    unmount('a'); await stop('a');
+    assert(unmount('a').exitCode === 0, 'A did not unmount before clone'); await stop('a');
     must([binary, 'clone', '--from', upper('a'), '--to', upper('d')]);
     for (const n of ['a', 'd']) { await serve(n); mount(n); }
     assert(same(tree(mnt('a')), beforeA), 'remounted A differs from its pre-unmount state');
@@ -201,20 +224,22 @@ sys.exit(0 if got else 1)`;
   });
 } catch (e) { fatal = e.message; }
 finally {
-  for (const n of [...mounts]) unmount(n);
-  for (const n of [...servers.keys()]) await stop(n).catch(e => { summary.cleanup[`stop-${n}`] = e.message; });
+  for (const n of [...mounts]) if (unmount(n).exitCode !== 0) cleanupErrors.push(`unmount ${n}`);
+  for (const n of [...servers.keys()]) await stop(n).catch(e => cleanupErrors.push(e.message));
   const leftover = run(['mount']).stdout.split('\n').filter(l => l.includes(work));
   summary.cleanup.remainingMounts = leftover;
   summary.cleanup.remainingServers = [...servers.keys()];
   if (leftover.length === 0) {
     run(['sudo', '-n', 'chown', '-R', `${process.getuid()}`, work]);
     summary.cleanup.removeWork = run(['rm', '-rf', work]).exitCode;
-  }
+    if (summary.cleanup.removeWork !== 0 || fs.existsSync(work)) cleanupErrors.push('work directory not removed');
+  } else cleanupErrors.push('mounts remain');
+  summary.cleanup.errors = cleanupErrors;
   summary.fatal = fatal ?? null;
   summary.finishedAt = new Date().toISOString();
   const required = summary.checks.filter(c => c.id !== 'probe:layer-clone-snapshot-isolation');
   summary.verdict = fatal || required.length === 0 ? 'INCONCLUSIVE'
-    : required.every(c => c.verdict === 'VERIFIED') && leftover.length === 0 ? 'VERIFIED' : 'NOT VERIFIED';
+    : required.every(c => c.verdict === 'VERIFIED') && cleanupErrors.length === 0 ? 'VERIFIED' : 'NOT VERIFIED';
   fs.writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
   console.log(`${summary.verdict}${fatal ? `: ${fatal}` : ''}`);
   for (const c of summary.checks) console.log(`${c.verdict}: ${c.id}`);

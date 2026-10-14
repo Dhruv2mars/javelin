@@ -88,8 +88,8 @@ try {
   const table = run('mount-table', ['mount']).stdout.split('\n').filter(l => l.includes(target));
   result.mount = { exitCode: mounted.exitCode, signal: mounted.signal, table };
   if (table.length) {
-    run('mounted-read', ['cat', join(target, 'hello.txt')]);
-    run('unmount', ['umount', target], { timeoutMs: 30000 });
+    result.mount.read = run('mounted-read', ['cat', join(target, 'hello.txt')]).stdout;
+    result.mount.unmountExit = run('unmount', ['umount', target], { timeoutMs: 30000 }).exitCode;
   }
 } catch (e) { result.stopped = e.message; }
 finally {
@@ -97,10 +97,13 @@ finally {
     'subsystem == "com.apple.FSKit" OR process == "fskitd" OR process == "fskit_agent" OR sender == "AppleMobileFileIntegrity" OR process == "amfid"'], { timeoutMs: 120000 });
   result.remainingMounts = run('final-mount-table', ['mount']).stdout.split('\n').filter(l => l.includes(work));
   result.records = records;
-  // Passthrough is not sparse. Even a successful mount only proves FSKit activation.
-  result.fskitMountVerdict = result.mount?.exitCode === 0 && result.mount.table.length ? 'VERIFIED' : 'INCONCLUSIVE';
+  // Passthrough is not sparse, and ad-hoc signing is not an accepted extension
+  // capability. Even a successful mount is only an experimental observation.
+  result.fskitMountObservation = result.mount?.exitCode === 0 && result.mount.table.length
+    && result.mount.read === 'hello\n' && result.mount.unmountExit === 0 ? 'MOUNTED' : 'NOT MOUNTED';
+  result.fskitBackendVerdict = 'INCONCLUSIVE';
   result.sparseVerdict = 'INCONCLUSIVE';
   result.finishedAt = new Date().toISOString();
   fs.writeFileSync(join(out, 'fskit-probe.json'), JSON.stringify(result, null, 2) + '\n');
-  console.log(`fskit mount ${result.fskitMountVerdict}; stopped: ${result.stopped ?? 'no'}`);
+  console.log(`fskit mount ${result.fskitMountObservation}; stopped: ${result.stopped ?? 'no'}`);
 }
