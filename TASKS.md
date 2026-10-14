@@ -209,3 +209,33 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Native development packages workstream
+
+- [x] Read `AGENTS.md`, `RTK.md`, root `TASKS.md`, `docs/build-contract.md`, and `decisions.tsv`.
+- [x] Open the draft PR, link it to T3 Code, and report PR, planning SHA, and owned paths to the hub.
+- [ ] Compare archive and installer shapes; select the simplest per-OS caller API (see `docs/native-development-packages.md`).
+- [ ] Inspect dependencies and license obligations; ship the actual `LICENSE` plus generated third-party notices.
+- [ ] Build the release CLI from the accepted source with `--locked --release` and no test hooks.
+- [ ] Package `tar.gz` (Linux, macOS) and `zip` (Windows) with `SHA256` and a manifest naming source SHA, toolchain, dependency hashes, target triple, and development/pre-GA channel.
+- [ ] Install with checksum verification, owned temporary extraction, and a rename into a fresh path; reject tampered, traversing, absolute, symlink, and duplicate entries.
+- [ ] Smoke the unpacked binary through `PATH` in a new non-Git project: `init`, `history`, `check` JSON, corruption exit code, preexisting binary bytes preserved.
+- [ ] Test side-by-side install, upgrade, and rollback of the minimal development binary only.
+- [ ] Attempt a reproducible build twice with `--remap-path-prefix` and `SOURCE_DATE_EPOCH`; record the outcome without claiming determinism it does not show.
+- [ ] Run all three OS jobs; download the artifacts on a second job and smoke them with native tools; inspect raw logs.
+- [ ] Obtain independent read-only review; add defect-detecting regressions; record limits.
+- [ ] Hand off the exact tested source, doc-only head, proofs, VERIFIED/NOT VERIFIED/INCONCLUSIVE scopes, and limits to the hub.
+
+Owner: thread `t3-thread://v1/mcp:6ebbed40-380a-4bc8-8330-96e51b8c89e4`.
+Branch `build/native-development-packages`, based on exact accepted native Layer
+state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`. That source is accepted by the hub
+but unmerged; this PR targets `feat/native-layer-checkpoints` and claims no
+independent acceptance. Owned paths: `tools/native-packaging/**`,
+`docs/native-development-packages.md`, `.github/workflows/native-packaging.yml`,
+and this section. No root Cargo, source, test, or workflow edits.
+
+Done: for one named source commit, hosted Linux, macOS, and Windows jobs build the
+release CLI, produce archive plus checksum plus manifest, and a separate job
+downloads each artifact, verifies the checksum, extracts into a fresh path, and
+runs the `PATH` smoke above Git-free. The result is a development distribution
+and clean-temp installation proof, not a public release or Gate 5.
