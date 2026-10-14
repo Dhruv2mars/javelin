@@ -1004,3 +1004,40 @@ fn build_works_when_paths_contain_spaces_and_quotes() {
         serde_json::from_slice(&fs::read(out.join("build-record.json")).unwrap()).unwrap();
     assert_eq!(record["binary_sha256"].as_str().unwrap().len(), 64);
 }
+
+#[test]
+fn stream_cut_exactly_on_a_header_boundary_is_not_mistaken_for_a_clean_end() {
+    // Layout (bytes): [pax header 512][pax data T][file header 512][file data F][symlink header ...]
+    // with the symlink header starting exactly at the decompressed-stream cap (272 MiB).
+    let cap: u64 = 272 * 1024 * 1024;
+    let pax_data: u64 = 40 * 1024 * 1024;
+    let file: u64 = cap - 1024 - pax_data;
+    let mut builder =
+        tar::Builder::new(flate2::GzBuilder::new().write(Vec::new(), flate2::Compression::fast()));
+    // Record is "<len> comment=<value>\n" where len (8 digits) counts the whole record.
+    let value = vec![b'x'; (pax_data - 18) as usize];
+    builder
+        .append_pax_extensions([("comment", value.as_slice())])
+        .unwrap();
+    let mut header = tar::Header::new_gnu();
+    header.set_size(file);
+    header.set_mode(0o644);
+    builder
+        .append_data(&mut header, "top/filler", std::io::repeat(0).take(file))
+        .unwrap();
+    let mut link = tar::Header::new_gnu();
+    link.set_entry_type(tar::EntryType::Symlink);
+    link.set_size(0);
+    builder
+        .append_link(&mut link, "top/link", "/etc/passwd")
+        .unwrap();
+    let bytes = builder.into_inner().unwrap().finish().unwrap();
+    let (err, dest, temp) = try_install_bytes("boundary.tar.gz", &bytes);
+    assert!(
+        !err.contains("PACKAGE.json") && !err.contains("unsupported type"),
+        "must fail on the cap, not later: {err}"
+    );
+    assert!(err.contains("decompressed stream cap"), "{err}");
+    assert!(!dest.exists());
+    assert_eq!(fs::read_dir(temp.path().join("prefix")).unwrap().count(), 0);
+}

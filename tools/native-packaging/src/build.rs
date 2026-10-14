@@ -42,6 +42,14 @@ const REMOVED_ENV: &[&str] = &[
     "CARGO_TARGET_DIR",
     "CFLAGS",
     "CXXFLAGS",
+    "RUSTC",
+    "CC",
+    "CXX",
+    "TARGET_CFLAGS",
+    "HOST_CFLAGS",
+    "CFLAGS_",
+    "CXXFLAGS_",
+    "CC_",
 ];
 
 fn cargo_home() -> PathBuf {
@@ -168,9 +176,18 @@ fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', "'\\''"))
 }
 
-/// SHA-256 over `Cargo.toml`, `Cargo.lock`, and `src/**` (path and content hashes, Git-free).
+/// SHA-256 over `Cargo.toml`, `Cargo.lock`, `LICENSE`, any `.cargo/config*`, and `src/**` (path and content hashes, Git-free).
 pub fn source_files_hash(source: &Path) -> Result<(String, usize)> {
-    let mut files = vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()];
+    let mut files = vec![
+        "Cargo.toml".to_string(),
+        "Cargo.lock".to_string(),
+        "LICENSE".to_string(),
+    ];
+    for config in [".cargo/config.toml", ".cargo/config"] {
+        if source.join(config).is_file() {
+            files.push(config.to_string());
+        }
+    }
     files.extend(
         list_files(&source.join("src"))?
             .into_iter()

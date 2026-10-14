@@ -20,6 +20,8 @@ pub struct ReproReport {
     pub identical: bool,
     pub first_difference_offset: Option<u64>,
     pub differing_bytes: Option<u64>,
+    /// First 64 differing offsets.
+    pub differing_offsets: Vec<u64>,
     pub note: String,
 }
 
@@ -53,8 +55,8 @@ pub fn repro(source: &Path, work: &Path, epoch: u64) -> Result<ReproReport> {
     }
     let (b, a) = (sides.pop().unwrap(), sides.pop().unwrap());
     let identical = a.2 == b.2;
-    let (first, differing) = if identical || a.2.len() != b.2.len() {
-        (None, None)
+    let (first, differing, offsets) = if identical || a.2.len() != b.2.len() {
+        (None, None, Vec::new())
     } else {
         let diffs: Vec<_> =
             a.2.iter()
@@ -65,6 +67,7 @@ pub fn repro(source: &Path, work: &Path, epoch: u64) -> Result<ReproReport> {
         (
             diffs.first().map(|(i, _)| *i as u64),
             Some(diffs.len() as u64),
+            diffs.iter().take(64).map(|(i, _)| *i as u64).collect(),
         )
     };
     let note = if identical {
@@ -84,6 +87,7 @@ pub fn repro(source: &Path, work: &Path, epoch: u64) -> Result<ReproReport> {
         identical,
         first_difference_offset: first,
         differing_bytes: differing,
+        differing_offsets: offsets,
         note,
     })
 }

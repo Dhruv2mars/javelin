@@ -183,6 +183,11 @@ fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
             data,
         });
     }
+    // The cap truncates silently; if it was reached the archive was not fully read, and
+    // a cut on a header boundary would otherwise look like a clean end of archive.
+    if archive.into_inner().limit() == 0 {
+        bail!("archive expands past the {MAX_TAR_STREAM} byte decompressed stream cap");
+    }
     Ok(out)
 }
 

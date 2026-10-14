@@ -9,6 +9,10 @@ on:
     paths:
       - tools/native-packaging/**
       - .github/workflows/native-packaging.yml
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE
+      - src/**
   workflow_dispatch:
 
 permissions:
@@ -37,6 +41,11 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Keep LF line endings in the checkout
+        # Developer setup: without this the Windows checkout rewrites sources to CRLF,
+        # so Cargo.lock, LICENSE, and the built bytes would differ from the commit.
+        run: git config --global core.autocrlf false
+
       - name: Check out committed source
         id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
@@ -135,6 +144,11 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Keep LF line endings in the checkout
+        # Developer setup: without this the Windows checkout rewrites sources to CRLF,
+        # so Cargo.lock, LICENSE, and the built bytes would differ from the commit.
+        run: git config --global core.autocrlf false
+
       - name: Check out committed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:

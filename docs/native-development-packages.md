@@ -59,7 +59,8 @@ elevation, registry, or signing and leave the choice of `PATH` to the user.
 
 - `channel: "development"`, `pre_ga: true`, `cargo_version: "0.1.0"`, a notice.
 - `source`: caller-supplied commit SHA; SHA-256 of `Cargo.lock`; SHA-256 over
-  `Cargo.toml`, `Cargo.lock`, and `src/**` (path and content hashes, Git-free).
+  `Cargo.toml`, `Cargo.lock`, `LICENSE`, any `.cargo/config*`, and `src/**` (path and
+  content hashes, Git-free).
 - `toolchain`: full `rustc -vV`, cargo version, exact build command, rustflags
   (path remaps), `SOURCE_DATE_EPOCH`.
 - `binary`: path, SHA-256, size, and the test-hook markers confirmed absent.
@@ -139,8 +140,8 @@ process-hook code. A regression appends a marker to the real binary and expects 
 ## Licenses
 
 Javelin is MIT licensed (`LICENSE` shipped unchanged). The root `Cargo.toml` declares no
-`license` field. Dependencies are MIT, Apache-2.0, MIT/Apache-2.0, Zlib, or
-Unlicense OR MIT, plus the bundled SQLite amalgamation (public-domain notice in its own
+`license` field. Dependencies are MIT, Apache-2.0, MIT/Apache-2.0, Zlib,
+Unlicense OR MIT, or `(MIT OR Apache-2.0) AND Unicode-3.0` (`unicode-ident`), plus the bundled SQLite amalgamation (public-domain notice in its own
 source header, version 3.53.2) built by `libsqlite3-sys`. The notices list the
 normal-dependency closure for the target, a conservative superset that includes
 compile-time proc-macro crates; packaging fails if a listed crate has no license file.
@@ -152,8 +153,9 @@ advice or a complete audit of transitive build tools.
 `build` sets `SOURCE_DATE_EPOCH`, `CARGO_INCREMENTAL=0`, `TZ=UTC`, `LC_ALL=C`, path
 remaps for the source, build directory, Cargo home, and Rust sysroot
 (`--remap-path-prefix`, plus `-ffile-prefix-map` for the bundled C on non-MSVC), and
-removes ambient `RUSTFLAGS`, `CARGO_PROFILE_*`, and `CARGO_BUILD_*`. It does not edit
-root Cargo profiles. `repro` builds the same source copied into two differently named
+removes ambient `RUSTFLAGS`, `RUSTC`, `CC`/`CXX`, `CFLAGS*`, `CARGO_PROFILE_*`, and
+`CARGO_BUILD_*`. It does not edit root Cargo profiles and does not neutralize a user's
+`~/.cargo/config.toml` (a documented limit). `repro` builds the same source copied into two differently named
 directories and compares the bytes. The archive layer is separately deterministic for
 identical input (sorted entries, fixed owner, modes, and times, no gzip timestamp),
 which a test asserts; that is not binary reproducibility.
