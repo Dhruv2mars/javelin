@@ -1,0 +1,16 @@
+D	bytes.bin
+D	delete.txt
+D	dir
+D	dir3
+F	completed.txt	6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e
+F	created.txt	fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696
+B	moved-bytes.bin	bytes.bin
+L	new-link	created.txt
+F	notes.txt	f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137
+F	README.txt	61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46
+N	renamed-dir
+N	renamed-dir3
+N	renamed-dir3\deep
+B	renamed-dir3\deep\leaf.txt	dir3\deep\leaf.txt
+B	renamed-dir\nested.txt	dir\nested.txt
+F	value.h	210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905

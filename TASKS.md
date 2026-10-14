@@ -174,6 +174,9 @@ unless the entire minimum backend passes.
 - [x] Open exactly one draft PR against `feat/windows-projfs-proof`, link it, report planning SHA to hub. PR #14, planning `34b0aee`, message `windows-sparse-backend-pr14-planning-v1`.
 - [x] Ground rename/ACL/cache behavior in primary Microsoft docs. ProjFS placeholder directories never become full (cache-state doc); VFS for Git documents partial-directory rename as unsupported (0x80070032); PR #9 log has no PRE_RENAME for `dir`. Actual SDK `cfapi.h` declarations are captured by the hosted run.
 - [x] Compare at least two filesystem shapes with independent review; record limits. Cloud Files sync root per Layer chosen; ProjFS rename matrix kept as control; container layers rejected. Two read-only reviews (Codex gpt-6.1-sol high, Claude Opus 5.5 medium) agreed; neither executed code.
-- [ ] Implement the bounded native backend and separate checks in the owned directory.
-- [ ] Run one bounded hosted attempt; retain raw archive and provenance; audit offline.
+- [x] Implement the bounded native backend and separate checks in the owned directory. `sparse.cpp` Cloud Files provider/capture/audit, pinned unchanged PR #9 `projfs-provider.cpp`, `checks.mjs`, `run.ps1`, `user-run.ps1`.
+- [x] Run one bounded hosted attempt; retain raw archive and provenance; audit offline. Seven attempts (bound extended from six for harness defects); final `4588385` run `38507282143`, digest `ae50ed33…7692`. `rtk proxy bun tools/windows-sparse-backend/verify-evidence.mjs` passes and rejects a tampered raw file.
 - [ ] Independent read-only review; fix material findings; report verdicts to hub.
+- [x] Bounded fixture VERIFIED on Cloud Files: rename matrix, native ordinary ops, ACL base and frozen snapshot, two clones of one snapshot, mid-hydration and mid-write kills vs closed-handle preservation, dehydrated untouched peers. ProjFS base-directory rename refused (error 50, no PRE_RENAME).
+- [ ] Unchanged common probe: CRLF compiler, Bun directory fsync EPERM, final integrity and path boundary NOT VERIFIED (probe portability; not owned here).
+- [ ] INCONCLUSIVE: storage cost at scale, metadata preservation, nested symlinks, AV hydration, power loss, concurrency, separate provider-only/writer-only kills, production registration, native binding, autosave, Windows acceptance, Gate 2, GA.
