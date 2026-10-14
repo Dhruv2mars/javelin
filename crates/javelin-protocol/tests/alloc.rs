@@ -33,7 +33,7 @@ fn allocated_by<T>(f: impl FnOnce() -> T) -> (T, usize) {
 }
 
 #[test]
-fn oversize_input_and_output_are_refused_before_large_allocations() {
+fn refusal_allocations_follow_the_fixture_and_outer_frame_budget() {
     let id = ObjectId::parse(&"ab".repeat(32)).unwrap();
     let blobs = Message::Blobs(vec![(id, vec![7; MAX_BLOB]); 3]);
     let mut sink = Vec::new();
@@ -68,4 +68,20 @@ fn oversize_input_and_output_are_refused_before_large_allocations() {
     let (result, bytes) = allocated_by(|| codec::decode(&count));
     assert_eq!(result.unwrap_err().code, "limit_exceeded");
     assert!(bytes < 4096, "count check allocated {bytes} bytes");
+
+    // A legal outer frame is buffered before its oversized inner blob is checked.
+    let mut body = vec![0x20];
+    body.extend(1_u32.to_be_bytes());
+    body.extend([0; 32]);
+    body.extend(((MAX_BLOB + 1) as u32).to_be_bytes());
+    body.resize(MAX_FRAME, 0);
+    let mut input = (MAX_FRAME as u32).to_be_bytes().to_vec();
+    input.extend(body);
+    let mut reader = Cursor::new(input);
+    let (result, bytes) = allocated_by(|| codec::read_frame(&mut reader));
+    assert_eq!(result.unwrap_err().code, "limit_exceeded");
+    assert!(
+        (MAX_FRAME..MAX_FRAME + 4096).contains(&bytes),
+        "legal outer frame allocated {bytes} bytes before inner refusal"
+    );
 }

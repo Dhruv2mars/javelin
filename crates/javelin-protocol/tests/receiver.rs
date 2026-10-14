@@ -136,12 +136,42 @@ fn refuses_blob_with_valid_hash_of_other_content() {
     let (_d, mut dest) = repo();
     let mut input = hello();
     // The claim is a real blob ID, but the bytes belong to a different blob.
-    input.extend(msg(&Message::Blobs(vec![(blobs[0].0, blobs[1].1.clone())])));
+    input.extend(msg(&Message::Blobs(vec![
+        blobs[2].clone(),
+        (blobs[0].0, blobs[1].1.clone()),
+    ])));
     refused(&mut dest, &input, "id_mismatch");
     assert!(matches!(
         dest.read_blob(blobs[0].0),
         Err(javelin::Error::MissingObject(_))
     ));
+    // The old API stores before checking the ID and does not roll back the prefix.
+    assert_eq!(dest.read_blob(blobs[2].0).unwrap(), blobs[2].1);
+    assert_eq!(dest.read_blob(blobs[1].0).unwrap(), blobs[1].1);
+    let retained = Manifest::new([(
+        RepoPath::parse("retained").unwrap(),
+        FileEntry::Regular {
+            content: blobs[1].0,
+            executable: false,
+        },
+    )])
+    .unwrap();
+    let retained_id = dest.put_manifest(&retained).unwrap();
+    let outcome = dest
+        .compare_and_advance(
+            &OperationId::parse("retained").unwrap(),
+            VersionNumber::new(0).unwrap(),
+            retained_id,
+        )
+        .unwrap();
+    assert_eq!(
+        Outcome::from_native(&outcome).unwrap(),
+        Outcome::Accepted {
+            number: VersionNumber::new(1).unwrap(),
+            manifest: retained_id,
+            operation: OperationId::parse("retained").unwrap(),
+        }
+    );
     // A manifest ID for a blob claim is also a mismatch: IDs are kind-separated.
     let mut input = hello();
     input.extend(msg(&Message::Blobs(vec![(id, manifest.canonical_bytes())])));
@@ -149,7 +179,7 @@ fn refuses_blob_with_valid_hash_of_other_content() {
 }
 
 #[test]
-fn refuses_manifest_with_mismatched_claim_and_never_publishes_it() {
+fn refuses_manifest_with_mismatched_claim_without_publishing() {
     let (_s, mut source) = repo();
     let (id, blobs, manifest) = fixture(&mut source);
     let smaller = Manifest::new([(
@@ -383,11 +413,22 @@ fn messages_round_trip() {
             code: "id_mismatch".into(),
             detail: "é".repeat(2000),
         },
+        Message::Error {
+            code: "é".into(),
+            detail: "UTF-8 code".into(),
+        },
     ];
     for message in messages {
         let decoded = javelin_protocol::codec::decode(&encode(&message).unwrap()).unwrap();
         match (&message, &decoded) {
-            (Message::Error { detail, .. }, Message::Error { detail: got, .. }) => {
+            (
+                Message::Error { code, detail },
+                Message::Error {
+                    code: got_code,
+                    detail: got,
+                },
+            ) => {
+                assert_eq!(got_code, code);
                 assert!(got.len() <= MAX_DETAIL && detail.starts_with(got.as_str()))
             }
             _ => assert_eq!(decoded, message),
