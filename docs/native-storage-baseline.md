@@ -30,7 +30,7 @@ cargo build --release --locked
 ```
 
 Profiles `smoke` (tests), `ci` (hosted-runner size), `local` (laptop) and `stress`
-(heavier contention; run once exploratorily, not in CI, no retained evidence). Size
+(heavier contention; defined but never run, so unmeasured). Size
 overrides exist; every value has a hard cap and a derived cap on the estimated bytes
 a write may re-read (`estimated_validation_bytes` ≤ 32 GiB), because the source
 suggests every write re-validates stored history and Layer graphs, so naive caps are
@@ -58,7 +58,7 @@ The tool never invokes Git (a regression test puts a failing `git` shim on `PATH
   `fixture-inventory.json`), `put_blob`, then an identical re-put.
 - **history**: H versions of F files, each changing k files, through `put_manifest` and
   `compare_and_advance`; `open`/`history`/`version`/`read_manifest`/`check` at
-  H/4, H/2, H on three repetitions (warm OS cache).
+  versions 1, H/4, H/2 and H (1, 7, 15, 30) on three repetitions (warm OS cache).
 - **layers**: create, six growing sparse captures with diff/state/checkpoint reads, one
   capture holding a 1 MiB blob, 24 clones of that checkpoint, diffs, three discards.
 - **contention**: P worker processes (own handles, wall-clock barrier) each doing
@@ -97,7 +97,7 @@ Tested tool source: `4149da97368bca3f68d0773d40bc801bfbced4b3` (native source
 | Source | Machine | Runs |
 | --- | --- | --- |
 | `macos-4149da9/` | Apple M1 Mac mini (Macmini9,1), 8 CPUs, 16 GiB, macOS 26.6.2, APFS (`/System/Volumes/Data`), `rustc 1.93.0` | 3 × `ci`, 1 × `local` |
-| `hosted-run-38507388389/ubuntu-24.04/` | hosted runner, AMD EPYC 9V45, 4 CPUs, 15.6 GiB, Linux 6.17 azure, filesystem type reported as `ext2/ext3` by `stat -f` (`/dev/root`, likely ext4), `rustc` 1.99.0 | 3 × `ci` |
+| `hosted-run-38507388389/ubuntu-24.04/` | hosted runner, AMD EPYC 9V45, 4 CPUs, 15.6 GiB, Linux 6.17 azure, ext4 per the mount entry (`stat -f` reports `ext2/ext3`), mounted `nobarrier,data=writeback,journal_async_commit,commit=30`, `rustc` 1.99.0 | 3 × `ci` |
 | `hosted-run-38507388389/macos-15/` | hosted runner, Apple M1 (Virtual), 3 CPUs, 7 GiB, macOS 15.7.9, `rustc` 1.99.0 | 3 × `ci` (4 processes on 3 CPUs) |
 
 Hosted run: https://github.com/Dhruv2mars/javelin/actions/runs/38507388389 (artifacts
@@ -121,21 +121,25 @@ errors in the 3 × 3 `ci` runs. Counts below are in each run's `summary.json`.
 | contention stale p50 / p95 / max | 132/1049/1779, 81/1708/4799, 84/1217/2042 | 21/194/845, 21/347/745, 21/442/741 | 30/419/1346, 31/441/1094, 87/930/1298 |
 
 Contention counts per run (accepted + stale = 100 operations): M1 47+53, 74+26, 57+43;
-Linux 49+51, 54+46, 48+52; macOS 64+36, 59+41, 66+34. Barrier release skew was
-1–6.5 ms on the M1 and microseconds elsewhere (see `summary.json` `barrier`). The
+Linux 49+51, 54+46, 48+52; macOS 64+36, 59+41, 66+34. Barrier release skew ranged from
+nanoseconds (Linux) to 6.5 ms (one M1 `ci` run); hosted macOS reached 3.1 ms (see
+`summary.json` `barrier`). The
 `local` M1 run (8 processes, 40 operations each, 1000 files): 115 accepted + 205 stale,
 accepted p50 73.5 ms, stale p50 220 ms, p95 2335 ms, max 3704 ms; its history advance
 p50 of first/last quarter was 140/1299 ms and `clone_layer` p50 1600 ms.
 
-Peak resident memory per scenario process: 8–13 MiB on the M1 (`getrusage`, bytes on
-macOS), 8–10 MiB on hosted Linux (`VmHWM`), 8–18 MiB on hosted macOS.
+Peak resident memory per scenario parent process: 8.5–13.8 MiB on the M1 (incl.
+`local`; `getrusage`, bytes on macOS), 8.2–11.0 MiB hosted Linux (`VmHWM`), 8.8–18.4 MiB
+hosted macOS; contention worker processes 4.8–6.2 MiB everywhere.
 
-Disk, `ci`, identical stored bytes on Linux and macOS (file lengths under `.javelin`):
-300 files, 5.27 MB content, 4.63 MB unique payload (270 unique objects) stored as
+Disk, `ci` (stored bytes under `.javelin` were identical on Linux and macOS for ingest and
+history; the M1 `before_clones` figure differed by 4 KiB in one run). 300 files, 5.27 MB content, 4.63 MB unique payload (270 unique objects) stored as
 4.94 MB; re-putting identical content added 0 bytes. After 30 history versions 11.6 MB
 stored. 24 clones of a 1 MiB checkpoint added 0 stored bytes (SQLite page granularity:
 a row can fit in an existing page, so this is not a per-clone cost). Physical
-(allocated blocks) on the M1 was 5.30 MB for the ingest repository vs 4.94 MB stored.
+(allocated blocks) on the M1 was 5.27–5.41 MB for the ingest repository vs 4.94 MB stored;
+physical equaled stored on hosted Linux. Object counts in disk rows come from `check()` and
+include the 270 unique blobs plus manifest objects.
 
 ### Actual busy errors
 
@@ -143,31 +147,37 @@ All nine `ci` runs had zero errors. The `local` M1 run (8 processes) recorded fo
 real `DatabaseBusy/5` errors, each after about 5.3–5.4 s, matching the documented 5 s
 busy timeout: three on `prep_put_blob` and one on `prep_put_manifest`, all in the
 unsynchronized pre-barrier setup writes. Each was followed by a recorded reopen and a
-retry of the same input that succeeded (retries took 43 ms to 2.6 s). The synchronized
-operations had no errors there. An earlier exploratory run of the same profile, whose
-raw samples were lost by a since-fixed tool bug, also showed `disk I/O error` and
+retry of the same input that succeeded (retries took 43 ms to 2.6 s; the reopens before
+them took up to 1.3 s). The synchronized
+operations had no errors there. An earlier, unretained exploratory `local` run with the pre-fix tool build (commit
+`42f8078`; its raw samples were lost to a tool bug fixed in `4149da9`; not in this repository,
+so unverifiable here) reportedly also showed `disk I/O error` and
 `attempt to write a readonly database` storage errors from workers; those were not
 reproduced in the retained runs and are **not** evidence either way.
 
 ## Observations (measured, not causal)
 
 - Per-write latency grows with accumulated state. In every environment the history
-  advance and the `history()`/`check()` reads are several times slower at the end
-  than at the start of the 30-version build (e.g. advance 65→383 ms on the M1). The
-  `local` run, with about 3.3× the files, shows about 3.4× the last-quarter advance
-  time (1299 vs 383 ms). This is consistent with the source re-validating stored
+  advance is several times slower, and the `history()`/`check()` reads tens of times
+  slower, at the end than at the start of the 30-version build (e.g. advance 65→383 ms and
+  `history()` 10→379 ms in the first M1 run). The
+  `local` run, with about 3.3× the files, shows about 3.1–4.0× the last-quarter advance
+  time (1299 ms vs 323–417 ms in the three M1 `ci` runs). This is consistent with the source re-validating stored
   history on each write, but this tool did not profile, so the cause is unconfirmed.
   Pooled percentiles across such a series mix states; `summary.json` flags those groups
   (`pooled_across_changing_state`) and gives first/last-quarter medians.
 - `clone_layer` p50 of about 0.5–0.7 s for a 1 MiB shared payload is an API-level
-  cost on this build; 24 clones took about 14 s in total on the M1 release build.
-  The existing debug test of the same shape is slower; no cause is assumed.
+  cost on this build; 24 clones took about 14–20 s in total across the three M1 `ci` runs.
+  No cause is assumed.
 - Single `put_blob` is about 1 ms on hosted Linux but 2–13 ms on macOS. The source sets
   `synchronous=EXTRA` and `fullfsync=ON`, and `fullfsync` only takes effect on macOS,
-  so macOS and Linux numbers are not durability-equivalent. The effective pragmas at
+  so macOS and Linux numbers are not durability-equivalent. The hosted Linux root is also
+  mounted `nobarrier`, so fsync there does not force a device cache flush; Linux latencies
+  reflect a lower durability bar than macOS. The effective pragmas at
   the measured connection are not readable through the public API.
-- Stale outcomes are slower than accepted ones under contention and carry the long
-  tail (p95 0.2–2.3 s, max up to 4.8 s), compatible with waiting on the write lock;
+- Stale outcomes carry a much longer tail than accepted ones under contention (p95
+  0.2–2.3 s, max up to 4.8 s; medians are similar on hosted Linux), compatible with waiting
+  on the write lock;
   the tool does not separate lock wait from work.
 
 ## Limits retained
