@@ -14,6 +14,8 @@ use crate::{
 
 const MAX_ENTRIES: usize = 10_000;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// Decompressed tar stream cap, covering headers and PAX/GNU metadata as well as payloads.
+const MAX_TAR_STREAM: u64 = MAX_TOTAL_BYTES + 16 * 1024 * 1024;
 
 pub struct Installed {
     pub dest: PathBuf,
@@ -110,7 +112,7 @@ pub fn install(archive: &Path, checksum_file: &Path, dest: &Path) -> Result<Inst
     if !root.join("LICENSE").is_file() {
         bail!("package has no LICENSE");
     }
-    fs::rename(&root, &dest)?;
+    claim_and_rename(&root, &dest)?;
     drop(guard);
     Ok(Installed {
         bin_dir: dest.join("bin"),
@@ -148,7 +150,7 @@ fn read_limited(reader: &mut impl Read, total: &mut u64) -> Result<Vec<u8>> {
 }
 
 fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes).take(MAX_TAR_STREAM));
     let (mut out, mut total) = (Vec::new(), 0);
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -166,6 +168,9 @@ fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
                 "entry {path:?} has unsupported type {other:?}; only files and directories are allowed"
             ),
         };
+        if is_dir && entry.header().size()? != 0 {
+            bail!("directory entry {path:?} carries a payload");
+        }
         let data = if is_dir {
             Vec::new()
         } else {
@@ -288,5 +293,21 @@ fn set_mode(path: &Path, executable: bool) -> Result<()> {
 
 #[cfg(not(unix))]
 fn set_mode(_: &Path, _: bool) -> Result<()> {
+    Ok(())
+}
+
+/// Move the verified tree into `dest` without ever replacing something that was not ours.
+/// Unix: an exclusive `create_dir` claims the path atomically, then the rename replaces
+/// only that empty claim. Elsewhere rename cannot replace a directory, so it fails closed.
+fn claim_and_rename(from: &Path, dest: &Path) -> Result<()> {
+    if cfg!(unix) {
+        fs::create_dir(dest).map_err(|e| Error(format!("cannot claim {}: {e}", dest.display())))?;
+        if let Err(error) = fs::rename(from, dest) {
+            let _ = fs::remove_dir(dest);
+            return Err(error.into());
+        }
+    } else {
+        fs::rename(from, dest)?;
+    }
     Ok(())
 }

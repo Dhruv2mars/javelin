@@ -17,8 +17,8 @@ no dependency on the `javelin` crate) that builds the `javelin-pack` developer t
 
 | Command | Purpose |
 | --- | --- |
-| `build` | `cargo build --locked --release --bin javelin` with a controlled environment; writes `build-record.json` |
-| `package` | Archive, `.sha256`, and `PACKAGE.json` for one built binary |
+| `build` | `cargo build --locked --release --bin javelin` with a controlled environment; writes `build-record.json` including a fingerprint of the sources built |
+| `package` | Archive, `.sha256`, and `PACKAGE.json` for one built binary; refuses a `--source` that differs from what was built |
 | `install` | Verify checksum, extract into an owned temp directory, rename into a **fresh** path |
 | `smoke` | Resolve `javelin` through `PATH` and exercise it in a new non-Git project |
 | `repro` | Build the same source from two directories and report whether the bytes match |
@@ -89,12 +89,15 @@ its own temp directory and leaves the destination absent:
   absolute, backslash, drive/ADS `:`, Windows device names, trailing dot or space,
   control characters, case-insensitive duplicates, file-versus-directory conflicts, a
   second top-level directory, symlinks, hardlinks, or devices.
-- Entry count and expanded size are capped.
+- Entry count, file payload bytes, and the whole decompressed tar stream (including PAX/GNU metadata) are capped; a directory entry with a payload is refused.
 - The extracted `PACKAGE.json` is development/pre-GA, names `bin/javelin[.exe]`, and
   its binary hash matches the extracted binary; `LICENSE` is present.
-- The final step is a rename from the owned temp directory (same filesystem). The
-  existence check and rename are not atomic against a concurrent writer to the same
-  destination path; this is a single-user developer tool.
+- The final step claims the destination and renames the verified tree into it. On Unix
+  an exclusive `create_dir` claims the path atomically and the rename replaces only that
+  empty claim, so a destination created by someone else is never replaced. On Windows a
+  directory rename cannot replace an existing one and fails closed, but the existence
+  check and the rename are not atomic against a concurrent writer; this is a
+  single-user developer tool.
 
 Manual install without the tool: verify with `shasum -a 256 -c` / `sha256sum -c` (Unix)
 or `Get-FileHash` (Windows), then `tar -xzf` / `Expand-Archive` into an empty directory.

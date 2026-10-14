@@ -1,7 +1,7 @@
 //! Behavior tests for the actual `javelin-pack` binary and the real `javelin` CLI it packages.
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::OnceLock,
@@ -848,4 +848,155 @@ fn upgrade_and_rollback_are_side_by_side_installs_of_the_development_binary() {
         serde_json::from_str::<Value>(&ok(&smoke(&old.join("bin")))).unwrap()["binary_sha256"],
         a.binary_sha
     );
+}
+
+fn bomb(kind: tar::EntryType, name: &str, size: u64) -> Vec<u8> {
+    let mut builder =
+        tar::Builder::new(flate2::GzBuilder::new().write(Vec::new(), flate2::Compression::fast()));
+    let mut header = tar::Header::new_gnu();
+    header.set_entry_type(kind);
+    header.set_mode(0o644);
+    header.set_size(size);
+    header.as_gnu_mut().unwrap().name[..name.len()].copy_from_slice(name.as_bytes());
+    header.set_cksum();
+    builder
+        .append(&header, std::io::repeat(0).take(size))
+        .unwrap();
+    builder.into_inner().unwrap().finish().unwrap()
+}
+
+#[test]
+fn oversized_expansion_is_rejected_for_files_and_directory_payloads() {
+    let over = 257 * 1024 * 1024;
+    let file = bomb(tar::EntryType::Regular, "top/big", over);
+    assert!(file.len() < 4 * 1024 * 1024, "fixture should compress well");
+    let (err, dest, temp) = try_install_bytes("bomb.tar.gz", &file);
+    assert!(
+        err.contains("expands past") || err.contains("unexpected EOF"),
+        "{err}"
+    );
+    assert!(!dest.exists());
+    assert_eq!(fs::read_dir(temp.path().join("prefix")).unwrap().count(), 0);
+    // The cap also covers tar metadata, which the parser buffers before any entry is read.
+    let mut builder =
+        tar::Builder::new(flate2::GzBuilder::new().write(Vec::new(), flate2::Compression::fast()));
+    let comment = vec![b'x'; 280 * 1024 * 1024];
+    builder
+        .append_pax_extensions([("comment", comment.as_slice())])
+        .unwrap();
+    let mut header = tar::Header::new_gnu();
+    header.set_size(0);
+    builder
+        .append_data(&mut header, "top/small", std::io::empty())
+        .unwrap();
+    let pax = builder.into_inner().unwrap().finish().unwrap();
+    let (err, dest, _t) = try_install_bytes("pax.tar.gz", &pax);
+    assert!(
+        !err.contains("PACKAGE.json") && !dest.exists(),
+        "metadata flood must fail during extraction: {err}"
+    );
+    // A directory header that smuggles a payload is refused outright.
+    let dir = bomb(tar::EntryType::Directory, "top/", 1024 * 1024);
+    let (err, dest, _t) = try_install_bytes("bomb.tar.gz", &dir);
+    assert!(err.contains("carries a payload"), "{err}");
+    assert!(!dest.exists());
+}
+
+#[test]
+fn valid_looking_package_with_a_wrong_binary_hash_leaves_no_temp_directory() {
+    let b = shared();
+    let temp = tempfile::tempdir().unwrap();
+    let good = temp.path().join("good");
+    ok(&install(b, &good));
+    let top = b
+        .archive
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .trim_end_matches(".tar.gz")
+        .trim_end_matches(".zip")
+        .to_string();
+    let mut builder =
+        tar::Builder::new(flate2::GzBuilder::new().write(Vec::new(), flate2::Compression::fast()));
+    for file in walk(&good) {
+        let rel = file
+            .strip_prefix(&good)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut data = fs::read(&file).unwrap();
+        if rel.starts_with("bin/") {
+            *data.last_mut().unwrap() ^= 1;
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o755);
+        header.set_uid(0);
+        header.set_gid(0);
+        builder
+            .append_data(&mut header, format!("{top}/{rel}"), data.as_slice())
+            .unwrap();
+    }
+    let bytes = builder.into_inner().unwrap().finish().unwrap();
+    let (err, dest, temp2) = try_install_bytes("tampered-inside.tar.gz", &bytes);
+    assert!(err.contains("does not match manifest"), "{err}");
+    assert!(!dest.exists());
+    assert_eq!(
+        fs::read_dir(temp2.path().join("prefix")).unwrap().count(),
+        0,
+        "owned temp directory left behind"
+    );
+}
+
+#[test]
+fn package_rejects_sources_that_differ_from_what_was_built() {
+    let b = shared();
+    let copy = tempfile::tempdir().unwrap();
+    let root_dir = source_root();
+    for file in ["Cargo.toml", "Cargo.lock", "LICENSE"] {
+        fs::copy(root_dir.join(file), copy.path().join(file)).unwrap();
+    }
+    for file in walk(&root_dir.join("src")) {
+        let rel = file.strip_prefix(root_dir.join("src")).unwrap();
+        let target = copy.path().join("src").join(rel);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(&file, target).unwrap();
+    }
+    let out = tempfile::tempdir().unwrap();
+    let args = |source: &Path| {
+        pack(&[
+            "package",
+            "--build",
+            s(&b.build_dir),
+            "--source",
+            s(source),
+            "--source-sha",
+            &"d".repeat(40),
+            "--out",
+            s(out.path()),
+        ])
+    };
+    ok(&args(copy.path()));
+    let mut main = fs::read(copy.path().join("src/main.rs")).unwrap();
+    main.extend_from_slice(b"\n// edited after the build\n");
+    fs::write(copy.path().join("src/main.rs"), main).unwrap();
+    assert!(fail(&args(copy.path())).contains("does not match the sources"));
+}
+
+#[test]
+fn build_works_when_paths_contain_spaces_and_quotes() {
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("build with 'quote' and spaces");
+    ok(&pack(&[
+        "build",
+        "--source",
+        root(),
+        "--out",
+        s(&out),
+        "--source-date-epoch",
+        EPOCH,
+    ]));
+    let record: Value =
+        serde_json::from_slice(&fs::read(out.join("build-record.json")).unwrap()).unwrap();
+    assert_eq!(record["binary_sha256"].as_str().unwrap().len(), 64);
 }

@@ -8,7 +8,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Result, bail, capture, exe_name, host_triple, rustc_verbose, sha256_file, util::write,
+    Result, bail, capture, exe_name, host_triple, list_files, rustc_verbose, sha256_file,
+    sha256_hex, util::write,
 };
 
 pub const RECORD_FILE: &str = "build-record.json";
@@ -26,6 +27,9 @@ pub struct BuildRecord {
     /// Binary path relative to the build output directory.
     pub binary: String,
     pub binary_sha256: String,
+    /// Fingerprint of the sources this binary was built from.
+    pub source_files_sha256: String,
+    pub source_files: usize,
 }
 
 const REMOVED_ENV: &[&str] = &[
@@ -91,11 +95,13 @@ pub fn build(
             "CFLAGS".to_string(),
             format!(
                 "-ffile-prefix-map={}=/cargo-home -ffile-prefix-map={}=/javelin-source -ffile-prefix-map={}=/javelin-target",
-                cargo_home.display(),
-                source.display(),
-                target_dir.display()
+                shell_quote(&cargo_home.display().to_string()),
+                shell_quote(&source.display().to_string()),
+                shell_quote(&target_dir.display().to_string())
             ),
         ));
+        // Paths may contain spaces; make `cc` parse CFLAGS as shell-escaped words.
+        extra_env.push(("CC_SHELL_ESCAPED_FLAGS".to_string(), "1".to_string()));
     }
 
     let command = [
@@ -136,6 +142,7 @@ pub fn build(
     if !binary_path.is_file() {
         bail!("expected binary missing: {}", binary_path.display());
     }
+    let (source_files_sha256, source_files) = source_files_hash(&source)?;
     let record = BuildRecord {
         command,
         rustflags,
@@ -149,7 +156,29 @@ pub fn build(
             .to_string(),
         binary,
         binary_sha256: sha256_file(&binary_path)?,
+        source_files_sha256,
+        source_files,
     };
     write(&out.join(RECORD_FILE), &serde_json::to_vec_pretty(&record)?)?;
     Ok(record)
+}
+
+/// Single-quote a word for shell-escaped parsing (`'` becomes `'\''`).
+fn shell_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// SHA-256 over `Cargo.toml`, `Cargo.lock`, and `src/**` (path and content hashes, Git-free).
+pub fn source_files_hash(source: &Path) -> Result<(String, usize)> {
+    let mut files = vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()];
+    files.extend(
+        list_files(&source.join("src"))?
+            .into_iter()
+            .map(|f| format!("src/{f}")),
+    );
+    let mut listing = String::new();
+    for file in &files {
+        listing.push_str(&format!("{file}\n{}\n", sha256_file(&source.join(file))?));
+    }
+    Ok((sha256_hex(listing.as_bytes()), files.len()))
 }

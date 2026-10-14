@@ -13,8 +13,8 @@ use serde_json::Value;
 use crate::bail;
 use crate::{
     Result,
-    build::{BuildRecord, RECORD_FILE},
-    exe_name, host_triple, is_hex, list_files, read, sha256_file, sha256_hex,
+    build::{BuildRecord, RECORD_FILE, source_files_hash},
+    exe_name, host_triple, is_hex, read, sha256_hex,
     util::{capture, write},
 };
 
@@ -131,6 +131,9 @@ pub fn package(build_dir: &Path, source: &Path, source_sha: &str, out: &Path) ->
     let cargo_version = crate_version(source)?;
     let (graph, lock_sha) = dependency_graph(source, &target)?;
     let (files_hash, files_count) = source_files_hash(source)?;
+    if files_hash != record.source_files_sha256 {
+        bail!("--source does not match the sources this binary was built from");
+    }
     let version_sha12 = &source_sha[..12];
     let top_dir = format!("javelin-development-{cargo_version}-{version_sha12}-{target}");
 
@@ -404,20 +407,6 @@ public domain; `libsqlite3-sys` and `rusqlite` license their own wrapper code un
         ));
     }
     text
-}
-
-fn source_files_hash(source: &Path) -> Result<(String, usize)> {
-    let mut files = vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()];
-    files.extend(
-        list_files(&source.join("src"))?
-            .into_iter()
-            .map(|f| format!("src/{f}")),
-    );
-    let mut listing = String::new();
-    for file in &files {
-        listing.push_str(&format!("{file}\n{}\n", sha256_file(&source.join(file))?));
-    }
-    Ok((sha256_hex(listing.as_bytes()), files.len()))
 }
 
 fn write_tar_gz(top: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
