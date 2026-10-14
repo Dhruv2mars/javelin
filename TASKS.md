@@ -150,3 +150,30 @@ Only owned Windows tools, documentation, workflow and this section may change.
 - [x] Preserve original artifact, audit source hashes offline, and document exact evidence and gaps. Eight attempts retained byte-identically; CRLF checkout transform recorded; `rtk proxy bun tools/windows-workspace-proof/verify-evidence.mjs` passes and rejects a tampered raw file.
 - [x] Report VERIFIED/NOT VERIFIED/INCONCLUSIVE scopes, dependencies and blockers to the hub; leave the single PR draft and unmerged. Backend, Gate 2 and GA INCONCLUSIVE. Hub review r1-3ad8241 corrections applied to docs/TASKS only.
 - [ ] Later unit, not this one: directory rename (base placeholder, local and full), common-probe Windows CRLF/fsync portability, probe/native fixture leftover isolation, ACL-enforced snapshots and mid-write kill recovery.
+
+## Windows sparse backend workstream
+
+Owned by `test/windows-sparse-backend`, based on unmerged `feat/windows-projfs-proof`
+at exact `cc94e22b8a316b4308305218aab003c172c96e42`. That base is a dependency, not
+acceptance; PR #9 accepted only its bounded collection, and its backend stays INCONCLUSIVE.
+Owns only `tools/windows-sparse-backend/`, `docs/windows-sparse-backend.md`,
+`.github/workflows/windows-sparse-backend.yml` and this section.
+Done means one bounded disposable hosted Windows attempt, with exact tested source,
+job, artifact digest, raw records, cost and cleanup, that gives an honest per-scope
+verdict for: the directory-rename root cause (projected, local and full directories);
+binary/read/write/save/delete/symlink/compiler on separate native fixtures;
+ACL-enforced base and frozen-snapshot protection against an ordinary user clearing
+attributes; two clones sharing one immutable snapshot with private writes; actual
+mid-write kill versus completed closed-handle preservation; hydration/full-copy cost
+recorded without overclaim. Windows CRLF/fsync checks stay separate from the unchanged
+common probe. A real platform refusal ends the attempt with a documented verdict.
+No laptop install, privilege, reboot or security change. No Windows product acceptance
+unless the entire minimum backend passes.
+
+- [x] Read instructions, hub contract, PR #9 evidence and review corrections; define done.
+- [ ] Open exactly one draft PR against `feat/windows-projfs-proof`, link it, report planning SHA to hub.
+- [ ] Ground rename/ACL/cache behavior in primary Microsoft docs and the actual SDK header.
+- [ ] Compare at least two filesystem shapes with independent review; record limits.
+- [ ] Implement the bounded native backend and separate checks in the owned directory.
+- [ ] Run one bounded hosted attempt; retain raw archive and provenance; audit offline.
+- [ ] Independent read-only review; fix material findings; report verdicts to hub.
