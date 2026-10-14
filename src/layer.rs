@@ -185,6 +185,12 @@ struct EncodedCheckpoint {
 }
 
 impl Repository {
+    /// The store's random identity, used to bind host-side runtimes to this repository.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn repository_identity(&self) -> Result<ObjectId> {
+        identity_in(&self.conn)
+    }
+
     pub fn layer_base(&self, version: VersionNumber) -> Result<LayerBase> {
         let tx = self.conn.unchecked_transaction()?;
         let world = history_in(&tx)?
