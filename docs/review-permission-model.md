@@ -67,7 +67,8 @@ Further rules:
   downgrade take effect without a stale role cache.
 - `required_approvals` may be zero, which makes reviews optional. A `Maintain`
   role is always required.
-- `check_publishable` does not compare `exact.base()` with the current World.
+- `check_publishable` does not compare `exact.base()` with the current World. A
+  World advance does not invalidate approvals; only a new revision does.
 
 ## Retries, ordering, and epochs
 
@@ -93,10 +94,34 @@ Further rules:
 At the publication correctness boundary, later integration must:
 
 1. Load the current review state and current applied permissions and policy.
-2. Rerun `check_publishable` for the exact revision.
-3. Advance the World through the repository's own compare-and-advance step, in
-   the same correctness boundary. The `expected` version is `RevisionRef.base`
-   when the World has not moved. Otherwise the author refreshes and submits a new revision.
+2. Rerun `check_publishable` for the exact frozen `RevisionRef`. This validates
+   its base, code, and context against the current approved revision, and the
+   publisher's current role. It says nothing about the current World.
+3. Separately, the future VCS publisher validates the frozen proposal against the
+   current World. The proposal base and the compare-and-advance `expected` value
+   are different things:
+   - `RevisionRef.base` is the immutable base the proposal and its approvals refer to.
+   - `expected` is the World head locked for this publication. It equals
+     `RevisionRef.base` only when the World has not advanced.
+   - If the World advanced without intersecting the proposal's changes, the
+     publisher composes the disjoint delta onto the current head and publishes.
+     This does not force the author to refresh, and it never mutates the approved
+     revision.
+   - If the World advanced with intersecting changes, the publisher rechecks and
+     reports explicit conflicts. The owner decides whether to refresh and submit a
+     new revision, which starts without approvals.
+4. Steps 2 and 3 happen within the same publication correctness boundary as the
+   World advance.
+
+Example. Alice's revision is approved with base World 4. A maintainer publishes
+while the World is at 6, and Worlds 5 and 6 touched only unrelated paths.
+`check_publishable(review, &rev, &perms_now, &mona)` is evaluated now. The
+publisher composes Alice's frozen delta onto World 6 and calls compare-and-advance
+with `expected = 6`. No new revision or approval is needed, and the review state
+still names base 4. If World 5 had edited a path Alice changed, the publisher
+would report the conflict, and only Alice could submit a replacement revision.
+
+This library does not implement the publisher, composition, or conflict detection.
 
 A prior `Publishable` result grants nothing and must not be stored or forwarded.
 
