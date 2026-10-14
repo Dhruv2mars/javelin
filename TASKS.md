@@ -255,7 +255,7 @@ then fixed, then re-reviewed. Details are in `docs/linux-layer-runtime.md`.
 - [x] Round 5: reproduce (38508346755, 38508564838) and replace view re-verification with recorded candidates (`d802d9b`).
 - [x] Round 6: no source defects; make the transient test non-vacuous (`8137111`).
 - [x] Verify `8137111`: hosted runs 38509261390 and 38509461412 pass 16/16; native 38509261520 passes 65/65/50.
-- [ ] Report the corrected source and evidence to the hub.
+- [x] Report the corrected source and evidence to the hub (message `linux-layer-runtime-hold-response-8137111`).
 
 Executable source `8137111cb00a227f0f225ef4debe7ca1bf891e98` is VERIFIED for the
 bounded Linux binding. File-watch reliability remains INCONCLUSIVE (2 failures in
