@@ -45,7 +45,7 @@ pub fn frame(body: &[u8]) -> Vec<u8> {
 }
 
 pub fn hello() -> Vec<u8> {
-    frame(&codec::encode(&Message::Hello { min: 1, max: 1 }))
+    frame(&codec::encode(&Message::Hello { min: 1, max: 1 }).unwrap())
 }
 
 /// Runs one receiver session over raw bytes and decodes every reply frame.

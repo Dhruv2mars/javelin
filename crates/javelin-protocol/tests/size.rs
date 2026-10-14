@@ -71,8 +71,10 @@ fn binary_is_smaller_than_json_for_the_fixture() {
     let manifest = Manifest::new(entries).unwrap();
     let id = source.put_manifest(&manifest).unwrap();
     let raw: usize = blobs.iter().map(|(_, b)| b.len()).sum();
-    let binary_blobs = encode(&Message::Blobs(blobs.clone())).len();
-    let binary_manifest = encode(&Message::Manifests(vec![(id, manifest.clone())])).len();
+    let binary_blobs = encode(&Message::Blobs(blobs.clone())).unwrap().len();
+    let binary_manifest = encode(&Message::Manifests(vec![(id, manifest.clone())]))
+        .unwrap()
+        .len();
     let (json_b, json_m) = (json_blobs(&blobs), json_manifest(id, &manifest));
     println!("fixture: 200 blobs x 2048 bytes = {raw} raw bytes, 200 manifest entries");
     println!("blobs: binary {binary_blobs} json {json_b}");

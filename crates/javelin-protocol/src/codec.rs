@@ -85,8 +85,10 @@ pub enum Message {
     },
 }
 
-pub fn encode(message: &Message) -> Vec<u8> {
-    let mut out = Vec::new();
+/// Encodes one body after checking every count, length and the total against the
+/// version 1 limits, so an oversize message is refused before its buffer exists.
+pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
+    let mut out = Vec::with_capacity(encoded_len(message)?);
     match message {
         Message::Hello { min, max } => {
             out.push(HELLO);
@@ -181,12 +183,80 @@ pub fn encode(message: &Message) -> Vec<u8> {
             out.extend_from_slice(detail.as_bytes());
         }
     }
-    out
+    Ok(out)
+}
+
+fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
+    let ids = |n: usize, max: usize| {
+        if n > max {
+            Err(limit("count exceeds limit"))
+        } else {
+            Ok(5 + n * 33)
+        }
+    };
+    let len = match message {
+        Message::Hello { .. } => 9,
+        Message::HelloOk { .. } => 3,
+        Message::Want(items) | Message::Missing(items) => ids(items.len(), MAX_WANT)?,
+        Message::Blobs(blobs) => {
+            if blobs.len() > MAX_BLOBS {
+                return Err(limit("count exceeds limit"));
+            }
+            let mut len = 5usize;
+            for (_, bytes) in blobs {
+                if bytes.len() > MAX_BLOB {
+                    return Err(limit("blob exceeds size limit"));
+                }
+                len = len.saturating_add(36 + bytes.len());
+            }
+            len
+        }
+        Message::Manifests(manifests) => {
+            if manifests.len() > MAX_MANIFESTS {
+                return Err(limit("count exceeds limit"));
+            }
+            let mut len = 5usize;
+            for (_, manifest) in manifests {
+                if manifest.entries().len() > MAX_ENTRIES {
+                    return Err(limit("count exceeds limit"));
+                }
+                len = len.saturating_add(36);
+                for path in manifest.entries().keys() {
+                    let path = path.as_str();
+                    if path.len() > MAX_PATH {
+                        return Err(limit("path exceeds length limit"));
+                    }
+                    if path.matches('/').count() >= MAX_DEPTH {
+                        return Err(limit("path exceeds depth limit"));
+                    }
+                    len = len.saturating_add(35 + path.len());
+                }
+            }
+            len
+        }
+        Message::Stored { .. } => 5,
+        Message::Publish { operation, .. } => 42 + operation.as_str().len(),
+        Message::Outcome(Outcome::Accepted { operation, .. }) => 43 + operation.as_str().len(),
+        Message::Outcome(Outcome::Stale { .. }) => 10,
+        Message::Error { code, .. } => {
+            if code.len() > u8::MAX as usize {
+                return Err(malformed("error code too long"));
+            }
+            4 + code.len() + MAX_DETAIL
+        }
+    };
+    if len > MAX_FRAME {
+        return Err(limit("frame exceeds size limit"));
+    }
+    Ok(len)
 }
 
 /// Decodes one complete frame body. Every count and length is checked against its
 /// fixed limit, and every field against the remaining bytes, before it is copied.
 pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
+    if body.len() > MAX_FRAME {
+        return Err(limit("frame exceeds size limit"));
+    }
     let mut r = Reader(body);
     let message = match r.u8()? {
         HELLO => {
@@ -306,14 +376,9 @@ pub fn read_frame(r: &mut impl Read) -> Result<Option<Message>, ProtocolError> {
     decode(&body).map(Some)
 }
 
-/// Writes one frame. Refuses to emit a body the peer would reject for size.
+/// Writes one frame. Oversize messages are refused before encoding.
 pub fn write_frame(w: &mut impl Write, message: &Message) -> Result<(), ProtocolError> {
-    let body = encode(message);
-    if body.len() > MAX_FRAME {
-        return Err(limit("frame exceeds size limit"));
-    }
-    // Never emit a body the peer would refuse, including lengths that exceed a field.
-    decode(&body)?;
+    let body = encode(message)?;
     w.write_all(&(body.len() as u32).to_be_bytes())?;
     w.write_all(&body)?;
     w.flush()?;

@@ -10,7 +10,8 @@ pub use codec::{Kind, Message, Outcome};
 pub use receiver::serve;
 pub use sender::push;
 
-/// Fixed version 1 limits. Both sides enforce them before allocating.
+/// Fixed version 1 limits. The codec enforces them before allocating protocol
+/// buffers. Native reads of already stored objects are not bounded by them.
 pub mod limits {
     pub const MAX_FRAME: usize = 16 << 20;
     pub const MAX_BLOB: usize = 8 << 20;

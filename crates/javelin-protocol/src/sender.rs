@@ -39,7 +39,11 @@ pub fn push(
     let mut missing = Vec::new();
     for chunk in offered.chunks(MAX_WANT) {
         match call(Message::Want(chunk.to_vec()))? {
-            Message::Missing(items) if items.iter().all(|item| chunk.contains(item)) => {
+            // Only offered objects, each at most once: a receiver cannot amplify transfer.
+            Message::Missing(items)
+                if items.iter().all(|item| chunk.contains(item))
+                    && items.iter().collect::<BTreeSet<_>>().len() == items.len() =>
+            {
                 missing.extend(items)
             }
             _ => return Err(unexpected()),
@@ -79,8 +83,32 @@ pub fn push(
         expected,
         manifest: manifest_id,
     })? {
-        Message::Outcome(outcome) => Ok(outcome),
+        Message::Outcome(outcome) if consistent(&outcome, operation, expected, manifest_id) => {
+            Ok(outcome)
+        }
         _ => Err(unexpected()),
+    }
+}
+
+/// An outcome must answer this exact Publish: acceptance is the next version with the
+/// requested manifest and operation; staleness reports a head beyond `expected`.
+fn consistent(
+    outcome: &Outcome,
+    operation: &OperationId,
+    expected: VersionNumber,
+    manifest_id: ObjectId,
+) -> bool {
+    match outcome {
+        Outcome::Accepted {
+            number,
+            manifest,
+            operation: accepted,
+        } => {
+            Some(number.get()) == expected.get().checked_add(1)
+                && *manifest == manifest_id
+                && accepted == operation
+        }
+        Outcome::Stale { actual } => *actual > expected,
     }
 }
 

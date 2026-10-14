@@ -15,7 +15,7 @@ fn raw(id: ObjectId) -> Vec<u8> {
 }
 
 fn msg(message: &Message) -> Vec<u8> {
-    frame(&encode(message))
+    frame(&encode(message).unwrap())
 }
 
 fn publish(op: &str, expected: u64, manifest: ObjectId) -> Vec<u8> {
@@ -121,7 +121,7 @@ fn refuses_unsupported_version_and_messages_before_hello() {
         &msg(&Message::Want(vec![])),
         "unexpected_message",
     );
-    let mut bad_magic = encode(&Message::Hello { min: 1, max: 1 });
+    let mut bad_magic = encode(&Message::Hello { min: 1, max: 1 }).unwrap();
     bad_magic[1] = b'X';
     refused(&mut dest, &frame(&bad_magic), "malformed");
     let mut twice = hello();
@@ -330,12 +330,12 @@ fn refuses_truncation_and_trailing_bytes() {
     header_cut.extend([0, 0]);
     refused(&mut dest, &header_cut, "truncated");
     // A frame whose body ends inside a field.
-    let body = encode(&Message::Blobs(blobs.clone()));
+    let body = encode(&Message::Blobs(blobs.clone())).unwrap();
     let mut input = hello();
     input.extend(frame(&body[..body.len() - 1]));
     refused(&mut dest, &input, "malformed");
     // Trailing bytes after a complete message.
-    let mut body = encode(&Message::Want(vec![]));
+    let mut body = encode(&Message::Want(vec![])).unwrap();
     body.push(0);
     let mut input = hello();
     input.extend(frame(&body));
@@ -385,7 +385,7 @@ fn messages_round_trip() {
         },
     ];
     for message in messages {
-        let decoded = javelin_protocol::codec::decode(&encode(&message)).unwrap();
+        let decoded = javelin_protocol::codec::decode(&encode(&message).unwrap()).unwrap();
         match (&message, &decoded) {
             (Message::Error { detail, .. }, Message::Error { detail: got, .. }) => {
                 assert!(got.len() <= MAX_DETAIL && detail.starts_with(got.as_str()))
@@ -393,4 +393,24 @@ fn messages_round_trip() {
             _ => assert_eq!(decoded, message),
         }
     }
+}
+
+#[test]
+fn encoder_refuses_messages_the_receiver_would_refuse() {
+    let id = ObjectId::parse(&"ab".repeat(32)).unwrap();
+    let big = Message::Blobs(vec![(id, vec![0; MAX_BLOB + 1])]);
+    assert_eq!(encode(&big).unwrap_err().code, "limit_exceeded");
+    let deep = vec!["d"; MAX_DEPTH + 1].join("/");
+    let manifest = Manifest::new([(
+        RepoPath::parse(&deep).unwrap(),
+        FileEntry::Regular {
+            content: id,
+            executable: false,
+        },
+    )])
+    .unwrap();
+    let message = Message::Manifests(vec![(id, manifest)]);
+    assert_eq!(encode(&message).unwrap_err().code, "limit_exceeded");
+    let many = Message::Want(vec![(Kind::Blob, id); MAX_WANT + 1]);
+    assert_eq!(encode(&many).unwrap_err().code, "limit_exceeded");
 }
