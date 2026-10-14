@@ -573,8 +573,9 @@ impl Actor {
                 .lines
                 .recv_timeout(Duration::from_secs(60))
                 .expect("actor did not reach barrier");
-            if let Some(rest) = line.strip_prefix(prefix) {
-                return rest.trim().into();
+            // libtest may print `test <name> ... ` on the same line first.
+            if let Some(index) = line.find(prefix) {
+                return line[index + prefix.len()..].trim().into();
             }
         }
     }
