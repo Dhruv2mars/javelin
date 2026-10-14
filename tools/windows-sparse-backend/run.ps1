@@ -17,8 +17,9 @@ $result = [ordered]@{ schema = 1; sourceSHA = $env:SOURCE_SHA; runId = $env:GITH
     blockers = @(); sources = [ordered]@{}; account = $username; accountCreated = $false; accountRemoved = $false; freeze = $null }
 $transcriptStarted = $false
 
-function Invoke-Bounded([string]$Name, [string]$File, [string[]]$Arguments, [int]$Milliseconds = 30000) {
+function Invoke-Bounded([string]$Name, [string]$File, [string[]]$Arguments, [int]$Milliseconds = 30000, [string]$Directory = '') {
     $info = [Diagnostics.ProcessStartInfo]::new($File)
+    if ($Directory) { $info.WorkingDirectory = $Directory }
     $info.UseShellExecute = $false; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
     foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
     $entry = [ordered]@{ name = $Name; executable = $File; argv = $Arguments; timeoutMs = $Milliseconds; exitCode = $null; timedOut = $false; error = $null }
@@ -77,6 +78,7 @@ try {
         $result.cldflt.statusAfter = "$((Get-Service -Name cldflt).Status)"
     }
     if (-not $cldflt) { $result.blockers += 'Cloud Files filter service cldflt absent.' }
+    Get-ChildItem env: | ForEach-Object { "$($_.Name) length=$($_.Value.Length)" } | Set-Content -LiteralPath (Join-Path $evidence 'environment-names.txt')
     $kits = 'C:\Program Files (x86)\Windows Kits\10\Include'
     $header = Get-ChildItem -LiteralPath $kits -Recurse -Filter cfapi.h -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
     if ($header) {
@@ -98,9 +100,12 @@ try {
             "cl $flags `"$source`" /Fe:`"$(Join-Path $owned "$($build[0]).exe")`" /Fo:`"$(Join-Path $owned "$($build[0]).obj")`" $($build[1])") |
             Set-Content -LiteralPath $batch -Encoding ascii
         Copy-Item -LiteralPath $batch -Destination (Join-Path $evidence "build-$($build[0]).cmd.txt")
-        [void](Invoke-Bounded "cmd-echo-$($build[0])" "$system/cmd.exe" @('/d', '/c', 'echo', 'cmd-ok'))
-        [void](Invoke-Bounded "cmd-type-$($build[0])" "$system/cmd.exe" @('/d', '/c', 'type', $batch))
-        $compile = Invoke-Bounded "compile-$($build[0])" "$system/cmd.exe" @('/d', '/c', $batch) 90000
+        $cmd = Join-Path $system 'cmd.exe'
+        [void](Invoke-Bounded "cmd-echo-$($build[0])" $cmd @('/d', '/c', 'echo', 'cmd-ok'))
+        [void](Invoke-Bounded "cmd-echo-owned-$($build[0])" $cmd @('/d', '/c', 'echo', 'cmd-ok') 30000 $owned)
+        $operator = & $cmd /d /c echo cmd-ok 2>&1
+        Set-Content -LiteralPath (Join-Path $evidence "cmd-operator-$($build[0]).txt") -Value "exit=$LASTEXITCODE cwd=$([Environment]::CurrentDirectory) pwd=$PWD`n$operator"
+        $compile = Invoke-Bounded "compile-$($build[0])" $cmd @('/d', '/c', $batch) 90000 $owned
         if ($compile.exitCode -ne 0) { throw "Native $($build[0]) compile failed; this is a source failure, not a platform verdict." }
         $result.sources["binary/$($build[0]).exe"] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $owned "$($build[0]).exe")).Hash.ToLowerInvariant()
     }
