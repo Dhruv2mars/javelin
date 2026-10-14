@@ -773,6 +773,18 @@ resumed the same stopped owners only after checking activity and pending runs.
   accepted native head, without a competing root writer. PRs #16/#17 retain
   their existing owners and PRs for verifier/installer repairs.
 
+#### Pending hub acceptance follow-ups
+
+- [ ] Review-model fix and decision-trail round 3, on committed hub `8a24989`:
+  `node:delegated-task:command%3Amcp%3A1415e1d9-77b8-4515-9821-4c8b3a8d6a87%3Adelegate-task%3Ajavelin-hub-pr13-b8b40ce-trail-r3-8a24989-20261014`.
+  Uses Codex `gpt-6-sol` after the Astra round failed; same-family limitation
+  remains. Includes original findings, responses and the user's platform answer.
+- [ ] Corrected benchmark-tool acceptance round 3 at reviewed `ebd3083`, hosted
+  `3acc660`, final evidence `100395b`:
+  `node:delegated-task:command%3Amcp%3A1415e1d9-77b8-4515-9821-4c8b3a8d6a87%3Adelegate-task%3Ajavelin-hub-pr16-ebd3083-correction-r3-20261014`.
+  This read-only Codex audit owns the fresh tamper, source and hosted-artifact
+  inspection. Do not duplicate it while active or accept from the owner report.
+
 #### Next native unit: whole-Layer Publish
 
 - PR #10 at `8137111` is now accepted as a bounded dependency. The next root
