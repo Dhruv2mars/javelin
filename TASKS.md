@@ -181,3 +181,30 @@ unless the entire minimum backend passes.
 - [x] Bounded fixture VERIFIED on Cloud Files: rename matrix, native ordinary ops, ACL base and frozen snapshot (including the frozen root itself; grant probe named the administrator, not a self-grant), two clones of one snapshot, mid-hydration and mid-write kills vs closed-handle preservation, dehydrated untouched peers. ProjFS base-directory rename refused (error 50, no PRE_RENAME).
 - [ ] Unchanged common probe: CRLF compiler, Bun directory fsync EPERM, final integrity and path boundary NOT VERIFIED (probe portability; not owned here).
 - [ ] INCONCLUSIVE: storage cost at scale, metadata preservation, nested symlinks, AV hydration, power loss, concurrency, provider-only kill during a write, capture of clones, production registration, native binding, autosave, Windows acceptance, Gate 2, GA.
+## Windows capture hardening, bounded follow-up to PR #14
+
+Owned branch: `fix/windows-sparse-capture`. Dependency: unmerged
+`test/windows-sparse-backend` at `8a77d4222a0324e1090dd1a03b09251fc76a67d4`.
+Prior feasibility was tested at `8712866`; its bounded acceptance does not accept
+this dependency independently, Gate 2, or GA.
+
+Done means exact-source hosted Windows 2022 evidence reproduces inherited defects
+before fixes and proves fail-closed capture, bounded contained traversal, validated
+manifests and blob digests, protected snapshot identity, unchanged previous
+snapshots and peers after refusal, and preserved prior bounded successes. The
+offline verifier must reject tampering and bind the current source. Active editing
+is unsupported; this unit does not claim atomic snapshots during user edits.
+
+Owned paths: `tools/windows-sparse-backend/**`,
+`docs/windows-capture-hardening.md`, `.github/workflows/windows-sparse-backend.yml`,
+and this appended checklist. Existing evidence stays immutable.
+
+- [x] Recover the same clean app-bound worktree and branch at exact dependency.
+- [ ] Open and T3-link one draft PR; report planning SHA and ownership to hub.
+- [ ] Compare two minimal identity/capture designs with independent Codex support.
+- [ ] Reproduce defects on unchanged inherited source in disposable hosted Windows.
+- [ ] Implement minimal fixes and focused adversarial regressions.
+- [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.
+- [ ] Inspect exact-source raw evidence and independent post-fix adversarial review.
+- [ ] Run fresh-head offline verifier and tamper checks; report scope and limits to hub.
+
