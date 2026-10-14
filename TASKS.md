@@ -321,6 +321,17 @@ Fixed in `865be13` and the following doc commit:
 A local 200,000-case run with up to seven-line bases and three edits per side gave
 29,312 clean results and no oracle violation. It ran in a /tmp copy and is not CI.
 
+Round-4 review (native Claude Opus 5.5 subagent at `2ca73dd`): R4-1 MEDIUM, a
+block swap left a unique anchor unmatched in an equally minimal diff, so clean
+results could depend on the matching. R4-2 LOW, heuristic Myers might not be
+minimal on large inputs, unconfirmed. It also confirmed a realistic Rust file
+merges cleanly in four far-apart edit combinations. Fixed in the following
+commits: a separator must also be kept by every minimal diff of both sides
+(LCS shrinks without it); diffs use exact `RawMyers`; the swap regression was
+added; 16/16 mutants compile and are killed. A local 200,000-case run with
+block rotations and a six-symbol alphabet found no violation in 103,017 clean
+results. An owner-run realistic Rust check merged three far-apart combinations.
+
 Review limits: the delegated Codex implementation review r1 failed on a provider
 usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
 The Claude Sonnet 5.5 r3 hit the API rate limit. None produced findings.

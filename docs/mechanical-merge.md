@@ -68,14 +68,15 @@ the same value. Content: if only one side changed it, that object is retained.
 If both changed it, the three versions are loaded. Any version containing a NUL
 byte is `Binary`. Otherwise a diff3 line merge without convergence runs:
 
-1. `similar` (Myers, no deadline) diffs base lines against each side.
+1. `similar` (`RawMyers`, exact, no deadline) diffs base lines against each side.
 2. Base lines kept unchanged on both sides are anchors.
 3. Each region between anchors is taken whole from the only side that changed
    it. A region both sides changed is a `Content` conflict, even when both made
    it identical, and no bytes are offered.
 4. Changes from different sides must be separated by at least one anchor line
-   that occurs exactly once in base, ours, and theirs. Otherwise the file is a
-   `Content` conflict.
+   that occurs exactly once in base, ours, and theirs, and that every minimal diff
+   of each side keeps unchanged (removing it from base shortens the longest common
+   subsequence with that side). Otherwise the file is a `Content` conflict.
 
 Lines are exact byte sequences ending in `\n`. CRLF and LF lines differ, so
 rewriting line endings conflicts with any concurrent edit. A missing final
@@ -91,15 +92,17 @@ left to the owner.
 Why unique separators: with repeated lines an edit can be matched at several
 places. In review, converging an apparent shared edit dropped a real edit. Merging
 across a repeated anchor applied a shared fix twice, removing two braces where each
-side removed one. A line that occurs once in every version is matched the same way
-by any line diff that keeps it. Any such diff reads the changes on each side of
-it as staying on that side.
+side removed one. In a fourth round a block swap left a unique line unmatched in
+one of two equally minimal diffs, so the result depended on which block Myers kept
+in place. A line that occurs once in every version and that every minimal diff
+keeps is matched the same way by all of them. Any such diff reads the changes on
+each side of it as staying on that side.
 
 Guarantee, as implemented: each clean region is copied from base or from exactly
-one side. Regions are read from `similar`'s diffs. Where a region's content equals
-base it counts as unchanged. Two sides' changes are always separated by an
-unchanged line that is unique in all three versions. This is checked empirically,
-not proven. A property test requires every clean result to equal the outcome of
+one side. Regions are read from `similar`'s exact `RawMyers` diffs. Where a
+region's content equals base it counts as unchanged. Two sides' changes are always
+separated by an unchanged line that is unique in all three versions and kept by
+every minimal diff of both sides. This is checked empirically, not proven. A property test requires every clean result to equal the outcome of
 every pair of minimal diffs of the two sides (see Evidence). The rule is
 conservative and trades clean merges near repeated lines for explicit conflicts.
 
@@ -133,9 +136,11 @@ could still drop an edit. Base `a`, blank, `}`, `b`: ours replaced the blank wit
 `}` and theirs added a `}`. The diff read both as inserting `}` at one point, so
 it was kept once. Convergence inside files was removed. A third round showed a
 shared fix inside a run of braces applied twice across a repeated anchor. That led
-to the unique-separator rule. The line merge is about 60 lines. `similar` has no default features and adds no dependencies. Its source
-notes that `Algorithm::Myers` may use bounded non-minimal splits. Without a
-deadline the output does not depend on time (source:
+to the unique-separator rule. A fourth round added the kept-by-every-minimal-diff
+condition and switched to exact `RawMyers`. The line merge is about 70 lines.
+Its separator check costs one extra exact diff per side per candidate anchor. `similar` has no default features and adds no dependencies. `RawMyers` computes a
+shortest edit script without heuristics; its source warns it can be slow on
+pathological inputs. Without a deadline the output does not depend on time (source:
 `similar-3.2.0/src/algorithms/mod.rs`, `src/common.rs`, `src/types.rs`).
 License: Apache-2.0. C would add a diff algorithm to own for no correctness gain.
 
@@ -155,7 +160,7 @@ target and type changes, prefix collisions including unresolved paths,
 determinism, symmetry, and loader errors.
 
 `tests/repeated_lines.rs` runs in memory with fixed generators and no Git. It
-holds the review regressions (F1, N1, R3-1) and two property tests:
+holds the review regressions (F1, N1, R3-1, R4-1) and two property tests:
 
 - 20,000 cases over repetitive `a`, `b`, and `}` bases, with each side making one
   edit with a unique token. A clean result must have the implied line count and
@@ -168,11 +173,12 @@ holds the review regressions (F1, N1, R3-1) and two property tests:
   exactly the result. This checks content and order, and that the result does
   not depend on the matching. Over 3,000 cases must be clean.
 
-A one-off local run of the same oracle used 200,000 cases, bases up to seven lines,
-and up to three edits per side, in a /tmp copy. It found no violation in 29,312
-clean results. That run is not part of CI.
+A one-off local run of the same oracle used 200,000 cases over a six-symbol
+alphabet, bases up to seven lines, up to two edits per side, and a one-in-four
+block rotation per side, in a /tmp copy. It found no violation in 103,017 clean
+results. That run is not part of CI.
 
-`scripts/mutation-check.ts` applies fifteen guard mutations one at a time. They
+`scripts/mutation-check.ts` applies sixteen guard mutations one at a time. They
 include region convergence, region reordering, and weakened separator rules. Each
 mutant must compile, and `cargo test` must then fail. The unmutated tests must
 pass first.
@@ -193,8 +199,9 @@ logs as artifacts.
 - Binary detection is a NUL-byte heuristic. A NUL-free binary format is line-merged.
 - Line ending rewrites are not normalized. Their conflicts are intentional.
 - Rename detection is out of scope. A rename is a delete plus an add.
-- Large files are held fully in memory, three versions at once. Diff cost on
-  pathological inputs is bounded only by `similar`'s Myers heuristics.
+- Large files are held fully in memory, three versions at once. Exact `RawMyers`
+  has no cost bound on pathological inputs, and each candidate separator costs two
+  more exact diffs. Performance is unmeasured.
 - No semantic language-aware merging exists, by design.
 
 ## Future gated adapter
