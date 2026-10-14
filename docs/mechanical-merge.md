@@ -66,24 +66,31 @@ Per path, compared by exact `FileEntry` equality:
 Executable bit: the side that changed it wins. If both changed it, both have
 the same value. Content: if only one side changed it, that object is retained.
 If both changed it, the three versions are loaded. Any version containing a NUL
-byte is `Binary`. Otherwise a classic diff3 line merge runs:
+byte is `Binary`. Otherwise a diff3 line merge without convergence runs:
 
-1. `similar` (Myers, no deadline) matches base lines to each side.
-2. Base lines matched unchanged on both sides are anchors.
+1. `similar` (Myers, no deadline) diffs base lines against each side.
+2. Base lines kept unchanged on both sides are anchors.
 3. Each region between anchors is taken whole from the only side that changed
-   it, or once when both sides made it byte-identical. Any other region makes
-   the file a `Content` conflict, and no bytes are offered.
+   it. A region both sides changed is a `Content` conflict, even when both made
+   it identical, and no bytes are offered.
 
 Lines are exact byte sequences ending in `\n`. CRLF and LF lines differ, so
 rewriting line endings conflicts with any concurrent edit. A missing final
-newline is part of the last line. Edits not separated by an unchanged common line,
-including edits to adjacent lines, conflict. Identical edits converge only when
-the whole region is identical. Different insertions at the same point conflict.
+newline is part of the last line. Edits not separated by an unchanged common line
+conflict, including adjacent lines and different insertions at one point.
 Non-UTF-8 text without NUL bytes still merges by line.
 
-Soundness does not depend on a minimal diff. Any valid matching yields regions
-that each come wholly from one side, so a non-minimal diff can only enlarge a
-conflict. It never invents or drops an edit.
+Identical changes converge only per path: two sides with the same content object
+are not loaded or merged. Inside a file, a shared edit next to a one-sided edit is
+left to the owner. With repeated lines an apparent shared edit can be an artifact
+of how lines were matched, and converging it dropped a real edit in review.
+
+Guarantee: a clean result applies one complete line diff of ours and one of
+theirs, as computed by `similar`, to base lines neither diff touches. The diffs
+delete no common line and insert at no common point. Where an edit lands among
+identical lines depends on the matching, as in any diff3. `similar`'s Myers may
+use non-minimal splits on hard inputs, and the result is still a valid diff of
+each side. A property test checks this against every minimal diff (see Evidence).
 
 Structural pass: every resolved path, and every conflicted path that either
 side still has, is a candidate. A resolved path that is a directory prefix of,
@@ -99,21 +106,25 @@ Three shapes were compared:
 - C: a bespoke Myers diff plus diff3 with no dependencies.
 
 A was implemented first and rejected after an independent review proved it
-unsound. diffy compacts each side's diff, and its private compaction moves a
-deletion away from the matching insertion. Its merge then splits change regions at
-common sub-ranges. With repeated lines this gives clean results that are wrong.
-Base `a a a`, ours `a x a`, and theirs `x a a` merged cleanly to `x a x a`, an
-invented line. Base `b b b b b`, ours `b b z b b`, and theirs with one `b` deleted
-merged cleanly to ours, dropping the deletion. diffy exposes no option to
-disable compaction (source: `diffy-0.5.2/src/merge/mod.rs` and
-`src/diff/mod.rs`, crates.io package). Both cases are now regressions in
+unsound. Base `a a a`, ours `a x a`, and theirs `x a a` merged cleanly to
+`x a x a`, an invented line. Base `b b b b b`, ours `b b z b b`, and theirs with
+one `b` deleted merged cleanly to ours, dropping the deletion. The cause is how
+diffy forms regions. It merges per aligned sub-range, so after its diff
+compaction slides edits among identical lines, one side's deletion can pair with
+the other side's and count once (source: `diffy-0.5.2/src/merge/mod.rs`,
+`merge_solutions` and `cleanup_conflicts`, crates.io package). Compaction is not
+unique to diffy: `similar`'s `capture_diff_slices` also compacts and trims
+(`similar-3.2.0/src/common.rs`). Both cases are now regressions in
 `tests/repeated_lines.rs`.
 
-B was selected. The anchor rule is about 30 lines and is sound for any matching.
-`similar` supplies a mature diff with no default features and no dependencies.
-Its source says `Algorithm::Myers` may use bounded non-minimal splits, which here
-only affect conflict size. With no deadline the output does not depend on time
-(source: `similar-3.2.0/src/algorithms/mod.rs`, `src/common.rs`, `src/types.rs`).
+B was selected. A second review round showed that B with whole-region convergence
+could still drop an edit. Base `a`, blank, `}`, `b`: ours replaced the blank with
+`}` and theirs added a `}`. The diff read both as inserting `}` at one point, so
+it was kept once. Convergence inside files was removed. The anchor loop is about
+25 lines. `similar` has no default features and adds no dependencies. Its source
+notes that `Algorithm::Myers` may use bounded non-minimal splits. Without a
+deadline the output does not depend on time (source:
+`similar-3.2.0/src/algorithms/mod.rs`, `src/common.rs`, `src/types.rs`).
 License: Apache-2.0. C would add a diff algorithm to own for no correctness gain.
 
 Conflict records are per file. Hunk ranges can be added later from the same
@@ -125,19 +136,27 @@ Integration tests (`tests/repository_merge.rs`) create a native repository,
 publish World 1, capture each side in a real Layer, and merge the checkpoint
 manifests. Clean results are stored and read back through `put_blob` and
 `put_manifest`. Sixteen tests cover disjoint path and line edits, overlapping and
-adjacent edits, insert/insert, convergence, add/delete/modify, add/add, CRLF,
+adjacent edits, insert/insert, per-path convergence, partial convergence left as
+a conflict, add/delete/modify, add/add, CRLF,
 missing final newline, binary refusal, non-UTF-8 text, executable bits, symlink
 target and type changes, prefix collisions including unresolved paths,
 determinism, symmetry, and loader errors.
 
-`tests/repeated_lines.rs` runs in memory with a fixed generator. It has the two
-review regressions and 20,000 generated cases over repetitive bases of `a`, `b`,
-and `}` lines. In each case each side makes one replacement, insertion, or
-deletion with a unique token. Every clean result must have the exact implied
-line count and each surviving token exactly once.
+`tests/repeated_lines.rs` runs in memory with fixed generators and no Git. It
+holds the three review regressions and two property tests:
 
-`scripts/mutation-check.ts` removes twelve guards one at a time and requires
-`cargo test` to fail each time. It requires the unmutated tests to pass first.
+- 20,000 cases over repetitive `a`, `b`, and `}` bases, with each side making one
+  edit with a unique token. A clean result must have the implied line count and
+  each surviving token once.
+- 20,000 cases drawn from the base's own alphabet (`a`, blank, `}`, `x`), with each
+  side making one or two edits. An independent oracle lists every minimal diff of
+  each side from the LCS table. A clean result must equal applying some minimal
+  diff of ours and some of theirs that delete no common line and insert at no
+  common point. This checks content and order. Over 5,000 cases must be clean.
+
+`scripts/mutation-check.ts` applies thirteen guard mutations one at a time, including
+region convergence and region reordering, and requires `cargo test` to fail each
+time. It requires the unmutated tests to pass first.
 
 `.github/workflows/mechanical-merge.yml` runs formatting, Clippy, tests, the
 release example, and the mutation check on Linux, macOS, and Windows, retaining
@@ -146,6 +165,10 @@ logs as artifacts.
 ## Limits
 
 - Conflict records are per file. They do not include hunk ranges.
+- Identical edits inside a file next to other edits conflict. A cherry-picked fix
+  plus other work therefore needs owner resolution.
+- Placement among identical lines follows the diff, as in any diff3.
+- The minimal-diff oracle covers small generated inputs, not a proof for all inputs.
 - Binary detection is a NUL-byte heuristic. A NUL-free binary format is line-merged.
 - Line ending rewrites are not normalized. Their conflicts are intentional.
 - Rename detection is out of scope. A rename is a delete plus an add.

@@ -276,6 +276,27 @@ were added, and the mutation guards went from nine to twelve. The reviewer's
 The `a4275025` CI evidence above predates this fix and is superseded by the
 rerun at the fixed head.
 
+Hosted evidence for the round-1 fix at `21a7dc7`: run
+https://github.com/Dhruv2mars/javelin/actions/runs/38520379743 passed on all three
+OSes. Artifacts in `/tmp/javelin-merge-ci-38520379743` show 19 tests, 12/12
+mutations killed, the same merged manifest, and source hashes matching
+the commit (Windows after CRLF conversion). It is superseded by the round-2 fix.
+
+Round-2 review (native Claude Opus 5.5 subagent at `21a7dc7`): N1 HIGH, a clean
+merge dropping one side's `}` through whole-region convergence, still occurred.
+N2 MEDIUM: the doc's "sound for any matching" claim was false. N3 MEDIUM: the
+property test was count-only and could not generate identical insertions.
+N4 LOW: the doc wrongly blamed compaction alone. N5 LOW: a missing anchor
+equality assertion. Fixed in `4dd0e6d` and the following doc commit:
+- convergence inside files was removed;
+- an exhaustive minimal-diff (LCS) oracle with content and order checks was added;
+- the N1 regressions were added;
+- a `debug_assert` now checks anchor equality;
+- the doc was corrected;
+- a reversal-agreement check was tried, then removed because no test detects it
+  under the minimal-diff spec;
+- mutations rose to 13, including convergence and region reordering.
+
 Review limits: the delegated Codex implementation review r1 failed on a provider
 usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
 The Claude Sonnet 5.5 r3 hit the API rate limit. None produced findings.
