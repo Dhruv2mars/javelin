@@ -167,6 +167,16 @@ impl LayerCheckpoint {
     }
 }
 
+/// A durable Layer operation row and its exact original outcome.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) struct LayerAttempt {
+    pub(crate) layer: LayerId,
+    pub(crate) discard: bool,
+    pub(crate) expected: u64,
+    pub(crate) checkpoint: CheckpointId,
+    pub(crate) outcome: LayerUpdate,
+}
+
 /// Status and diff share exact before/after entries, preserving type and mode changes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PathDiff {
@@ -191,41 +201,38 @@ impl Repository {
         identity_in(&self.conn)
     }
 
-    /// The durable outcome already recorded for a Layer operation: its Layer,
-    /// action, stored candidate and exact original outcome. Used by host bindings
-    /// to decide whether an interrupted operation committed.
+    /// The durable record of a Layer operation, if any. Used by host bindings
+    /// to decide whether an interrupted operation committed, and whether that
+    /// commit was theirs.
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn layer_operation(
-        &self,
-        operation: &OperationId,
-    ) -> Result<Option<(LayerId, bool, CheckpointId, LayerUpdate)>> {
+    pub(crate) fn layer_operation(&self, operation: &OperationId) -> Result<Option<LayerAttempt>> {
         let tx = self.conn.unchecked_transaction()?;
         check_layers(&tx)?;
         let row = tx
             .query_row(
-                "SELECT layer,discard,checkpoint FROM layer_attempts WHERE id=?1",
+                "SELECT layer,discard,checkpoint,expected FROM layer_attempts WHERE id=?1",
                 [operation.as_str()],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, i64>(1)?,
                         r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
                     ))
                 },
             )
             .optional()?;
         let found = match row {
             None => None,
-            Some((layer, discard, checkpoint)) => {
-                let layer = LayerId::parse(&layer)
-                    .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))?;
-                Some((
-                    layer,
-                    discard == 1,
-                    CheckpointId(decode_id(&checkpoint)?),
-                    attempt_outcome(&tx, operation)?,
-                ))
-            }
+            Some((layer, discard, checkpoint, expected)) => Some(LayerAttempt {
+                layer: LayerId::parse(&layer)
+                    .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))?,
+                discard: discard == 1,
+                expected: u64::try_from(expected)
+                    .map_err(|_| Error::CorruptRepository("invalid Layer attempt".into()))?,
+                checkpoint: CheckpointId(decode_id(&checkpoint)?),
+                outcome: attempt_outcome(&tx, operation)?,
+            }),
         };
         tx.commit()?;
         Ok(found)

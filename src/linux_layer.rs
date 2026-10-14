@@ -162,6 +162,7 @@ pub struct RecoveryReport {
     pub stages_aborted: usize,
     pub pending_resolved: usize,
     pub views_removed: usize,
+    pub views_thawed: usize,
     /// Views that could not be recovered; others are still processed.
     pub failures: Vec<String>,
 }
@@ -731,16 +732,19 @@ impl LinuxLayerRuntime {
         layer: &LayerId,
         operation: &OperationId,
         discard: bool,
-    ) -> Result<Option<(CheckpointId, LayerUpdate)>> {
+    ) -> Result<Option<crate::layer::LayerAttempt>> {
         match repo.layer_operation(operation)? {
-            None => Ok(None),
-            Some((owner, was_discard, checkpoint, update)) => {
-                if &owner != layer || was_discard != discard {
-                    return Err(Error::OperationIdReused(operation.clone()));
-                }
-                Ok(Some((checkpoint, update)))
+            Some(attempt) if &attempt.layer != layer || attempt.discard != discard => {
+                Err(Error::OperationIdReused(operation.clone()))
             }
+            found => Ok(found),
         }
+    }
+
+    fn abandon(&self, slot: &str, record: &mut ViewRecord) -> Result<()> {
+        record.pending = None;
+        self.write_record(slot, record)?;
+        self.ensure_thawed(slot)
     }
 
     /// Records an outcome and thaws. Only an operation this view froze for (its
@@ -824,21 +828,26 @@ impl LinuxLayerRuntime {
             Err(error) => {
                 // The ID was used natively elsewhere; this capture can never commit.
                 if certain(&error) && owned {
-                    record.pending = None;
-                    self.write_record(slot, record)?;
-                    self.ensure_thawed(slot)?;
+                    self.abandon(slot, record)?;
                 }
                 return Err(error);
             }
         };
-        if let Some((checkpoint, update)) = durable {
-            let changed = repo.read_checkpoint(checkpoint)?.changes().entries().len();
+        if let Some(attempt) = &durable
+            && !owned
+        {
+            // A plain retry of a completed operation: report it, never rebind.
+            let changed = repo
+                .read_checkpoint(attempt.checkpoint)?
+                .changes()
+                .entries()
+                .len();
             return self.settle_capture(
                 slot,
                 record,
-                owned,
+                false,
                 CaptureOutcome {
-                    update,
+                    update: attempt.outcome.clone(),
                     changed_paths: changed,
                     unrepresented_directories: Vec::new(),
                     replayed: true,
@@ -874,23 +883,41 @@ impl LinuxLayerRuntime {
         let (changes, unrepresented, expected) = match attempt {
             Ok(values) => values,
             Err(error) => {
-                // No native attempt exists for this operation (checked above under
-                // the runtime lock), so nothing committed: thaw and keep the edits.
-                record.pending = None;
-                self.write_record(slot, record)?;
-                self.ensure_thawed(slot)?;
+                // Nothing this view owns can be lost: either no native attempt exists,
+                // or the existing one is adopted only after an exact match below.
+                self.abandon(slot, record)?;
                 return Err(error);
             }
         };
+        if let Some(attempt) = durable {
+            // The frozen view is unchanged since it froze for this operation. Adopt the
+            // native commit only if it is exactly this view's capture; otherwise another
+            // caller used the same ID and adopting it would overwrite their work.
+            let ours = attempt.expected == record.revision
+                && repo.read_checkpoint(attempt.checkpoint)?.changes() == &changes;
+            if !ours {
+                self.abandon(slot, record)?;
+                return Err(Error::OperationIdReused(operation.clone()));
+            }
+            return self.settle_capture(
+                slot,
+                record,
+                true,
+                CaptureOutcome {
+                    update: attempt.outcome,
+                    changed_paths: changes.entries().len(),
+                    unrepresented_directories: unrepresented,
+                    replayed: true,
+                },
+            );
+        }
         let update = match repo.capture_layer(operation, &expected, &changes) {
             Ok(update) => update,
             Err(error) => {
                 // Uncertain storage errors stay frozen; the retry consults the
-                // durable native record before recomputing anything.
+                // durable native record and verifies it before adopting anything.
                 if certain(&error) {
-                    record.pending = None;
-                    self.write_record(slot, record)?;
-                    self.ensure_thawed(slot)?;
+                    self.abandon(slot, record)?;
                 }
                 return Err(error);
             }
@@ -955,7 +982,7 @@ impl LinuxLayerRuntime {
     ) -> Result<LayerUpdate> {
         self.helper("unmount-view", &[slot])?;
         let update = match self.durable(repo, layer, operation, true) {
-            Ok(Some((_, update))) => Ok(update),
+            Ok(Some(attempt)) => Ok(attempt.outcome),
             Ok(None) => self
                 .head(repo, layer, record)
                 .and_then(|expected| repo.discard_layer(operation, &expected)),
@@ -1108,6 +1135,10 @@ impl LinuxLayerRuntime {
             self.helper("remove-view", &[slot])?;
             self.remove_record(slot)?;
             report.views_removed += 1;
+        } else if mount_state(&self.root.join("views").join(slot))? == Some(true) {
+            // A crash between freeze and the pending write leaves nothing to resolve.
+            self.helper("thaw", &["view", slot])?;
+            report.views_thawed += 1;
         }
         Ok(())
     }
@@ -1407,20 +1438,23 @@ mod tests {
         )])
         .unwrap();
         let applied = repo.capture_layer(&capture, &head, &changes).unwrap();
-        let (owner, discard, checkpoint, update) = repo.layer_operation(&capture).unwrap().unwrap();
+        let found = repo.layer_operation(&capture).unwrap().unwrap();
         assert_eq!(
-            (owner, discard, update),
-            (layer.clone(), false, applied.clone())
+            (found.layer, found.discard, found.expected, found.outcome),
+            (layer.clone(), false, 0, applied.clone())
         );
         assert_eq!(
-            repo.read_checkpoint(checkpoint).unwrap().changes(),
+            repo.read_checkpoint(found.checkpoint).unwrap().changes(),
             &changes
         );
         // A stale attempt is durable too and keeps its exact original outcome.
         let stale_op = OperationId::parse("stale").unwrap();
         let stale = repo.capture_layer(&stale_op, &head, &changes).unwrap();
         assert!(matches!(stale, LayerUpdate::Stale { .. }));
-        assert_eq!(repo.layer_operation(&stale_op).unwrap().unwrap().3, stale);
+        assert_eq!(
+            repo.layer_operation(&stale_op).unwrap().unwrap().outcome,
+            stale
+        );
         let LayerUpdate::Applied {
             state: LayerState::Active { head: next },
         } = applied
@@ -1430,8 +1464,8 @@ mod tests {
         let discard_op = OperationId::parse("discard").unwrap();
         let discarded = repo.discard_layer(&discard_op, &next).unwrap();
         let found = repo.layer_operation(&discard_op).unwrap().unwrap();
-        assert!(found.1);
-        assert_eq!(found.3, discarded);
+        assert!(found.discard && found.expected == 1);
+        assert_eq!(found.outcome, discarded);
     }
 
     #[test]
