@@ -1,5 +1,9 @@
 # Mechanical merge engine
 
+This document records the PR #12 algorithm and its historical evidence. The current
+bounded API, matching implementation and resource policy supersede those sections
+in [Bounded mechanical merge](bounded-mechanical-merge.md).
+
 `crates/javelin-merge` is a pure, deterministic three-way merge of native
 manifests. It is the mechanical core for a future Stack and owner-controlled
 refresh. It does not write files, persist Stack state, mint object IDs, or

@@ -393,10 +393,10 @@ This is a pure component, with no Stack, Publish, GA, or underlying core accepta
 
 - [x] Recover interrupted run, clean base, instructions and hub contract/decisions.
 - [x] Open and immediately T3-link draft PR #21; report planning `935f38a` to hub.
-- [ ] Ground API, loader, matching and refusal; compare two shapes with Codex architect.
-- [ ] Reproduce exact old-source resource issue in private scratch.
-- [ ] Implement smallest deterministic bounded design and public resource outcome.
-- [ ] Extend every-pair oracle, ordinary fixtures, adversarial and boundary tests.
+- [x] Ground API/loader/refusal; independent Codex architect selected flat prefix LCS plus rolling suffix omission scans over bounded repeated RawMyers. Prior provider-failed design task resumed once, no duplicate.
+- [x] Reproduce exact old-source issue in `/tmp/javelin-bounded-pr21/old`: library SHA256 `882af7f23031254aa602a273aab10c477ed0670224f6fab69a3203fe3ad29ee0`; 2000 lines, bytes 18890/18890/19690, 4771.514 ms; 4000 lines externally killed after 30000 ms. No domain timeout claim.
+- [x] Implement fixed metadata/byte/line/table/work admission and MergeError::Load/Resource, with call-wide Usage and sequential loader checks.
+- [x] Extend unchanged every-pair oracle with 30,000 moves: 2,682 clean, 22,291 ambiguous; original 20,000 remains 3,868 clean. Add ordinary fixtures, exhaustive mandatory-row masks and deterministic resource/boundary/adversarial cases.
 - [ ] Run debug/release, fmt, Clippy and compiling guard/correctness mutations.
 - [ ] Obtain fresh independent Codex review, fix findings and verify restored hashes.
 - [ ] Inspect exact-head three-OS logs/artifacts using the single T3 watcher.
