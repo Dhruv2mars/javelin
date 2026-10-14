@@ -65,15 +65,15 @@ try {
     }
     # Read-only platform facts first; the only setup change allowed is starting an inbox filter if it is stopped.
     $system = Join-Path $env:SystemRoot 'System32'
-    [void](Invoke-Bounded 'cldflt-query' "$system/sc.exe" @('query', 'cldflt'))
-    [void](Invoke-Bounded 'cldflt-config' "$system/sc.exe" @('qc', 'cldflt'))
-    [void](Invoke-Bounded 'filters' "$system/fltMC.exe" @('filters'))
-    [void](Invoke-Bounded 'developer-mode' "$system/reg.exe" @('query', 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'))
+    [void](Invoke-Bounded 'cldflt-query' (Join-Path $system 'sc.exe') @('query', 'cldflt'))
+    [void](Invoke-Bounded 'cldflt-config' (Join-Path $system 'sc.exe') @('qc', 'cldflt'))
+    [void](Invoke-Bounded 'filters' (Join-Path $system 'fltMC.exe') @('filters'))
+    [void](Invoke-Bounded 'developer-mode' (Join-Path $system 'reg.exe') @('query', 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'))
     $result.projfsFeature = (Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS).State.ToString()
     $cldflt = Get-Service -Name cldflt -ErrorAction SilentlyContinue
     $result.cldflt = @{ present = [bool]$cldflt; status = "$($cldflt.Status)"; startType = "$($cldflt.StartType)" }
     if ($cldflt -and $cldflt.Status -ne 'Running') {
-        $start = Invoke-Bounded 'cldflt-start' "$system/sc.exe" @('start', 'cldflt')
+        $start = Invoke-Bounded 'cldflt-start' (Join-Path $system 'sc.exe') @('start', 'cldflt')
         $result.cldflt.startAttempt = $start.exitCode
         $result.cldflt.statusAfter = "$((Get-Service -Name cldflt).Status)"
     }
@@ -129,11 +129,13 @@ try {
     foreach ($acl in @(
         @('owned-user-acl', @($owned, '/grant', "${username}:(OI)(CI)F")),
         @('frozen-owner', @($frozen, '/setowner', '*S-1-5-32-544', '/T', '/C', '/L')),
-        @('frozen-acl', @($frozen, '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/T', '/C', '/L')))) {
-        $set = Invoke-Bounded $acl[0] "$system/icacls.exe" $acl[1]
+        # Protect the container only; children inherit. Explicit (OI)(CI) grants applied to files leave them with empty DACLs.
+        @('frozen-acl', @($frozen, '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/C', '/L')),
+        @('frozen-children-inherit', @((Join-Path $frozen '*'), '/reset', '/T', '/C', '/L')))) {
+        $set = Invoke-Bounded $acl[0] (Join-Path $system 'icacls.exe') $acl[1]
         if ($set.exitCode -ne 0) { throw "ACL step $($acl[0]) failed." }
     }
-    [void](Invoke-Bounded 'frozen-acl-readback' "$system/icacls.exe" @($frozen, '/T'))
+    [void](Invoke-Bounded 'frozen-acl-readback' (Join-Path $system 'icacls.exe') @($frozen, '/T'))
     $result.baseTrees = @{ native = Get-Tree (Join-Path $frozen 'base-native'); common = Get-Tree (Join-Path $frozen 'base-common') }
     $pwsh = (Get-Process -Id $PID).Path
     $argv = @('bounded', '190000', $pwsh, '-NoProfile', '-File', (Join-Path $tools 'user-run.ps1'), '-Owned', $owned, '-Username', $username)
@@ -146,10 +148,11 @@ try {
             # Freeze: an administrator copy becomes administrator-owned, read-only and not writable by the proof user.
             $target = Join-Path $frozen 'snap'
             Copy-Item -LiteralPath (Join-Path $owned 'staging/snap') -Destination $target -Recurse
-            [void](Invoke-Bounded 'snapshot-owner' "$system/icacls.exe" @($target, '/setowner', '*S-1-5-32-544', '/T', '/C', '/L'))
-            [void](Invoke-Bounded 'snapshot-acl' "$system/icacls.exe" @($target, '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/T', '/C', '/L'))
-            [void](Invoke-Bounded 'snapshot-readonly' "$system/attrib.exe" @('+R', (Join-Path $target '*'), '/S'))
-            [void](Invoke-Bounded 'snapshot-acl-readback' "$system/icacls.exe" @($target, '/T'))
+            [void](Invoke-Bounded 'snapshot-owner' (Join-Path $system 'icacls.exe') @($target, '/setowner', '*S-1-5-32-544', '/T', '/C', '/L'))
+            [void](Invoke-Bounded 'snapshot-acl' (Join-Path $system 'icacls.exe') @($target, '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/C', '/L'))
+            [void](Invoke-Bounded 'snapshot-children-inherit' (Join-Path $system 'icacls.exe') @((Join-Path $target '*'), '/reset', '/T', '/C', '/L'))
+            [void](Invoke-Bounded 'snapshot-readonly' (Join-Path $system 'attrib.exe') @('+R', (Join-Path $target '*'), '/S'))
+            [void](Invoke-Bounded 'snapshot-acl-readback' (Join-Path $system 'icacls.exe') @($target, '/T'))
             $result.freeze = @{ tree = Get-Tree $target; at = [DateTime]::UtcNow.ToString('o') }
             # checks.mjs compares its own tree format, so it records that independently from the user side.
             $userTree = Invoke-Bounded 'snapshot-tree' (Join-Path $tools 'bun.exe') @('-e', "const fs=require('fs/promises'),p=require('path'),c=require('crypto');async function t(b){const r=[];async function v(n){const q=p.join(b,n),s=await fs.lstat(q);if(s.isDirectory()){r.push([n,'directory']);for(const x of (await fs.readdir(q)).sort())await v(p.join(n,x))}else r.push([n,'file',s.size,c.createHash('sha256').update(await fs.readFile(q)).digest('hex')])}await v('');return r}t(process.argv[1]).then(x=>console.log(JSON.stringify({tree:x})))", $target)
@@ -180,12 +183,15 @@ try {
             $root = Join-Path $owned $name
             if (Test-Path -LiteralPath $root) {
                 $unregister = & (Join-Path $owned 'sparse.exe') unregister $root
-                & "$env:SystemRoot/System32/cmd.exe" /d /c "rmdir /s /q `"$root`""
+                & (Join-Path $system 'cmd.exe') /d /c "rmdir /s /q `"$root`""
                 $cleanup.roots[$name] = @{ unregister = "$unregister"; removed = -not (Test-Path -LiteralPath $root) }
                 if (Test-Path -LiteralPath $root) { throw "Owned root $name removal failed." }
             }
         }
-        & "$env:SystemRoot/System32/attrib.exe" -R (Join-Path $frozen '*') /S /D /L | Out-Null
+        if (Test-Path -LiteralPath $frozen) {
+            & "$env:SystemRoot\System32\icacls.exe" $frozen /reset /T /C /L /Q | Out-Null
+            & "$env:SystemRoot\System32\attrib.exe" -R (Join-Path $frozen '*') /S /D /L | Out-Null
+        }
         foreach ($base in @('base-native', 'base-rename', 'base-common')) {
             $link = Join-Path $frozen "$base/inside-link"
             if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force }
