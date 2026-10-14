@@ -663,7 +663,6 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Draft PR: [#16](https://github.com/Dhruv2mars/javelin/pull/16), linked to owner and hub; unmerged.
 - Owns: tools/native-benchmarks/**; docs/native-storage-baseline.md; native-storage-baseline.yml and its own appended TASKS section.
 - Done: Reproducible release-native API cost and multiprocess contention measurements; no scale or filesystem-throughput claim.
-- Implementation/evidence acceptance is pending. No product gate is checked by launch.
 - Retained `4149da9` API measurements independently verified by Codex r2; tool
   acceptance was HELD for retry-chain verification and failed-disk-probe gaps.
   Deleted setup failures, attempt 99, worker 999 reopens and zero/shrinking disk
@@ -671,12 +670,21 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   corrections were also returned. Evidence is under
   `/tmp/javelin-hub-audit-pr16-codex-r2`; original measurements remain valid,
   not hot-repository or mounted-throughput acceptance.
-- Owner reports corrected reviewed source `ebd3083`, hosted head `3acc660` and
-  final evidence-only `100395b`, with 29 tests per debug/release profile and 33
-  verifier checks. Run `38569138378` and retained correction evidence require
-  the hub's fresh inspection before acceptance. Do not substitute the owner's
-  final report for that inspection. Windows measurements, stress, retry
-  exhaustion, growth causation and Gate 6 remain unverified.
+- [x] Accept corrected tool source `ebd3083`, hosted head `3acc660` and final
+  evidence-only `100395b` as a bounded measurement tool after fresh Codex r3
+  and the hub's inspection of its actual reports and raw comparison results.
+  All 19 matched-summary tampering cases now reject; the old tool accepted 17.
+  Both test profiles pass 7 unit and 22 CLI tests. All 17 retained datasets
+  pass 33 checks with unchanged bytes, including the four real busy chains.
+  Run `38569138378` supplies six actual Linux/macOS runs, each with 2,616
+  records, 100 contended advances, 80 contended blob puts and zero error outcomes.
+  The hub checked all 66 raw-file comparisons and both ZIP digests against
+  GitHub metadata. Evidence is under `/tmp/javelin-hub-pr16-correction-r3/audit/`
+  and `/tmp/javelin-hub-pr16-correction-r3-hosted/`.
+  Windows built and linted only. Version 1 setup bytes remain inferred from
+  the fixed generator; consistency checks do not authenticate measurements.
+  Windows measurements, stress, actual retry exhaustion, causal profiling,
+  mounted throughput and Gate 6 remain unverified.
 
 Standalone Rust crates own an empty `[workspace]`, lockfile and target ignore.
 They use accepted public native types and APIs; they do not copy private hashing
@@ -755,6 +763,7 @@ resumed the same stopped owners only after checking activity and pending runs.
 | Windows capture hardening | `mcp:327b1dfe-5b03-483b-b457-b6ba584e73dd` | `fix/windows-sparse-capture` / `test/windows-sparse-backend` | `8a77d42` | [#19](https://github.com/Dhruv2mars/javelin/pull/19) |
 | macOS mounted suitability | `mcp:d0d0bcfd-88ec-4d2f-bcde-0526e2d4b795` | `test/macos-backend-suitability` / `test/macos-sparse-backend` | `61aae6f` | [#20](https://github.com/Dhruv2mars/javelin/pull/20) |
 | Bounded mechanical merge | `mcp:f51d22d4-d73a-45e4-b17f-154b825352a8` | `perf/bounded-mechanical-merge` / `feat/mechanical-merge-engine` | `61ecdd9` | [#21](https://github.com/Dhruv2mars/javelin/pull/21) |
+| Native validation cost profile | `mcp:6475b5a3-414c-4199-99bf-09ed865c1991` | `perf/native-validation-profile` / `perf/native-storage-baseline` | `100395b` | [#22](https://github.com/Dhruv2mars/javelin/pull/22) |
 
 - Worktrees are `/Users/dhruv2mars/.t3/worktrees/javelin/` plus each branch with
   `/` replaced by `-`; bindings were selected by `t3_thread_launch`, not shell
@@ -776,8 +785,9 @@ resumed the same stopped owners only after checking activity and pending runs.
   same-mount restart, filename aliases, traversal, scale and host prerequisites
   on a disposable Mac runner. This is not native binding or acceptance.
 - PR #21 owns `crates/javelin-merge/**`, its bounded-merge doc and focused
-  workflow; planning `935f38a`. Its typed Load/Resource refusals, table/work
-  budgets and faster 2,000-line case are owner-reported, not yet accepted.
+  workflow; planning `935f38a`. Bounded component accepted at actual tested
+  `884d51c` after source-review and three-OS artifact inspection. Typed
+  Load/Resource refusals bound entry/path/blob/line/table/work costs.
   A 4,000-line refusal is not a faster successful merge. Stack remains gated.
 - PR #21 source review at `edc9293` is now inspected by the hub, not merely
   owner-reported. The actual `RESULT.txt`, independent-harness and resource logs
@@ -787,10 +797,33 @@ resumed the same stopped owners only after checking activity and pending runs.
   The hub matched all three production-module hashes against scratch,
   reviewed `edc9293` and pushed `884d51c` blobs. The review does not certify
   mutation runs, hosted execution, universal correctness, or caller allocation.
-  Actual GitHub checks at `884d51c` show Linux/macOS component jobs successful;
-  Windows component and Linux/Windows native jobs remain pending at inspection.
-  The existing owner watcher retains check waiting and artifact collection.
-  Component acceptance remains open; no duplicate review or workstream launched.
+  Hosted run `38613209944` at exact `884d51c` is now VERIFIED on Linux x64,
+  macOS arm64 and Windows x64. The hub independently ran the artifact verifier
+  from its own exported source and output directory, checked ten source hashes,
+  35 debug and 35 release tests, 29 compiling mutations, source restoration
+  and the release example on each OS. Windows hashes account for checkout CRLF.
+  Downloaded ZIP digests for artifacts `11918793626`, `11918848764` and
+  `11917909187` match actual GitHub metadata; retention ends October 28.
+  Root verification is at the path in `/tmp/javelin-hub-pr21-hosted-path.txt`.
+  The 2,000-line release case took 29.166/65.872/66.718 ms on those runners.
+  General correctness, preservation of all previously accepted inputs, caller
+  allocation/capacity, loader I/O/CPU and concurrency remain outside this proof.
+  Final docs-only `de5e4bb` has identical component/workflow bytes; its automatic
+  checks remain with the existing owner watcher, not a new hub watcher.
+- PR #22 owns `tools/native-profiles/**`, `docs/native-validation-profile.md`,
+  `.github/workflows/native-validation-profile.yml` and its appended checklist.
+  Planning `a7cf694` precedes implementation; draft is linked to owner and hub.
+  Done requires preregistered hypotheses, matched controls and resource budgets,
+  a rerunnable public-API diagnostic, local Mac and hosted Ubuntu raw evidence,
+  a meaningful verifier and independent Codex design/final reviews. It measures
+  unchanged native `e56fc86` through corrected benchmark dependency `100395b`.
+  No core or old benchmark edits, integrity shortcuts, privileged laptop setup,
+  causal attribution without evidence, or Gate 6 acceptance are authorized.
+- The hub inspected terminal activity before resuming the same stopped owners
+  for PRs #17/#18/#19/#20 after usage-limit failures. No live owner turns or
+  pending requests existed. PR18 and PR17 must inspect failed review tasks
+  before commissioning fresh rounds; PR19 must inspect the actual hosted
+  control result before fixes. No replacement worktrees, PRs or scheduler.
 - PR #15 waits for PR #18 hub acceptance; whole-Layer Publish follows the next
   accepted native head, without a competing root writer. PRs #16/#17 retain
   their existing owners and PRs for verifier/installer repairs.
@@ -805,11 +838,12 @@ resumed the same stopped owners only after checking activity and pending runs.
   found in `8a24989`. Review cutoff is that commit and hub activity through
   2026-10-14 18:12:29 UTC. Later `e8cf8f9` and subsequent root additions are
   outside the independent trail review and must not be labelled reviewed by it.
-- [ ] Corrected benchmark-tool acceptance round 3 at reviewed `ebd3083`, hosted
+- [x] Corrected benchmark-tool acceptance round 3 at reviewed `ebd3083`, hosted
   `3acc660`, final evidence `100395b`:
   `node:delegated-task:command%3Amcp%3A1415e1d9-77b8-4515-9821-4c8b3a8d6a87%3Adelegate-task%3Ajavelin-hub-pr16-ebd3083-correction-r3-20261014`.
-  This read-only Codex audit owns the fresh tamper, source and hosted-artifact
-  inspection. Do not duplicate it while active or accept from the owner report.
+  Completed with no actionable findings. The hub inspected its acceptance,
+  tamper and hosted reports plus raw comparison results before bounded acceptance.
+  This is not a numerical release requirement or Gate 6 pass.
 
 #### Next native unit: whole-Layer Publish
 
