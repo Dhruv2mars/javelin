@@ -194,6 +194,13 @@ Windows) and places it first on PATH. A probe in a separate directory runs Rust'
 reach it with the prefix. The test step then requires that the shim
 never ran. The earlier shell-script shim at `58fadbf` could not intercept on Windows.
 
+Tested source `02c7427ef18bedf933ab4a75bc8d7d46cd9dce3b` passed hosted run
+[38508849025](https://github.com/Dhruv2mars/javelin/actions/runs/38508849025) on
+ubuntu-24.04, macos-15 and windows-2025 with Rust 1.99.0. I downloaded and inspected
+all three log artifacts, which expire 2026-10-28. Each records the exact commit, 21
+passing tests, formatting, Clippy and a successful release build. Each job log shows
+`probe exit without shim=0 with shim=97`, and the test step confirms the shim never ran.
+
 ## API gaps for the hub
 
 These gaps were worked around through the public API only. Nothing private was copied.

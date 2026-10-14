@@ -292,3 +292,6 @@ formatting and Clippy clean. `bun scripts/mutate.ts` reports 24/24 guard removal
 detected. Hosted runs passed on all three OSes for `58fadbf` (38505510520) and
 `d2530fe` (38507397981). Review r1 (Codex) and r2 (Claude, after a Codex usage-limit
 failure) are addressed. Native read allocation remains hub API gap 3.
+Final tested source `02c7427ef18bedf933ab4a75bc8d7d46cd9dce3b` passed hosted run
+38508849025 on Linux, macOS and Windows: 21 tests per OS, release build, and a PATH
+git-shim control of without=0 and with=97. Later commits are documentation-only.
