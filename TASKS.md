@@ -386,9 +386,36 @@ PRs are never merged without explicit user instruction.
 - Automatic capture while tools keep working, production privilege setup,
   complete Layer workflows and other platforms remain required follow-on work.
   Mounts and privilege tests are limited to disposable hosted Linux CI.
-- The design compares three shapes and proposes shared read-only base/checkpoint
+- The design compares three shapes and selects shared read-only base/checkpoint
   caches, separate private uppers, and a per-view read-only remount for capture
-  with busy-writer refusal. This is a design choice, not verified runtime evidence.
+  with busy-writer refusal. Exact-source runtime evidence and acceptance limits follow.
+- Submitted executable `93f9eaa00421f3c5efbaac79449bc22699c464b1` has actual
+  hosted evidence inspected by the hub. Run `38503434985`, attempt 2, and
+  dispatched run `38503753472` each passed four gated tests. The hub downloaded
+  both 21-file artifacts to `/tmp/javelin-hub-linux-binding-38503434985-attempt2`
+  and `/tmp/javelin-hub-linux-binding-38503753472`, matched all fourteen source
+  hashes against an exact export, and checked raw inventories, recovery and cleanup.
+  Base-cache inodes/hashes are identical across four boundaries, fresh uppers are
+  empty, and the checkpoint cache omits unchanged `main.c` while retaining changed
+  bytes and whiteouts. Shared writable mappings refuse capture with `EBUSY` on
+  this kernel. These results remain subject to the independent source review.
+- The hub inspected all eighteen native logs and actual job steps from run
+  `38503434805` at the same source. Linux/macOS each passed 63 tests, Windows 50.
+  Linux has five gated/actor entries ignored in this ordinary suite; macOS/Windows
+  have one actor each. Formatting, Clippy and release build passed on all three OSes.
+- Attempt 1 of `38503434985` failed the watch-notifications check. The hub retained
+  its failed-job log at `/tmp/javelin-hub-linux-binding-watch-attempt1.log`.
+  File-watch reliability remains INCONCLUSIVE despite later passing runs.
+  The hub's exact local export passes 63 tests with one ignored actor on Darwin
+  arm64, Rust 1.93.0. This does not exercise Linux mounts.
+- Independent review `javelin-linux-binding-hub-review-r1-93f9eaa` found a material
+  recovery defect: after an external Layer head advance, a persistent pre-native
+  snapshot error can leave the stale-bound view frozen with pending capture,
+  blocking mount/capture/discard. The hub confirmed the faulty history-length
+  condition in source; an actual hosted regression is required. Acceptance is held
+  for correction in the same PR #10. Reserved staging-name deletion, replay thaw
+  handling and helper list/snapshot trust scope were also returned to that owner.
+  No binding acceptance, product Gate 2 or GA is claimed from green tests.
 
 ### Expanded parallel workstreams
 
