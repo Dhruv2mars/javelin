@@ -1419,3 +1419,99 @@ fn reused_pending_capture_id_thaws_the_view() {
         &json!({"verdict": "VERIFIED", "commands": log}),
     );
 }
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn pending_capture_never_adopts_a_foreign_same_id_commit() {
+    let env = env();
+    let mut log = Vec::new();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        repo_dir,
+        _source,
+    } = setup(&env, "sameid");
+    sh(&view, "printf 'mine\\n' > mine.txt", &mut log);
+    let mut actor = Actor::spawn(
+        &env,
+        repo_dir.path(),
+        &root,
+        "capture",
+        "A",
+        "same-id",
+        "capture_frozen",
+    );
+    actor.marker("BOUNDARY capture_frozen");
+    actor.kill();
+    // Another caller commits different content on the same Layer under the same ID.
+    let x = FileEntry::Regular {
+        content: repo.put_blob(b"x\n").unwrap(),
+        executable: false,
+    };
+    let changes = SparseChanges::new([(RepoPath::parse("x.txt").unwrap(), Some(x))]).unwrap();
+    applied(
+        &repo
+            .capture_layer(&op("same-id"), &active(&repo, &layer), &changes)
+            .unwrap(),
+    );
+    let report = rt.recover(&mut repo).unwrap();
+    let status = rt.status(&repo, &layer).unwrap();
+    save(
+        &env,
+        "sameid-result",
+        &json!({"recovery": report, "frozen": status.frozen,
+        "pending": status.pending, "boundRevision": status.bound_revision}),
+    );
+    assert_eq!(
+        status.bound_revision, 0,
+        "foreign same-ID commit adopted as this view's capture"
+    );
+    assert!(!status.frozen && status.pending.is_none());
+    assert_eq!(report.failures.len(), 1);
+    let next = rt.capture(&mut repo, &layer, &op("after-same-id")).unwrap();
+    assert!(
+        matches!(next.update, LayerUpdate::Stale { .. }),
+        "foreign work overwritten"
+    );
+    assert_eq!(fs::read(view.join("mine.txt")).unwrap(), b"mine\n");
+    save(
+        &env,
+        "sameid",
+        &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn recover_thaws_a_frozen_view_without_pending_work() {
+    let env = env();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        _source,
+        repo_dir: _repo_dir,
+    } = setup(&env, "orphanfreeze");
+    // Models a crash between the freeze and the pending-record write.
+    let slot = slot(&layer);
+    assert!(
+        direct(&env, &["freeze", root.to_str().unwrap(), "view", &slot])
+            .status
+            .success()
+    );
+    let report = rt.recover(&mut repo).unwrap();
+    let frozen = rt.status(&repo, &layer).unwrap().frozen;
+    save(
+        &env,
+        "orphanfreeze-result",
+        &json!({"recovery": report, "frozenAfterRecover": frozen}),
+    );
+    assert!(!frozen, "recover left a frozen view without pending work");
+    fs::write(view.join("writable.txt"), "ok").unwrap();
+    save(&env, "orphanfreeze", &json!({"verdict": "VERIFIED"}));
+}
