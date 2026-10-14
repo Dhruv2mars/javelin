@@ -265,3 +265,31 @@ The four original P2 tamper accepts now fail by the named retry/reopen and disk
 checks. Windows measurement, stress, actual retry exhaustion, growth profiling,
 mounted filesystem, power loss, hot/many-repository workloads, Gate 6 and GA remain
 NOT VERIFIED. Same one linked draft PR16 remains unmerged; T3 watcher stopped.
+
+## Workstream: native validation profiling
+
+Owns only `tools/native-profiles/**`, `docs/native-validation-profile.md`,
+`.github/workflows/native-validation-profile.yml` and this appended section.
+Branch `perf/native-validation-profile` targets `perf/native-storage-baseline`.
+Starting dependency `100395b8d5bdd58efc82b7ffcca6414926a09188` preserves accepted,
+unmerged native `e56fc86`. The user confirms hub r3 acceptance of the corrected
+benchmark tool at `ebd3083` and hosted `3acc660`; current hub files still show
+that review pending. No independent native acceptance or Gate 6 credit here.
+
+Done means a rerunnable public-API profiling tool, precommitted hypotheses and
+matched controls, honest bounded local Mac and disposable Ubuntu evidence,
+source/host/artifact identity and raw failures, a tamper-detecting verifier,
+independent Codex design and final review, and exact-source fmt/Clippy/tests/CLI
+and hosted checks. No core optimization, schema or trust change. Attribution
+is INCONCLUSIVE wherever profiling is unavailable. GA requires all three OSes.
+
+- [x] Verify exact dependency, local instructions and current hub contract/trail.
+- [ ] Open and T3-link exactly one draft before implementation; report plan to hub.
+- [ ] Compare two designs, get Codex feedback and commit fixture/hypothesis/budget plan before measuring.
+- [ ] Implement bounded public-API producer and independent evidence verifier.
+- [ ] Re-read integrity guarantees and retain exact outcome/history checks.
+- [ ] Capture local optimized control and available CPU/heap profiling with overhead labels.
+- [ ] Independent Codex final read-only review; fix reproduced findings.
+- [ ] Verify fmt, Clippy, tests and real CLI at named source.
+- [ ] Run exact-source owned Ubuntu workflow, watch once, retain and verify artifacts.
+- [ ] Release watcher and report bounded conclusions and next experiment to hub.
