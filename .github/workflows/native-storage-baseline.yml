@@ -8,6 +8,9 @@ on:
   pull_request:
     paths:
       - "tools/native-benchmarks/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/native-storage-baseline.yml"
 
 permissions:
@@ -63,14 +66,13 @@ jobs:
         env:
           CHECKED_OUT_COMMIT: ${{ steps.checkout.outputs.commit }}
         run: |
+          mkdir -p ../../ci-logs/native-baseline
           for run in 1 2 3; do
+            # Evidence is written straight into the uploaded directory so a failing run keeps it.
             ./target/release/native-bench run --profile ci --seed 1 \
-              --out "$RUNNER_TEMP/native-baseline-$run" --workdir "$RUNNER_TEMP/native-baseline-work-$run" \
+              --out "../../ci-logs/native-baseline/run-$run" --workdir "$RUNNER_TEMP/native-baseline-work-$run" \
               --source-commit "$CHECKED_OUT_COMMIT" 2>&1 | tee "../../ci-logs/baseline-run-$run.log"
-            # A second verification pass over the raw files alone.
-            ./target/release/native-bench verify "$RUNNER_TEMP/native-baseline-$run" 2>&1 | tee "../../ci-logs/baseline-verify-$run.log"
-            mkdir -p ../../ci-logs/native-baseline
-            cp -R "$RUNNER_TEMP/native-baseline-$run" "../../ci-logs/native-baseline/run-$run"
+            ./target/release/native-bench verify "../../ci-logs/native-baseline/run-$run" 2>&1 | tee "../../ci-logs/baseline-verify-$run.log"
           done
 
       - name: Retain raw measurements and logs
@@ -81,3 +83,26 @@ jobs:
           path: ci-logs/
           retention-days: 14
           if-no-files-found: warn
+
+  windows-compile:
+    name: Compile only / windows-2025 (unmeasured)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: tools/native-benchmarks
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy
+
+      - name: Build and lint only; no measurement is run on Windows
+        run: |
+          cargo build --locked --release
+          cargo clippy --locked --all-targets -- -D warnings

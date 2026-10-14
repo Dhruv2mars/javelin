@@ -44,6 +44,17 @@ fn main() {
     let tool = digest(here, &["src"], &["Cargo.toml", "Cargo.lock", "build.rs"]);
     println!("cargo:rustc-env=NB_JAVELIN_SOURCE_SHA256={javelin}");
     println!("cargo:rustc-env=NB_TOOL_SOURCE_SHA256={tool}");
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+    let version = std::process::Command::new(rustc)
+        .arg("-Vv")
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .replace('\n', "; ")
+        })
+        .unwrap_or_else(|e| format!("unavailable: {e}"));
+    println!("cargo:rustc-env=NB_RUSTC_VERBOSE={version}");
     println!(
         "cargo:rustc-env=NB_TARGET={}",
         std::env::var("TARGET").unwrap()

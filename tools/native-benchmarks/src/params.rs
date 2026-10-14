@@ -157,6 +157,13 @@ impl Params {
         within("blobs", self.blobs, 1, MAX_BLOBS)?;
         within("binary-max", self.binary_max, 2, 4 << 20)?;
         within("baseline-ops", self.baseline_ops, 0, 50)?;
+        within("prefill-versions", self.prefill_versions, 0, MAX_HISTORY)?;
+        if self.prefill_versions > 0 {
+            within("prefill-files", self.prefill_files, 1, MAX_FILES)?;
+        }
+        if self.prefill_files * self.prefill_versions > MAX_MANIFEST_ENTRIES {
+            return Err("prefill entries exceed the manifest entry cap".into());
+        }
         within(
             "budget-secs",
             self.budget_secs as usize,
@@ -207,6 +214,8 @@ impl Params {
         let ops = (self.procs * self.ops + self.prefill_versions + self.baseline_ops) as u64;
         let prefilled =
             (self.prefill_files * CONTENTION_BLOB_BYTES) as u64 * self.prefill_versions as u64;
-        history + layers + ops * prefilled
+        history
+            .saturating_add(layers)
+            .saturating_add(ops.saturating_mul(prefilled))
     }
 }

@@ -91,7 +91,7 @@ fn tampered(edit: impl FnOnce(&Path)) -> String {
     let dir = tmp.path().join("copy");
     copy_dir(baseline(), &dir);
     edit(&dir);
-    let result = bench(&["verify", dir.to_str().unwrap()]);
+    let result = bench(&["verify", dir.to_str().unwrap(), "--allow-debug-build"]);
     assert!(
         !result.status.success(),
         "tampered evidence must fail verification:\n{}",
@@ -118,7 +118,11 @@ fn contention_ops(lines: &[Value], op: &str) -> Vec<usize> {
 
 #[test]
 fn smoke_run_passes_every_check_with_real_processes() {
-    let verified = bench(&["verify", baseline().to_str().unwrap()]);
+    let verified = bench(&[
+        "verify",
+        baseline().to_str().unwrap(),
+        "--allow-debug-build",
+    ]);
     let out = text(&verified);
     assert!(verified.status.success(), "{out}");
     assert!(
@@ -384,11 +388,25 @@ fn verifier_accepts_a_genuine_busy_retry_of_the_exact_same_input() {
     busy["sqlite_code"] = json!("DatabaseBusy/5");
     busy["result"] = Value::Null;
     lines[i]["attempt"] = json!(1);
+    let mut reopen = busy.clone();
+    reopen["op"] = json!("reopen");
+    reopen["outcome"] = json!("ok");
+    reopen["error_code"] = Value::Null;
+    reopen["sqlite_code"] = Value::Null;
     lines.insert(i, busy);
+    lines.insert(i + 1, reopen);
     write_lines(&dir, &lines);
-    let out = text(&bench(&["verify", dir.to_str().unwrap()]));
+    let out = text(&bench(&[
+        "verify",
+        dir.to_str().unwrap(),
+        "--allow-debug-build",
+    ]));
     assert!(
         out.contains("PASS retries_repeat_exact_input_after_uncertain_errors"),
+        "{out}"
+    );
+    assert!(
+        out.contains("PASS every_retry_followed_a_recorded_reopen"),
         "{out}"
     );
     assert!(
@@ -564,7 +582,11 @@ fn clone_storage_check_passes_for_references_and_fails_for_copied_payload() {
     let grown = lines[last]["stored_bytes"].as_u64().unwrap() + 4 * 262_144;
     lines[last]["stored_bytes"] = json!(grown);
     write_lines(&out, &lines);
-    let verified = text(&bench(&["verify", out.to_str().unwrap()]));
+    let verified = text(&bench(&[
+        "verify",
+        out.to_str().unwrap(),
+        "--allow-debug-build",
+    ]));
     assert_fails(&verified, "clone_storage_not_payload_proportional");
 }
 
@@ -604,7 +626,11 @@ fn prefilled_world_is_part_of_the_verified_ordered_history() {
     lines.remove(i);
     write_lines(&out, &lines);
     assert_fails(
-        &text(&bench(&["verify", out.to_str().unwrap()])),
+        &text(&bench(&[
+            "verify",
+            out.to_str().unwrap(),
+            "--allow-debug-build",
+        ])),
         "history_matches_acknowledged_accepts",
     );
 }
@@ -727,4 +753,111 @@ fn derived_validation_cost_cap_rejects_quadratic_fixtures() {
         "{}",
         text(&result)
     );
+}
+
+fn inject_busy_retry(d: &Path, with_reopen: bool, keep_first: bool) {
+    let mut lines = read_lines(d);
+    let i = contention_ops(&lines, "compare_and_advance")[0];
+    let mut busy = lines[i].clone();
+    busy["outcome"] = json!("error");
+    busy["error_code"] = json!("storage_error");
+    busy["sqlite_code"] = json!("DatabaseBusy/5");
+    busy["result"] = Value::Null;
+    lines[i]["attempt"] = json!(1);
+    if with_reopen {
+        let mut reopen = busy.clone();
+        reopen["op"] = json!("reopen");
+        reopen["outcome"] = json!("ok");
+        reopen["error_code"] = Value::Null;
+        reopen["sqlite_code"] = Value::Null;
+        lines.insert(i, reopen);
+    }
+    if keep_first {
+        lines.insert(i, busy);
+    }
+    write_lines(d, &lines);
+}
+
+#[test]
+fn verifier_detects_erased_retry_attempts_and_missing_reopens() {
+    let gap = tampered(|d| inject_busy_retry(d, true, false));
+    assert_fails(&gap, "retries_repeat_exact_input_after_uncertain_errors");
+    let no_reopen = tampered(|d| inject_busy_retry(d, false, true));
+    assert_fails(&no_reopen, "every_retry_followed_a_recorded_reopen");
+}
+
+#[test]
+fn verifier_detects_unacknowledged_blobs_and_identity_swaps() {
+    let unacked = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "put_blob")[0];
+        lines[i]["outcome"] = json!("error");
+        lines[i]["error_code"] = json!("storage_error");
+        lines[i]["sqlite_code"] = json!("DatabaseBusy/5");
+        write_lines(d, &lines);
+    });
+    assert_fails(&unacked, "every_blob_put_has_durable_outcome");
+    let swapped = tampered(|d| {
+        let mut lines = read_lines(d);
+        let ids = contention_ops(&lines, "exact_retry_check");
+        let first = lines[ids[0]]["operation"].clone();
+        lines[ids[1]]["operation"] = first;
+        write_lines(d, &lines);
+    });
+    assert_fails(&swapped, "same_operation_retry_returns_identical_outcome");
+    let readback = tampered(|d| {
+        let mut lines = read_lines(d);
+        let ids = contention_ops(&lines, "blob_readback");
+        let index = lines[ids[0]]["index"].as_u64().unwrap();
+        lines[ids[0]]["index"] = json!(index + 1000);
+        write_lines(d, &lines);
+    });
+    assert_fails(&readback, "acknowledged_blobs_read_back_exactly");
+    let skipped = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "worker_end")[0];
+        let n = lines[i]["param"].as_u64().unwrap();
+        lines[i]["param"] = json!(n - 1);
+        write_lines(d, &lines);
+    });
+    assert_fails(&skipped, "workers_completed_and_all_operations_recorded");
+}
+
+#[test]
+fn debug_builds_are_not_release_evidence_and_huge_values_do_not_panic() {
+    let plain = bench(&["verify", baseline().to_str().unwrap()]);
+    let out = text(&plain);
+    if cfg!(debug_assertions) {
+        assert_fails(&out, "release_build_only");
+        assert!(!plain.status.success());
+    } else {
+        assert!(out.contains("PASS release_build_only"), "{out}");
+    }
+    let huge = tampered(|d| {
+        let mut lines = read_lines(d);
+        let i = contention_ops(&lines, "compare_and_advance")[0];
+        lines[i]["ns"] = json!(u64::MAX);
+        lines[i]["start_unix_ns"] = json!(u64::MAX);
+        write_lines(d, &lines);
+    });
+    assert!(huge.contains("VERIFY: FAILED"), "{huge}");
+}
+
+#[test]
+fn prefill_without_files_is_rejected_not_a_panic() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = bench(&[
+        "run",
+        "--profile",
+        "smoke",
+        "--out",
+        tmp.path().join("x").to_str().unwrap(),
+        "--allow-debug-build",
+        "--prefill-versions",
+        "3",
+        "--prefill-files",
+        "0",
+    ]);
+    assert_eq!(result.status.code(), Some(2), "{}", text(&result));
+    assert!(text(&result).contains("prefill-files"), "{}", text(&result));
 }

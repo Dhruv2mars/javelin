@@ -62,6 +62,7 @@ impl Ctx {
             index,
             pid: std::process::id(),
             ns,
+            start_unix_ns: Some(crate::record::unix_ns().saturating_sub(ns)),
             outcome,
             error_code,
             error,

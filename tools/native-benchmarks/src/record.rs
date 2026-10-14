@@ -111,6 +111,7 @@ struct Acc {
     points: Vec<(u64, u64)>,
     params: std::collections::BTreeSet<u64>,
     expected: std::collections::BTreeSet<u64>,
+    untimed: bool,
 }
 
 fn group_json(scenario: &str, op: &str, outcome: &str, acc: &mut Acc) -> Value {
@@ -119,10 +120,11 @@ fn group_json(scenario: &str, op: &str, outcome: &str, acc: &mut Acc) -> Value {
     let mut ns = ordered.clone();
     ns.sort_unstable();
     let n = ns.len() as u64;
-    let sum: u64 = ns.iter().sum();
+    let sum: u64 = ns.iter().fold(0u64, |a, b| a.saturating_add(*b));
     let state_points = acc.params.len().max(acc.expected.len());
+    let state_recorded = !acc.params.is_empty() || !acc.expected.is_empty();
     let quarter = ordered.len() / 4;
-    let trend = (ordered.len() >= 8).then(|| {
+    let trend = (ordered.len() >= 8 && !acc.untimed).then(|| {
         let mut first = ordered[..quarter].to_vec();
         let mut last = ordered[ordered.len() - quarter..].to_vec();
         first.sort_unstable();
@@ -135,7 +137,7 @@ fn group_json(scenario: &str, op: &str, outcome: &str, acc: &mut Acc) -> Value {
         "max_ns": ns[ns.len() - 1], "mean_ns": sum / n, "sum_ns": sum,
         "p95_reliable": n >= 20,
         "distinct_state_points": state_points,
-        "pooled_across_changing_state": state_points > 1,
+        "pooled_across_changing_state": state_recorded.then_some(state_points > 1),
         "time_ordered_trend": trend,
     })
 }
@@ -155,6 +157,7 @@ pub fn summarize(records: &[Record]) -> Value {
                 let acc = groups
                     .entry((s.scenario.clone(), s.op.clone(), s.outcome.clone()))
                     .or_default();
+                acc.untimed |= s.start_unix_ns.is_none();
                 acc.points
                     .push((s.start_unix_ns.unwrap_or(seq as u64), s.ns));
                 acc.params.extend(s.param);
@@ -171,13 +174,11 @@ pub fn summarize(records: &[Record]) -> Value {
                     );
                     *errors.entry(key).or_default() += 1;
                 }
-                if s.scenario == "contention"
-                    && matches!(s.op.as_str(), "compare_and_advance" | "resolve_unresolved")
-                {
+                if s.scenario == "contention" && s.op == "compare_and_advance" {
                     let chain = chains
                         .entry((s.scenario.clone(), s.operation.clone().unwrap_or_default()))
                         .or_insert((0, 0, String::new()));
-                    chain.1 += s.ns;
+                    chain.1 = chain.1.saturating_add(s.ns);
                     if chain.2.is_empty() || s.attempt >= chain.0 {
                         chain.0 = s.attempt;
                         chain.2 = s.outcome.clone();
@@ -197,7 +198,7 @@ pub fn summarize(records: &[Record]) -> Value {
     }
     for ((scenario, _), (_, sum, outcome)) in chains {
         let acc = groups
-            .entry((scenario, "compare_and_advance_end_to_end".into(), outcome))
+            .entry((scenario, "compare_and_advance_attempts_sum".into(), outcome))
             .or_default();
         acc.points.push((acc.points.len() as u64, sum));
     }
@@ -228,7 +229,7 @@ pub fn summarize(records: &[Record]) -> Value {
     });
     json!({
         "barrier": barrier,
-        "percentile_method": "nearest-rank ceil(p/100*n) over raw nanosecond samples; p95 equals the maximum when n < 20 (p95_reliable=false); groups with pooled_across_changing_state=true mix different repository states, so read the raw param/expected series and time_ordered_trend instead of pooled percentiles",
+        "percentile_method": "nearest-rank ceil(p/100*n) over raw nanosecond samples; p95 equals the maximum when n < 20 (p95_reliable=false); groups with pooled_across_changing_state=true mix different repository states (read the raw param/expected series and time_ordered_trend instead); null means the state was not recorded for that operation; compare_and_advance_attempts_sum adds attempt durations per operation and excludes reopen samples and the parent's later resolution",
         "groups": groups,
         "error_counts": errors,
         "truncated_scenarios": truncated,

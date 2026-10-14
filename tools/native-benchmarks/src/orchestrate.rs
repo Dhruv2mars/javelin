@@ -106,6 +106,9 @@ pub fn run(args: &[String]) -> R<bool> {
             "sqlite_fullfsync": "ON",
             "source": "src/repository.rs connect() at the measured source; read, not set, by this tool",
             "contention_retries": contention::MAX_RETRIES,
+            "bundled_sqlite_library_version": rusqlite::version(),
+            "journal_mode": "DELETE (enforced by connect(); not readable through the public API)",
+            "durability_note": "synchronous=EXTRA and fullfsync=ON are set per connection; fullfsync only affects macOS, so macOS and Linux latencies are not durability-equivalent",
             "os_cache": "not dropped; samples are warm-cache unless the operation writes",
         },
         "estimated_validation_bytes": params.estimated_validation_bytes(),
@@ -186,12 +189,12 @@ pub fn run(args: &[String]) -> R<bool> {
     if !args.iter().any(|a| a == "--keep-repos") {
         let _ = fs::remove_dir_all(&workdir);
     }
-    let report = verify_and_print(&out)?;
+    let report = verify_and_print(&out, args.iter().any(|a| a == "--allow-debug-build"))?;
     Ok(ok && report)
 }
 
-pub fn verify_and_print(dir: &Path) -> R<bool> {
-    let checks = verify::verify(dir)?;
+pub fn verify_and_print(dir: &Path, allow_debug: bool) -> R<bool> {
+    let checks = verify::verify(dir, allow_debug)?;
     let mut all = true;
     for c in &checks {
         println!(

@@ -63,7 +63,8 @@ pub fn host_info(workdir: &Path) -> Value {
         "arch": std::env::consts::ARCH,
         "family": std::env::consts::FAMILY,
         "logical_cpus": std::thread::available_parallelism().map(|n| n.get()).ok(),
-        "rustc": run("rustc", &["-Vv"]),
+        "rustc": env!("NB_RUSTC_VERBOSE"),
+        "rustc_on_path_at_run": run("rustc", &["-Vv"]),
         "cargo": run("cargo", &["-V"]),
         "workdir": dir,
     });
@@ -153,8 +154,16 @@ fn walk(dir: &Path, usage: &mut Usage) {
 }
 
 /// Peak resident set of this process. macOS reports bytes, Linux kilobytes.
+/// Linux reads VmHWM: ru_maxrss survives exec and can carry the spawning parent's peak.
 pub fn peak_rss_bytes() -> Option<u64> {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
+    {
+        let status = fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+        let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+        Some(kb * 1024)
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
     {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         // SAFETY: getrusage fills the provided, properly sized struct.
@@ -162,11 +171,7 @@ pub fn peak_rss_bytes() -> Option<u64> {
             return None;
         }
         let raw = usage.ru_maxrss.max(0) as u64;
-        Some(if cfg!(target_os = "macos") {
-            raw
-        } else {
-            raw * 1024
-        })
+        Some(raw)
     }
     #[cfg(not(unix))]
     {

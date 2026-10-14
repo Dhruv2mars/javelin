@@ -20,9 +20,11 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("run") => orchestrate::run(&args).map(|ok| if ok { 0 } else { 1 }),
         Some("verify") => match args.get(1) {
-            Some(dir) => {
-                orchestrate::verify_and_print(dir.as_ref()).map(|ok| if ok { 0 } else { 1 })
-            }
+            Some(dir) => orchestrate::verify_and_print(
+                dir.as_ref(),
+                args.iter().any(|a| a == "--allow-debug-build"),
+            )
+            .map(|ok| if ok { 0 } else { 1 }),
             None => Err("usage: native-bench verify DIR".into()),
         },
         Some("scenario") => orchestrate::scenario(&args).map(|_| 0),

@@ -119,6 +119,37 @@ fn put_manifest(
     Ok(result?)
 }
 
+/// Runs a write under the documented retry rule: after an uncertain `storage_error` or
+/// `io_error`, reopen (a separate sample) and repeat the same input. Every attempt is a
+/// raw sample; a non-uncertain error or exhausted retries is returned to the caller.
+#[allow(clippy::too_many_arguments)]
+fn retried<T>(
+    ctx: &mut Ctx,
+    repo: &mut Repository,
+    dir: &str,
+    w: u32,
+    op: &str,
+    index: u64,
+    decorate: impl Fn(&mut Sample, Option<&T>),
+    call: impl Fn(&mut Repository) -> javelin::Result<T>,
+) -> R<T> {
+    for attempt in 0..=MAX_RETRIES {
+        let (ns, result) = timed(|| call(repo));
+        let mut s = ctx.sample(op, index, ns, &result);
+        s.process = Some(w);
+        s.attempt = attempt;
+        decorate(&mut s, result.as_ref().ok());
+        let again = matches!(&result, Err(e) if retryable(e.code())) && attempt < MAX_RETRIES;
+        ctx.push(s);
+        match result {
+            Ok(value) => return Ok(value),
+            Err(_) if again => reopen(ctx, repo, dir, w),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("the final attempt always returns")
+}
+
 pub fn worker(args: &[String]) -> R<()> {
     let get = |name: &str| -> R<String> {
         args.iter()
@@ -141,7 +172,18 @@ pub fn worker(args: &[String]) -> R<()> {
         deadline_unix_ns: deadline,
         records: vec![],
     };
-    let (ns, opened) = timed(|| Repository::open(&dir));
+    let result = worker_body(&mut ctx, &dir, w, seed, ops, blobs);
+    ctx.memory(Some(w));
+    // Raw samples, including the error that ended a failed worker, are always kept.
+    write_records(
+        &Path::new(&out).join(format!("worker-{w}.jsonl")),
+        &ctx.records,
+    )?;
+    result
+}
+
+fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: usize) -> R<()> {
+    let (ns, opened) = timed(|| Repository::open(dir));
     let mut s = ctx.sample("open", 0, ns, &opened);
     s.process = Some(w);
     ctx.push(s);
@@ -150,12 +192,18 @@ pub fn worker(args: &[String]) -> R<()> {
     let mut manifests = Vec::new();
     for i in 0..ops {
         let payload = format!("contention w{w} i{i} seed{seed}");
-        let blob = put_blob(
-            &mut ctx,
+        let blob = retried(
+            ctx,
             &mut repo,
+            dir,
+            w,
             "prep_put_blob",
             i as u64,
-            payload.as_bytes(),
+            |s: &mut Sample, id: Option<&ObjectId>| {
+                s.bytes = Some(payload.len() as u64);
+                s.object = id.map(|id| id.to_string());
+            },
+            |r| r.put_blob(payload.as_bytes()),
         )?;
         let manifest = Manifest::new([(
             RepoPath::parse(&format!("contention/w{w}-i{i}"))?,
@@ -164,18 +212,16 @@ pub fn worker(args: &[String]) -> R<()> {
                 executable: false,
             },
         )])?;
-        manifests.push(put_manifest(
-            &mut ctx,
+        manifests.push(retried(
+            ctx,
             &mut repo,
+            dir,
+            w,
             "prep_put_manifest",
             i as u64,
-            &manifest,
+            |s: &mut Sample, id: Option<&ObjectId>| s.object = id.map(|id| id.to_string()),
+            |r| r.put_manifest(&manifest),
         )?);
-    }
-    for record in ctx.records.iter_mut() {
-        if let Record::Sample(s) = record {
-            s.process = Some(w);
-        }
     }
     println!("ready");
     std::io::stdout().flush()?;
@@ -210,23 +256,25 @@ pub fn worker(args: &[String]) -> R<()> {
             ));
             break;
         }
-        let (ns, hist) = timed(|| repo.history());
-        let mut s = ctx.sample("read_head", i as u64, ns, &hist);
-        s.process = Some(w);
-        s.result = hist
-            .as_ref()
-            .ok()
-            .and_then(|h| h.last())
-            .map(|v| v.number.get());
-        ctx.push(s);
-        let Some(head) = hist.ok().and_then(|h| h.last().map(|v| v.number)) else {
-            continue;
-        };
+        let history = retried(
+            ctx,
+            &mut repo,
+            dir,
+            w,
+            "read_head",
+            i as u64,
+            |s: &mut Sample, h: Option<&Vec<javelin::WorldVersion>>| {
+                s.result = h.and_then(|h| h.last()).map(|v| v.number.get());
+                s.param = s.result;
+            },
+            |r| r.history(),
+        )?;
+        let head = history.last().map(|v| v.number).ok_or("empty history")?;
         executed += 1;
         let operation = format!("w{w}-i{i}");
         for attempt in 0..=MAX_RETRIES {
             let (s, result) = advance(
-                &ctx,
+                ctx,
                 &mut repo,
                 "compare_and_advance",
                 &operation,
@@ -241,7 +289,7 @@ pub fn worker(args: &[String]) -> R<()> {
             if !again {
                 break;
             }
-            reopen(&mut ctx, &mut repo, &dir, w);
+            reopen(ctx, &mut repo, dir, w);
         }
     }
     for j in 0..blobs {
@@ -253,21 +301,21 @@ pub fn worker(args: &[String]) -> R<()> {
         }
         let key = blob_key(w, j);
         let bytes = blob_bytes(seed, &key);
-        for attempt in 0..=MAX_RETRIES {
-            let (ns, result) = timed(|| repo.put_blob(&bytes));
-            let mut s = ctx.sample("put_blob", j as u64, ns, &result);
-            s.process = Some(w);
-            s.attempt = attempt;
-            s.content = Some(key.clone());
-            s.bytes = Some(bytes.len() as u64);
-            s.object = result.as_ref().ok().map(|id| id.to_string());
-            let again = matches!(&result, Err(e) if retryable(e.code())) && attempt < MAX_RETRIES;
-            ctx.push(s);
-            if !again {
-                break;
-            }
-            reopen(&mut ctx, &mut repo, &dir, w);
-        }
+        // An exhausted uncertain error is a measured outcome; the parent resolves it.
+        let _ = retried(
+            ctx,
+            &mut repo,
+            dir,
+            w,
+            "put_blob",
+            j as u64,
+            |s: &mut Sample, id: Option<&ObjectId>| {
+                s.content = Some(key.clone());
+                s.bytes = Some(bytes.len() as u64);
+                s.object = id.map(|id| id.to_string());
+            },
+            |r| r.put_blob(&bytes),
+        );
     }
     ctx.push(Sample {
         scenario: "contention".into(),
@@ -278,11 +326,6 @@ pub fn worker(args: &[String]) -> R<()> {
         param: Some(executed),
         ..Default::default()
     });
-    ctx.memory(Some(w));
-    write_records(
-        &Path::new(&out).join(format!("worker-{w}.jsonl")),
-        &ctx.records,
-    )?;
     Ok(())
 }
 
@@ -329,28 +372,40 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         .iter_mut()
         .map(|c| BufReader::new(c.stdout.take().expect("piped stdout")))
         .collect();
+    // A worker that cannot reach the barrier keeps its raw error samples; the rest proceed.
+    let mut failures = Vec::new();
+    let mut ready = Vec::new();
     for (w, reader) in readers.iter_mut().enumerate() {
         let mut line = String::new();
         reader.read_line(&mut line)?;
-        if line.trim() != "ready" {
-            return Err(format!("worker {w} failed before the barrier").into());
+        ready.push(line.trim() == "ready");
+        if !ready[w] {
+            failures.push(format!("worker {w} failed before the barrier"));
         }
     }
     let target = unix_ns() + BARRIER_LEAD_NS;
-    for child in &mut children {
-        let stdin = child.stdin.as_mut().expect("piped stdin");
-        writeln!(stdin, "go {target}")?;
-        stdin.flush()?;
+    for (child, ok) in children.iter_mut().zip(&ready) {
+        if *ok {
+            let stdin = child.stdin.as_mut().expect("piped stdin");
+            writeln!(stdin, "go {target}")?;
+            stdin.flush()?;
+        }
     }
     for (w, child) in children.iter_mut().enumerate() {
+        drop(child.stdin.take());
         let status = child.wait()?;
-        if !status.success() {
-            return Err(format!("worker {w} exited with {status}").into());
+        if !status.success() && ready[w] {
+            failures.push(format!("worker {w} exited with {status}"));
         }
     }
     let mut samples: Vec<Sample> = Vec::new();
     for w in 0..p.procs {
-        for record in read_records(&workers_dir.join(format!("worker-{w}.jsonl")))? {
+        let file = workers_dir.join(format!("worker-{w}.jsonl"));
+        if !file.exists() {
+            failures.push(format!("worker {w} wrote no records"));
+            continue;
+        }
+        for record in read_records(&file)? {
             match record {
                 Record::Sample(s) => samples.push(s),
                 other => ctx.records.push(other),
@@ -384,11 +439,33 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         r.index = s.index;
         resolutions.push(r);
     }
+    // A blob put whose final attempt was an uncertain error is re-put with the same
+    // bytes (content-addressed, so safe) to learn whether it was stored.
+    let mut last_put: BTreeMap<(Option<u32>, u64), Sample> = BTreeMap::new();
+    for s in samples.iter().filter(|s| s.op == "put_blob") {
+        let key = (s.process, s.index);
+        if last_put.get(&key).is_none_or(|l| l.attempt <= s.attempt) {
+            last_put.insert(key, s.clone());
+        }
+    }
+    for s in last_put.values().filter(|s| s.outcome == "error") {
+        let mut repo = Repository::open(&dir)?;
+        let key = s.content.clone().unwrap_or_default();
+        let bytes = blob_bytes(p.seed, &key);
+        let (ns, result) = timed(|| repo.put_blob(&bytes));
+        let mut r = ctx.sample("resolve_blob_put", s.index, ns, &result);
+        r.process = s.process;
+        r.attempt = s.attempt + 1;
+        r.content = Some(key);
+        r.bytes = Some(bytes.len() as u64);
+        r.object = result.as_ref().ok().map(|id| id.to_string());
+        resolutions.push(r);
+    }
     samples.extend(resolutions);
-    samples.extend(seeded);
     for s in &samples {
         ctx.records.push(Record::Sample(s.clone()));
     }
+    samples.extend(seeded);
     // Post-run checks through fresh handles.
     let mut repo = Repository::open(&dir)?;
     let (ns, history) = timed(|| repo.history());
@@ -489,10 +566,17 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         ctx.push(s);
     }
     // Every acknowledged blob must read back byte-for-byte equal to its generated payload.
+    let mut blob_finals: BTreeMap<(Option<u32>, u64), &Sample> = BTreeMap::new();
     for s in samples
         .iter()
-        .filter(|s| s.op == "put_blob" && s.outcome == "ok")
+        .filter(|s| s.op == "put_blob" || s.op == "resolve_blob_put")
     {
+        let key = (s.process, s.index);
+        if blob_finals.get(&key).is_none_or(|l| l.attempt <= s.attempt) {
+            blob_finals.insert(key, s);
+        }
+    }
+    for s in blob_finals.values().filter(|s| s.outcome == "ok") {
         let id = ObjectId::parse(s.object.as_deref().unwrap())?;
         let key = s.content.clone().unwrap();
         let expected = blob_bytes(p.seed, &key);
@@ -507,7 +591,11 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         ctx.push(r);
     }
     ctx.disk("after_contention", None, Some(check.objects as u64));
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
 }
 
 /// Hash of every repository file; proves replays do not modify stored bytes.
@@ -556,6 +644,10 @@ fn prefill(ctx: &mut Ctx, repo: &mut Repository, out: &mut Vec<Sample>) -> R<u64
     }
     let changed = (files / 10).max(1);
     for v in 1..=versions {
+        if ctx.expired() {
+            ctx.note("budget exhausted during contention prefill; run is truncated");
+            return Ok(v as u64 - 1);
+        }
         for j in 0..changed {
             let i = (v * changed + j) % files;
             ids[i] = put_blob(
@@ -588,6 +680,7 @@ fn prefill(ctx: &mut Ctx, repo: &mut Repository, out: &mut Vec<Sample>) -> R<u64
             0,
             None,
         );
+        ctx.push(s.clone());
         out.push(s);
         result?;
     }
@@ -598,6 +691,10 @@ fn prefill(ctx: &mut Ctx, repo: &mut Repository, out: &mut Vec<Sample>) -> R<u64
 /// hold time to read against any busy outcome under contention.
 fn baseline(ctx: &mut Ctx, repo: &mut Repository, mut head: u64, out: &mut Vec<Sample>) -> R<()> {
     for i in 0..ctx.params.baseline_ops {
+        if ctx.expired() {
+            ctx.note("budget exhausted during contention baseline; run is truncated");
+            break;
+        }
         let payload = format!("baseline i{i} seed{}", ctx.params.seed);
         let blob = put_blob(ctx, repo, "baseline_put_blob", i as u64, payload.as_bytes())?;
         let manifest = Manifest::new([(
@@ -619,6 +716,7 @@ fn baseline(ctx: &mut Ctx, repo: &mut Repository, mut head: u64, out: &mut Vec<S
             0,
             None,
         );
+        ctx.push(s.clone());
         out.push(s);
         result?;
         head += 1;

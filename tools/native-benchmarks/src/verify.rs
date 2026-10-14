@@ -33,7 +33,7 @@ fn retryable(code: Option<&str>) -> bool {
     matches!(code, Some("storage_error" | "io_error"))
 }
 
-pub fn verify(dir: &Path) -> R<Vec<Check>> {
+pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
     let records = read_records(&dir.join("samples.jsonl"))?;
     let summary = json(dir, "summary.json")?;
     let run = json(dir, "run.json")?;
@@ -72,6 +72,15 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
             && run["command"].is_array()
             && inventory["params"] == run["params"],
         "executable/source hashes, host, rustc, command and params consistent",
+    ));
+    let release = run["provenance"]["build_profile"] == "release";
+    out.push(check(
+        "release_build_only",
+        release || allow_debug,
+        format!(
+            "build_profile {}; debug-build evidence needs --allow-debug-build",
+            run["provenance"]["build_profile"]
+        ),
     ));
     let clean = |name: &str| {
         records
@@ -236,7 +245,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         let same_input = a
             .iter()
             .all(|s| s.expected == a[0].expected && s.manifest == a[0].manifest);
-        let seq = a.windows(2).all(|w| w[0].attempt < w[1].attempt);
+        let seq = a.iter().enumerate().all(|(k, s)| s.attempt as usize == k);
         let only_after_uncertain = a[..a.len() - 1]
             .iter()
             .all(|s| s.outcome == "error" && retryable(s.error_code.as_deref()));
@@ -246,6 +255,27 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         "retries_repeat_exact_input_after_uncertain_errors",
         retry_ok && !groups.is_empty(),
         format!("{} operations", groups.len()),
+    ));
+    let worker_retries = samples
+        .iter()
+        .filter(|s| {
+            s.scenario == "contention"
+                && s.attempt > 0
+                && matches!(
+                    s.op.as_str(),
+                    "compare_and_advance"
+                        | "put_blob"
+                        | "read_head"
+                        | "prep_put_blob"
+                        | "prep_put_manifest"
+                )
+        })
+        .count();
+    let reopens = samples.iter().filter(|s| s.op == "reopen").count();
+    out.push(check(
+        "every_retry_followed_a_recorded_reopen",
+        worker_retries == reopens,
+        format!("{worker_retries} retry attempts, {reopens} reopen samples"),
     ));
     let finals: Vec<(&str, &Sample)> = groups
         .iter()
@@ -334,6 +364,14 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         "same_operation_retry_returns_identical_outcome",
         retries.len() == groups.len()
             && retries.iter().all(|s| s.outcome == "ok")
+            && retries
+                .iter()
+                .map(|s| s.operation.as_deref().unwrap_or(""))
+                .collect::<std::collections::BTreeSet<_>>()
+                == groups
+                    .keys()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>()
             && !retries.is_empty(),
         format!("{} retried operations", retries.len()),
     ));
@@ -346,14 +384,40 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         reuse.len() == 1 && reuse[0].outcome == "ok",
         "same ID with different manifest",
     ));
-    let puts: Vec<_> = samples
+    let mut blob_finals: BTreeMap<(Option<u32>, u64), &Sample> = BTreeMap::new();
+    for s in samples.iter().filter(|s| {
+        s.scenario == "contention" && (s.op == "put_blob" || s.op == "resolve_blob_put")
+    }) {
+        let key = (s.process, s.index);
+        if blob_finals.get(&key).is_none_or(|l| l.attempt <= s.attempt) {
+            blob_finals.insert(key, s);
+        }
+    }
+    let truncated = records
         .iter()
-        .filter(|s| s.scenario == "contention" && s.op == "put_blob")
+        .any(|r| matches!(r, Record::Note { message, .. } if message.contains("budget exhausted")));
+    let blobs = run["params"]["blobs"].as_u64().unwrap_or(0) as usize;
+    let all_ok = blob_finals.values().all(|s| s.outcome == "ok");
+    out.push(check(
+        "every_blob_put_has_durable_outcome",
+        all_ok && (truncated || blob_finals.len() == procs * blobs) && !blob_finals.is_empty(),
+        format!(
+            "{} blob puts with a final outcome; {} not acknowledged",
+            blob_finals.len(),
+            blob_finals.values().filter(|s| s.outcome != "ok").count()
+        ),
+    ));
+    let acked: Vec<_> = blob_finals
+        .iter()
+        .filter(|(_, s)| s.outcome == "ok")
         .collect();
-    let acked = puts.iter().filter(|s| s.outcome == "ok").count();
-    let read: Vec<_> = samples.iter().filter(|s| s.op == "blob_readback").collect();
+    let read: BTreeMap<(Option<u32>, u64), &Sample> = samples
+        .iter()
+        .filter(|s| s.op == "blob_readback")
+        .map(|s| ((s.process, s.index), *s))
+        .collect();
     let mut ids_by_key: BTreeMap<&str, std::collections::BTreeSet<&str>> = BTreeMap::new();
-    for s in puts.iter().filter(|s| s.outcome == "ok") {
+    for (_, s) in &acked {
         ids_by_key
             .entry(s.content.as_deref().unwrap_or(""))
             .or_default()
@@ -362,13 +426,16 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
     let distinct: std::collections::BTreeSet<_> = ids_by_key.values().flatten().collect();
     out.push(check(
         "acknowledged_blobs_read_back_exactly",
-        acked > 0
-            && read.len() == acked
-            && read.iter().all(|s| s.outcome == "ok")
+        !acked.is_empty()
+            && read.len() == acked.len()
+            && acked
+                .iter()
+                .all(|(k, _)| read.get(k).is_some_and(|r| r.outcome == "ok"))
             && ids_by_key.values().all(|v| v.len() == 1)
             && distinct.len() == ids_by_key.len(),
         format!(
-            "{acked} acknowledged puts, {} read back, {} distinct contents",
+            "{} acknowledged puts, {} read back, {} distinct contents",
+            acked.len(),
             read.len(),
             ids_by_key.len()
         ),
@@ -392,7 +459,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
     ));
     let heads: BTreeMap<(Option<u32>, u64), Option<u64>> = samples
         .iter()
-        .filter(|s| s.op == "read_head" && s.scenario == "contention")
+        .filter(|s| s.op == "read_head" && s.scenario == "contention" && s.outcome == "ok")
         .map(|s| ((s.process, s.index), s.result))
         .collect();
     let observed = samples
@@ -408,7 +475,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         observed && !heads.is_empty(),
         "each first attempt used the head its worker had just read",
     ));
-    let end = |s: &Sample| s.start_unix_ns.unwrap_or(0) + s.ns;
+    let end = |s: &Sample| s.start_unix_ns.unwrap_or(0).saturating_add(s.ns);
     let ordered = finals
         .iter()
         .filter(|(_, f)| f.outcome == "stale")
@@ -428,6 +495,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         "prep_put_manifest",
         "prefill_put_blob",
         "prefill_put_manifest",
+        "resolve_blob_put",
         "baseline_put_blob",
         "baseline_put_manifest",
     ];
@@ -456,6 +524,7 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         unchanged.len() == 1 && unchanged[0].outcome == "ok",
         "repository file hash before and after replaying every operation",
     ));
+    let ops_per_proc = run["params"]["ops"].as_u64().unwrap_or(0) as usize;
     let ends: Vec<_> = samples.iter().filter(|s| s.op == "worker_end").collect();
     let executed: u64 = ends.iter().filter_map(|s| s.param).sum();
     let worker_ops = groups
@@ -464,15 +533,14 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
         .count() as u64;
     out.push(check(
         "workers_completed_and_all_operations_recorded",
-        ends.len() == procs && executed == worker_ops,
+        ends.len() == procs
+            && executed == worker_ops
+            && (truncated || executed == (procs * ops_per_proc) as u64),
         format!(
             "{} worker_end markers; {executed} executed vs {worker_ops} recorded operations",
             ends.len()
         ),
     ));
-    let truncated = records
-        .iter()
-        .any(|r| matches!(r, Record::Note { message, .. } if message.contains("budget exhausted")));
     out.push(check(
         "not_truncated_by_budget",
         !truncated
