@@ -488,3 +488,23 @@ earlier artifacts and are excluded from this build's evidence and releases.
   even before truncation; directory-rename copy; O(N²) whiteout mass deletion.
 - [ ] Open integration: native storage binding, automatic checkpoints, CLI,
   product Gate 2 and GA. Power loss, mounted I/O failure injection and scale untested.
+
+
+### macOS mounted backend suitability
+
+- Branch: `test/macos-backend-suitability`, base `61aae6f`; targets `test/macos-sparse-backend`.
+- Owns only `tools/macos-backend-validation/**`, `docs/macos-backend-suitability.md`,
+  `.github/workflows/macos-backend-suitability.yml`, and this appended section.
+- Done means one reproducible disposable macos-26 hosted attempt against the unchanged
+  `39a065b` backend, with exact source, identity, fixture, measurements, raw failures,
+  artifact integrity audit, cleanup verification and independent Codex final review.
+- Failures remain failures. No native binding, Gate 2, platform acceptance or GA claim.
+- [x] Recover prior commands and clean source; no prior edits, PR or review existed.
+- [x] Read local rules and hub TASKS, build contract, decisions and PR11 audit evidence.
+- [ ] Open and T3-link exactly one planning draft; report ownership to hub.
+- [ ] Compare at least two fixture designs and record chosen bounds.
+- [ ] Implement bounded runner using inherited CLI, without backend changes.
+- [ ] Verify offline audit rejects tampering and missing/false phase outcomes.
+- [ ] Execute hosted attempt, retain failures, audit exact-source artifacts and cleanup.
+- [ ] Obtain independent read-only Codex source/evidence review and resolve proof gaps.
+- [ ] Report tested SHA, doc head, limits, findings and next smallest recommendation to hub.
