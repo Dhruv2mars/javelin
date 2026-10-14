@@ -28,6 +28,29 @@ fn read(path: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn grep_first(text: Value, key: &str) -> Value {
+    text.as_str()
+        .and_then(|t| t.lines().find(|l| l.starts_with(key)))
+        .map(|l| json!(l.trim()))
+        .unwrap_or(Value::Null)
+}
+
+/// The one mount-table line for the device that holds the work directory.
+fn mount_entry(df: &Value, mounts: Value) -> Value {
+    let device = df
+        .as_str()
+        .and_then(|t| t.lines().nth(1))
+        .and_then(|l| l.split_whitespace().next());
+    match (device, mounts.as_str()) {
+        (Some(device), Some(table)) => table
+            .lines()
+            .find(|l| l.starts_with(&format!("{device} ")))
+            .map(|l| json!(l))
+            .unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
 pub fn executable_sha256() -> String {
     let exe = std::env::current_exe().expect("current executable");
     sha256_hex(&fs::read(exe).expect("read executable"))
@@ -55,18 +78,30 @@ pub fn host_info(workdir: &Path) -> Value {
         map.insert("hw_model".into(), run("sysctl", &["-n", "hw.model"]));
         map.insert("memory_bytes".into(), run("sysctl", &["-n", "hw.memsize"]));
         map.insert("filesystem_df".into(), run("df", &["-P", "-k", &dir]));
-        map.insert("mounts".into(), run("mount", &[]));
+        map.insert(
+            "mount_entry".into(),
+            mount_entry(&map["filesystem_df"], run("mount", &[])),
+        );
     } else if cfg!(target_os = "linux") {
         map.insert("os_version".into(), read("/etc/os-release"));
         map.insert("kernel".into(), run("uname", &["-srm"]));
-        map.insert("cpuinfo".into(), read("/proc/cpuinfo"));
-        map.insert("meminfo".into(), read("/proc/meminfo"));
+        map.insert(
+            "cpu_model".into(),
+            grep_first(read("/proc/cpuinfo"), "model name"),
+        );
+        map.insert(
+            "memory".into(),
+            grep_first(read("/proc/meminfo"), "MemTotal"),
+        );
         map.insert(
             "filesystem_type".into(),
             run("stat", &["-f", "-c", "%T", &dir]),
         );
         map.insert("filesystem_df".into(), run("df", &["-P", "-k", &dir]));
-        map.insert("mounts".into(), read("/proc/mounts"));
+        map.insert(
+            "mount_entry".into(),
+            mount_entry(&map["filesystem_df"], read("/proc/mounts")),
+        );
     } else {
         map.insert(
             "note".into(),
