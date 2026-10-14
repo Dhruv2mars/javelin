@@ -47,6 +47,13 @@ async function tree(base) {
   }
   await visit(''); return rows;
 }
+// Names only: listing must not read file bytes, so it does not hydrate placeholders.
+async function names(base, name = '') {
+  const rows = [name];
+  const stat = await fs.lstat(join(base, name));
+  if (stat.isDirectory() && !stat.isSymbolicLink()) for (const child of (await fs.readdir(join(base, name))).sort()) rows.push(...await names(base, join(name, child)));
+  return rows;
+}
 async function writeSynced(path, contents) {
   const file = await fs.open(path, 'w');
   try { await file.writeFile(contents); await file.sync(); } finally { await file.close(); }
@@ -154,7 +161,7 @@ try {
     });
     await step('symlinkCreate', async () => { await fs.symlink('created.txt', join(a, 'new-link')); assert.equal(await read(join(a, 'new-link')), 'created in A\n'); });
     await step('traversal', async () => {
-      const listing = (await tree(a)).map(row => row[0]);
+      const listing = await names(a);
       for (const name of ['renamed-dir3\\deep\\leaf.txt', 'renamed-dir\\nested.txt', 'moved-bytes.bin', 'created.txt', 'dir2\\inner.txt'])
         assert.ok(listing.includes(name), name);
       for (const name of ['delete.txt', 'dir', 'dir3', 'bytes.bin', 'value.h.saving']) assert.ok(!listing.includes(name), name);

@@ -91,6 +91,7 @@ try {
     Start-Provider 'b' 'cfapi' $native
     [void](Check 'native-ops')
     Step 'kill-during-hydration' {
+        Stop-Provider 'a'; Audit 'a' 'before-hydration-kill'; Start-Provider 'a' 'cfapi' $native
         Set-Content -LiteralPath (Join-Path $Owned 'a.slow') -Value 'slow'
         $reader = Start-Process -FilePath $sparse -ArgumentList @('bounded', '60000', $bun, $checks, $Owned, $Evidence, 'read-slow') -PassThru `
             -RedirectStandardOutput (Join-Path $Evidence 'read-slow.stdout.txt') -RedirectStandardError (Join-Path $Evidence 'read-slow.stderr.txt')

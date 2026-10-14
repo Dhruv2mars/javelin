@@ -309,6 +309,14 @@ static int capture(const fs::path& base, const fs::path& root, const fs::path& o
             }
             if (directory) { local[path] = { Directory, id, L"", L"", state }; return true; }
             if (state & CF_PLACEHOLDER_STATE_IN_SYNC) { local[path] = { File, id, L"", L"", state }; return false; }
+            // A rename clears in-sync on the moved entry. Unchanged bytes still reference the immutable base entry:
+            // a dehydrated placeholder has no local bytes, and a hydrated one is compared with its base source.
+            auto original = baseView.find(id);
+            if (original != baseView.end() && original->second.kind == File) {
+                if ((state & CF_PLACEHOLDER_STATE_PARTIAL) || sha256(bytes(full)) == sha256(bytes(original->second.source))) {
+                    local[path] = { File, id, L"", L"", state }; return false;
+                }
+            }
         } else if (directory) { local[path] = { Directory, L"", L"", L"", state }; return true; }
         auto content = bytes(full); auto digest = sha256(content);
         std::ofstream(out / L"blobs" / wide(digest), std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
