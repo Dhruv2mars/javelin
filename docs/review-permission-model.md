@@ -135,16 +135,18 @@ compared with `examples/review_flow.expected`.
   commands. It checks append-only history, a fixed author, no self-approval, unique
   operation IDs, author-only revisions, determinism, and soundness of every allowed
   publish result.
-- `scripts/mutations.sh` reverts 16 guards one at a time and fails if any change
-  survives the suite. The guards are: author check, self-approval, current-role
+- `scripts/mutations.sh` requires a passing baseline, then reverts 16 guards one
+  at a time. Each mutation must compile and then fail at least one named test;
+  a mutation that survives, does not compile, or does not apply fails the script. The guards are: author check, self-approval, current-role
   filter, replay input comparison, epoch, approval reset, approval index, revise
   expectation, publish role, exact revision, public-role ceiling, repository match,
-  refusal-before-binding, revision equality on base, revision equality on context,
+  transition permission validation, revision equality on base, revision equality on context,
   and the unchanged-revision refusal. It runs on the Linux CI job. The base
   equality mutation came from independent review r1. It survived the earlier suite
   and is caught only by the base-only test.
 
-Hosted three-OS results and tested heads are recorded in `TASKS.md`. CI tests the
+Hosted three-OS results, run links, and tested heads are recorded in this unit's
+`TASKS.md` section. CI tests the
 PR head, not a merge with its base.
 
 ## Limits

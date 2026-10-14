@@ -232,9 +232,20 @@ fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
 - [x] Compare at least two caller API candidates with an architecture review.
 - [x] Implement the selected state machine and `check_publishable`.
 - [x] Add behavior tests with a repository-backed fixture and property tests.
-- [ ] Add the three-OS workflow and inspect actual hosted artifacts.
-- [ ] Run an independent read-only review and fix material findings.
+- [x] Add the three-OS workflow and inspect actual hosted artifacts.
+  `351102d`: run https://github.com/Dhruv2mars/javelin/actions/runs/38505916927
+  passed on Linux x64, macOS ARM64, and Windows x64. Downloaded all three artifacts:
+  each records commit `351102d`, 13 behavior + 1 property test passing, and an empty
+  example oracle diff. Linux ran 16/16 guard mutations caught. The Linux source
+  SHA256 values match local files. Earlier `363a3e3` Windows failed only on the CRLF
+  oracle comparison (run 38505130417), fixed in `64d6436`.
+- [x] Run an independent read-only review and fix material findings.
 - [x] Review r1 (Codex gpt-6.1-sol high, read-only, `363a3e3`): no high findings.
   Fixed Windows CRLF oracle comparison (`64d6436`); added base-only binding test
   and committed 16-guard `scripts/mutations.sh`; corrected doc claims.
+- [x] Review r2 (same model, `351102d`): r1 closed, no state-machine defect.
+  Fixed: mutation runner now requires a passing baseline and treats compile
+  failure, non-applied, or unnamed failure as errors; exit trap keeps status;
+  renamed mislabeled mutation to `skip_permission_validation`. Negative runner
+  check: compile-error, no-match, and harmless mutations each fail the script.
 - [ ] Hand off exact tested source, scopes, and retained limits to the hub.

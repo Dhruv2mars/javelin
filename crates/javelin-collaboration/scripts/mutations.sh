@@ -6,21 +6,37 @@ set -euo pipefail
 src=src/lib.rs
 backup=$(mktemp)
 cp "$src" "$backup"
-trap 'cp "$backup" "$src"; rm -f "$backup"' EXIT
+trap 'rc=$?; cp "$backup" "$src"; rm -f "$backup"; exit $rc' EXIT
+
+# A mutation counts only if it compiles and then fails at least one test.
+if ! cargo test --locked --quiet --no-fail-fast >/dev/null 2>&1; then
+  echo "baseline: tests fail before mutation"
+  exit 1
+fi
 
 survived=0
 mutate() {
-  local name=$1 expr=$2
+  local name=$1 expr=$2 out failed
   cp "$backup" "$src"
   perl -0pi -e "$expr" "$src"
   if cmp -s "$backup" "$src"; then
     echo "$name: NOT APPLIED"
     survived=1
-  elif cargo test --locked --quiet --no-fail-fast >/dev/null 2>&1; then
+  elif ! out=$(cargo test --locked --no-run 2>&1); then
+    echo "$name: DOES NOT COMPILE"
+    echo "$out" | grep -E '^error' | head -5
+    survived=1
+  elif out=$(cargo test --locked --no-fail-fast 2>&1); then
     echo "$name: SURVIVED"
     survived=1
   else
-    echo "$name: caught"
+    failed=$(echo "$out" | grep -E '^test .* FAILED$' | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | paste -sd, -)
+    if [ -z "$failed" ]; then
+      echo "$name: FAILED WITHOUT A NAMED TEST"
+      survived=1
+    else
+      echo "$name: caught by $failed"
+    fi
   fi
 }
 
@@ -36,7 +52,7 @@ mutate publish_role 's/permissions\.has\(publisher, Role::Maintain\)/permissions
 mutate exact_mismatch 's/if current\.revision != \*exact \{/if false {/'
 mutate public_reviewer 's/Visibility::Public => granted\.or\(Some\(Role::Read\)\)/Visibility::Public => granted.or(Some(Role::Review))/'
 mutate repo_mismatch 's/if permissions\.repository != self\.repository \{/if false {/'
-mutate refusal_binds_id 's/self\.check_permissions\(permissions\)\?;\n        let actor/let actor/'
+mutate skip_permission_validation 's/self\.check_permissions\(permissions\)\?;\n        let actor/let actor/'
 mutate equality_ignores_base 's/#\[derive\(Clone, Copy, Debug, Eq, PartialEq\)\]\npub struct RevisionRef/#[derive(Clone, Copy, Debug, Eq)]\npub struct RevisionRef/; s/(impl RevisionRef \{)/impl PartialEq for RevisionRef {\n    fn eq(&self, o: &Self) -> bool {\n        self.manifest == o.manifest && self.context == o.context\n    }\n}\n\n$1/'
 mutate equality_ignores_context 's/#\[derive\(Clone, Copy, Debug, Eq, PartialEq\)\]\npub struct RevisionRef/#[derive(Clone, Copy, Debug, Eq)]\npub struct RevisionRef/; s/(impl RevisionRef \{)/impl PartialEq for RevisionRef {\n    fn eq(&self, o: &Self) -> bool {\n        self.manifest == o.manifest && self.base == o.base\n    }\n}\n\n$1/'
 mutate unchanged_revision_allowed 's/if current\.revision == \*revision \{/if false {/'
