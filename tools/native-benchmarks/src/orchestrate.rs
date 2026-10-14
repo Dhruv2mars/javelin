@@ -53,6 +53,8 @@ pub fn parse_params(args: &[String]) -> R<Params> {
     number(args, "--procs", &mut p.procs)?;
     number(args, "--ops", &mut p.ops)?;
     number(args, "--blobs", &mut p.blobs)?;
+    number(args, "--prefill-versions", &mut p.prefill_versions)?;
+    number(args, "--prefill-files", &mut p.prefill_files)?;
     number(args, "--budget-secs", &mut p.budget_secs)?;
     p.validate()?;
     Ok(p)
@@ -164,7 +166,7 @@ pub fn run(args: &[String]) -> R<bool> {
         "layers": {"base_files": params.layer_files, "rounds": params.layer_rounds, "changed_per_round": params.layer_changed,
                    "clones": params.clones, "shared_blob_bytes": params.big_blob_bytes, "change_blob_max_bytes": 16384},
         "contention": {"processes": params.procs, "advance_ops_per_process": params.ops, "blobs_per_process": params.blobs,
-                       "blob_bytes": 4096, "shared_blobs": "even indexes identical across processes; odd indexes unique"},
+                       "blob_bytes": 4096, "prefill_versions": params.prefill_versions, "prefill_files": params.prefill_files, "shared_blobs": "even indexes identical across processes; odd indexes unique"},
     });
     fs::write(
         out.join("fixture-inventory.json"),

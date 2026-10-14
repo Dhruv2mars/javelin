@@ -202,7 +202,11 @@ pub fn worker(args: &[String]) -> R<()> {
 pub fn run(ctx: &mut Ctx) -> R<()> {
     let p = ctx.params.clone();
     let dir = ctx.repo_dir()?;
-    drop(Repository::init(&dir)?);
+    let mut prefill_samples = Vec::new();
+    {
+        let mut repo = Repository::init(&dir)?;
+        prefill(ctx, &mut repo, &mut prefill_samples)?;
+    }
     let exe = std::env::current_exe()?;
     let workers_dir = ctx.out.join("contention-workers");
     std::fs::create_dir_all(&workers_dir)?;
@@ -290,6 +294,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         resolutions.push(r);
     }
     samples.extend(resolutions);
+    samples.extend(prefill_samples);
     for s in &samples {
         ctx.records.push(Record::Sample(s.clone()));
     }
@@ -324,10 +329,12 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
     )?;
     // Exact retry of every operation's final outcome must return the identical result.
     let mut finals: BTreeMap<String, Sample> = BTreeMap::new();
-    for s in samples
-        .iter()
-        .filter(|s| s.op == "compare_and_advance" || s.op == "resolve_unresolved")
-    {
+    for s in samples.iter().filter(|s| {
+        matches!(
+            s.op.as_str(),
+            "compare_and_advance" | "resolve_unresolved" | "prefill_compare_and_advance"
+        )
+    }) {
         let key = s.operation.clone().unwrap();
         if finals.get(&key).is_none_or(|l| l.attempt <= s.attempt) {
             finals.insert(key, s.clone());
@@ -391,5 +398,65 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         ctx.push(r);
     }
     ctx.disk("after_contention", None, Some(check.objects as u64));
+    Ok(())
+}
+
+/// Builds an accepted history before the barrier so each contended advance has a
+/// non-trivial World to validate while holding the write lock. Same public APIs only.
+fn prefill(ctx: &mut Ctx, repo: &mut Repository, out: &mut Vec<Sample>) -> R<()> {
+    let (versions, files) = (ctx.params.prefill_versions, ctx.params.prefill_files);
+    if versions == 0 {
+        return Ok(());
+    }
+    let fx = ctx.fixture();
+    let blob = |i: usize, v: u64| {
+        let mut c = fx.content(i, v);
+        c.truncate(BLOB_BYTES);
+        c
+    };
+    let paths: Vec<RepoPath> = (0..files)
+        .map(|i| RepoPath::parse(&format!("prefill/p{i}")))
+        .collect::<Result<_, _>>()?;
+    let mut ids = Vec::with_capacity(files);
+    for i in 0..files {
+        let (ns, id) = timed(|| repo.put_blob(&blob(i, 0)));
+        ctx.push(ctx.sample("prefill_put_blob", i as u64, ns, &id));
+        ids.push(id?);
+    }
+    let changed = (files / 10).max(1);
+    for v in 1..=versions {
+        for j in 0..changed {
+            let i = (v * changed + j) % files;
+            ids[i] = repo.put_blob(&blob(i, v as u64))?;
+        }
+        let manifest =
+            Manifest::new(
+                paths
+                    .iter()
+                    .cloned()
+                    .zip(ids.iter().map(|id| FileEntry::Regular {
+                        content: *id,
+                        executable: false,
+                    })),
+            )?;
+        let (ns, stored) = timed(|| repo.put_manifest(&manifest));
+        ctx.push(ctx.sample("prefill_put_manifest", v as u64, ns, &stored));
+        let manifest = stored?;
+        let operation = format!("prefill-{v}");
+        let expected = VersionNumber::new(v as u64 - 1)?;
+        let (ns, result) = timed(|| {
+            repo.compare_and_advance(&OperationId::parse(&operation)?, expected, manifest)
+        });
+        let mut s = ctx.sample("prefill_compare_and_advance", v as u64, ns, &result);
+        s.operation = Some(operation);
+        s.expected = Some(expected.get());
+        s.manifest = Some(manifest.to_string());
+        if let Ok(AdvanceOutcome::Accepted { version }) = &result {
+            s.outcome = "accepted".into();
+            s.result = Some(version.number.get());
+        }
+        out.push(s);
+        result?;
+    }
     Ok(())
 }

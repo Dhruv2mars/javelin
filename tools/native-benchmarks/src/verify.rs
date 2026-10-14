@@ -198,7 +198,12 @@ pub fn verify(dir: &Path) -> R<Vec<Check>> {
     let cas: Vec<&Sample> = samples
         .iter()
         .copied()
-        .filter(|s| s.op == "compare_and_advance" || s.op == "resolve_unresolved")
+        .filter(|s| {
+            matches!(
+                s.op.as_str(),
+                "compare_and_advance" | "resolve_unresolved" | "prefill_compare_and_advance"
+            )
+        })
         .filter(|s| s.scenario == "contention")
         .collect();
     let mut groups: BTreeMap<&str, Vec<&Sample>> = BTreeMap::new();

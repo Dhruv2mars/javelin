@@ -566,3 +566,44 @@ fn clone_storage_check_passes_for_references_and_fails_for_copied_payload() {
     let verified = text(&bench(&["verify", out.to_str().unwrap()]));
     assert_fails(&verified, "clone_storage_not_payload_proportional");
 }
+
+#[test]
+fn prefilled_world_is_part_of_the_verified_ordered_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("run");
+    let result = bench(&[
+        "run",
+        "--profile",
+        "smoke",
+        "--out",
+        out.to_str().unwrap(),
+        "--allow-debug-build",
+        "--prefill-versions",
+        "3",
+        "--prefill-files",
+        "6",
+    ]);
+    assert!(result.status.success(), "{}", text(&result));
+    let history = read_json(&out.join("history.json"));
+    let ops: Vec<_> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|v| v["operation"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ops, ["prefill-1", "prefill-2", "prefill-3"]);
+    // Dropping a prefill winner must break the ordered-history evidence.
+    let mut lines = read_lines(&out);
+    let i = lines
+        .iter()
+        .position(|l| l["op"] == "prefill_compare_and_advance")
+        .unwrap();
+    lines.remove(i);
+    write_lines(&out, &lines);
+    assert_fails(
+        &text(&bench(&["verify", out.to_str().unwrap()])),
+        "history_matches_acknowledged_accepts",
+    );
+}
