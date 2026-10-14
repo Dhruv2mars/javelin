@@ -36,6 +36,9 @@ workflow may invoke or interpret Git.
 - [x] Rerun final probe source `bce352e`, including termination of a stalled external
   command group and rejection of hardlinked or FIFO report destinations.
 - [ ] Implement Layer creation, cloning, checkpointing, discard, status, and diff.
+- [x] Verify the bounded native Layer state API, immutable sparse checkpoints,
+  reference clones, retained history and exact retries. Ordinary-path binding and
+  automatic capture remain separate unchecked requirements.
 - [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [ ] Bind supplied agent traces to immutable work, with missing-trace override.
@@ -206,19 +209,19 @@ PRs are never merged without explicit user instruction.
 - This unit also owns the two inherited low validator-coverage regressions noted in review.
 - Selected representation: a complete sparse delta per immutable checkpoint, with
   transactional head history and retry outcomes. Format 2 distinguishes symlinks
-  and rejects unshipped format 1. This is a reported design choice, not verified behavior.
+  and rejects unshipped format 1. This is verified at the bounded native API scope below.
 - Exact submitted source `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3` is based on
   accepted CI head `0c8582d`. The hub's independent export on Darwin arm64,
   Rust 1.93.0, passed 43 tests with one ignored process actor, formatting,
   warnings-denied Clippy and a release build. The unchanged documented caller
   compiled against the production library and its CLI check returned two Layers,
   four objects, one World and zero World attempts. Test hooks are absent from the
-  release binary. This verifies local API execution; bounded acceptance awaits review.
+  release binary. This historical source verifies local API execution; the corrected
+  source accepted below supersedes it for dependency use.
 - Hub export: `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-layer-bd16d52-pfz39_ae`.
   Independent review `javelin-layer-state-review-hub-r1-bd16d52` completed with
   no material code defect and a medium canonical-checkpoint test coverage gap.
-  The same PR owner is repairing that gap. Bounded dependency acceptance is held
-  until the corrected tests and their evidence are reviewed.
+  The owner repaired that gap in the same PR. Corrected-source acceptance is below.
 - The hub downloaded all eighteen artifact logs and the full job log from
   [run 38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999)
   to `/tmp/javelin-hub-layer-ci-38465628999`. Exact `bd16d52` passed formatting,
@@ -238,6 +241,35 @@ PRs are never merged without explicit user instruction.
 - Layer IDs are opaque metadata, not host path components. The future filesystem
   binder must map identities safely and prove containment and collision handling.
   Ordinary-path binding, autosave, production naming limits and Gate 2 remain open.
+- Corrected source head `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`, code/test commit
+  `0a75b1a`, adds independent canonical-byte/delta fixtures and valid-graph binding
+  tamper cases. The only runtime change rejects ambiguous directory-prefix deletions.
+  The hub's exact export `/tmp/javelin-hub-layer-e56fc86-1xjnu2h0` passes 52 tests,
+  formatting, Clippy and release build on Darwin arm64 Rust 1.93.0. The production
+  library caller and release CLI integrity pass; the release prefix-deletion
+  regression also passes. No runtime or test Git invocation was found.
+- The hub inspected all seven owner mutation logs. Each canonicality and candidate
+  guard removal fails its intended regression. The single per-Layer base scan
+  removal remains rejected through accepted-attempt binding; removing both base
+  protections fails. No independent failure claim is made for the redundant scan.
+  Fresh review `javelin-layer-state-review-hub-r2-e56fc86` closed the medium finding.
+  It independently ran the guard mutations and verified file/directory replacement
+  still works. No material new bug or required user decision was found.
+- VERIFIED bounded native state dependency at exact head
+  `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`, code/test commit `0a75b1a`.
+  The hub inspected all eighteen logs and the complete job log for
+  [corrected run 38468818530](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530)
+  in `/tmp/javelin-hub-layer-ci-38468818530`. Rust 1.99.0 compiled this exact source.
+  Linux/macOS each passed 52 tests; Windows passed 50, excluding two Unix-only tests.
+  All fourteen process checks and eighteen Layer integration tests passed.
+  Formatting, Clippy and release builds ran and passed on all three OSes.
+  Artifacts Linux `11850772498`, macOS `11850931356`, Windows `11850917029` expire
+  2026-10-27 UTC. The old `bd16d52` run is not proof for this correction.
+- The owner is terminal with T3 status `failed` after a Codex usage-limit error.
+  Committed source and downloaded proof are intact; there is no live native writer.
+  Acceptance covers state APIs, not filesystem isolation, autosave, full Publish,
+  Stack/refresh, hosting, hardware power loss or measured scale. PR #8 stays draft
+  and unmerged. The next filesystem unit must preserve these validated semantics.
 
 ### Windows projected Layer filesystem proof
 
