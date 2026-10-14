@@ -512,10 +512,58 @@ or decoding. Root Cargo/src/native tests remain outside these units' ownership.
 Integration, core exports, Stack adaptation, durable collaboration and actual
 publication authorization require later bounded native work. The reviewed plan
 and dependency rules are in `docs/parallel-build-plan.md`.
-- Read-only design task `javelin-whole-layer-publish-grounding-r1-20261014` is
-  preparing the next native publication boundary and its verification plan.
-  It writes no implementation and creates no PR or scheduler. Native code work
-  remains gated on corrected PR #10 acceptance and relevant component interfaces.
+- Read-only design task `javelin-whole-layer-publish-grounding-r1-20261014`
+  completed. It wrote no code and created no PR or scheduler. Its design and the
+  hub's rulings are recorded under "Next native unit" below.
+
+#### Hub consolidation on 2026-10-14
+
+- All seven expanded workstreams and the Linux binding correction handed off.
+  Each owner thread is stopped with its watcher released; the merge-engine thread
+  ended cancelled during its own round-4 review, so the hub audit is that round.
+- The hub fetched every branch and confirmed from file-level diffs that each PR
+  head differs from its tested commit only in TASKS, its doc, committed evidence,
+  or the offline verifier: PR #10 `8137111`→`a4a95c1`, #11 `39a065b`→`651835d`,
+  #13 `87f2acd`→`e0f0a19`, #14 `8712866`→`2565598`, #15 `02c7427`→`29457a8`,
+  #16 `4149da9`→`688cc0c`, #17 `b9243f5`→`f31c4cb`. PR #12 is tested at head `2ca73dd`.
+- Owner reports are not acceptance. The hub launched eight independent read-only
+  audits on `claude-work` `claude-fable-5-1` at high effort, one per PR, each
+  exporting the exact tested commit, downloading the hosted artifacts, rerunning
+  tests and verifiers, and reviewing source adversarially:
+  `javelin-hub-audit-pr10-8137111-r1`, `-pr11-39a065b-r1`, `-pr12-2ca73dd-r1`,
+  `-pr13-87f2acd-r1`, `-pr14-8712866-r1`, `-pr15-02c7427-r1`, `-pr16-4149da9-r1`,
+  `-pr17-b9243f5-r1`. Scratch lives under `/tmp/javelin-hub-audit-pr*`.
+- [ ] Inspect each audit against its cited evidence, then accept or return each PR.
+- Owner-reported native API requests awaiting the next core unit: public pre-store
+  object ID computation, `ObjectId` byte conversion, a cheap existence check or
+  size-limited read (PR #15); a cheap public head read and readable effective
+  pragmas (PR #16). The owner of PR #13 and PR #15 each force exact-base Publish,
+  which conflicts with nonintersecting advances; both must adopt the Layer-bound
+  Publish outcome once the core unit exists.
+
+#### Next native unit: whole-Layer Publish
+
+- Gated on hub acceptance of PR #10 at `8137111`, because PR #10 is the root
+  `src/` writer. Branch from that accepted head; not stacked on PR #12, #13 or #15.
+- Design selected: one `publish_layer` call composing `head World + Layer delta`
+  inside one IMMEDIATE SQLite transaction, with durable `Published`, `Conflict`
+  and `LayerStale` outcomes, operation-ID idempotency across later advances,
+  `OperationIdReused` for changed input or raw-advance collisions, a guard hook run
+  under the lock for the future hosted permission check, and a format 3 append-only
+  `publications` table. Prepare-then-seal and an external consumer crate were
+  rejected for livelock and TOCTOU reasons.
+- Hub rulings from the contract and verified grilling answers: a published Layer
+  is read-only with clone allowed and no auto-discard or auto-refresh; an
+  intersecting advance is a conflict even when the results are identical;
+  attribution is declared in the Publish input and recorded in the receipt; agent
+  context is one opaque Blob reference for now; format 2 stores are rejected
+  without migration. The contract now records the read-only rule.
+- Acceptance tests (a) through (k) in the design cover base-head publish,
+  nonintersecting advance without refresh, exact/prefix/delete-modify conflicts,
+  stale/discarded/second publish, retry identity, kill-point atomicity, concurrent
+  disjoint and overlapping Layers, attribution and override warnings, guard
+  refusal writing zero rows, tamper detection, and format rejection, plus fmt,
+  Clippy and the three-OS native workflow.
 
 
 ### Hub continuation and review
@@ -525,6 +573,10 @@ and dependency rules are in `docs/parallel-build-plan.md`.
 - First scheduled continuation: 2026-10-13 16:54:44 UTC, 22:24:44 Asia/Kolkata.
 - Continuation reads this checklist, checks live work before delegating, and keeps
   unchanged status quiet. Disable the scheduler when GA is verified or the user cancels.
+- Provider routing from 2026-10-14: Codex is usage-limited. The user directed that
+  worker threads and delegated tasks use `claude-work` `claude-fable-5-1` at high
+  effort until Codex limits reset. The hub itself runs on the same model. Reviews
+  by the same model family are recorded as a limitation, not independence.
 - Contract review round 1 failed before review with `Claude API rate limit reached. Try again later.`
 - Contract review round 2 uses provider `claude-work`, model `claude-opus-5-5`.
 - Review task: `node:delegated-task:command%3Amcp%3A3981ee7f-8fb4-4683-a0d3-78e3e74e0371%3Adelegate-task%3Ajavelin-ga-contract-review-r2-20261013`.

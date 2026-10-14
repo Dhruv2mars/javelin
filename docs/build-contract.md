@@ -39,6 +39,11 @@ is the starting point. Reuse earlier work only after verifying it against this c
   require rechecking before acceptance.
 - Publish accepts the whole Layer as the next World version. Partial acceptance
   requires preparing another Layer.
+- A published Layer becomes read-only. Further work starts by creating or cloning
+  another Layer from the current World. Javelin retains the Layer identity, final
+  checkpoint reference, supplied agent context, Stack ancestry, and publication
+  relationship. The workspace, overlay, and derived caches may be discarded when
+  convenient. A published Layer remains inspectable through its immutable records.
 - Publish validates VCS correctness and permissions. Tests, builds, reviews, and
   security checks are optional repository policy, not mandatory default Publish behavior.
 - Final World advancement is ordered, atomic, durable, and idempotent. Preparation
@@ -168,6 +173,10 @@ without explicit user instruction.
 - Explicit fork-history answer, "Inherit history through the selected version":
   `t3-thread://v1/6bbb5b4b-899f-4bc7-b999-a78669bcc177` and
   `codex://threads/01a12ebd-0de7-7113-b9ba-b99a0771ce30`.
+- Read-only published Layers and retained provenance: earlier grilling Q82 and Q121,
+  each answered "agreed" by the user. Local transcript
+  `~/.codex/sessions/2026/09/09/rollout-2026-09-09T12-30-06-01a084f7-7b5f-79d1-b381-d686c430a7f9.jsonl`,
+  verified by the hub on 2026-10-14.
 - Marathon authorization, replacement of earlier code, and one-PR-per-thread rule:
   `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`, user messages on 2026-10-13.
   Local backing transcript: `codex://threads/01a135d7-d344-72c2-b0c3-331850d6b2ec`.
