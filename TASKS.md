@@ -252,6 +252,6 @@ Gate 6 and GA remain open. Same draft PR #16 and owned paths only.
 - [x] Fix worker retry chains and bind final evidence, with focused tamper regressions.
 - [x] Propagate disk traversal errors and reject missing, zeroed or shrinking clone evidence.
 - [x] Correct actual build-profile test and six doc values; document rounding and precise validation scope.
-- [ ] Run formatting, clippy, debug/release tests, all old evidence verifiers and one fresh release `ci` run.
+- [x] Run formatting, clippy, debug/release tests, all 18 old evidence verifiers and one fresh release `ci` run at `ebd3083`.
 - [ ] Get fresh Codex read-only review of exact committed source; resolve findings.
 - [ ] Run owned hosted workflow, use one T3 watcher, and report exact source and evidence to hub.
