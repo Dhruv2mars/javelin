@@ -15,7 +15,7 @@ pub enum Merged {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConflictKind {
-    /// Both sides changed one region of a regular file that no common line separates.
+    /// Both sides changed one region of a regular file that no unchanged line separates.
     Content,
     /// Both sides changed a regular file whose content is not line-mergeable text.
     Binary,
@@ -197,13 +197,18 @@ fn merge_path<E>(
     })))
 }
 
-/// Classic diff3: base lines matched unchanged on both sides are stable anchors.
-/// Each region between anchors is taken whole from the only side that changed it,
-/// or once when both sides made it byte-identical; otherwise the file conflicts.
-/// Any valid matching keeps this sound; the matching only affects region size.
 fn merge_lines(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
-    let (base, ours, theirs) = (lines(base), lines(ours), lines(theirs));
-    let (in_ours, in_theirs) = (matches(&base, &ours), matches(&base, &theirs));
+    diff3(&lines(base), &lines(ours), &lines(theirs)).map(|merged| merged.concat())
+}
+
+/// diff3 without convergence: base lines matched unchanged on both sides are
+/// anchors. Each region between anchors is taken whole from the only side that
+/// changed it. A region both sides changed conflicts, even if identically, because
+/// with repeated lines an apparent shared edit can be an artifact of the matching.
+/// A clean result therefore applies one complete edit script from each side to
+/// disjoint base lines separated by unchanged lines.
+fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Option<Vec<&'a [u8]>> {
+    let (in_ours, in_theirs) = (matches(base, ours), matches(base, theirs));
     let (mut b, mut o, mut t) = (0, 0, 0);
     let mut out = Vec::new();
     loop {
@@ -212,16 +217,17 @@ fn merge_lines(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
         let (region, mine, other) = (&base[b..nb], &ours[o..no], &theirs[t..nt]);
         let taken = if mine == region {
             other
-        } else if other == region || mine == other {
+        } else if other == region {
             mine
         } else {
             return None;
         };
-        out.extend(taken.iter().copied().flatten());
+        out.extend_from_slice(taken);
         let Some((nb, no, nt)) = anchor else {
             return Some(out);
         };
-        out.extend_from_slice(base[nb]);
+        debug_assert!(base[nb] == ours[no] && base[nb] == theirs[nt]);
+        out.push(base[nb]);
         (b, o, t) = (nb + 1, no + 1, nt + 1);
     }
 }

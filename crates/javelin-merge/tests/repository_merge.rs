@@ -248,15 +248,14 @@ fn different_insertions_at_one_point_conflict_and_identical_ones_converge() {
 }
 
 #[test]
-fn convergent_edits_inside_a_changed_region_merge_once() {
+fn partial_convergence_inside_a_file_is_left_to_the_owner() {
+    // A shared edit plus a one-sided edit could be a matching artifact with
+    // repeated lines, so only whole-file identical content converges.
     let mut fx = Fixture::new(&[("f", File(TEN))]);
     let ours = fx.layer(&[("f", Some(File(b"1\nZ\n3\n4\n5\n6\n7\n8\n9\nEND\n")))]);
     let theirs = fx.layer(&[("f", Some(File(b"1\nZ\n3\n4\n5\n6\n7\n8\n9\n10\n")))]);
-    let result = {
-        let outcome = fx.merge(&ours, &theirs);
-        fx.persist(&outcome)
-    };
-    assert_eq!(fx.bytes(&result, "f"), b"1\nZ\n3\n4\n5\n6\n7\n8\n9\nEND\n");
+    let outcome = fx.merge(&ours, &theirs);
+    assert_eq!(kinds(&outcome), [("f", ConflictKind::Content)]);
 }
 
 #[test]
