@@ -261,6 +261,25 @@ fn mounted_views_capture_clone_and_discard() {
     let a = rt.mount(&mut repo, &la).unwrap();
     let b = rt.mount(&mut repo, &lb).unwrap();
     assert_ne!(a, b, "case-distinct Layer IDs map to distinct views");
+    assert_eq!(
+        rt.mount(&mut repo, &la).unwrap(),
+        a,
+        "remount is idempotent"
+    );
+    let outside =
+        LinuxLayerRuntime::init(&repo, "/var/lib/javelin-not-permitted/rt-x", helper(&env));
+    assert!(
+        matches!(outside, Err(Error::InvalidInput(_))),
+        "unlisted parent accepted"
+    );
+    // The helper refuses to list a writable (unfrozen) upper even when invoked directly.
+    let direct = Command::new("/usr/bin/sudo")
+        .arg("-n")
+        .arg(&env.helper)
+        .args(["list", root.to_str().unwrap(), "view", &slot(&la)])
+        .output()
+        .unwrap();
+    assert_eq!(direct.status.code(), Some(2), "unfrozen upper listed");
     for view in [&a, &b] {
         let c = std::ffi::CString::new(view.as_os_str().as_bytes()).unwrap();
         // SAFETY: valid path and zeroed out-parameter.
@@ -357,6 +376,19 @@ fn mounted_views_capture_clone_and_discard() {
         vec!["empty-dir".to_string()]
     );
     let c1 = applied(&first.update);
+    // A caller that lost the reply retries the same operation and gets the same outcome.
+    let retried = rt.capture(&mut repo, &la, &op("a-1")).unwrap();
+    assert_eq!(applied(&retried.update), c1);
+    assert_eq!(repo.layer_history(&la).unwrap().len(), 2);
+    // An unreadable file fails capture without leaving the view frozen.
+    sh(&a, "printf s > secret && chmod 000 secret", &mut log);
+    assert!(matches!(
+        rt.capture(&mut repo, &la, &op("a-unreadable")),
+        Err(Error::Io(_))
+    ));
+    let status = rt.status(&repo, &la).unwrap();
+    assert!(!status.frozen && status.pending.is_none());
+    sh(&a, "chmod 644 secret && rm secret", &mut log);
     let diff = repo.layer_diff(&c1).unwrap();
     let described = diff_json(&repo, &diff);
     let paths: Vec<&str> = diff.iter().map(|d| d.path.as_str()).collect();
@@ -536,7 +568,8 @@ impl Actor {
         operation: &str,
         boundary: &str,
     ) -> Self {
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "linux_layer::mount_tests::runtime_actor",
@@ -550,7 +583,11 @@ impl Actor {
             .env("JAVELIN_TEST_LAYER", layer)
             .env("JAVELIN_TEST_OPERATION", operation)
             .env("JAVELIN_TEST_BOUNDARY", boundary)
-            .env("JAVELIN_LINUX_LAYER_HELPER", &env.helper)
+            .env("JAVELIN_LINUX_LAYER_HELPER", &env.helper);
+        Self::start(command)
+    }
+    fn start(mut command: Command) -> Self {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -566,6 +603,24 @@ impl Actor {
             }
         });
         Self { child, lines }
+    }
+    /// Next line containing any prefix, or `None` once the child closes stdout.
+    fn next_of(&mut self, prefixes: &[&str]) -> Option<(usize, String)> {
+        loop {
+            let line = match self.lines.recv_timeout(Duration::from_secs(60)) {
+                Ok(line) => line,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+                Err(e) => panic!("child did not reach barrier: {e}"),
+            };
+            for (i, prefix) in prefixes.iter().enumerate() {
+                if let Some(index) = line.find(prefix) {
+                    return Some((i, line[index + prefix.len()..].trim().into()));
+                }
+            }
+        }
+    }
+    fn send(&mut self, bytes: &[u8]) {
+        let _ = self.child.stdin.as_mut().unwrap().write_all(bytes);
     }
     fn marker(&mut self, prefix: &str) -> String {
         loop {
@@ -784,6 +839,59 @@ fn process_loss_and_restart_converge() {
     assert!(!c.exists());
     assert_eq!(fs::read(a.join("private.txt")).unwrap(), b"private\n");
     evidence.insert("killedDuringDiscard".into(), json!({"recovery": report}));
+
+    // A shared writable mapping whose descriptor is closed: record whether the
+    // read-only freeze excludes its writes on this kernel instead of assuming it.
+    fs::write(a.join("m.bin"), vec![b'A'; 4096]).unwrap();
+    let mut mapper_command = Command::new("timeout");
+    mapper_command
+        .args(["60s", "python3", "-I", "-c"])
+        .arg("import mmap,sys\nf=open('m.bin','r+b')\nm=mmap.mmap(f.fileno(),0)\nf.close()\nprint('ready',flush=True)\nsys.stdin.readline()\nm[0:1]=b'B'\nm.flush()\nprint('wrote',flush=True)\nsys.stdin.readline()\n")
+        .current_dir(&a);
+    let mut mapper = Actor::start(mapper_command);
+    mapper.marker("ready");
+    let mut actor = Actor::spawn(
+        &env,
+        repo_dir.path(),
+        &root,
+        "capture",
+        "A",
+        "mmap-capture",
+        "capture_frozen",
+    );
+    let mmap = match actor.next_of(&["BOUNDARY capture_frozen", "RESULT "]) {
+        Some((0, _)) => {
+            mapper.send(b"go\n");
+            let wrote = mapper.next_of(&["wrote"]).is_some();
+            let during = fs::read(a.join("m.bin")).unwrap()[0];
+            let result = actor.release();
+            let head = active(&repo, &la);
+            let captured = repo
+                .layer_diff(&head)
+                .unwrap()
+                .into_iter()
+                .find(|d| d.path.as_str() == "m.bin")
+                .and_then(|d| d.after)
+                .map(|e| repo.read_blob(e.content()).unwrap()[0]);
+            let bypass = wrote && during == b'B';
+            json!({
+                "verdict": if bypass { "NOT VERIFIED" } else { "VERIFIED" },
+                "freezeAllowed": true, "mapperWroteWhileFrozen": wrote,
+                "viewByteWhileFrozen": (during as char).to_string(),
+                "capturedByte": captured.map(|b| (b as char).to_string()),
+                "captureResult": result,
+                "scope": "MAP_SHARED|PROT_WRITE mapping after close(2); kernel-specific",
+            })
+        }
+        Some((_, result)) => {
+            assert!(actor.child.wait().unwrap().success());
+            json!({"verdict": "VERIFIED", "freezeAllowed": false, "captureResult": result})
+        }
+        None => panic!("capture actor exited without a result"),
+    };
+    mapper.send(b"done\n");
+    let _ = mapper.child.wait();
+    evidence.insert("sharedWritableMapping".into(), mmap);
 
     let final_inventory = inventory(&env, &root, "recovery-inventory-final");
     assert!(final_inventory["stages"].as_array().unwrap().is_empty());

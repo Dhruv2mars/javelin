@@ -53,10 +53,12 @@ trap 'exit 143' TERM
 
 cd "$repo_dir"
 cargo build --locked --release --bin javelin-linux-layer-helper
-sudo -n install -d -o root -g root -m 0755 "$parent" "$libexec"
+sudo -n install -d -o root -g root -m 0755 "$parent" "$libexec" /etc/javelin
+printf '%s\n' "$parent" | sudo -n tee /etc/javelin/linux-layer-parents > /dev/null
+sudo -n chmod 0644 /etc/javelin/linux-layer-parents
 sudo -n install -o root -g root -m 0755 target/release/javelin-linux-layer-helper "$libexec/"
 sudo -n install -o root -g root -m 0644 "$script_dir/inventory.py" "$libexec/"
-stat -c '%n %U:%G %a' "$parent" "$libexec" "$libexec"/* /usr/bin/sudo > "$evidence/installed.txt"
+stat -c '%n %U:%G %a' "$parent" "$libexec" "$libexec"/* /etc/javelin/linux-layer-parents /usr/bin/sudo > "$evidence/installed.txt"
 
 python3 -I - "$evidence" <<'PY'
 import hashlib, json, os, platform, subprocess, sys
