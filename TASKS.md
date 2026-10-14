@@ -257,3 +257,29 @@ release binaries contain no test-boundary hooks. Evidence and limits are in
 `docs/linux-layer-runtime.md`. Gate 2 and GA are not claimed. Follow-on work:
 autosave/stable capture, continuous editing during capture, re-binding stale views,
 cache collection, the production privilege model, and macOS/Windows bindings.
+
+## Workstream: repository protocol message codec
+
+Owner: separate T3 implementation thread commissioned by hub
+`e659350e-23d8-4473-98e8-d3609b784340`. Branch `feat/repository-protocol`, draft PR
+against `feat/native-layer-checkpoints`. Planning source is exact accepted Layer state
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; that base is an unmerged accepted
+dependency, so this PR cannot claim independent acceptance. Owned paths only:
+`crates/javelin-protocol/**`, `docs/repository-protocol.md`,
+`.github/workflows/repository-protocol.yml`, and this section.
+
+Done means `cargo test --locked` in `crates/javelin-protocol` passes a versioned
+codec, a reference receiver on the public native API, adversarial refusals that
+leave World unchanged, and a runnable sender/receiver process test between two
+separate repositories with a lost reply and retry. The same suite passes in its own
+hosted workflow. No HTTP, authentication, public endpoint, provider deployment,
+checkpoint, trace or collaboration format is claimed.
+
+- [ ] Open the draft PR, link it, and report planning source and owned paths to the hub.
+- [ ] Compare JSON framing and compact binary candidates with the actual caller.
+- [ ] Implement negotiation, have/want, bounded blob and manifest batches, and publish.
+- [ ] Use validated wire DTOs; never deserialize native serialize-only types.
+- [ ] Refuse malicious, malformed, oversize, truncated, replayed and changed input.
+- [ ] Prove separate-process transfer, lost reply and retry between two repositories.
+- [ ] Record API gaps for the hub instead of copying private native internals.
+- [ ] Obtain independent review and hosted three-platform evidence.
