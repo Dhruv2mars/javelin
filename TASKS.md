@@ -297,6 +297,30 @@ equality assertion. Fixed in `4dd0e6d` and the following doc commit:
   under the minimal-diff spec;
 - mutations rose to 13, including convergence and region reordering.
 
+Hosted evidence for the round-2 fix at `45dfa01`: run
+https://github.com/Dhruv2mars/javelin/actions/runs/38524136786 passed on all three
+OSes. It showed 21 tests, 13/13 mutations, and seven source hashes matching the
+commit on each runner. It is superseded by the round-3 fix.
+
+Round-3 review (native Claude Opus 5.5 subagent at `45dfa01`):
+- R3-1 HIGH: a shared fix inside a run of identical lines was applied twice. Two
+  docs lines were contradicted by this. The removed reversal check would have
+  caught part of it.
+- R3-2 LOW: the doc misdescribed the alphabet.
+- R3-3 LOW: the guarantee wording was inexact.
+
+Fixed in `865be13` and the following doc commit:
+- changes from different sides now merge only across an anchor line unique in
+  base, ours, and theirs;
+- the oracle now requires every pair of minimal diffs to be independent and to
+  produce the result;
+- the count test no longer tolerates duplicate deletions;
+- three R3-1 regressions were added;
+- mutants must compile, and 15/15 are killed.
+
+A local 200,000-case run with up to seven-line bases and three edits per side gave
+29,312 clean results and no oracle violation. It ran in a /tmp copy and is not CI.
+
 Review limits: the delegated Codex implementation review r1 failed on a provider
 usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
 The Claude Sonnet 5.5 r3 hit the API rate limit. None produced findings.
