@@ -344,9 +344,19 @@ PRs are never merged without explicit user instruction.
   include errors; metadata preservation and production storage cost remain
   INCONCLUSIVE. These fixture results do not verify a complete ordinary-user
   backend, native database binding, autosave, product Gate 2 or GA.
-- The bounded owner is stopped, PR #9 remains draft/unmerged and unwatched.
-  Independent review `javelin-windows-handoff-hub-review-r1-3ad8241` is pending;
-  backend acceptance remains INCONCLUSIVE regardless of collection success.
+- Bounded runtime implementation is stopped; PR #9 remains draft/unmerged and unwatched.
+  Independent review `javelin-windows-handoff-hub-review-r1-3ad8241` confirmed
+  archive/source provenance and the INCONCLUSIVE backend verdict. It found medium
+  documentation and checkbox overclaims, returned to this same owner for a
+  docs/TASKS-only correction. No new runtime implementation was commissioned.
+- Scope corrections: peer `b` has its own full `concurrent.txt`, and projected
+  symlinks also report full state. Directory rename failed only for the tested
+  base placeholder directory. Restart checks preserve completed writes across
+  provider termination, with no kill during an open write. Snapshot write refusal
+  tests a clearable Windows read-only attribute, not permission-enforced immutable
+  storage; base ACL protection is separate. Multiple snapshot clones, metadata
+  edits and mid-write recovery remain unverified. These limits preserve the
+  bounded fixture evidence without accepting the Windows Layer backend.
 
 ### Native Linux Layer filesystem binding
 
