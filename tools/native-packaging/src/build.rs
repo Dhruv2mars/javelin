@@ -44,8 +44,8 @@ fn cargo_home() -> PathBuf {
     if let Some(home) = std::env::var_os("CARGO_HOME") {
         return home.into();
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .unwrap_or_default();
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
     PathBuf::from(home).join(".cargo")
 }
 
@@ -70,12 +70,18 @@ pub fn build(
         format!("--remap-path-prefix={}=/cargo-home", cargo_home.display()),
         format!("--remap-path-prefix={}=/rust-sysroot", sysroot.trim()),
         format!("--remap-path-prefix={}=/javelin-source", source.display()),
-        format!("--remap-path-prefix={}=/javelin-target", target_dir.display()),
+        format!(
+            "--remap-path-prefix={}=/javelin-target",
+            target_dir.display()
+        ),
     ];
     rustflags.extend(extra_rustflags.iter().cloned());
 
     let mut extra_env = vec![
-        ("SOURCE_DATE_EPOCH".to_string(), source_date_epoch.to_string()),
+        (
+            "SOURCE_DATE_EPOCH".to_string(),
+            source_date_epoch.to_string(),
+        ),
         ("CARGO_INCREMENTAL".to_string(), "0".to_string()),
         ("TZ".to_string(), "UTC".to_string()),
         ("LC_ALL".to_string(), "C".to_string()),
@@ -92,9 +98,16 @@ pub fn build(
         ));
     }
 
-    let command = ["cargo", "build", "--locked", "--release", "--bin", "javelin"]
-        .map(String::from)
-        .to_vec();
+    let command = [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--bin",
+        "javelin",
+    ]
+    .map(String::from)
+    .to_vec();
     let mut cargo = Command::new("cargo");
     for (key, _) in std::env::vars() {
         if REMOVED_ENV
@@ -131,13 +144,12 @@ pub fn build(
         source_date_epoch,
         host_triple: host,
         rustc_verbose: rustc_verbose()?,
-        cargo_version: capture(Command::new("cargo").arg("--version"))?.trim().to_string(),
+        cargo_version: capture(Command::new("cargo").arg("--version"))?
+            .trim()
+            .to_string(),
         binary,
         binary_sha256: sha256_file(&binary_path)?,
     };
-    write(
-        &out.join(RECORD_FILE),
-        &serde_json::to_vec_pretty(&record)?,
-    )?;
+    write(&out.join(RECORD_FILE), &serde_json::to_vec_pretty(&record)?)?;
     Ok(record)
 }

@@ -36,7 +36,11 @@ struct Smoke {
 
 impl Smoke {
     fn check(&mut self, name: &str, ok: bool, detail: impl Into<String>) -> bool {
-        self.checks.push(Check { name: name.into(), ok, detail: detail.into() });
+        self.checks.push(Check {
+            name: name.into(),
+            ok,
+            detail: detail.into(),
+        });
         ok
     }
 }
@@ -49,8 +53,13 @@ pub fn which(name: &str, path: &OsString) -> Option<PathBuf> {
 }
 
 fn unique_dir(label: &str) -> Result<PathBuf> {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
-    let dir = std::env::temp_dir().join(format!("javelin-smoke-{label}-{}-{nonce}", std::process::id()));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "javelin-smoke-{label}-{}-{nonce}",
+        std::process::id()
+    ));
     fs::create_dir_all(&dir)?;
     Ok(fs::canonicalize(dir)?)
 }
@@ -74,14 +83,22 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     let binary_sha256 = sha256_file(&binary)?;
     let mut s = Smoke { checks: Vec::new() };
     if let Some(expected) = expected_sha256 {
-        s.check("binary hash matches expected", binary_sha256 == expected, format!("{binary_sha256} vs {expected}"));
+        s.check(
+            "binary hash matches expected",
+            binary_sha256 == expected,
+            format!("{binary_sha256} vs {expected}"),
+        );
     }
 
     let work = unique_dir("work")?;
     let project = work.join("project");
     fs::create_dir(&project)?;
     let git_ancestor = project.ancestors().find(|a| a.join(".git").exists());
-    s.check("project is outside any Git worktree", git_ancestor.is_none(), format!("{git_ancestor:?}"));
+    s.check(
+        "project is outside any Git worktree",
+        git_ancestor.is_none(),
+        format!("{git_ancestor:?}"),
+    );
 
     // Shim directory: any call to `git` fails and leaves a marker.
     let shim_dir = work.join("shim");
@@ -96,8 +113,15 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
 
     let path = std::env::join_paths([&shim_dir, &bin_dir, &pre_dir])?;
     // The shim must be able to detect a Git call, or the later check proves nothing.
-    let probe = Command::new("git").arg("--version").env("PATH", &path).env(SHIM_MARKER_ENV, &marker).output();
-    let shim_works = probe.map(|o| o.status.code() == Some(SHIM_EXIT)).unwrap_or(false) && marker.exists();
+    let probe = Command::new("git")
+        .arg("--version")
+        .env("PATH", &path)
+        .env(SHIM_MARKER_ENV, &marker)
+        .output();
+    let shim_works = probe
+        .map(|o| o.status.code() == Some(SHIM_EXIT))
+        .unwrap_or(false)
+        && marker.exists();
     s.check("git shim detects a Git call", shim_works, "");
     let _ = fs::remove_file(&marker);
 
@@ -111,7 +135,11 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     s.check(
         "javelin --help by name is the Javelin CLI",
         help.status.success() && String::from_utf8_lossy(&help.stdout).contains(HELP_MARKER),
-        String::from_utf8_lossy(&help.stdout).lines().next().unwrap_or("").to_string(),
+        String::from_utf8_lossy(&help.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string(),
     );
 
     let existing = [0u8, 255, 42, b'\n'];
@@ -121,16 +149,27 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     let init_ok = init.status.success()
         && init.stderr.is_empty()
         && init_json.as_ref().is_some_and(|v| {
-            v["ok"] == true && v["command"] == "init" && v["initial"]["number"] == 0 && v["tracked_files"] == 0
+            v["ok"] == true
+                && v["command"] == "init"
+                && v["initial"]["number"] == 0
+                && v["tracked_files"] == 0
         });
-    s.check("init --json succeeds in a new non-Git project", init_ok, String::from_utf8_lossy(&init.stdout).trim().to_string());
+    s.check(
+        "init --json succeeds in a new non-Git project",
+        init_ok,
+        String::from_utf8_lossy(&init.stdout).trim().to_string(),
+    );
     s.check(
         "init leaves existing project files untouched",
         read(&project.join("existing.bin"))? == existing,
         "",
     );
     let again = run(&path, &marker, &project, &["init", "--json"])?;
-    s.check("repeated init is idempotent", again.status.success() && again.stdout == init.stdout, "");
+    s.check(
+        "repeated init is idempotent",
+        again.status.success() && again.stdout == init.stdout,
+        "",
+    );
 
     let history = run(&path, &marker, &project, &["history", "--json"])?;
     let history_json = json(&history);
@@ -140,7 +179,9 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
             && history_json.as_ref().is_some_and(|v| {
                 v["ok"] == true
                     && v["versions"].as_array().is_some_and(|a| a.len() == 1)
-                    && init_json.as_ref().is_some_and(|i| v["versions"][0] == i["initial"])
+                    && init_json
+                        .as_ref()
+                        .is_some_and(|i| v["versions"][0] == i["initial"])
             }),
         String::from_utf8_lossy(&history.stdout).trim().to_string(),
     );
@@ -149,44 +190,61 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     s.check(
         "check --json reports integrity OK",
         check.status.success()
-            && check_json.as_ref().is_some_and(|v| v["ok"] == true && v["integrity"]["versions"] == 1),
+            && check_json
+                .as_ref()
+                .is_some_and(|v| v["ok"] == true && v["integrity"]["versions"] == 1),
         String::from_utf8_lossy(&check.stdout).trim().to_string(),
     );
     let plain = run(&path, &marker, &project, &["check"])?;
     s.check(
         "plain check prints success text",
-        plain.status.success() && String::from_utf8_lossy(&plain.stdout).starts_with("Integrity OK"),
+        plain.status.success()
+            && String::from_utf8_lossy(&plain.stdout).starts_with("Integrity OK"),
         "",
     );
 
     // Corruption: damage the storage file's data pages, expect a structured nonzero failure, then restore.
     let db = project.join(".javelin").join("repository.sqlite3");
-    let original = read(&db)?;
-    let mut damaged = original.clone();
-    let start = 4096.min(damaged.len());
-    for byte in &mut damaged[start..] {
-        *byte = !*byte;
+    if let Ok(original) = read(&db) {
+        let mut damaged = original.clone();
+        let start = 4096.min(damaged.len());
+        for byte in &mut damaged[start..] {
+            *byte = !*byte;
+        }
+        write(&db, &damaged)?;
+        let broken = run(&path, &marker, &project, &["check", "--json"])?;
+        let broken_err: Option<Value> = serde_json::from_slice(&broken.stderr).ok();
+        s.check(
+            "check --json on damaged storage exits 1 with a structured error and no success output",
+            broken.status.code() == Some(1)
+                && broken.stdout.is_empty()
+                && broken_err
+                    .as_ref()
+                    .is_some_and(|v| v["ok"] == false && v["error"]["code"].is_string()),
+            String::from_utf8_lossy(&broken.stderr).trim().to_string(),
+        );
+        write(&db, &original)?;
+        let restored = run(&path, &marker, &project, &["check", "--json"])?;
+        s.check(
+            "check passes again after restoring the storage bytes",
+            restored.status.success(),
+            "",
+        );
+    } else {
+        s.check(
+            "init created the storage file",
+            false,
+            db.display().to_string(),
+        );
     }
-    write(&db, &damaged)?;
-    let broken = run(&path, &marker, &project, &["check", "--json"])?;
-    let broken_err: Option<Value> = serde_json::from_slice(&broken.stderr).ok();
-    s.check(
-        "check --json on damaged storage exits 1 with a structured error and no success output",
-        broken.status.code() == Some(1)
-            && broken.stdout.is_empty()
-            && broken_err.as_ref().is_some_and(|v| v["ok"] == false && v["error"]["code"].is_string()),
-        String::from_utf8_lossy(&broken.stderr).trim().to_string(),
-    );
-    write(&db, &original)?;
-    let restored = run(&path, &marker, &project, &["check", "--json"])?;
-    s.check("check passes again after restoring the storage bytes", restored.status.success(), "");
 
     // Resolution follows PATH order: with the preexisting binary first, that one runs, untouched.
     let reordered = std::env::join_paths([&shim_dir, &pre_dir, &bin_dir])?;
     let other = which("javelin", &reordered);
     s.check(
         "PATH order selects the preexisting binary when it comes first",
-        other.as_deref().map(|p| fs::canonicalize(p).ok()) == Some(Some(fs::canonicalize(pre_dir.join(exe_name("javelin")))?)),
+        other.as_deref().map(|p| fs::canonicalize(p).ok())
+            == Some(Some(fs::canonicalize(pre_dir.join(exe_name("javelin")))?)),
         format!("{other:?}"),
     );
     let pre_help = run(&reordered, &marker, &project, &["--help"])?;
@@ -209,7 +267,12 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
 
     let _ = fs::remove_dir_all(&work);
     let ok = s.checks.iter().all(|c| c.ok);
-    Ok(Report { bin_dir: bin_dir.display().to_string(), binary_sha256, checks: s.checks, ok })
+    Ok(Report {
+        bin_dir: bin_dir.display().to_string(),
+        binary_sha256,
+        checks: s.checks,
+        ok,
+    })
 }
 
 /// Called by `main` when this executable was copied to a `git` name as a shim.
@@ -228,6 +291,11 @@ pub fn fail_unless_ok(report: &Report) -> Result<()> {
     if report.ok {
         return Ok(());
     }
-    let failed: Vec<_> = report.checks.iter().filter(|c| !c.ok).map(|c| c.name.as_str()).collect();
+    let failed: Vec<_> = report
+        .checks
+        .iter()
+        .filter(|c| !c.ok)
+        .map(|c| c.name.as_str())
+        .collect();
     Err(Error(format!("smoke failed: {}", failed.join("; "))))
 }

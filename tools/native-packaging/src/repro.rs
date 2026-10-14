@@ -40,7 +40,10 @@ pub fn repro(source: &Path, work: &Path, epoch: u64) -> Result<ReproReport> {
     fs::create_dir_all(work)?;
     let work = fs::canonicalize(work)?;
     let mut sides = Vec::new();
-    for (label, dir) in [("a", "alpha/javelin-tree"), ("b", "beta-longer-name/another-javelin-tree")] {
+    for (label, dir) in [
+        ("a", "alpha/javelin-tree"),
+        ("b", "beta-longer-name/another-javelin-tree"),
+    ] {
         let tree = work.join(dir);
         copy_source(source, &tree)?;
         let out = work.join(format!("out-{label}"));
@@ -53,8 +56,16 @@ pub fn repro(source: &Path, work: &Path, epoch: u64) -> Result<ReproReport> {
     let (first, differing) = if identical || a.2.len() != b.2.len() {
         (None, None)
     } else {
-        let diffs: Vec<_> = a.2.iter().zip(&b.2).enumerate().filter(|(_, (x, y))| x != y).collect();
-        (diffs.first().map(|(i, _)| *i as u64), Some(diffs.len() as u64))
+        let diffs: Vec<_> =
+            a.2.iter()
+                .zip(&b.2)
+                .enumerate()
+                .filter(|(_, (x, y))| x != y)
+                .collect();
+        (
+            diffs.first().map(|(i, _)| *i as u64),
+            Some(diffs.len() as u64),
+        )
     };
     let note = if identical {
         "Two builds from different directories produced identical binary bytes on this host; this is not proof for other hosts or toolchains.".into()

@@ -10,13 +10,13 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::bail;
 use crate::{
     Result,
     build::{BuildRecord, RECORD_FILE},
     exe_name, host_triple, is_hex, list_files, read, sha256_file, sha256_hex,
     util::{capture, write},
 };
-use crate::bail;
 
 pub const MANIFEST_FILE: &str = "PACKAGE.json";
 /// Strings that only exist when test-only process hooks were compiled in.
@@ -107,7 +107,10 @@ pub fn package(build_dir: &Path, source: &Path, source_sha: &str, out: &Path) ->
     let record: BuildRecord = serde_json::from_slice(&read(&build_dir.join(RECORD_FILE))?)?;
     let target = host_triple()?;
     if record.host_triple != target {
-        bail!("build record is for {}, this host is {target}", record.host_triple);
+        bail!(
+            "build record is for {}, this host is {target}",
+            record.host_triple
+        );
     }
     let binary_path = build_dir.join(&record.binary);
     let binary = read(&binary_path)?;
@@ -247,7 +250,8 @@ Nothing here installs itself or changes PATH. See PACKAGE.json for the exact sou
 toolchain, and dependency checksums, and LICENSE plus THIRD-PARTY-NOTICES.md for licenses.\n";
 
 fn crate_version(source: &Path) -> Result<String> {
-    let manifest: toml::Table = toml::from_str(&String::from_utf8(read(&source.join("Cargo.toml"))?)?)?;
+    let manifest: toml::Table =
+        toml::from_str(&String::from_utf8(read(&source.join("Cargo.toml"))?)?)?;
     let package = manifest
         .get("package")
         .and_then(|p| p.as_table())
@@ -265,11 +269,19 @@ fn crate_version(source: &Path) -> Result<String> {
 type LicenseFiles = BTreeMap<String, Vec<u8>>;
 
 /// Normal-dependency closure of `javelin` for `target`, with lock checksums and license texts.
-fn dependency_graph(source: &Path, target: &str) -> Result<(Vec<(Dependency, LicenseFiles)>, String)> {
+fn dependency_graph(
+    source: &Path,
+    target: &str,
+) -> Result<(Vec<(Dependency, LicenseFiles)>, String)> {
     let lock_bytes = read(&source.join("Cargo.lock"))?;
     let lock: toml::Table = toml::from_str(&String::from_utf8(lock_bytes.clone())?)?;
     let mut checksums = BTreeMap::new();
-    for pkg in lock.get("package").and_then(|p| p.as_array()).into_iter().flatten() {
+    for pkg in lock
+        .get("package")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+    {
         let (Some(name), Some(version)) = (
             pkg.get("name").and_then(|v| v.as_str()),
             pkg.get("version").and_then(|v| v.as_str()),
@@ -283,7 +295,14 @@ fn dependency_graph(source: &Path, target: &str) -> Result<(Vec<(Dependency, Lic
 
     let metadata: Value = serde_json::from_str(&capture(
         Command::new("cargo")
-            .args(["metadata", "--locked", "--format-version", "1", "--filter-platform", target])
+            .args([
+                "metadata",
+                "--locked",
+                "--format-version",
+                "1",
+                "--filter-platform",
+                target,
+            ])
             .arg("--manifest-path")
             .arg(source.join("Cargo.toml")),
     )?)?;
@@ -299,7 +318,9 @@ fn dependency_graph(source: &Path, target: &str) -> Result<(Vec<(Dependency, Lic
         .iter()
         .map(|n| (n["id"].as_str().unwrap_or_default(), n))
         .collect();
-    let root = metadata["resolve"]["root"].as_str().ok_or_else(|| crate::Error("no resolve root".into()))?;
+    let root = metadata["resolve"]["root"]
+        .as_str()
+        .ok_or_else(|| crate::Error("no resolve root".into()))?;
     let mut seen = std::collections::BTreeSet::new();
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
@@ -340,7 +361,10 @@ fn dependency_graph(source: &Path, target: &str) -> Result<(Vec<(Dependency, Lic
             }
         }
         if files.is_empty() {
-            bail!("no license text found for {name} {version} in {}", dir.display());
+            bail!(
+                "no license text found for {name} {version} in {}",
+                dir.display()
+            );
         }
         let checksum = checksums.get(&(name.clone(), version.clone())).cloned();
         out.push((
@@ -384,7 +408,11 @@ public domain; `libsqlite3-sys` and `rusqlite` license their own wrapper code un
 
 fn source_files_hash(source: &Path) -> Result<(String, usize)> {
     let mut files = vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()];
-    files.extend(list_files(&source.join("src"))?.into_iter().map(|f| format!("src/{f}")));
+    files.extend(
+        list_files(&source.join("src"))?
+            .into_iter()
+            .map(|f| format!("src/{f}")),
+    );
     let mut listing = String::new();
     for file in &files {
         listing.push_str(&format!("{file}\n{}\n", sha256_file(&source.join(file))?));
@@ -407,6 +435,8 @@ fn write_tar_gz(top: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Directory);
         header.set_mode(0o755);
+        header.set_uid(0);
+        header.set_gid(0);
         header.set_mtime(epoch);
         header.set_size(0);
         tar.append_data(&mut header, format!("{dir}/"), std::io::empty())?;
@@ -415,17 +445,26 @@ fn write_tar_gz(top: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);
         header.set_mode(if entry.executable { 0o755 } else { 0o644 });
+        header.set_uid(0);
+        header.set_gid(0);
         header.set_mtime(epoch);
         header.set_size(entry.data.len() as u64);
-        tar.append_data(&mut header, format!("{top}/{}", entry.path), entry.data.as_slice())?;
+        tar.append_data(
+            &mut header,
+            format!("{top}/{}", entry.path),
+            entry.data.as_slice(),
+        )?;
     }
     Ok(tar.into_inner()?.finish()?)
 }
 
 fn write_zip(top: &str, entries: &[Entry], epoch: u64) -> Result<Vec<u8>> {
     let (y, mo, d, h, mi, s) = civil(epoch);
-    let time = zip::DateTime::from_date_and_time(y, mo, d, h, mi, s - s % 2)
-        .map_err(|_| crate::Error(format!("SOURCE_DATE_EPOCH {epoch} is outside the zip date range")))?;
+    let time = zip::DateTime::from_date_and_time(y, mo, d, h, mi, s - s % 2).map_err(|_| {
+        crate::Error(format!(
+            "SOURCE_DATE_EPOCH {epoch} is outside the zip date range"
+        ))
+    })?;
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -466,7 +505,14 @@ fn civil(epoch: u64) -> (u16, u8, u8, u8, u8, u8) {
     if year < 1980 {
         return (1980, 1, 1, 0, 0, 0);
     }
-    (year.min(2107), month, day, (secs / 3600) as u8, (secs % 3600 / 60) as u8, (secs % 60) as u8)
+    (
+        year.min(2107),
+        month,
+        day,
+        (secs / 3600) as u8,
+        (secs % 3600 / 60) as u8,
+        (secs % 60) as u8,
+    )
 }
 
 #[cfg(test)]
@@ -477,6 +523,6 @@ mod tests {
     fn civil_dates() {
         assert_eq!(civil(0), (1980, 1, 1, 0, 0, 0));
         assert_eq!(civil(1_000_000_000), (2001, 9, 9, 1, 46, 40));
-        assert_eq!(civil(1_781_000_000), (2026, 6, 9, 9, 33, 20));
+        assert_eq!(civil(1_781_000_000), (2026, 6, 9, 10, 13, 20));
     }
 }

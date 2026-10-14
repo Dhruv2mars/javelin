@@ -49,7 +49,10 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn is_hex(value: &str, len: usize) -> bool {
-    value.len() == len && value.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    value.len() == len
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 pub fn exe_name(base: &str) -> String {
@@ -127,8 +130,9 @@ impl Args {
     pub fn source_date_epoch(&self) -> Result<u64> {
         let value = match self.get("source-date-epoch") {
             Some(v) => v.to_string(),
-            None => std::env::var("SOURCE_DATE_EPOCH")
-                .map_err(|_| Error("--source-date-epoch or SOURCE_DATE_EPOCH is required".into()))?,
+            None => std::env::var("SOURCE_DATE_EPOCH").map_err(|_| {
+                Error("--source-date-epoch or SOURCE_DATE_EPOCH is required".into())
+            })?,
         };
         Ok(value.parse()?)
     }
