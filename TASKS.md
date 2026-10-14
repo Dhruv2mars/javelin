@@ -464,7 +464,26 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Draft PR: [#13](https://github.com/Dhruv2mars/javelin/pull/13), linked to owner and hub; unmerged.
 - Owns: crates/javelin-collaboration/**; docs/review-permission-model.md; review-permission-model.yml and its own appended TASKS section.
 - Done: Pure author-owned revision/exact-approval/applied-permission model; no durable store or publication ticket.
-- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- VERIFIED bounded pure component at tested `87f2acd` by hub audit
+  `javelin-hub-audit-pr13-87f2acd-r1`: exact export passes fmt, Clippy, 13
+  behaviour plus 1 property test, the example matches its expected output, and
+  all 16 mutations are caught by named tests. Hosted run `38507448220` logs show
+  `87f2acd`, Rust 1.99.0, the same results on all three OSes, and nine hashed
+  source files matching the export (Windows after CRLF). A 3000-seed randomized
+  check against an independent model found no violation. The hub confirmed the
+  exact-base refresh sentence was removed in ancestor `681be58`; approvals bind
+  the immutable revision base and the publication head is separate, matching
+  the contract. Same-family review limitation noted. Not hosting, not a gate.
+- Returned as a small same-PR fix with regression tests: `check_publishable`
+  compares the revision before checking the publisher's access, leaking
+  `revision_mismatch` versus `no_access` to principals without access
+  (`lib.rs:472-479`); replay lookup precedes the repository sanity check
+  (`lib.rs:341-353`). TASKS wording: nine hashed files, not seven.
+- Integration obligation for the Publish and hosting units: the model has no
+  published or closed state, so `check_publishable` keeps allowing an already
+  published revision. The publisher must record publication or close the
+  request in the same boundary. Nonintersecting advances compose the frozen
+  proposal delta onto the head without a new revision or approval.
 
 #### Javelin Windows sparse backend repair proof
 
