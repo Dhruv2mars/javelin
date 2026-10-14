@@ -574,6 +574,7 @@ fn resolved_paths_colliding_with_an_unresolved_path_are_held_back() {
             ("a/b", ConflictKind::PathPrefix)
         ]
     );
+    assert_eq!(outcome.conflicts[0].with, Some(path("a/b")));
     assert_eq!(outcome.conflicts[1].with, Some(path("a")));
     assert!(outcome.merged.is_empty());
 }
