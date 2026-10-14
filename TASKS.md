@@ -447,3 +447,15 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - Earlier grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
 - Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
 - Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
+
+### macOS sparse Layer backend attempt
+
+- Branch: `test/macos-sparse-backend`, from `c5c0ebec93cb80308043192628ed452ff6f5d66d`.
+- Owns `tools/macos-sparse-backend/**`, `docs/macos-sparse-backend.md`,
+  `.github/workflows/macos-sparse-backend.yml`, and this section.
+- PR #5/#7 are unmerged dependencies used at most as pinned developer checkouts.
+- [ ] Compare FSKit and at least one alternative sparse ordinary-path approach from sources.
+- [ ] Record hosted SDK, compiler, license, signing and activation prerequisites raw.
+- [ ] Run one bounded disposable hosted macOS attempt and archive raw evidence.
+- [ ] Mount checks only if documented prerequisites are satisfied; else INCONCLUSIVE.
+- [ ] Independent read-only review and handoff to the hub.
