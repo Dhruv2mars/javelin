@@ -290,5 +290,26 @@ acceptance at `87f2acd` remains separate from this follow-up.
   oracle diff. All 18 mutations compiled and failed named tests. Evidence is in
   `/tmp/javelin-pr13-low-fixes/`. The example needs an existing fixture directory;
   the first invocation lacked it, and the corrected invocation passed.
-- [ ] Push tested source and inspect raw three-OS hosted logs at that exact head.
-- [ ] Stop the single T3 watcher, confirm draft PR linkage, and report evidence to hub.
+- [x] Push tested source and inspect raw three-OS hosted logs at that exact head.
+  VERIFIED source `b8b40ce20c8e075d16dee2e91cc7731fdb73931d`, run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38532925240. All three jobs
+  passed on Rust 1.99.0: Linux x64, macOS ARM64, and Windows x64. Downloaded
+  raw job logs and all three artifacts to
+  `/tmp/javelin-pr13-low-fixes/hosted-38532925240/`. Each records the exact SHA,
+  matching nine file hashes, fmt, warnings-denied Clippy, 15 behavior tests plus
+  one property test, release example, and an empty oracle diff. Windows hashes
+  match source after LF-to-CRLF conversion. Linux caught all 18 mutations,
+  including each new regression when its ordering fix was reverted.
+  Artifacts: Linux `11877769906`, macOS `11878900892`, Windows `11878204730`,
+  expiring 2026-10-28 UTC. `audit-summary.txt` records the inspected checks.
+- [x] Stop the single T3 watcher, confirm draft PR linkage, and report evidence to hub.
+  Exactly one linked draft PR #13 remains open and unmerged. Final evidence
+  update changes only `TASKS.md`; crate and workflow still match tested `b8b40ce`.
+  Follow-up diff from `e0f0a19` names only `TASKS.md`,
+  `crates/javelin-collaboration/src/lib.rs`,
+  `crates/javelin-collaboration/tests/review.rs`,
+  `crates/javelin-collaboration/scripts/mutations.sh`, and
+  `docs/review-permission-model.md`. No native source or workflow changes.
+  Bounded pure component and these two fixes are VERIFIED. Durable/provider
+  integration, atomic publication/rechecking, publication/closure persistence,
+  and complete hosted workflows remain NOT VERIFIED and outside this unit.
