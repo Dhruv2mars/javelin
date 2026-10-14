@@ -248,4 +248,10 @@ fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
   failure, non-applied, or unnamed failure as errors; exit trap keeps status;
   renamed mislabeled mutation to `skip_permission_validation`. Negative runner
   check: compile-error, no-match, and harmless mutations each fail the script.
+- [x] Review r3 (same model, `8c5ea80`): r2 closed; one low diagnostic defect
+  (no-match grep under pipefail exited before printing the unnamed-failure
+  message). Fixed; an aborting-test probe now prints the message and exits 1.
+- [x] Hub audit: integration doc now separates the immutable proposal base from
+  the publication-locked World head; nonintersecting advances do not force
+  refresh or invalidate approvals (`681be58`, doc-only).
 - [ ] Hand off exact tested source, scopes, and retained limits to the hub.

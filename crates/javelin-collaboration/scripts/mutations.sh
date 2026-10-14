@@ -30,7 +30,7 @@ mutate() {
     echo "$name: SURVIVED"
     survived=1
   else
-    failed=$(echo "$out" | grep -E '^test .* FAILED$' | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | paste -sd, -)
+    failed=$({ echo "$out" | grep -E '^test .* FAILED$' || true; } | sed -E 's/^test (.*) \.\.\. FAILED$/\1/' | paste -sd, -)
     if [ -z "$failed" ]; then
       echo "$name: FAILED WITHOUT A NAMED TEST"
       survived=1
