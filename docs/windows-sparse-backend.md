@@ -102,7 +102,7 @@ defect, not a platform refusal. Attempt 8 applies the independent review finding
 | 2 | `6e849b5` | `38506216303` | Same; no batch line echoed |
 | 3 | `cf8a8c1` | `38506397776` | Even `cmd /c echo` failed via a `System32/cmd.exe` path |
 | 4 | `60fdf62` | `38506542313` | Backslash path fixed cmd; `CF_SIZE_OF_OP_PARAM` undefined |
-| 5 | `e738c3f` | `38506681907` | Both compiled; recursive inheritance grants left files with empty DACLs |
+| 5 | `e738c3f` | `38506681907` | Workflow concluded `failure`: both compiled; recursive inheritance grants left files with empty DACLs |
 | 6 | `ee23f17` | `38506890542` | All phases ran; traversal hydrated the slow file; renamed unchanged file copied |
 | 7 | `4588385` | `38507282143` | All native phases passed; reviewed as `fdd0f4b` (`evidence/7-pre-review/`) |
 | **8** | **`8712866`** | **`38508454070`** | **Final; review fixes; all native phases VERIFIED** |
@@ -139,8 +139,14 @@ unregistered, the account was removed and the owned scratch tree was deleted.
   (`39 0d 0a`); the native check normalises it explicitly. A Win32 directory flush succeeded.
 - Permission-enforced protection: the base and the frozen snapshot are Administrators-owned
   (set by `/setowner`; no owner readback) with read/execute for the user. The user's
-  `attrib -R`, `icacls /grant <self>:F`, `takeown`, write, delete, rename, create, container
-  rename and rename of the whole frozen root were all refused, and the attribute stayed set.
+  `attrib -R`, `icacls /grant runneradmin:F`, `takeown`, write, delete, rename, create,
+  container rename and rename of the whole frozen root were all refused, and the attribute
+  stayed set. The grant probe named the administrator, not the proof user
+  `jvs127c2b16d4c6`: `userInfo().username` in `checks.mjs` returned the parent's inherited
+  `USERNAME` under `Start-Process -Credential`, so the attempt 8 "target the proof user" fix
+  did not take effect (raw argv in `native-protect-base.json` and
+  `native-protect-snapshot.json`). The refusal still shows the user lacks WRITE_DAC, which any
+  grant needs; a self-grant was not exercised. Known limitation, not rerun.
 - Two clones of one frozen snapshot each showed the captured tree exactly, private writes stayed
   isolated between clones and from the source, and the snapshot was unchanged at the end. Clone
   provider logs show changed files served from `frozen\snap\blobs\<sha256>` and unchanged
@@ -182,10 +188,23 @@ evidence defects and confirmed the ProjFS, rename, identity, kill, snapshot, pee
 source claims. Its findings were applied in attempt 8: capture refuses snapshot-served roots,
 the frozen root can no longer be renamed by the user, the kill checks and verifier now assert
 the reader failure and post-kill state, the partial-directory and dehydrated-rename capture
-paths are exercised with a size check, the ACL probe targets the proof user, providers log
-source paths, writer liveness is recorded, capture checks its writes and the verifier pins the
-final digest, run, phases and sources. Documented rather than changed: case-only renames,
-unvalidated manifest paths (protected by ACL only) and unenforced capture quiescence.
+paths are exercised with a size check, providers log source paths, writer liveness is
+recorded, capture checks its writes and the verifier pins the final digest, run, phases and
+sources. The ACL-probe change intended to target the proof user did not take effect (see the
+protection verdict above). Documented rather than changed: case-only renames, unvalidated
+manifest paths (protected by ACL only) and unenforced capture quiescence.
+
+The hub's independent audit of tested `8712866` / head `2565598` matched the re-downloaded
+artifact digest and all 96 raw files and confirmed every VERIFIED claim. It recorded these
+further known limits of the proof code, left unfixed in this PR:
+
+- `capture` writes whatever `bytes()` returned with no PARTIAL guard, so a renamed partial
+  placeholder that is neither in-sync nor size-matched could be captured truncated.
+- `capture` and `audit` walk directory junctions as plain directories, with no entry or size
+  bound on that walk.
+- Manifest blob names and link targets are trusted, and blob bytes are never checked against
+  their digest name.
+- The `.registered` marker that makes `capture` refuse snapshot-served roots is owner-editable.
 
 ## Rerun and audit
 
