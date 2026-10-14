@@ -400,6 +400,8 @@ fn executable_bit_merges_independently_of_content() {
         ("mode-only", File(TEN)),
         ("mode-and-text", File(TEN)),
         ("drop", Exec(TEN)),
+        ("theirs-mode", File(TEN)),
+        ("same-text", File(TEN)),
     ]);
     let ours = fx.layer(&[
         ("mode-only", Some(Exec(TEN))),
@@ -408,6 +410,14 @@ fn executable_bit_merges_independently_of_content() {
             Some(Exec(b"ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")),
         ),
         ("drop", Some(File(TEN))),
+        (
+            "theirs-mode",
+            Some(File(b"ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")),
+        ),
+        (
+            "same-text",
+            Some(Exec(b"ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")),
+        ),
     ]);
     let theirs = fx.layer(&[
         ("mode-only", Some(File(b"1\n2\n3\n4\n5\n6\n7\n8\n9\nTEN\n"))),
@@ -416,6 +426,11 @@ fn executable_bit_merges_independently_of_content() {
             Some(File(b"1\n2\n3\n4\n5\n6\n7\n8\n9\nTEN\n")),
         ),
         ("drop", Some(Exec(b"1\n2\n3\n4\n5\n6\n7\n8\n9\nTEN\n"))),
+        ("theirs-mode", Some(Exec(TEN))),
+        (
+            "same-text",
+            Some(File(b"ONE\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")),
+        ),
     ]);
     let (outcome, loads) = fx.merge_counting(&ours, &theirs);
     assert!(outcome.is_clean(), "{:?}", outcome.conflicts);
@@ -452,6 +467,17 @@ fn executable_bit_merges_independently_of_content() {
         })
     ));
     assert_eq!(fx.bytes(&result, "drop"), ten);
+    // Content-only on one side and mode-only on the other retains the edited object.
+    for p in ["theirs-mode", "same-text"] {
+        assert_eq!(
+            outcome.merged[&path(p)],
+            Merged::Retained(FileEntry::Regular {
+                content: fx.entry_of(&ours, p).unwrap().content(),
+                executable: true
+            }),
+            "{p}"
+        );
+    }
 }
 
 #[test]
