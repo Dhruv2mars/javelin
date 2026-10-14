@@ -142,18 +142,40 @@ the local and hosted development workflows.
    unconfirmed until the sparse backend passes. Unsupported capabilities and required
    host setup remain open work, not a successful gate.
 3. Complete a real local project with externally managed parallel agents. Exercise
-   checkpoints, Stack, conflicts, Publish, discard, history, restore, and supplied traces.
+   checkpoints, Layer clone, Stack, conflicts, Publish, discard, history, restore,
+   ignore discovery and supplied traces. Pass through a rerunnable acceptance
+   script with explicit expected outcomes from this contract, including unchanged
+   source snapshots after clone, compatible advances without forced refresh,
+   explicit intersection conflicts, and the missing-agent-trace warning and override.
 4. Complete a hosted public and private repository workflow through CLI and browser.
    Exercise direct Publish, exact review approvals, revisions, upstream contributions,
-   forks, permissions, retries, and outages.
+   forks, permissions, retries, and outages. A rerunnable acceptance script must
+   assert exact revision authorization, immutable prior revisions, one durable
+   outcome after a lost reply, inherited fork data without inherited credentials,
+   no access to restricted traces, and the distinct control-plane/provider outage
+   outcomes in this contract.
 5. Initial GA requires macOS, Linux, and Windows support. Verify installation,
    upgrade, recovery, and complete workflows on each. Record supported architectures
    in the release manifest. A platform that has not passed remains a GA blocker.
+   The user explicitly confirmed all three for initial GA in this hub on
+   2026-10-14. This supersedes the earlier Q61 macOS-first release direction.
 6. Measure hot-repository and many-repository workloads. Record fixtures, machines,
-   backend, limits, errors, and cost assumptions. Set numerical release requirements
-   from measured behavior. Do not equate simulated API throughput with filesystem throughput.
+   backend, limits, errors, and cost assumptions. Baselines inform engineering;
+   they do not pass this gate. Before a release acceptance run, commit its workload
+   shape, repository/file/history sizes, concurrent Layer/client counts, duration,
+   numeric latency/throughput/resource/error limits and cost budget. A missing
+   threshold or exceeded limit fails acceptance. Changes to criteria require a
+   recorded rationale and a new run; do not relax them retroactively to pass the
+   same result. Numerical criteria remain open engineering work. Measure mounted
+   filesystem paths separately from API throughput.
 7. Verify public release artifacts and documentation as a new developer. Publish
    reproducible evidence, known limits, and supported versions before declaring GA.
+
+The complete local and hosted acceptance scripts must run with a failing `git`
+stand-in on PATH whose positive control proves it detects invocation. Check the
+resulting marker is absent during product workflows and inspect runtime/storage
+dependencies for Git invocation or interpretation. Developer checkout and build
+metadata collection remain outside those product executions.
 
 ## Work ownership
 
@@ -180,3 +202,11 @@ without explicit user instruction.
 - Marathon authorization, replacement of earlier code, and one-PR-per-thread rule:
   `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`, user messages on 2026-10-13.
   Local backing transcript: `codex://threads/01a135d7-d344-72c2-b0c3-331850d6b2ec`.
+- Build direction confirmation of record: the user's opening messages in that
+  hub direct the implementation to follow the final design and authorize the OSS
+  GA marathon. They do not alter the prior thread's formal confirmation metadata.
+- Initial GA platform scope: in this hub on 2026-10-14 the user answered
+  "All three platforms for initial GA" to the release-scope question. The earlier
+  Q61 answer was "first os is macos only" with portable architecture; presenting
+  all three as an already accepted gate before this answer was a hub attribution
+  error. The new explicit answer settles that scope.

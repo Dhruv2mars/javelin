@@ -25,6 +25,9 @@ workflow may invoke or interpret Git.
 - [x] Arrange hourly persistent hub continuation without duplicating active work.
 - [x] Independently review this plan against the accepted design with `claude-opus-5-5`.
 - [x] Strengthen the sparse-backend gate and record platform requirements from review.
+- [x] Correct the platform decision's provenance: the review proposed the three-OS
+  gate; the user explicitly chose "All three platforms for initial GA" in this
+  hub on 2026-10-14, superseding the earlier Q61 macOS-first direction.
 
 ## Prove the local VCS
 
@@ -72,6 +75,8 @@ workflow may invoke or interpret Git.
 - [ ] Add contribution guidance, support policy, security reporting, and license checks.
 - [ ] Complete independent security and correctness review, fixing material findings.
 - [ ] Set measured release limits and performance requirements before claiming scale.
+- [ ] Commit fixed workload shapes and numeric pass/fail thresholds before the
+  release acceptance measurements. Baselines alone cannot pass Gate 6.
 - [ ] Run the full local and hosted acceptance suite against release artifacts.
 - [ ] Publish versioned packages and release artifacts with checksums and provenance.
 - [ ] Verify the public release as a new developer and record GA evidence.
@@ -417,6 +422,23 @@ PRs are never merged without explicit user instruction.
   handling and helper list/snapshot trust scope were also returned to that owner.
   No binding acceptance, product Gate 2 or GA is claimed from green tests.
 
+- [x] Accept corrected PR #10 as a bounded Linux binding dependency at tested
+  `8137111cb00a227f0f225ef4debe7ca1bf891e98`, after independent source review and
+  inspection of actual artifacts. This supersedes the hold on `93f9eaa` above.
+  Audit `javelin-hub-audit-pr10-8137111-r1` found no material new defect and checked
+  the hosted pre-fix reproductions and corrected pending-operation ownership.
+  The resumed Codex hub matched all 14 source hashes in each runtime artifact,
+  both 16-test mount results, all 15 summary checks and complete cleanup from
+  runs `38509261390` and `38509461412`. Native run `38509261520` records
+  `8137111` and 65 Linux / 65 macOS / 50 Windows passing tests; Linux ignores
+  17 gated entries, macOS and Windows one actor. Raw files are under
+  `/tmp/javelin-hub-audit-pr10/runs`; the hub's recomputation is
+  `/tmp/javelin-hub-codex-pr10-evidence-check.json`.
+  Head `a4a95c1` differs only in TASKS and the Linux runtime doc.
+  File watching remains INCONCLUSIVE: two failures in 25 probe attempts across
+  23 runs. Same-user helper trust, stale-view rebind, autosave, other kernels,
+  production privileges, Gate 2 and GA remain open.
+
 ### Expanded parallel workstreams
 
 The user authorized broader parallel execution on 2026-10-14. Independent,
@@ -435,7 +457,20 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Draft PR: [#12](https://github.com/Dhruv2mars/javelin/pull/12), linked to owner and hub; unmerged.
 - Owns: crates/javelin-merge/**; docs/mechanical-merge.md; mechanical-merge.yml and its own appended TASKS section.
 - Done: Pure deterministic three-way merge with explicit structural/content conflicts and actual native-manifest caller tests.
-- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- [x] Accept tested `b725a69` as a bounded pure merge component after Codex r5
+  `javelin-hub-merge-e0a5f5f-codex-r5-20261014`. Exact engine tree matches `e0a5f5f`;
+  final `61ecdd9` changes docs/TASKS only. The hub inspected the audit's actual
+  raw hosted log extract, fixtures and timings under
+  `/tmp/javelin-hub-merge-codex-r5/audit`.
+  Runs `38526975921` and `38526975843` identify `b725a69` on all three OSes;
+  the component has 22 tests and 16 compiling mutations killed. Independent
+  fuzz/exhaustive evidence covers 996,849 changed inputs and 22,657 clean results
+  with no every-pair oracle violation. This is empirical bounded evidence.
+- Medium resource blocker before Stack/hosted integration: repeated exact diffs
+  took 4.88 seconds at 2,000 scattered lines; about 39 KB at 4,000 lines exceeded
+  a 30-second external cutoff. PR #21 owns deterministic resource limits.
+  Ordinary function/section-boundary edits can also conservatively conflict.
+  Universal correctness, arbitrary large files and persisted Stack remain open.
 
 #### Javelin repository protocol and verified transfers
 
@@ -455,6 +490,25 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   Transport security, authentication, whole-Layer Publish, traces and hosting
   remain outside this unit. Current-head hosted results and owner review are pending;
   this local check does not accept the protocol dependency.
+- Fresh Codex audit `javelin-hub-audit-pr15-codex-r2-20261014` independently
+  verifies tested `02c7427`: 21 tests, 24 compiling mutations, raw three-OS
+  run `38508849025`, source hashes and positive/negative Git controls. It found
+  no World-validation bypass. Bounded codec proofs are verified; integration
+  acceptance and hosted exposure remain held on resource limits.
+- HIGH hosted blocker: a 55-byte Want causes a 32 MiB Rust allocation; an
+  eight-entry manifest caused 268,446,277 cumulative Rust allocation bytes.
+  This is not peak RSS and excludes SQLite C allocations. The older resumed
+  audit also measured repeated entry/history validation in Manifests/Publish;
+  fixing Want alone does not bound those operations. Preserve corruption
+  detection while resolving CPU/memory/retention limits before hosted exposure.
+- Returned doc claims were disproven by actual fixtures: a failed batch retains
+  bytes that a later legitimate Publish can reference; a legal 16 MiB frame
+  reserves its body before inner refusal; Error codes accept UTF-8.
+  Owner correction fixtures are `c133fab`, docs-only head `e235824`, local
+  verification owner-reported. No new hosted or independent acceptance is
+  claimed for those changes. The same PR #15 waits for the hub-accepted PR #18
+  exact source before rebasing and migrating APIs, then requires fresh review
+  and three-OS proof. Evidence: `/tmp/javelin-hub-audit-pr15-codex-r2/notes`.
 
 #### Javelin review and applied-permission state machine
 
@@ -479,6 +533,15 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   `revision_mismatch` versus `no_access` to principals without access
   (`lib.rs:472-479`); replay lookup precedes the repository sanity check
   (`lib.rs:341-353`). TASKS wording: nine hashed files, not seven.
+- Fix source `b8b40ce`, final evidence-only head `e0343a8`: the hub inspected the
+  nine-line guard reorder and verified raw run `38532925240` against repository
+  blobs. All nine source hashes, 15 behavior plus one property test and empty
+  example diff match each OS; Windows line endings are checked per file.
+  Linux raw mutations name both new regressions among 18 caught mutations.
+  Recomputed evidence: `/tmp/javelin-hub-pr13-b8b40ce-raw-check.json`.
+  The separate `gpt-6-astra` follow-up/trail audit failed from a usage limit
+  before returning a review. It is not evidence of independent acceptance of
+  the fix; its bounded follow-up remains open. Prior `87f2acd` acceptance stands.
 - Integration obligation for the Publish and hosting units: the model has no
   published or closed state, so `check_publishable` keeps allowing an already
   published revision. The publisher must record publication or close the
@@ -527,6 +590,13 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   bounded Windows unit: capture hardening (PARTIAL guard, junction refusal,
   manifest path and digest validation, bounds) with a rerun, then a
   Windows-portable common probe (CRLF-tolerant compiler check, file-only fsync).
+- [x] Verify the returned documentation correction at `8a77d42` and accept
+  tested `8712866` as bounded Windows feasibility evidence. The hub inspected
+  `2565598..8a77d42`: only TASKS and the Windows doc changed; raw grant target,
+  failed attempt and unfixed capture limitations are now stated accurately.
+  The unchanged offline audit again passes on eight archives and 96 final raw
+  files. No new executable run is claimed. Capture hardening is the next unit;
+  Gate 2 and Windows product acceptance remain open.
 
 #### Javelin macOS sparse filesystem feasibility
 
@@ -537,6 +607,23 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Owns: tools/macos-sparse-backend/**; docs/macos-sparse-backend.md; macos-sparse-backend.yml and its own appended TASKS section.
 - Done: One hosted macOS prerequisite and feasible mounted-backend attempt, without laptop or host-security changes.
 - Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- Hub audit `javelin-hub-audit-pr11-39a065b-r1` independently reproduced 25 unit
+  tests and inspected run `38507420049` and artifact `11868946498`. Its verdict
+  permits bounded feasibility acceptance after docs-only corrections. The raw
+  summary has 18 VERIFIED required checks and one excluded INCONCLUSIVE clone
+  check; the probe has ten passing behavior checks, an INCONCLUSIVE overall
+  result, and NOT VERIFIED path boundary. Corrections were returned to the same
+  PR #11 owner on Codex. No backend or product gate is accepted yet.
+  Follow-on risks include restart-invalidated handles, unauthenticated loopback
+  access, default APFS case/normalization aliases, sudo mounts, serialized blocking
+  I/O, costly copy-up/deletion, paginated enumeration and interrupted delete.
+  FSEvents, hard links, xattrs and same-mount restart behavior remain unverified.
+- [x] Accept only bounded macOS feasibility at `39a065b` after verifying corrected
+  docs `61aae6f`. The tested-source-to-head diff contains only TASKS and the Mac
+  doc. The hub independently recomputed all seven component hashes against
+  Git blobs and counted the raw 18 VERIFIED / one INCONCLUSIVE summary entries,
+  retained the failed path-boundary result, and checked cleanup. The backend's
+  correctness/setup gaps remain blockers; PR #20 owns suitability evidence.
 
 #### Javelin native development packaging and installation
 
@@ -547,6 +634,16 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Owns: tools/native-packaging/**; docs/native-development-packages.md; native-packaging.yml and its own appended TASKS section.
 - Done: Three-OS development CLI archives, checksums and clean-temp installation smoke; no public release.
 - Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- Acceptance HELD after fresh Codex r2 reproduced five archive-validation gaps
+  at `b9243f5`, despite valid package/checksum/smoke evidence. Actual ZIP duplicate
+  records and 10,004 raw records bypass deduplicated library counts; directory
+  payloads are skipped; PAX sparse metadata changes extracted meaning; special
+  ZIP modes are accepted as regular; missing/corrupt gzip trailers are accepted.
+  The hub inspected `/tmp/javelin-hub-audit-pr17-codex-r2/{confirmation,edge-probes}/results.json`.
+  Same PR #17 owner is fixing these with unchanged-source reproductions and
+  new regressions. The older automatically resumed audit missed these stronger
+  fixtures; its recommendation does not override the concrete failures.
+  Development-only scope, Windows reproducibility and release gates remain open.
 
 #### Javelin native storage cost and contention measurements
 
@@ -557,6 +654,19 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Owns: tools/native-benchmarks/**; docs/native-storage-baseline.md; native-storage-baseline.yml and its own appended TASKS section.
 - Done: Reproducible release-native API cost and multiprocess contention measurements; no scale or filesystem-throughput claim.
 - Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- Retained `4149da9` API measurements independently verified by Codex r2; tool
+  acceptance was HELD for retry-chain verification and failed-disk-probe gaps.
+  Deleted setup failures, attempt 99, worker 999 reopens and zero/shrinking disk
+  records could pass with matching summaries. Release-test and six rounding
+  corrections were also returned. Evidence is under
+  `/tmp/javelin-hub-audit-pr16-codex-r2`; original measurements remain valid,
+  not hot-repository or mounted-throughput acceptance.
+- Owner reports corrected reviewed source `ebd3083`, hosted head `3acc660` and
+  final evidence-only `100395b`, with 29 tests per debug/release profile and 33
+  verifier checks. Run `38569138378` and retained correction evidence require
+  the hub's fresh inspection before acceptance. Do not substitute the owner's
+  final report for that inspection. Windows measurements, stress, retry
+  exhaustion, growth causation and Gate 6 remain unverified.
 
 Standalone Rust crates own an empty `[workspace]`, lockfile and target ignore.
 They use accepted public native types and APIs; they do not copy private hashing
@@ -585,18 +695,90 @@ and dependency rules are in `docs/parallel-build-plan.md`.
   `javelin-hub-audit-pr10-8137111-r1`, `-pr11-39a065b-r1`, `-pr12-2ca73dd-r1`,
   `-pr13-87f2acd-r1`, `-pr14-8712866-r1`, `-pr15-02c7427-r1`, `-pr16-4149da9-r1`,
   `-pr17-b9243f5-r1`. Scratch lives under `/tmp/javelin-hub-audit-pr*`.
-- [ ] Inspect each audit against its cited evidence, then accept or return each PR.
+- [x] Inspect each initial audit against its cited evidence and accept or return
+  the bounded unit. Returned corrections need their own exact-source acceptance.
 - Owner-reported native API requests awaiting the next core unit: public pre-store
   object ID computation, `ObjectId` byte conversion, a cheap existence check or
   size-limited read (PR #15); a cheap public head read and readable effective
-  pragmas (PR #16). The owner of PR #13 and PR #15 each force exact-base Publish,
-  which conflicts with nonintersecting advances; both must adopt the Layer-bound
-  Publish outcome once the core unit exists.
+  pragmas (PR #16). Correction to the earlier publish-design interpretation:
+  PR #13 already separates the immutable revision base from the publication head;
+  PR #15 exposes foundation CAS against the current World head. Neither requires
+  that the current World equal a Layer's base. Whole-Layer composition and hosted
+  authorization are future adapters, not verified by these components.
+
+#### Codex continuation after usage reset
+
+Done for this continuation means recovering interrupted work without duplicates,
+checking completed audits against artifacts, recording bounded acceptance, and
+commissioning only dependency-ready units in separate app-bound single-PR threads.
+
+- [x] Confirm live thread state and all linked draft PRs before resuming work.
+- [x] Route the hub, new audits and resumed owners to Codex `gpt-6.1-sol`, high.
+- [x] Retrieve all eight prior audits; four completed and four failed with no live
+  children. Failed runs are not acceptance evidence.
+- [x] Restart protocol, benchmark and packaging acceptance audits as fresh Codex
+  rounds with the original briefs, partial work and unresolved findings:
+  `javelin-hub-audit-pr15-codex-r2-20261014`,
+  `javelin-hub-audit-pr16-codex-r2-20261014`,
+  `javelin-hub-audit-pr17-codex-r2-20261014`.
+- [x] Recover the merge owner's newer R4 fix rather than audit superseded
+  `2ca73dd`. Fresh hub audit `javelin-hub-merge-e0a5f5f-codex-r5-20261014`
+  reviews engine `e0a5f5f` with R1-R4 history; head `b725a69` has docs only on top.
+  The same PR #12 owner is checking exact-head hosted artifacts. No duplicate
+  owner review was requested.
+- [x] Resume the interrupted two low review-model fixes in the same PR #13.
+- [ ] Inspect each fresh audit and corrected owner handoff before accepting it.
+- [x] Commission bounded native object lookups on accepted `8137111` to remove
+  the protocol's stored-object allocation gap, preserving integrity guarantees.
+- [x] Commission Windows capture hardening on corrected `8a77d42` with hosted
+  partial-file, junction, malformed-manifest and bounds regressions.
+
+#### Dependency-ready follow-on workstreams
+
+Each entry below owns one draft PR and its own app-bound worktree. New units use
+Codex; no replacement threads were created for usage-limit failures. The hub
+resumed the same stopped owners only after checking activity and pending runs.
+
+| Unit | Thread | Branch / PR target | Exact starting dependency | Draft PR |
+| --- | --- | --- | --- | --- |
+| Bounded native object access | `mcp:ced01005-75b0-4291-bbcb-deb33fd063cc` | `feat/bounded-native-object-access` / `feat/linux-layer-workspaces` | `8137111` | [#18](https://github.com/Dhruv2mars/javelin/pull/18) |
+| Windows capture hardening | `mcp:327b1dfe-5b03-483b-b457-b6ba584e73dd` | `fix/windows-sparse-capture` / `test/windows-sparse-backend` | `8a77d42` | [#19](https://github.com/Dhruv2mars/javelin/pull/19) |
+| macOS mounted suitability | `mcp:d0d0bcfd-88ec-4d2f-bcde-0526e2d4b795` | `test/macos-backend-suitability` / `test/macos-sparse-backend` | `61aae6f` | [#20](https://github.com/Dhruv2mars/javelin/pull/20) |
+| Bounded mechanical merge | `mcp:f51d22d4-d73a-45e4-b17f-154b825352a8` | `perf/bounded-mechanical-merge` / `feat/mechanical-merge-engine` | `61ecdd9` | [#21](https://github.com/Dhruv2mars/javelin/pull/21) |
+
+- Worktrees are `/Users/dhruv2mars/.t3/worktrees/javelin/` plus each branch with
+  `/` replaced by `-`; bindings were selected by `t3_thread_launch`, not shell
+  worktree creation. Starting dependencies remain unmerged.
+- PR #18 is the only root native writer. Owns focused domain/repository/library
+  exports and tests, minimal Cargo feature changes and its doc. Streamed
+  `has_blob`/`has_manifest` verifies kind, hash and size only; bounded Manifest
+  bytes validate their own canonical encoding without walking referenced blobs.
+  Full read/history/check/publication validation remains unchanged. The hub
+  accepted this explicit object-only guarantee, not a verified graph claim.
+  Source/tests `f13aa3c` / `3a54021` and allocation reductions are owner-reported;
+  exact-source review and hosted evidence remain pending.
+- PR #19 owns `tools/windows-sparse-backend/**`, a focused capture doc and its
+  Windows workflow. Its first interrupted run was resumed in the same binding
+  after the user's continuation. Planning `a2528fa`, unchanged-backend control
+  `bd42718`; actual hosted reproduction and fixes are not yet verified by hub.
+- PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
+  planning `0828bab`. It leaves the inherited backend unchanged and measures
+  same-mount restart, filename aliases, traversal, scale and host prerequisites
+  on a disposable Mac runner. This is not native binding or acceptance.
+- PR #21 owns `crates/javelin-merge/**`, its bounded-merge doc and focused
+  workflow; planning `935f38a`. Its typed Load/Resource refusals, table/work
+  budgets and faster 2,000-line case are owner-reported, not yet accepted.
+  A 4,000-line refusal is not a faster successful merge. Stack remains gated.
+- PR #15 waits for PR #18 hub acceptance; whole-Layer Publish follows the next
+  accepted native head, without a competing root writer. PRs #16/#17 retain
+  their existing owners and PRs for verifier/installer repairs.
 
 #### Next native unit: whole-Layer Publish
 
-- Gated on hub acceptance of PR #10 at `8137111`, because PR #10 is the root
-  `src/` writer. Branch from that accepted head; not stacked on PR #12, #13 or #15.
+- PR #10 at `8137111` is now accepted as a bounded dependency. The next root
+  writer first delivers bounded object lookups for the protocol's unresolved
+  allocation gap. Whole-Layer Publish follows that reviewed native head; no
+  competing root writer is launched. It is not stacked on PR #12, #13 or #15.
 - Design selected: one `publish_layer` call composing `head World + Layer delta`
   inside one IMMEDIATE SQLite transaction, with durable `Published`, `Conflict`
   and `LayerStale` outcomes, operation-ID idempotency across later advances,
@@ -625,10 +807,11 @@ and dependency rules are in `docs/parallel-build-plan.md`.
 - First scheduled continuation: 2026-10-13 16:54:44 UTC, 22:24:44 Asia/Kolkata.
 - Continuation reads this checklist, checks live work before delegating, and keeps
   unchanged status quiet. Disable the scheduler when GA is verified or the user cancels.
-- Provider routing from 2026-10-14: Codex is usage-limited. The user directed that
-  worker threads and delegated tasks use `claude-work` `claude-fable-5-1` at high
-  effort until Codex limits reset. The hub itself runs on the same model. Reviews
-  by the same model family are recorded as a limitation, not independence.
+- Current provider routing after the user's 2026-10-14 usage-reset instruction:
+  use Codex for resumed owners, new implementation threads and delegated tasks.
+  Default selection is `codex` / `gpt-6.1-sol` / high. This supersedes temporary
+  Claude routing during the limit. Reviews by the same model family remain a
+  recorded limitation even when performed by separate agents.
 - Contract review round 1 failed before review with `Claude API rate limit reached. Try again later.`
 - Contract review round 2 uses provider `claude-work`, model `claude-opus-5-5`.
 - Review task: `node:delegated-task:command%3Amcp%3A3981ee7f-8fb4-4683-a0d3-78e3e74e0371%3Adelegate-task%3Ajavelin-ga-contract-review-r2-20261013`.
