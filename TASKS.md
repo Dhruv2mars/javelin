@@ -233,16 +233,37 @@ A real caller example and integration tests use actual repository-produced
 manifests and blobs. Adversarial tests cover the cases below, and the new workflow
 passes on hosted Linux, macOS, and Windows with downloaded logs inspected.
 
-- [ ] Planning commit, draft PR, T3 registration, hub report.
-- [ ] Ground the design and compare at least two candidate shapes; record the choice.
-- [ ] Compare a mature Rust merge crate with a bespoke line merge from primary docs.
-- [ ] Implement manifest-level merge: retain, add, delete, modify, convergent.
-- [ ] Implement within-file line merge with CRLF and missing-final-newline safety.
-- [ ] Refuse binary content merge; report symlink, type, and executable conflicts.
-- [ ] Report file/directory-prefix structural conflicts.
-- [ ] Real caller example and integration tests over actual repository objects.
-- [ ] Adversarial regressions that fail when guards are removed.
+- [x] Planning commit, draft PR, T3 registration, hub report.
+- [x] Ground the design and compare at least two candidate shapes; record the choice.
+  Candidates A (diffy), B (similar plus bespoke diff3), and C (bespoke) are compared in
+  `docs/mechanical-merge.md`. The delegated Codex architecture review was cancelled
+  before it produced findings, so the comparison is owner-only.
+- [x] Compare a mature Rust merge crate with a bespoke line merge from primary docs.
+- [x] Implement manifest-level merge: retain, add, delete, modify, convergent.
+- [x] Implement within-file line merge with CRLF and missing-final-newline safety.
+- [x] Refuse binary content merge; report symlink, type, and executable conflicts.
+- [x] Report file/directory-prefix structural conflicts.
+- [x] Real caller example and integration tests over actual repository objects.
+- [x] Adversarial regressions that fail when guards are removed.
 - [ ] Independent read-only review; record findings and limits.
-- [ ] Three-OS workflow evidence with inspected artifacts.
-- [ ] Document the future gated adapter to SparseChanges, refresh, and Publish.
+- [x] Three-OS workflow evidence with inspected artifacts.
+- [x] Document the future gated adapter to SparseChanges, refresh, and Publish.
 - [ ] Final hub handoff with VERIFIED, NOT VERIFIED, and INCONCLUSIVE scopes.
+
+Draft PR: https://github.com/Dhruv2mars/javelin/pull/12, linked in T3. Planning SHA
+`63929936581a72d71e4b53b447b6b544b54138da`.
+
+Evidence so far, at tested head `a4275025eec11c8c3a58e60d178924b60902cae0`:
+run https://github.com/Dhruv2mars/javelin/actions/runs/38505396039 (pull_request)
+passed on ubuntu-24.04 (X64), macos-15 (ARM64), and windows-2025 (X64) with Rust
+1.99.0. Downloaded all three artifacts to `/tmp/javelin-merge-ci-38505396039`.
+Each runner logged 16 passing tests, a release example printing the same merged
+manifest `f0d748da511a8540b64683e5855752dd4cb8f3b0c2a715b95523211c7e5c7d97` and one
+`Content` conflict, and 9/9 guard mutations killed. Linux and macOS source hashes
+equal the committed bytes. Windows hashes equal the committed bytes after CRLF
+checkout conversion, verified locally for all six files.
+
+Review limits: the delegated Codex implementation review r1 failed on a provider
+usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
+The Claude Sonnet 5.5 r3 hit the API rate limit. None produced findings.
+
