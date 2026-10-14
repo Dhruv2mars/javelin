@@ -241,3 +241,19 @@ release binaries contain no test-boundary hooks. Evidence and limits are in
 `docs/linux-layer-runtime.md`. Gate 2 and GA are not claimed. Follow-on work:
 autosave/stable capture, continuous editing during capture, re-binding stale views,
 cache collection, the production privilege model, and macOS/Windows bindings.
+
+## Bounded native object access
+
+Dependency: exact hub-accepted tested `8137111cb00a227f0f225ef4debe7ca1bf891e98` from unmerged PR #10. This unit does not independently accept its base. Branch `feat/bounded-native-object-access`; target `feat/linux-layer-workspaces`.
+
+Done: a public caller computes canonical kind-tagged IDs before storage, roundtrips 32 bytes without hex, and performs typed availability and bounded reads without allocating arbitrary payloads or referenced graphs. Existing corruption and publication checks remain intact.
+
+- [x] Read local instructions and current hub TASKS, build contract and decisions.
+- [ ] Open and link one draft PR; report planning SHA to hub.
+- [ ] Compare metadata hints plus bounded verification with streamed verified lookup in independent Codex design review; settle types and guarantees.
+- [ ] Implement scoped native APIs and downstream public caller regressions.
+- [ ] Measure Rust allocation for 32 MiB blob, bounded 8 MiB read, manifests and referenced graphs; distinguish SQLite C buffers and RSS.
+- [ ] Run focused tests, fmt, Clippy with warnings denied, locked tests and release build.
+- [ ] Review exact source independently and fix reproduced material findings.
+- [ ] Inspect same-PR inherited three-OS exact-head raw logs/artifacts and Windows omissions.
+- [ ] Send tested SHA, doc head, scope, raw paths, APIs, outcome and blockers to hub; leave draft unmerged.
