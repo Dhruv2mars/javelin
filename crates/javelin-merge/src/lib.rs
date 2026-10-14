@@ -201,35 +201,61 @@ fn merge_lines(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
     diff3(&lines(base), &lines(ours), &lines(theirs)).map(|merged| merged.concat())
 }
 
+/// A region's changing side (true is ours), its merged lines, and the anchor after it.
+type Step<'a, 'r> = (Option<bool>, &'r [&'a [u8]], Option<&'a [u8]>);
+
 /// diff3 without convergence: base lines matched unchanged on both sides are
 /// anchors. Each region between anchors is taken whole from the only side that
-/// changed it. A region both sides changed conflicts, even if identically, because
-/// with repeated lines an apparent shared edit can be an artifact of the matching.
-/// A clean result therefore applies one complete edit script from each side to
-/// disjoint base lines separated by unchanged lines.
+/// changed it; a region both sides changed conflicts, even if identically.
+///
+/// With repeated lines a change can be matched at several places, so only an anchor
+/// line that occurs exactly once in base, ours, and theirs separates the two sides'
+/// changes. Across any other anchor one side's edit could equally sit on the other
+/// side, and merging it could drop, duplicate, or reorder an edit.
 fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Option<Vec<&'a [u8]>> {
     let (in_ours, in_theirs) = (matches(base, ours), matches(base, theirs));
+    let mut steps: Vec<Step> = Vec::new();
     let (mut b, mut o, mut t) = (0, 0, 0);
-    let mut out = Vec::new();
     loop {
         let anchor = (b..base.len()).find_map(|i| Some((i, in_ours[i]?, in_theirs[i]?)));
         let (nb, no, nt) = anchor.unwrap_or((base.len(), ours.len(), theirs.len()));
         let (region, mine, other) = (&base[b..nb], &ours[o..no], &theirs[t..nt]);
-        let taken = if mine == region {
-            other
-        } else if other == region {
-            mine
-        } else {
-            return None;
+        let (side, taken) = match (mine == region, other == region) {
+            (true, true) => (None, region),
+            (false, true) => (Some(true), mine),
+            (true, false) => (Some(false), other),
+            (false, false) => return None,
         };
-        out.extend_from_slice(taken);
-        let Some((nb, no, nt)) = anchor else {
-            return Some(out);
-        };
-        debug_assert!(base[nb] == ours[no] && base[nb] == theirs[nt]);
-        out.push(base[nb]);
+        let line = anchor.map(|(nb, no, nt)| {
+            debug_assert!(base[nb] == ours[no] && base[nb] == theirs[nt]);
+            base[nb]
+        });
+        steps.push((side, taken, line));
+        let Some((nb, no, nt)) = anchor else { break };
         (b, o, t) = (nb + 1, no + 1, nt + 1);
     }
+
+    let unique = |line: &[u8]| {
+        [base, ours, theirs]
+            .iter()
+            .all(|lines| lines.iter().filter(|l| **l == line).count() == 1)
+    };
+    let (mut last, mut separated) = (None, false);
+    let mut out = Vec::new();
+    for (side, taken, line) in steps {
+        if side.is_some() {
+            if last.is_some() && last != side && !separated {
+                return None;
+            }
+            (last, separated) = (side, false);
+        }
+        out.extend_from_slice(taken);
+        if let Some(line) = line {
+            separated = separated || unique(line);
+            out.push(line);
+        }
+    }
+    Some(out)
 }
 
 /// Lines keep their exact terminator; a final line may have none.

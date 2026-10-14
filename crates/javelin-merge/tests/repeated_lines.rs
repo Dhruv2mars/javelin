@@ -65,6 +65,27 @@ fn identical_lines_inserted_near_a_replacement_are_not_merged_away() {
 }
 
 #[test]
+fn a_shared_edit_in_a_run_of_identical_lines_is_never_applied_twice() {
+    for (base, ours, theirs) in [
+        (
+            &b"fn f() {\n    g();\n}\n}\n}\n"[..],
+            &b"fn f() {\n    g();\n}\n}\n"[..],
+            &b"// c\nfn f() {\n    g();\n}\n}\n"[..],
+        ),
+        (b"a\n\n\n\n", b"a\n\n\n", b"x\na\n\n\n"),
+        (b"}\n}\n}\n", b"}\n}\ny\n", b"a\n}\n}\n"),
+    ] {
+        let outcome = merge_text(base, ours, theirs);
+        assert_eq!(
+            merged_text(&outcome),
+            None,
+            "{:?}",
+            String::from_utf8_lossy(base)
+        );
+    }
+}
+
+#[test]
 fn a_deletion_in_a_run_of_repeated_lines_is_kept() {
     let outcome = merge_text(b"b\nb\nb\nb\nb\n", b"b\nb\nz\nb\nb\n", b"b\nb\nb\nb\n");
     if let Some(bytes) = merged_text(&outcome) {
@@ -135,13 +156,7 @@ fn single_edits_over_repetitive_bases_never_merge_into_wrong_lengths() {
         };
         let expected = len as i64 + delta(o) + delta(t);
         let context = format!("base={base:?} ours={ours:?} theirs={theirs:?} got={lines:?}");
-        // Two deletions of identical lines may be one convergent deletion.
-        let allowed = if (o, t) == (2, 2) {
-            expected..=expected + 1
-        } else {
-            expected..=expected
-        };
-        assert!(allowed.contains(&(lines.len() as i64)), "{context}");
+        assert_eq!(lines.len() as i64, expected, "{context}");
         for (op, token) in [(o, &b"OURS"[..]), (t, &b"THEIRS"[..])] {
             let want = usize::from(op != 2);
             assert_eq!(
@@ -294,9 +309,10 @@ fn independent(a: &Script, b: &Script) -> bool {
     lines && points
 }
 
-/// Independent oracle: a clean result must equal applying some minimal line diff of
-/// ours together with some minimal line diff of theirs that touch no common base line
-/// or insertion point. This checks content and order without the engine's algorithm.
+/// Independent oracle: a clean result must not depend on how identical lines are
+/// matched. Every minimal line diff of ours paired with every minimal line diff of
+/// theirs must touch no common base line or insertion point and produce exactly the
+/// result. This checks content and order without the engine's algorithm.
 #[test]
 fn small_edits_drawn_from_the_base_alphabet_match_an_independent_oracle() {
     let mut rng = Lcg(0x006d_6572_6765_0002);
@@ -335,10 +351,10 @@ fn small_edits_drawn_from_the_base_alphabet_match_an_independent_oracle() {
             minimal_scripts(&base, &ours),
             minimal_scripts(&base, &theirs),
         );
-        let valid = mine.iter().any(|m| {
+        let valid = mine.iter().all(|m| {
             other
                 .iter()
-                .any(|o| independent(m, o) && apply_scripts(&base, &[m, o]) == got)
+                .all(|o| independent(m, o) && apply_scripts(&base, &[m, o]) == got)
         });
         assert!(
             valid,
@@ -346,7 +362,7 @@ fn small_edits_drawn_from_the_base_alphabet_match_an_independent_oracle() {
         );
     }
     assert!(
-        clean > 5000,
+        clean > 3000,
         "the generator must exercise clean merges: {clean}"
     );
 }
