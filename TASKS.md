@@ -171,9 +171,9 @@ No laptop install, privilege, reboot or security change. No Windows product acce
 unless the entire minimum backend passes.
 
 - [x] Read instructions, hub contract, PR #9 evidence and review corrections; define done.
-- [ ] Open exactly one draft PR against `feat/windows-projfs-proof`, link it, report planning SHA to hub.
-- [ ] Ground rename/ACL/cache behavior in primary Microsoft docs and the actual SDK header.
-- [ ] Compare at least two filesystem shapes with independent review; record limits.
+- [x] Open exactly one draft PR against `feat/windows-projfs-proof`, link it, report planning SHA to hub. PR #14, planning `34b0aee`, message `windows-sparse-backend-pr14-planning-v1`.
+- [x] Ground rename/ACL/cache behavior in primary Microsoft docs. ProjFS placeholder directories never become full (cache-state doc); VFS for Git documents partial-directory rename as unsupported (0x80070032); PR #9 log has no PRE_RENAME for `dir`. Actual SDK `cfapi.h` declarations are captured by the hosted run.
+- [x] Compare at least two filesystem shapes with independent review; record limits. Cloud Files sync root per Layer chosen; ProjFS rename matrix kept as control; container layers rejected. Two read-only reviews (Codex gpt-6.1-sol high, Claude Opus 5.5 medium) agreed; neither executed code.
 - [ ] Implement the bounded native backend and separate checks in the owned directory.
 - [ ] Run one bounded hosted attempt; retain raw archive and provenance; audit offline.
 - [ ] Independent read-only review; fix material findings; report verdicts to hub.
