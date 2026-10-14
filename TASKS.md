@@ -397,7 +397,7 @@ This is a pure component, with no Stack, Publish, GA, or underlying core accepta
 - [x] Reproduce exact old-source issue in `/tmp/javelin-bounded-pr21/old`: library SHA256 `882af7f23031254aa602a273aab10c477ed0670224f6fab69a3203fe3ad29ee0`; 2000 lines, bytes 18890/18890/19690, 4771.514 ms; 4000 lines externally killed after 30000 ms. No domain timeout claim.
 - [x] Implement fixed metadata/byte/line/table/work admission and MergeError::Load/Resource, with call-wide Usage and sequential loader checks.
 - [x] Extend unchanged every-pair oracle with 30,000 moves: 2,682 clean, 22,291 ambiguous; original 20,000 remains 3,868 clean. Add ordinary fixtures, exhaustive mandatory-row masks and deterministic resource/boundary/adversarial cases.
-- [ ] Run debug/release, fmt, Clippy and compiling guard/correctness mutations.
+- [x] Local tested source `29abd0e`: debug/release 2+8+16+9 tests, fmt, Clippy -D warnings, native release example and 29/29 compiling mutations pass. All source restored exactly. Logs `/tmp/javelin-bounded-pr21/local-final`; old/new finite differential 592,620 changed cases, 3,432 identical clean outputs.
 - [ ] Obtain fresh independent Codex review, fix findings and verify restored hashes.
 - [ ] Inspect exact-head three-OS logs/artifacts using the single T3 watcher.
 - [ ] Report hashes, counts, limits, API compatibility, evidence and blockers to hub.

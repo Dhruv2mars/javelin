@@ -135,6 +135,11 @@ compared all 592,620 changed triplets over four tokens up to three lines. Both
 engines had 3,432 clean cases, with identical clean bytes and no newly clean cases.
 This is finite compatibility evidence, not general completeness or correctness.
 All 29 guard/correctness mutants compiled and tests rejected each. The three
-production source modules were restored byte-for-byte. Fresh final local logs,
-independent implementation review and hosted exact-head verification are pending. General correctness beyond the small oracle is
+production source modules were restored byte-for-byte. Final local logs at /tmp/javelin-bounded-pr21/local-final verify source at
+29abd0e. Debug/release, fmt, Clippy -D warnings, the native example and all 29
+compiling mutations pass. Restored library SHA256 is
+c84959b77c7ae2e833adb2a0db9d17757c16391212024070b123d3f104f561ed;
+resources is 7c288610a7a26118418a41e6c18bf4e1abd60c031f82cb85e09af402d9283da2;
+matching is e22509c63576e3605b29f6ba09d0baccfce378e67ed1a9208776e39ed781f140.
+Independent implementation review and hosted exact-head verification are pending. General correctness beyond the small oracle is
 INCONCLUSIVE. This is not production Stack or a product gate.
