@@ -247,10 +247,11 @@ passes on hosted Linux, macOS, and Windows with downloaded logs inspected.
 - [x] Adversarial regressions that fail when guards are removed.
 - [x] Independent read-only review; record findings and limits.
 - [ ] Follow-up review of the diff3 fix against prior findings.
-- [ ] Three-OS evidence at the fixed head.
+- [x] Three-OS evidence at the fixed head `b725a69`, with downloaded logs inspected.
 - [x] Three-OS workflow evidence with inspected artifacts.
 - [x] Document the future gated adapter to SparseChanges, refresh, and Publish.
-- [ ] Final hub handoff with VERIFIED, NOT VERIFIED, and INCONCLUSIVE scopes.
+- [x] Owner evidence handoff with VERIFIED, NOT VERIFIED, and INCONCLUSIVE scopes.
+- [ ] Hub acceptance after its fresh Codex round-5 review.
 
 Draft PR: https://github.com/Dhruv2mars/javelin/pull/12, linked in T3. Planning SHA
 `63929936581a72d71e4b53b447b6b544b54138da`.
@@ -336,3 +337,42 @@ Review limits: the delegated Codex implementation review r1 failed on a provider
 usage limit. The OpenCode GPT-6.1 Sol r2 failed with insufficient account funds.
 The Claude Sonnet 5.5 r3 hit the API rate limit. None produced findings.
 
+Hosted evidence for the round-4 fix at exact tested head
+`b725a6961d74e850c8f64d9f8e062d5b3b378b40`: run
+https://github.com/Dhruv2mars/javelin/actions/runs/38526975921, attempt 1,
+succeeded on ubuntu-24.04 X64, macos-15 ARM64, and windows-2025 X64. Jobs
+115729719267, 115729718692, and 115729720210 respectively passed formatting,
+Clippy, 22 tests, the release caller, and 16/16 compiling mutations killed.
+Artifacts 11875802586, 11875664982, and 11875789437 respectively were downloaded
+to `/tmp/javelin-merge-ci-38526975921-codex` and inspected. All seven source hashes
+match the commit, accounting for Windows CRLF checkout. Each release example
+stored manifest `f0d748da511a8540b64683e5855752dd4cb8f3b0c2a715b95523211c7e5c7d97`
+and reported `src/main.rs` as a `Content` conflict in the conflicting case.
+See `docs/mechanical-merge.md` for job links, commands, and the retained limits.
+
+Exact component tree `bd5a374a4810570b190079a59be193f1d94274bd` is unchanged
+between implementation `81cadc9225399bc70b6fe8c0bb32e2d7318e733b`, review source
+`e0a5f5f5c2ba4952c606191d2b9c681137d9a2de`, and tested head `b725a69`.
+This handoff only updates this section and the owned doc. No engine, test,
+caller, workflow, or dependency changes. Native run 38526975843 also reports
+success on all three OSes at `b725a69`; its artifacts were not inspected here.
+
+Review status: the owner's prior round-5 failed without findings. Per user
+routing reset, the hub launched a fresh independent Codex round-5 on the same
+source. No replacement review was launched by this thread. Follow-up review and
+hub acceptance remain unchecked. The sole linked PR is still draft #12, and
+its T3 watcher is released. No merge or scheduler.
+
+Cost-label correction: the retained `/tmp/jm-perf/examples/perf.rs` uses
+`i % 10 == 3` for ours and `i % 10 == 7` for theirs. Each side changes 10% of
+lines, 20% combined. The old label said 20% each. Only that label is corrected;
+the measured 2.75 s and full-memory, unbounded exact-Myers and separator costs
+remain. The hub was notified before the documentation correction.
+
+VERIFIED: bounded library and native-repository caller at the tested source,
+22 tests and 16 guard mutations on the three hosted OS and architecture pairs.
+NOT VERIFIED: persisted Stack, refresh, or whole-Layer adapter; other
+architectures; arbitrary large-file resource bounds; acceptance of unmerged
+native source baseline `e56fc86`.
+INCONCLUSIVE: general correctness outside the small oracle inputs and fresh
+independent review, which remains hub-owned and pending. No GA claim.

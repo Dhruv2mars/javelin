@@ -187,6 +187,52 @@ pass first.
 release example, and the mutation check on Linux, macOS, and Windows, retaining
 logs as artifacts.
 
+## Hosted evidence for the round-4 fix
+
+The [Mechanical merge run 38526975921](https://github.com/Dhruv2mars/javelin/actions/runs/38526975921)
+tested exact PR head `b725a6961d74e850c8f64d9f8e062d5b3b378b40`, attempt 1.
+Checkout explicitly selected the PR head.
+The component tree is `bd5a374a4810570b190079a59be193f1d94274bd`, identical at
+implementation commit `81cadc9225399bc70b6fe8c0bb32e2d7318e733b`, review source
+`e0a5f5f5c2ba4952c606191d2b9c681137d9a2de`, and tested head `b725a69`.
+Later evidence and cost-label documentation changes do not change this source.
+
+| Runner | Architecture | Job | Retained artifact ID |
+| --- | --- | --- | --- |
+| ubuntu-24.04 | X64 | [115729719267](https://github.com/Dhruv2mars/javelin/actions/runs/38526975921/job/115729719267) | 11875802586 |
+| macos-15 | ARM64 | [115729718692](https://github.com/Dhruv2mars/javelin/actions/runs/38526975921/job/115729718692) | 11875664982 |
+| windows-2025 | X64 | [115729720210](https://github.com/Dhruv2mars/javelin/actions/runs/38526975921/job/115729720210) | 11875789437 |
+
+All three jobs passed formatting, `cargo clippy --locked --all-targets -- -D warnings`,
+`cargo test --locked --all-targets -- --nocapture`, the release caller, and
+`bun scripts/mutation-check.ts`. The tests passed 6 repeated-line tests and
+16 repository integration tests. All 16 mutants compiled and the tests rejected
+each one. Rust was 1.99.0 and Bun was 1.3.13.
+
+The owner downloaded all three artifacts to
+`/tmp/javelin-merge-ci-38526975921-codex` and inspected their logs. Each environment
+log reports the exact tested head and seven SHA-256 file hashes. Those hashes
+match the committed component files, with LF converted to CRLF for Windows.
+The files are `Cargo.toml`, `Cargo.lock`, `src/lib.rs`, `tests/repository_merge.rs`,
+`tests/repeated_lines.rs`, `examples/stack_preview.rs`, and `scripts/mutation-check.ts`.
+The library SHA-256 is
+`882af7f23031254aa602a273aab10c477ed0670224f6fab69a3203fe3ad29ee0` for LF,
+`888c69d1636a1fafce946de7fbd06ae0c9d7bc93184af58ed0c93d48b929f8bc` for CRLF.
+All three release callers stored the same clean manifest
+`f0d748da511a8540b64683e5855752dd4cb8f3b0c2a715b95523211c7e5c7d97`
+and reported `conflict path=src/main.rs kind=Content` for the conflicting case.
+Artifacts expire on 2026-10-28. Download them with
+`gh run download 38526975921` for development evidence inspection.
+
+VERIFIED: the bounded library, real native-repository caller, tested conflict
+rules, mutation detection, and these hosted OS and architecture combinations.
+NOT VERIFIED: a persisted Stack or refresh adapter, whole-Layer integration,
+other architectures, and bounded resource use on arbitrary large files.
+INCONCLUSIVE: general correctness beyond the tested oracle inputs. The earlier
+owner round-5 review failed without findings. The hub owns the fresh Codex
+round-5 review and acceptance remains pending that review. This evidence does
+not claim GA readiness or accept the unmerged native dependency.
+
 ## Limits
 
 - Conflict records are per file. They do not include hunk ranges.
@@ -202,9 +248,9 @@ logs as artifacts.
 - Large files are held fully in memory, three versions at once. Exact `RawMyers`
   has no cost bound on pathological inputs, and each candidate separator costs two
   more exact diffs. Measured once on an Apple Silicon laptop, release build,
-  2,000-line files: far-apart edits 0.3 ms; one side reversed 176 ms; both sides
-  rewriting 20% of lines scattered throughout 2.75 s. The scattered case is the
-  separator cost. A forward/backward LCS table would make it one pass, which is
+  2,000-line files: far-apart edits 0.3 ms; one side reversed 176 ms; scattered
+  edits to 10% of lines per side (20% combined) 2.75 s. The scattered case is
+  the separator cost. A forward/backward LCS table would make it one pass, which is
   future work if real repositories hit it.
 - No semantic language-aware merging exists, by design.
 
