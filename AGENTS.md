@@ -25,6 +25,8 @@
 
 - Read `docs/build-contract.md` before changing product behavior.
 - The Javelin GA build hub owns the master checklist and integration decisions.
+- Keep independent, dependency-ready workstreams active in parallel with explicit owned paths.
+- Use completion events and the existing hub continuation to commission the next ready bounded unit.
 - Each separate implementation thread owns one PR and its own worktree.
 - Update `TASKS.md` in your own worktree. The hub consolidates verified results.
 - Do not push to another thread's branch or edit another thread's worktree.

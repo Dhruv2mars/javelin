@@ -371,7 +371,8 @@ PRs are never merged without explicit user instruction.
 - Branch: `feat/linux-layer-workspaces`, based on exact accepted native Layer
   state `e56fc86` through `feat/native-layer-checkpoints`.
 - Provider: configured `claude-work`, model `claude-opus-5-5`, while Codex workers
-  are usage-limited. No other native source writer is active.
+  are usage-limited. Shared root native source ownership remains with this unit;
+  the parallel standalone components below own separate directories.
 - Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-linux-layer-workspaces`.
 - PR: [#10](https://github.com/Dhruv2mars/javelin/pull/10), draft and linked to
   owner and hub. Planning commit `e25819c3d72cb518ea89e4a99da196b6d83ca193`.
@@ -388,6 +389,94 @@ PRs are never merged without explicit user instruction.
 - The design compares three shapes and proposes shared read-only base/checkpoint
   caches, separate private uppers, and a per-view read-only remount for capture
   with busy-writer refusal. This is a design choice, not verified runtime evidence.
+
+### Expanded parallel workstreams
+
+The user authorized broader parallel execution on 2026-10-14. Independent,
+dependency-ready units stay active while the hub verifies completed artifacts.
+The existing hourly hub scheduler is unchanged. No second scheduler is created.
+
+- [x] Review parallel boundaries and launch seven isolated, app-bound single-PR threads.
+- [x] Confirm each new worktree and register all seven draft PRs with this hub.
+- [ ] Independently inspect and accept each bounded artifact before integration.
+
+#### Javelin mechanical merge engine
+
+- Thread: [Javelin mechanical merge engine](t3-thread://v1/mcp:c7d7eb0c-cdc6-4861-a5f3-69968a664085).
+- Branch: `feat/mechanical-merge-engine`; base source `e56fc86`, PR target `feat/native-layer-checkpoints`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-mechanical-merge-engine`.
+- Draft PR: [#12](https://github.com/Dhruv2mars/javelin/pull/12), linked to owner and hub; unmerged.
+- Owns: crates/javelin-merge/**; docs/mechanical-merge.md; mechanical-merge.yml and its own appended TASKS section.
+- Done: Pure deterministic three-way merge with explicit structural/content conflicts and actual native-manifest caller tests.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin repository protocol and verified transfers
+
+- Thread: [Javelin repository protocol and verified transfers](t3-thread://v1/mcp:8bc9054b-2120-4a21-be7d-bd3a9a132feb).
+- Branch: `feat/repository-protocol`; base source `e56fc86`, PR target `feat/native-layer-checkpoints`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-repository-protocol`.
+- Draft PR: [#15](https://github.com/Dhruv2mars/javelin/pull/15), linked to owner and hub; unmerged.
+- Owns: crates/javelin-protocol/**; docs/repository-protocol.md; repository-protocol.yml and its own appended TASKS section.
+- Done: Bounded versioned codec and verified object transfer/reference receiver between real native repositories.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin review and applied-permission state machine
+
+- Thread: [Javelin review and applied-permission state machine](t3-thread://v1/mcp:08bd84e4-6d16-4282-9e65-01e13e2d614d).
+- Branch: `feat/review-permission-model`; base source `e56fc86`, PR target `feat/native-layer-checkpoints`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-review-permission-model`.
+- Draft PR: [#13](https://github.com/Dhruv2mars/javelin/pull/13), linked to owner and hub; unmerged.
+- Owns: crates/javelin-collaboration/**; docs/review-permission-model.md; review-permission-model.yml and its own appended TASKS section.
+- Done: Pure author-owned revision/exact-approval/applied-permission model; no durable store or publication ticket.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin Windows sparse backend repair proof
+
+- Thread: [Javelin Windows sparse backend repair proof](t3-thread://v1/mcp:dac1385c-b28b-43a5-ae66-ff6ec16c75b3).
+- Branch: `test/windows-sparse-backend`; base source `cc94e22`, PR target `feat/windows-projfs-proof`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/test-windows-sparse-backend`.
+- Draft PR: [#14](https://github.com/Dhruv2mars/javelin/pull/14), linked to owner and hub; unmerged.
+- Owns: tools/windows-sparse-backend/**; docs/windows-sparse-backend.md; windows-sparse-backend.yml and its own appended TASKS section.
+- Done: One bounded real sparse-backend attempt addressing rename and permission-enforced snapshot gaps, with honest refusal evidence.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin macOS sparse filesystem feasibility
+
+- Thread: [Javelin macOS sparse filesystem feasibility](t3-thread://v1/mcp:98fd57f4-9ac4-412f-8277-3d1ed5098d1d).
+- Branch: `test/macos-sparse-backend`; base source `c5c0ebe`, PR target `chore/ga-build-plan`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/test-macos-sparse-backend`.
+- Draft PR: [#11](https://github.com/Dhruv2mars/javelin/pull/11), linked to owner and hub; unmerged.
+- Owns: tools/macos-sparse-backend/**; docs/macos-sparse-backend.md; macos-sparse-backend.yml and its own appended TASKS section.
+- Done: One hosted macOS prerequisite and feasible mounted-backend attempt, without laptop or host-security changes.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin native development packaging and installation
+
+- Thread: [Javelin native development packaging and installation](t3-thread://v1/mcp:6ebbed40-380a-4bc8-8330-96e51b8c89e4).
+- Branch: `build/native-development-packages`; base source `e56fc86`, PR target `feat/native-layer-checkpoints`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/build-native-development-packages`.
+- Draft PR: [#17](https://github.com/Dhruv2mars/javelin/pull/17), linked to owner and hub; unmerged.
+- Owns: tools/native-packaging/**; docs/native-development-packages.md; native-packaging.yml and its own appended TASKS section.
+- Done: Three-OS development CLI archives, checksums and clean-temp installation smoke; no public release.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+#### Javelin native storage cost and contention measurements
+
+- Thread: [Javelin native storage cost and contention measurements](t3-thread://v1/mcp:0247ee42-1e8c-4241-afdf-07c41c64cf4b).
+- Branch: `perf/native-storage-baseline`; base source `e56fc86`, PR target `feat/native-layer-checkpoints`.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/perf-native-storage-baseline`.
+- Draft PR: [#16](https://github.com/Dhruv2mars/javelin/pull/16), linked to owner and hub; unmerged.
+- Owns: tools/native-benchmarks/**; docs/native-storage-baseline.md; native-storage-baseline.yml and its own appended TASKS section.
+- Done: Reproducible release-native API cost and multiprocess contention measurements; no scale or filesystem-throughput claim.
+- Implementation/evidence acceptance is pending. No product gate is checked by launch.
+
+Standalone Rust crates own an empty `[workspace]`, lockfile and target ignore.
+They use accepted public native types and APIs; they do not copy private hashing
+or decoding. Root Cargo/src/native tests remain outside these units' ownership.
+Integration, core exports, Stack adaptation, durable collaboration and actual
+publication authorization require later bounded native work. The reviewed plan
+and dependency rules are in `docs/parallel-build-plan.md`.
+
 
 ### Hub continuation and review
 
