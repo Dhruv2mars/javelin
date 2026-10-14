@@ -265,8 +265,9 @@ PRs are never merged without explicit user instruction.
   Formatting, Clippy and release builds ran and passed on all three OSes.
   Artifacts Linux `11850772498`, macOS `11850931356`, Windows `11850917029` expire
   2026-10-27 UTC. The old `bd16d52` run is not proof for this correction.
-- The owner is terminal with T3 status `failed` after a Codex usage-limit error.
-  Committed source and downloaded proof are intact; there is no live native writer.
+- The Codex owner turn ended with a usage-limit error. The same thread and PR were
+  resumed on available Claude Opus for an evidence-only handoff. Committed source
+  and downloaded proof are intact; no native source work was reopened.
   Acceptance covers state APIs, not filesystem isolation, autosave, full Publish,
   Stack/refresh, hosting, hardware power loss or measured scale. PR #8 stays draft
   and unmerged. The next filesystem unit must preserve these validated semantics.
@@ -311,6 +312,39 @@ PRs are never merged without explicit user instruction.
   Feature and API prerequisites are VERIFIED on this admin Server 2022 runner.
   No provider or projected root existed in that attempt; backend remains INCONCLUSIVE.
   The same owner is implementing non-admin provider and ordinary-path runtime proof.
+- Codex usage limits ended the owner turn with uncommitted evidence/audit files.
+  The same thread/worktree/PR was resumed on available `claude-work` Opus for its
+  bounded handoff. No replacement workstream or second PR was created.
+- Actual runtime run `38469723137` at `21b2ddaa9798d0b1bf81cd1b00467c29125d52f5`
+  has been downloaded to `/tmp/javelin-hub-windows-runtime-38469723137`.
+  Raw summary records non-admin projection, clone/reopen phases and cleanup,
+  alongside failed native directory rename and common-probe exit 1. The owner
+  is completing the raw-file/source audit. Backend and Gate 2 remain INCONCLUSIVE;
+  a green collection workflow is not backend acceptance.
+
+### Native Linux Layer filesystem binding
+
+- Thread: `t3-thread://v1/mcp:bc4ffe10-9bdc-40bf-b78d-c22654bf4f4a`.
+- Branch: `feat/linux-layer-workspaces`, based on exact accepted native Layer
+  state `e56fc86` through `feat/native-layer-checkpoints`.
+- Provider: configured `claude-work`, model `claude-opus-5-5`, while Codex workers
+  are usage-limited. No other native source writer is active.
+- Worktree: `/Users/dhruv2mars/.t3/worktrees/javelin/feat-linux-layer-workspaces`.
+- PR: [#10](https://github.com/Dhruv2mars/javelin/pull/10), draft and linked to
+  owner and hub. Planning commit `e25819c3d72cb518ea89e4a99da196b6d83ca193`.
+- Owns the native Linux binding, necessary exports/Cargo additions, targeted tests,
+  `tools/linux-layer-runtime/`, `docs/linux-layer-runtime.md`, and
+  `.github/workflows/linux-layer-runtime.yml`. Existing proofs and workflows remain
+  unchanged. A pinned developer checkout may supply PR #7's verified common probe.
+- Done: ordinary Linux paths bound to actual repository state, safe quiescent
+  native capture, immutable sparse clone, exact diff/discard, interrupted
+  materialization recovery, isolation and raw real-run storage/cleanup evidence.
+- Automatic capture while tools keep working, production privilege setup,
+  complete Layer workflows and other platforms remain required follow-on work.
+  Mounts and privilege tests are limited to disposable hosted Linux CI.
+- The design compares three shapes and proposes shared read-only base/checkpoint
+  caches, separate private uppers, and a per-view read-only remount for capture
+  with busy-writer refusal. This is a design choice, not verified runtime evidence.
 
 ### Hub continuation and review
 
