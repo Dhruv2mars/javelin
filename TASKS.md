@@ -115,7 +115,8 @@ PRs are never merged without explicit user instruction.
   host prerequisites, and a bounded evidence-backed recommendation.
 - Evidence so far: planning commit `c6b68e4`; actual sparse-backend verification pending.
 - Host: macOS 26.6.2 build 25G83, arm64. PR #7 subsequently verified Linux caller
-  paths on a sparse backend. Windows execution remains unverified.
+  paths on a sparse backend. PR #9 executed the unchanged caller-path probe on
+  Windows; required checks failed, so Windows backend acceptance remains open.
 - The hub independently exported `0f15db2` and reran directory, clonefile, hardlink
   negative, and safety regression checks. Both controls pass all eleven checks;
   the hardlink negative fails actual isolation assertions with exit 1. Timeout
@@ -271,6 +272,10 @@ PRs are never merged without explicit user instruction.
   Acceptance covers state APIs, not filesystem isolation, autosave, full Publish,
   Stack/refresh, hosting, hardware power loss or measured scale. PR #8 stays draft
   and unmerged. The next filesystem unit must preserve these validated semantics.
+- Final handoff head `5fc51a5bd055a3c08dec978032258cc5fd43ef32` changes only
+  TASKS and `docs/layer-checkpoints.md` from accepted `e56fc86`. The hub checked
+  the exact diff. Tested native source is unchanged, and the owner is stopped
+  with its watcher disabled. PR #10 uses the accepted source commit.
 
 ### Windows projected Layer filesystem proof
 
@@ -303,24 +308,45 @@ PRs are never merged without explicit user instruction.
   reports Client-ProjFS already enabled, administrator identity, Unix utilities,
   and MSVC compiler discovery. The API probe failed with C2039 for `std::wprintf`.
   This is a source error, not proof of an unavailable compiler. No projected root
-  or provider existed. The owner added `<cwchar>` at `648474c` and is rerunning
-  the same PR. API availability and backend behavior remain INCONCLUSIVE.
+  or provider existed. The owner added `<cwchar>` at `648474c`; the corrected
+  prerequisite result follows. This initial attempt did not verify API availability.
 - The corrected [run 38465691765](https://github.com/Dhruv2mars/javelin/actions/runs/38465691765)
   at `648474ce69800c2d77ed51c806a7b88fcb21b098` passed actual SDK compilation and
   export inspection. The hub downloaded raw compiler and API records to
   `/tmp/javelin-hub-windows-prereq-38465691765`, confirming both exited zero.
   Feature and API prerequisites are VERIFIED on this admin Server 2022 runner.
-  No provider or projected root existed in that attempt; backend remains INCONCLUSIVE.
-  The same owner is implementing non-admin provider and ordinary-path runtime proof.
+  No provider or projected root existed in that attempt; it did not verify a backend.
+  The same owner subsequently completed the bounded runtime attempt below.
 - Codex usage limits ended the owner turn with uncommitted evidence/audit files.
   The same thread/worktree/PR was resumed on available `claude-work` Opus for its
   bounded handoff. No replacement workstream or second PR was created.
 - Actual runtime run `38469723137` at `21b2ddaa9798d0b1bf81cd1b00467c29125d52f5`
   has been downloaded to `/tmp/javelin-hub-windows-runtime-38469723137`.
-  Raw summary records non-admin projection, clone/reopen phases and cleanup,
-  alongside failed native directory rename and common-probe exit 1. The owner
-  is completing the raw-file/source audit. Backend and Gate 2 remain INCONCLUSIVE;
-  a green collection workflow is not backend acceptance.
+  The hub independently confirmed the completed run and artifact `11851736345`
+  through GitHub. Its digest is
+  `62cdd12848000a277b6e3a82a7c9f98cf5daa93438701a9f7fbf69ee8c636af9`;
+  retained cloud artifacts expire 2026-10-27 UTC.
+- Final evidence/docs head `3ad82410b147850488118512c6f09bc93758c819` preserves
+  the tested executable. Its diff adds only owned evidence, the offline verifier,
+  docs and TASKS. The hub ran the committed verifier on an isolated export;
+  all eight archives passed their digest, raw-file and source checks. All 99 final
+  raw files match the hub's independent download byte for byte. All ten retained
+  source files match the tested commit with the recorded Windows CRLF conversion.
+- Raw evidence and executable assertions support bounded non-admin fixture
+  execution, separate source/clone writes, compiler execution, shared-base write
+  refusal, and provider kill/reopen before and after a file rename. The snapshot
+  copied eight private files totaling 64,088 bytes, retained two deletions, omitted
+  hydrated unchanged `main.c`, and reused the unchanged base symlink. The hung
+  parent/child negative exited 124 with zero remaining Windows job processes.
+  Provider stops, owned scratch removal and temporary account removal are recorded.
+- Native directory rename failed with `ENOTSUP`, exit 3. The unchanged common
+  probe exited 1, including CRLF output and POSIX writer assumptions. Cache queries
+  include errors; metadata preservation and production storage cost remain
+  INCONCLUSIVE. These fixture results do not verify a complete ordinary-user
+  backend, native database binding, autosave, product Gate 2 or GA.
+- The bounded owner is stopped, PR #9 remains draft/unmerged and unwatched.
+  Independent review `javelin-windows-handoff-hub-review-r1-3ad8241` is pending;
+  backend acceptance remains INCONCLUSIVE regardless of collection success.
 
 ### Native Linux Layer filesystem binding
 
