@@ -267,3 +267,12 @@ artifact inspection. No root changes or Windows reproducibility work.
 - [ ] Obtain independent Codex review of the exact corrected source and resolve findings.
 - [ ] Push the same PR and use the single T3 watcher for the hosted three-OS workflow.
 - [ ] Inspect raw head artifacts, report exact source/evidence/limits to the hub, and unwatch.
+
+Resumed 2026-10-15 on the same PR/worktree after the usage reset. Exact correction
+commit `ce0819b81e4523eae7068c775a00af7a5212a447` retained. Codex review r3
+failed on the provider usage limit with no pending children and no review result.
+Local Rust 1.99.0 fmt and Clippy completed successfully. The full initial local
+suite passed one unit, nine new archive tests and 17 of 18 existing integration
+tests; one older cleanup assertion assumed a malformed archive creates its parent
+directory. It now asserts that the parent is absent, matching the stricter
+pre-write refusal behavior. Fresh verification/review follows this test correction.

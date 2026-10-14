@@ -460,10 +460,9 @@ fn tampered_archive_or_checksum_is_rejected_and_leaves_nothing() {
         s(&dest),
     ]));
     assert!(!dest.exists());
-    assert_eq!(
-        fs::read_dir(temp.path().join("prefix")).unwrap().count(),
-        0,
-        "owned temp left behind"
+    assert!(
+        !temp.path().join("prefix").exists(),
+        "truncated archive created a destination parent"
     );
 }
 
