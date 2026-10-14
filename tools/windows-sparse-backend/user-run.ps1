@@ -111,10 +111,12 @@ try {
             $holders += Start-Process -FilePath $sparse -ArgumentList @('hold', ('"' + (Join-Path (Join-Path $Owned 'a') $item[0]) + '"'), $item[1], ('"' + $item[2] + '"'), ('"' + $ready + '"')) -PassThru
             Wait-File $ready
         }
-        # Kill writers with handles open and the provider together; nothing was closed or flushed by the writers.
+        # Kill writers with handles open, then the provider; nothing was closed or flushed by the writers.
+        $summary.holdersAliveBeforeKill = @($holders | ForEach-Object { -not $_.HasExited })
         foreach ($holder in $holders) { $holder.Kill() }
         Stop-Provider 'a' $true
         foreach ($holder in $holders) { [void]$holder.WaitForExit(5000) }
+        $summary.holderExitCodes = @($holders | ForEach-Object { $_.ExitCode })
         Audit 'a' 'after-write-kill'
         Start-Provider 'a' 'cfapi' $native
         [void](Check 'after-kills')

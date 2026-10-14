@@ -152,7 +152,8 @@ struct Provider {
     }
     static void CALLBACK fetchData(const CF_CALLBACK_INFO* info, const CF_CALLBACK_PARAMETERS* parameters) {
         auto key = identity(info); auto found = self->view.find(key);
-        note("fetch-data key=%s flags=%lu required=%lld+%lld", utf8(key).c_str(), static_cast<unsigned long>(parameters->FetchData.Flags),
+        note("fetch-data key=%s source=%s flags=%lu required=%lld+%lld", utf8(key).c_str(),
+            found == self->view.end() ? "-" : utf8(found->second.source).c_str(), static_cast<unsigned long>(parameters->FetchData.Flags),
             parameters->FetchData.RequiredFileOffset.QuadPart, parameters->FetchData.RequiredLength.QuadPart);
         std::vector<char> data; NTSTATUS status = STATUS_SUCCESS;
         try {
@@ -243,7 +244,7 @@ struct Provider {
             DWORD processed = 0;
             if (!create.empty()) require(CfCreatePlaceholders(root.c_str(), create.data(), static_cast<DWORD>(create.size()), CF_CREATE_FLAG_NONE, &processed), "CfCreatePlaceholders");
             note("registered root=%s rootPlaceholders=%lu", utf8(root.wstring()).c_str(), static_cast<unsigned long>(processed));
-            std::ofstream(fs::path(marker)) << "registered";
+            std::ofstream(fs::path(marker)) << "snapshot=" << (snapshot.empty() ? std::string("-") : utf8(snapshot.wstring()));
         }
         CF_CALLBACK_REGISTRATION table[] = {
             { CF_CALLBACK_TYPE_FETCH_DATA, fetchData }, { CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, fetchPlaceholders },
@@ -291,6 +292,9 @@ template <class Visit> static void walk(const fs::path& root, const std::wstring
 }
 // Quiescent capture: the provider is stopped and partial directories are never enumerated.
 static int capture(const fs::path& base, const fs::path& root, const fs::path& out) {
+    // Identities resolve against the base only, so a root served from a snapshot is refused rather than misread.
+    std::ifstream marker(fs::path(root.wstring() + L".registered")); std::string served;
+    if (!std::getline(marker, served) || served != "snapshot=-") throw std::runtime_error("capture supports base-served roots only");
     expose();
     auto baseView = scan(base); std::map<std::wstring, Local, NoCase> local;
     fs::create_directories(out / L"blobs");
@@ -313,13 +317,17 @@ static int capture(const fs::path& base, const fs::path& root, const fs::path& o
             // a dehydrated placeholder has no local bytes, and a hydrated one is compared with its base source.
             auto original = baseView.find(id);
             if (original != baseView.end() && original->second.kind == File) {
-                if ((state & CF_PLACEHOLDER_STATE_PARTIAL) || sha256(bytes(full)) == sha256(bytes(original->second.source))) {
+                INT64 size = (static_cast<INT64>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+                bool dehydrated = (state & CF_PLACEHOLDER_STATE_PARTIAL) && size == original->second.size;
+                if (dehydrated || sha256(bytes(full)) == sha256(bytes(original->second.source))) {
                     local[path] = { File, id, L"", L"", state }; return false;
                 }
             }
         } else if (directory) { local[path] = { Directory, L"", L"", L"", state }; return true; }
         auto content = bytes(full); auto digest = sha256(content);
-        std::ofstream(out / L"blobs" / wide(digest), std::ios::binary).write(content.data(), static_cast<std::streamsize>(content.size()));
+        std::ofstream blob(out / L"blobs" / wide(digest), std::ios::binary);
+        blob.write(content.data(), static_cast<std::streamsize>(content.size())); blob.close();
+        if (!blob) throw std::runtime_error("snapshot blob write failed");
         local[path] = { File, L"", wide(digest), L"", state }; return false;
     });
     std::ofstream manifest(out / L"manifest.tsv", std::ios::binary); std::set<std::wstring, NoCase> deleted;
@@ -339,6 +347,8 @@ static int capture(const fs::path& base, const fs::path& root, const fs::path& o
         if (!entry.base.empty()) { ++references; if (!baseHas || !same(entry.base, path)) manifest << "B\t" << utf8(path) << "\t" << utf8(entry.base) << "\n"; continue; }
         ++copies; manifest << "F\t" << utf8(path) << "\t" << utf8(entry.blob) << "\n";
     }
+    manifest.close();
+    if (!manifest) throw std::runtime_error("snapshot manifest write failed");
     std::printf("{\"privateCopies\":%zu,\"references\":%zu,\"deletions\":%zu,\"entries\":%zu}\n", copies, references, deletions, local.size());
     return 0;
 }

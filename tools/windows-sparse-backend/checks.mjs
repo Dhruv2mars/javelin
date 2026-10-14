@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { userInfo } from 'node:os';
 
 const [owned, evidence, phase] = process.argv.slice(2);
 assert.equal(process.platform, 'win32');
@@ -25,6 +26,7 @@ const fixture = {
   'notes.txt': 'original notes line\n'.repeat(64), 'slow.bin': Buffer.alloc(9000, 0x5a),
   'value.h': '#define VALUE 7\n', 'main.c': '#include <stdio.h>\n#include "value.h"\nint main(void) { printf("%d\\n", VALUE); return 0; }\n',
   'dir/nested.txt': 'nested\n', 'dir2/inner.txt': 'inner\n', 'dir3/deep/leaf.txt': 'leaf\n',
+  'cold/sub/cold.txt': 'cold unpopulated\n', 'cold-file.txt': 'cold dehydrated\n',
 };
 function run(argv, cwd, allowFailure = false) {
   const child = spawnSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', timeout: 30000, maxBuffer: 65536 });
@@ -48,10 +50,11 @@ async function tree(base) {
   await visit(''); return rows;
 }
 // Names only: listing must not read file bytes, so it does not hydrate placeholders.
-async function names(base, name = '') {
+async function names(base, name = '', skip = null) {
   const rows = [name];
+  if (skip && name === skip) return rows; // Leave this directory unpopulated.
   const stat = await fs.lstat(join(base, name));
-  if (stat.isDirectory() && !stat.isSymbolicLink()) for (const child of (await fs.readdir(join(base, name))).sort()) rows.push(...await names(base, join(name, child)));
+  if (stat.isDirectory() && !stat.isSymbolicLink()) for (const child of (await fs.readdir(join(base, name))).sort()) rows.push(...await names(base, join(name, child), skip));
   return rows;
 }
 async function writeSynced(path, contents) {
@@ -68,7 +71,7 @@ async function protection(target, file, container) {
   const before = await fs.readFile(file);
   const attrib = run(['attrib.exe', '-R', file], target, true);
   const after = run(['attrib.exe', file], target, true);
-  const grant = run(['icacls.exe', file, '/grant', `${process.env.USERNAME}:F`], target, true);
+  const grant = run(['icacls.exe', file, '/grant', `${userInfo().username}:F`], target, true);
   const owner = run(['takeown.exe', '/f', file], target, true);
   const checks = {
     attributeStillReadOnly: after.stdout.slice(0, Math.max(0, after.stdout.toLowerCase().indexOf(file.toLowerCase()))).includes('R'),
@@ -79,6 +82,7 @@ async function protection(target, file, container) {
     renameDenied: await refused(`${target}-rename`, () => fs.rename(file, `${file}.moved`)),
     createDenied: await refused(`${target}-create`, () => fs.writeFile(join(target, 'planted.txt'), 'x')),
     containerRenameDenied: await refused(`${target}-container-rename`, () => fs.rename(container, `${container}-moved`)),
+    frozenRootRenameDenied: await refused(`${target}-frozen-root-rename`, () => fs.rename(frozen, `${frozen}-moved`)),
   };
   assert.deepEqual(await fs.readFile(file), before);
   return checks;
@@ -155,14 +159,17 @@ try {
     });
     await step('untouchedDirectoryRename', () => fs.rename(join(a, 'dir3'), join(a, 'renamed-dir3')));
     await step('unchangedFileRename', () => fs.rename(join(a, 'bytes.bin'), join(a, 'moved-bytes.bin')));
+    // Cold entries stay unpopulated/dehydrated until capture, exercising the partial-directory and dehydrated-rename paths.
+    await step('coldDirectoryRename', () => fs.rename(join(a, 'cold'), join(a, 'cold-moved')));
+    await step('coldFileRename', () => fs.rename(join(a, 'cold-file.txt'), join(a, 'cold-file-moved.txt')));
     await step('baseSymlinkRead', async () => {
       assert.equal(await fs.readlink(join(a, 'inside-link')), 'README.txt');
       assert.equal(await read(join(a, 'inside-link')), 'private A text\n');
     });
     await step('symlinkCreate', async () => { await fs.symlink('created.txt', join(a, 'new-link')); assert.equal(await read(join(a, 'new-link')), 'created in A\n'); });
     await step('traversal', async () => {
-      const listing = await names(a);
-      for (const name of ['renamed-dir3\\deep\\leaf.txt', 'renamed-dir\\nested.txt', 'moved-bytes.bin', 'created.txt', 'dir2\\inner.txt'])
+      const listing = await names(a, '', 'cold-moved');
+      for (const name of ['renamed-dir3\\deep\\leaf.txt', 'renamed-dir\\nested.txt', 'moved-bytes.bin', 'created.txt', 'dir2\\inner.txt', 'cold-moved', 'cold-file-moved.txt'])
         assert.ok(listing.includes(name), name);
       for (const name of ['delete.txt', 'dir', 'dir3', 'bytes.bin', 'value.h.saving']) assert.ok(!listing.includes(name), name);
       return listing;
@@ -201,6 +208,7 @@ try {
       atomicTargetAfterKill: await read(join(a, 'README.txt')),
       temporaryAfterKill: await read(join(a, 'README.txt.saving')).catch(error => error.code),
     };
+    assert.equal(evidenceKill.readerDuringKill.ok, false, 'reader must fail while its hydration is interrupted');
     assert.ok(evidenceKill.slowAfterRestartMatchesBase);
     assert.equal(evidenceKill.completedClosedWrite, 'completed and closed\n');
     assert.equal(evidenceKill.atomicTargetAfterKill, 'private A text\n');

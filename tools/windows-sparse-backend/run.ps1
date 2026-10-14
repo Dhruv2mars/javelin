@@ -127,7 +127,9 @@ try {
     Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $username
     $credential = [PSCredential]::new("$env:COMPUTERNAME\$username", $password)
     foreach ($acl in @(
-        @('owned-user-acl', @($owned, '/grant', "${username}:(OI)(CI)F")),
+        # The user may add entries here and fully control what it creates, but cannot delete or rename
+        # administrator children such as the frozen container (no delete-child on this folder).
+        @('owned-user-acl', @($owned, '/grant', "${username}:(RX,WD,AD)", "${username}:(OI)(CI)(IO)F")),
         @('frozen-owner', @($frozen, '/setowner', '*S-1-5-32-544', '/T', '/C', '/L')),
         # Protect the container only; children inherit. Explicit (OI)(CI) grants applied to files leave them with empty DACLs.
         @('frozen-acl', @($frozen, '/inheritance:r', '/grant:r', "${username}:(OI)(CI)RX", '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '/C', '/L')),
