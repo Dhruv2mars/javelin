@@ -241,11 +241,11 @@ runs the `PATH` smoke above Git-free. The result is a development distribution
 and clean-temp installation proof, not a public release or Gate 5.
 
 Evidence (see `docs/native-development-packages.md`): tested source
-`b0383ff52658618ed840d9b5449eea892fa4f337`, hosted run
-https://github.com/Dhruv2mars/javelin/actions/runs/38507762765, six jobs green.
+`b9243f54750a1f3ba1b2c6196b07d8fda811a472`, hosted run
+https://github.com/Dhruv2mars/javelin/actions/runs/38509714612, six jobs green.
 Archives, checksums, native-tool download smoke, and packager install smoke are
 VERIFIED on Linux x86_64, macOS arm64, and Windows x86_64. Binary reproducibility is
 VERIFIED identical on Linux and macOS and NOT reproducible on Windows. Minimum OS
 versions, other architectures, signing, publishing, and Gate 5 remain unverified.
-Independent review r1 (gpt-6.1-sol) found six issues, all fixed with regressions; a
-follow-up review is recorded in the doc when complete.
+Independent reviews (r1 gpt-6.1-sol; r2 Claude Opus 5.5 after a Codex usage limit)
+found eight issues, all fixed with regressions; the final head was not reviewed again.
