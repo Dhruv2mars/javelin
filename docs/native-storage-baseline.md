@@ -228,3 +228,25 @@ reproduced in the retained runs and are **not** evidence either way.
    real mounted backend; these numbers cannot stand in for it.
 4. Rerun this tool on every native source change and keep the `verify` checks as the
    regression guard for retry, ordering and replay behavior.
+
+## Codex r2 tool validation
+
+The corrected tool source is `ebd30833974b08968271d3466eab0717773a5d00`, still on
+native `e56fc86`. Format, clippy, debug and release tests pass. Each test profile
+passes 7 unit and 22 CLI tests. The corrected release verifier passes all 18 old
+proof directories with 33 checks each; original files and labels are unchanged.
+The four previously accepted audit tamper cases now fail at the retry and disk checks.
+
+One fresh release `ci` run is retained at
+`tools/native-benchmarks/evidence/codex-r2-validation/fresh-ci-ebd3083/`. It contains
+2,616 raw records, 100 contended advances, 48 accepted and 52 stale, and 80 blob puts,
+with zero errors. All 33 verifier checks pass. Its source and executable hashes,
+M1/16 GiB/APFS host, Rust 1.93.0, exact command and 600-second budget are in `run.json`.
+This validates the tool corrections; it does not revise the earlier performance table.
+
+Fresh read-only Codex review of that exact source found no actionable issues and
+confirmed the four audit findings are addressed. Review identity and limitations,
+matched-summary regressions, local test logs and old-run verification results are in
+`evidence/codex-r2-validation/`. Exhausted worker-to-parent resolution is tested
+synthetically; actual retry exhaustion was not reproduced. Hosted validation of
+the corrected tool remains pending. All earlier scope limits, Gate 6 and GA remain open.

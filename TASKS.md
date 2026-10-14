@@ -253,5 +253,5 @@ Gate 6 and GA remain open. Same draft PR #16 and owned paths only.
 - [x] Propagate disk traversal errors and reject missing, zeroed or shrinking clone evidence.
 - [x] Correct actual build-profile test and six doc values; document rounding and precise validation scope.
 - [x] Run formatting, clippy, debug/release tests, all 18 old evidence verifiers and one fresh release `ci` run at `ebd3083`.
-- [ ] Get fresh Codex read-only review of exact committed source; resolve findings.
+- [x] Get fresh Codex read-only review of exact `ebd3083` source; no actionable findings. Review task and limits are retained in `evidence/codex-r2-validation/review.json`.
 - [ ] Run owned hosted workflow, use one T3 watcher, and report exact source and evidence to hub.

@@ -44,6 +44,9 @@ legacy setup bytes remain inferred from the original fixed source generator and
 worker/index/seed; this is not retrospective byte-level input capture.
 
 Fresh local raw evidence, exact machine/source provenance and its command are in
-`fresh-ci-ebd3083/`. Hosted validation and independent review remain pending here.
+`fresh-ci-ebd3083/`. Fresh Codex `gpt-6.1-sol` read-only review of `ebd3083` found no actionable issues
+and confirmed all four audit findings are addressed. Its task identity, independent
+checks and limits are in `review.json`. It did not reproduce actual retry exhaustion;
+parent-resolution tests remain synthetic. Hosted validation is pending.
 Windows measurement, stress, profiling of latency growth, mounted filesystem,
 power loss, realistic hot/many-repository workloads, Gate 6 and GA are NOT VERIFIED.
