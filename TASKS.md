@@ -238,3 +238,20 @@ outcomes, defect-detecting regressions, honest recommendations. Windows unmeasur
 
 Windows performance, mounted-Layer cost, hosted-service cost, power-loss durability,
 scale and GA thresholds are NOT VERIFIED and not claimed.
+
+### Codex r2 acceptance corrections
+
+Done means the unchanged-tool audit failures are reproduced; each worker retry binds
+its initial error, input, attempt order and successful reopen; disk probes fail on
+incomplete traversal and shrinking clone evidence fails; original raw data and source
+labels remain immutable; debug/release tests, all retained verifiers and one fresh
+release `ci` run pass; fresh Codex review and the owned hosted workflow are recorded.
+Gate 6 and GA remain open. Same draft PR #16 and owned paths only.
+
+- [x] Read hub Codex r2 audit read-only; reproduce four accepted tampers and release test failure on unchanged `4149da9` tool source.
+- [x] Fix worker retry chains and bind final evidence, with focused tamper regressions.
+- [x] Propagate disk traversal errors and reject missing, zeroed or shrinking clone evidence.
+- [x] Correct actual build-profile test and six doc values; document rounding and precise validation scope.
+- [ ] Run formatting, clippy, debug/release tests, all old evidence verifiers and one fresh release `ci` run.
+- [ ] Get fresh Codex read-only review of exact committed source; resolve findings.
+- [ ] Run owned hosted workflow, use one T3 watcher, and report exact source and evidence to hub.

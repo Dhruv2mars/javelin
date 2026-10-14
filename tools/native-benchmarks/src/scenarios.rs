@@ -56,7 +56,7 @@ pub fn ingest(ctx: &mut Ctx) -> R<()> {
     let fx = ctx.fixture();
     let dir = ctx.repo_dir()?;
     let mut repo = Repository::init(&dir)?;
-    ctx.disk("empty_repository", Some(0), None);
+    ctx.disk("empty_repository", Some(0), None)?;
     let mut unique: BTreeMap<String, u64> = BTreeMap::new();
     let mut classes: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
     let mut content_digest = Sha256::new();
@@ -91,7 +91,7 @@ pub fn ingest(ctx: &mut Ctx) -> R<()> {
     let (ns, check) = timed(|| repo.check());
     let objects = check.as_ref().ok().map(|c| c.objects as u64);
     ctx.push(ctx.sample("check", 0, ns, &check));
-    ctx.disk("after_put_blob", Some(payload), objects);
+    ctx.disk("after_put_blob", Some(payload), objects)?;
     // Identical re-put: shared objects must not add payload; cost is measured, not assumed.
     for i in 0..done {
         if ctx.expired() {
@@ -107,7 +107,7 @@ pub fn ingest(ctx: &mut Ctx) -> R<()> {
         ctx.push(s);
         result?;
     }
-    ctx.disk("after_duplicate_put_blob", Some(payload), objects);
+    ctx.disk("after_duplicate_put_blob", Some(payload), objects)?;
     sizes.sort_unstable();
     let inventory = json!({
         "seed": ctx.params.seed,
@@ -235,7 +235,7 @@ pub fn history(ctx: &mut Ctx) -> R<()> {
                 hist?;
                 check?;
             }
-            ctx.disk(&format!("history_{h}"), None, None);
+            ctx.disk(&format!("history_{h}"), None, None)?;
         }
     }
     Ok(())
@@ -285,7 +285,7 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
     let (ns, created) = timed(|| repo.create_layer(&layer, &base));
     ctx.push(ctx.sample("create_layer", 0, ns, &created));
     let mut head = created?;
-    ctx.disk("layer_created", None, None);
+    ctx.disk("layer_created", None, None)?;
     for round in 1..=ctx.params.layer_rounds {
         if ctx.expired() {
             ctx.note("budget exhausted during layer captures; run is truncated");
@@ -344,7 +344,7 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
         s.param = Some(entries_count);
         ctx.push(s);
         frozen?;
-        ctx.disk(&format!("after_capture_{round}"), None, None);
+        ctx.disk(&format!("after_capture_{round}"), None, None)?;
     }
     // One checkpoint holding a large blob, cloned N times; clones reference, not copy.
     let big = fixture::bytes(ctx.params.seed ^ 0xB16, ctx.params.big_blob_bytes);
@@ -365,7 +365,7 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
     let (ns, check) = timed(|| repo.check());
     let objects = check.as_ref().ok().map(|c| c.objects as u64);
     ctx.push(ctx.sample("check", 0, ns, &check));
-    ctx.disk("before_clones", Some(big.len() as u64), objects);
+    ctx.disk("before_clones", Some(big.len() as u64), objects)?;
     let mut clone_heads = Vec::new();
     for n in 1..=ctx.params.clones {
         if ctx.expired() {
@@ -390,7 +390,7 @@ pub fn layers(ctx: &mut Ctx) -> R<()> {
         }
         ctx.push(check);
         clone_heads.push(cloned);
-        ctx.disk(&format!("after_clone_{n}"), Some(big.len() as u64), None);
+        ctx.disk(&format!("after_clone_{n}"), Some(big.len() as u64), None)?;
     }
     for (n, clone) in [
         (1, clone_heads.first()),

@@ -87,6 +87,7 @@ pub fn run(args: &[String]) -> R<bool> {
     let deadline = started + params.budget_secs * 1_000_000_000;
     let mut run = json!({
         "tool": "javelin-native-benchmarks 0.1.0",
+        "record_format_version": 2,
         "command": std::env::args().collect::<Vec<_>>(),
         "params": params,
         "host": host,

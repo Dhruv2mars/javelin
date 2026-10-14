@@ -170,7 +170,10 @@ fn provenance_names_the_exact_executable_sources_and_host() {
         run["provenance"]["source_commit_supplied_by_caller"],
         "test-source"
     );
-    assert_eq!(run["provenance"]["debug_build_allowed"], true);
+    assert_eq!(
+        run["provenance"]["debug_build_allowed"],
+        cfg!(debug_assertions)
+    );
     assert_eq!(run["documented_settings"]["sqlite_busy_timeout_secs"], 5);
     assert!(run["host"]["rustc"].as_str().unwrap().contains("rustc"));
     assert!(run["host"]["logical_cpus"].as_u64().unwrap() >= 1);
@@ -375,7 +378,7 @@ fn verifier_rejects_unresolved_and_non_uncertain_retries() {
 }
 
 #[test]
-fn verifier_accepts_a_genuine_busy_retry_of_the_exact_same_input() {
+fn verifier_accepts_an_injected_busy_retry_of_the_exact_same_input() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("copy");
     copy_dir(baseline(), &dir);
@@ -387,12 +390,17 @@ fn verifier_accepts_a_genuine_busy_retry_of_the_exact_same_input() {
     busy["error"] = json!("database is locked");
     busy["sqlite_code"] = json!("DatabaseBusy/5");
     busy["result"] = Value::Null;
+    let start = lines[i]["start_unix_ns"].as_u64().unwrap();
+    busy["ns"] = json!(0);
+    busy["start_unix_ns"] = json!(start - 2);
     lines[i]["attempt"] = json!(1);
     let mut reopen = busy.clone();
     reopen["op"] = json!("reopen");
     reopen["outcome"] = json!("ok");
     reopen["error_code"] = Value::Null;
     reopen["sqlite_code"] = Value::Null;
+    reopen["index"] = json!(0);
+    reopen["start_unix_ns"] = json!(start - 1);
     lines.insert(i, busy);
     lines.insert(i + 1, reopen);
     write_lines(&dir, &lines);

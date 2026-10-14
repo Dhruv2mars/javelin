@@ -1,6 +1,9 @@
 //! Offline re-check of a finished run directory against its raw records. Nothing here
 //! opens a repository or trusts the summary; it recomputes from raw samples.
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use serde_json::Value;
 
@@ -33,6 +36,226 @@ fn retryable(code: Option<&str>) -> bool {
     matches!(code, Some("storage_error" | "io_error"))
 }
 
+fn action(op: &str) -> Option<&str> {
+    match op {
+        "resolve_unresolved" => Some("compare_and_advance"),
+        "resolve_blob_put" => Some("put_blob"),
+        "compare_and_advance"
+        | "put_blob"
+        | "prep_put_blob"
+        | "prep_put_manifest"
+        | "read_head" => Some(op),
+        _ => None,
+    }
+}
+
+fn same_input(a: &Sample, b: &Sample) -> bool {
+    a.process == b.process
+        && a.index == b.index
+        && a.operation == b.operation
+        && a.expected == b.expected
+        && a.manifest == b.manifest
+        && a.content == b.content
+        && a.bytes == b.bytes
+}
+
+fn succeeded(s: &Sample) -> bool {
+    if action(&s.op) == Some("compare_and_advance") {
+        matches!(s.outcome.as_str(), "accepted" | "stale") && s.result.is_some()
+    } else if action(&s.op) == Some("read_head") {
+        s.outcome == "ok" && s.result.is_some()
+    } else {
+        s.outcome == "ok" && s.object.is_some()
+    }
+}
+
+/// Raw order matters: each action starts at attempt 0; the next identical attempt
+/// consumes its own successful reopen in the same worker, never a global count.
+fn worker_retry_checks(samples: &[&Sample], run: &Value) -> (bool, bool, bool) {
+    let procs = run["params"]["procs"].as_u64().unwrap_or(0);
+    let ops = run["params"]["ops"].as_u64().unwrap_or(0);
+    let blobs = run["params"]["blobs"].as_u64().unwrap_or(0);
+    let seed = run["params"]["seed"].as_u64().unwrap_or(0);
+    let explicit_inputs = run["record_format_version"].as_u64() == Some(2);
+    if !(2..=crate::params::MAX_PROCS as u64).contains(&procs)
+        || !(1..=crate::params::MAX_OPS as u64).contains(&ops)
+        || !(1..=crate::params::MAX_BLOBS as u64).contains(&blobs)
+    {
+        return (false, false, false);
+    }
+    let worker_pids: BTreeMap<_, _> = samples
+        .iter()
+        .filter(|s| s.scenario == "contention" && s.op == "barrier_release")
+        .map(|s| (s.process, s.pid))
+        .collect();
+    let parent_pid = samples
+        .iter()
+        .find(|s| s.scenario == "contention" && s.op == "final_history")
+        .map(|s| s.pid);
+    type WorkerActions<'a> = BTreeMap<(Option<u32>, &'a str, u64), Vec<(usize, &'a Sample)>>;
+    let mut groups = WorkerActions::new();
+    let mut input_ok = true;
+    for (pos, s) in samples
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.scenario == "contention")
+    {
+        if let Some(op) = action(&s.op) {
+            let resolving = s.op.starts_with("resolve_");
+            input_ok &= s.process.is_some_and(|w| u64::from(w) < procs)
+                && if resolving {
+                    Some(s.pid) == parent_pid
+                } else {
+                    worker_pids.get(&s.process) == Some(&s.pid)
+                };
+            groups
+                .entry((s.process, op, s.index))
+                .or_default()
+                .push((pos, s));
+        }
+    }
+    let mut consumed = BTreeSet::new();
+    let mut reopen_ok = true;
+    for attempts in groups.values() {
+        let first = attempts[0].1;
+        input_ok &= first.attempt == 0 && !first.op.starts_with("resolve_");
+        for (k, (pos, s)) in attempts.iter().enumerate() {
+            input_ok &= s.attempt as usize == k
+                && same_input(first, s)
+                && (s.attempt <= crate::contention::MAX_RETRIES || s.op.starts_with("resolve_"));
+            if k == 0 {
+                continue;
+            }
+            let (prev_pos, prev) = attempts[k - 1];
+            input_ok &= prev.outcome == "error" && retryable(prev.error_code.as_deref());
+            let preceding: Vec<_> = samples[..*pos]
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    r.scenario == "contention" && r.process == s.process && r.pid == s.pid
+                })
+                .collect();
+            let reopen = preceding.last().copied();
+            let valid = reopen.is_some_and(|(rpos, r)| {
+                let resolving = s.op.starts_with("resolve_");
+                r.outcome == "ok"
+                    && prev
+                        .start_unix_ns
+                        .zip(r.start_unix_ns)
+                        .is_some_and(|(a, b)| a.checked_add(prev.ns).is_some_and(|end| end <= b))
+                    && r.start_unix_ns
+                        .zip(s.start_unix_ns)
+                        .is_some_and(|(a, b)| a.checked_add(r.ns).is_some_and(|end| end <= b))
+                    && rpos > prev_pos
+                    && consumed.insert(rpos)
+                    && if resolving {
+                        r.op == "resolve_reopen"
+                            && same_input(r, s)
+                            && r.attempt == s.attempt
+                            && prev.attempt == crate::contention::MAX_RETRIES
+                            && prev.pid != s.pid
+                    } else {
+                        r.op == "reopen"
+                            && r.attempt == 0
+                            && r.index == 0
+                            && preceding.len() >= 2
+                            && preceding[preceding.len() - 2].0 == prev_pos
+                    }
+            });
+            reopen_ok &= valid;
+        }
+        input_ok &= succeeded(attempts.last().unwrap().1);
+    }
+    let reopens: BTreeSet<_> = samples
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            s.scenario == "contention" && matches!(s.op.as_str(), "reopen" | "resolve_reopen")
+        })
+        .map(|(pos, _)| pos)
+        .collect();
+    reopen_ok &= consumed == reopens;
+    let mut expected = BTreeSet::new();
+    let mut final_ok = true;
+    for w in 0..procs as u32 {
+        let ends: Vec<_> = samples
+            .iter()
+            .filter(|s| s.scenario == "contention" && s.op == "worker_end" && s.process == Some(w))
+            .collect();
+        final_ok &= ends.len() == 1
+            && ends[0].outcome == "ok"
+            && ends[0].param == Some(ops)
+            && worker_pids.get(&Some(w)) == Some(&ends[0].pid);
+        for i in 0..ops {
+            for op in [
+                "prep_put_blob",
+                "prep_put_manifest",
+                "read_head",
+                "compare_and_advance",
+            ] {
+                expected.insert((Some(w), op, i));
+            }
+            let fin = |op| {
+                groups
+                    .get(&(Some(w), op, i))
+                    .and_then(|a| a.last())
+                    .map(|(_, s)| *s)
+            };
+            let payload = format!("contention w{w} i{i} seed{seed}");
+            final_ok &= match (
+                fin("prep_put_blob"),
+                fin("prep_put_manifest"),
+                fin("read_head"),
+                fin("compare_and_advance"),
+            ) {
+                (Some(blob), Some(manifest), Some(head), Some(cas)) => {
+                    // Old runs omitted setup content markers. Their inputs are defined
+                    // by the recorded worker/index/seed and the fixed source generator.
+                    let manifest_input = blob.object.as_ref().map(|id| serde_json::json!({
+                        format!("contention/w{w}-i{i}"): {"kind": "regular", "content": id, "executable": false}
+                    }));
+                    let content_matches = manifest.content.as_ref().map_or(!explicit_inputs, |c| {
+                        serde_json::from_str::<Value>(c).ok() == manifest_input
+                    });
+                    blob.bytes == Some(payload.len() as u64)
+                        && blob
+                            .content
+                            .as_deref()
+                            .map_or(!explicit_inputs, |c| c == payload)
+                        && content_matches
+                        && manifest.object == cas.manifest
+                        && [
+                            "prep_put_blob",
+                            "prep_put_manifest",
+                            "read_head",
+                            "compare_and_advance",
+                        ]
+                        .windows(2)
+                        .all(|pair| {
+                            let a = &groups[&(Some(w), pair[0], i)];
+                            let b = &groups[&(Some(w), pair[1], i)];
+                            a.last().unwrap().0 < b[0].0
+                        })
+                        && head.result == cas.expected
+                        && cas.operation.as_deref() == Some(format!("w{w}-i{i}").as_str())
+                }
+                _ => false,
+            };
+        }
+        for i in 0..blobs {
+            expected.insert((Some(w), "put_blob", i));
+            let key = crate::contention::blob_key(w, i as usize);
+            final_ok &= groups.get(&(Some(w), "put_blob", i)).is_some_and(|a| {
+                let fin = a.last().unwrap().1;
+                fin.content.as_deref() == Some(key.as_str())
+                    && fin.bytes == Some(crate::params::CONTENTION_BLOB_BYTES as u64)
+            });
+        }
+    }
+    final_ok &= groups.keys().copied().collect::<BTreeSet<_>>() == expected;
+    (input_ok, reopen_ok, final_ok)
+}
+
 pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
     let records = read_records(&dir.join("samples.jsonl"))?;
     let summary = json(dir, "summary.json")?;
@@ -52,6 +275,12 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         .collect();
     let mut out = Vec::new();
 
+    out.push(check(
+        "record_format_supported",
+        run.get("record_format_version")
+            .is_none_or(|v| matches!(v.as_u64(), Some(1 | 2))),
+        "version 1 legacy generator inputs; version 2 explicit setup inputs and resolution reopens",
+    ));
     out.push(check(
         "summary_matches_raw",
         summarize(&records) == summary,
@@ -175,6 +404,21 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         })
         .filter(|d| d.scenario == "layers")
         .collect();
+    let disk_valid = records
+        .iter()
+        .filter_map(|r| {
+            if let Record::Disk(d) = r {
+                Some(d)
+            } else {
+                None
+            }
+        })
+        .all(|d| d.stored_bytes > 0 && d.files > 0 && d.physical_bytes.is_none_or(|p| p > 0));
+    out.push(check(
+        "disk_probes_complete_and_nonempty",
+        disk_valid,
+        "initialized repositories have bytes/files; incomplete traversal fails the scenario",
+    ));
     let before = disks.iter().find(|d| d.label == "before_clones");
     let clones: Vec<_> = disks
         .iter()
@@ -184,19 +428,32 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         (Some(b), Some(l)) => {
             let n = clones.len() as u64;
             let payload = b.payload_bytes.unwrap_or(0);
-            let growth = l.stored_bytes.saturating_sub(b.stored_bytes);
-            if payload * n < 64 * 1024 {
+            let mut previous = *b;
+            let monotonic = clones.iter().enumerate().all(|(i, d)| {
+                let ok = d.label == format!("after_clone_{}", i + 1)
+                    && d.stored_bytes >= previous.stored_bytes
+                    && d.files >= previous.files
+                    && d.payload_bytes == b.payload_bytes;
+                previous = d;
+                ok
+            });
+            let growth = l.stored_bytes.checked_sub(b.stored_bytes);
+            let valid = disk_valid
+                && monotonic
+                && growth.is_some()
+                && clones.len() as u64 == run["params"]["clones"].as_u64().unwrap_or(0);
+            if payload.saturating_mul(n) < 64 * 1024 {
                 (
-                    true,
+                    valid,
                     format!(
                         "skipped: shared payload {payload} B x {n} clones too small to distinguish"
                     ),
                 )
             } else {
                 (
-                    growth < payload * n / 2,
+                    valid && growth.is_some_and(|g| g < payload.saturating_mul(n) / 2),
                     format!(
-                        "{n} clones grew stored bytes by {growth} in total; shared payload {payload}"
+                        "{n} clones grew stored bytes by {growth:?} in total; shared payload {payload}"
                     ),
                 )
             }
@@ -227,9 +484,6 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
             .or_default()
             .push(s);
     }
-    for attempts in groups.values_mut() {
-        attempts.sort_by_key(|s| s.attempt);
-    }
     let barrier: Vec<_> = samples
         .iter()
         .filter(|s| s.op == "barrier_release")
@@ -241,41 +495,29 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         procs >= 2 && barrier.len() == procs && pids.len() == procs,
         format!("{} workers, {} distinct pids", barrier.len(), pids.len()),
     ));
+    let (worker_input_ok, reopen_ok, worker_final_ok) = worker_retry_checks(&samples, &run);
     let retry_ok = groups.values().all(|a| {
-        let same_input = a
-            .iter()
-            .all(|s| s.expected == a[0].expected && s.manifest == a[0].manifest);
-        let seq = a.iter().enumerate().all(|(k, s)| s.attempt as usize == k);
-        let only_after_uncertain = a[..a.len() - 1]
-            .iter()
-            .all(|s| s.outcome == "error" && retryable(s.error_code.as_deref()));
-        same_input && seq && only_after_uncertain
+        a.iter()
+            .enumerate()
+            .all(|(k, s)| s.attempt as usize == k && same_input(a[0], s))
+            && a[..a.len() - 1]
+                .iter()
+                .all(|s| s.outcome == "error" && retryable(s.error_code.as_deref()))
     });
     out.push(check(
         "retries_repeat_exact_input_after_uncertain_errors",
-        retry_ok && !groups.is_empty(),
-        format!("{} operations", groups.len()),
+        retry_ok && worker_input_ok && !groups.is_empty(),
+        "every action starts at 0 and repeats identical worker/input after its uncertain failure",
     ));
-    let worker_retries = samples
-        .iter()
-        .filter(|s| {
-            s.scenario == "contention"
-                && s.attempt > 0
-                && matches!(
-                    s.op.as_str(),
-                    "compare_and_advance"
-                        | "put_blob"
-                        | "read_head"
-                        | "prep_put_blob"
-                        | "prep_put_manifest"
-                )
-        })
-        .count();
-    let reopens = samples.iter().filter(|s| s.op == "reopen").count();
     out.push(check(
         "every_retry_followed_a_recorded_reopen",
-        worker_retries == reopens,
-        format!("{worker_retries} retry attempts, {reopens} reopen samples"),
+        reopen_ok,
+        "each retry consumes its own successful, ordered reopen; no orphan reopen",
+    ));
+    out.push(check(
+        "worker_actions_match_fixture_and_final_evidence",
+        worker_final_ok,
+        "all worker/index actions present; setup objects, observed head and blob inputs bind final evidence",
     ));
     let finals: Vec<(&str, &Sample)> = groups
         .iter()
@@ -363,7 +605,17 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
     out.push(check(
         "same_operation_retry_returns_identical_outcome",
         retries.len() == groups.len()
-            && retries.iter().all(|s| s.outcome == "ok")
+            && retries.iter().all(|s| {
+                s.outcome == "ok"
+                    && groups
+                        .get(s.operation.as_deref().unwrap_or(""))
+                        .is_some_and(|a| {
+                            let fin = a.last().unwrap();
+                            s.expected == fin.expected
+                                && s.manifest == fin.manifest
+                                && s.result == fin.result
+                        })
+            })
             && retries
                 .iter()
                 .map(|s| s.operation.as_deref().unwrap_or(""))
@@ -428,9 +680,11 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         "acknowledged_blobs_read_back_exactly",
         !acked.is_empty()
             && read.len() == acked.len()
-            && acked
-                .iter()
-                .all(|(k, _)| read.get(k).is_some_and(|r| r.outcome == "ok"))
+            && acked.iter().all(|(k, s)| {
+                read.get(k).is_some_and(|r| {
+                    r.outcome == "ok" && r.object == s.object && r.content == s.content
+                })
+            })
             && ids_by_key.values().all(|v| v.len() == 1)
             && distinct.len() == ids_by_key.len(),
         format!(
@@ -570,4 +824,308 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         format!("{clone_checks} clone checks, {layer_count} layer count checks"),
     ));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::record::write_records;
+
+    fn copied_run(name: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("evidence/macos-4149da9")
+            .join(name);
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), tmp.path().join(entry.file_name())).unwrap();
+        }
+        assert_valid(tmp.path());
+        tmp
+    }
+
+    fn save(dir: &Path, records: &[Record]) {
+        write_records(&dir.join("samples.jsonl"), records).unwrap();
+        std::fs::write(
+            dir.join("summary.json"),
+            serde_json::to_vec(&summarize(records)).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn assert_valid(dir: &Path) {
+        let checks = verify(dir, true).unwrap();
+        let failures: Vec<_> = checks
+            .iter()
+            .filter(|c| !c.ok)
+            .map(|c| (c.name, &c.detail))
+            .collect();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    fn assert_rejected(dir: &Path, name: &str) {
+        let checks = verify(dir, true).unwrap();
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.name == "summary_matches_raw" && c.ok)
+        );
+        assert!(
+            checks.iter().any(|c| c.name == name && !c.ok),
+            "missing failure: {name}"
+        );
+    }
+
+    #[test]
+    fn retained_busy_setup_chains_reject_erased_failures_gaps_and_wrong_reopens() {
+        for tamper in [
+            "erase",
+            "attempt",
+            "worker",
+            "failed_reopen",
+            "order",
+            "input",
+        ] {
+            let tmp = copied_run("local-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            if tamper == "erase" {
+                records.retain(|r| !matches!(r, Record::Sample(s) if s.outcome == "error"));
+            } else {
+                for r in &mut records {
+                    if let Record::Sample(s) = r {
+                        if s.op == "reopen" {
+                            match tamper {
+                                "worker" => {
+                                    s.process = Some(999);
+                                    s.pid = 1;
+                                }
+                                "failed_reopen" => {
+                                    s.outcome = "error".into();
+                                    s.error_code = Some("storage_error".into());
+                                }
+                                "order" => s.start_unix_ns = Some(0),
+                                _ => {}
+                            }
+                        }
+                        if s.attempt > 0
+                            && matches!(s.op.as_str(), "prep_put_blob" | "prep_put_manifest")
+                        {
+                            match tamper {
+                                "attempt" => s.attempt = 99,
+                                "input" => s.content = Some("changed input".into()),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            save(tmp.path(), &records);
+            assert_rejected(
+                tmp.path(),
+                if ["worker", "failed_reopen", "order"].contains(&tamper) {
+                    "every_retry_followed_a_recorded_reopen"
+                } else {
+                    "retries_repeat_exact_input_after_uncertain_errors"
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn every_worker_action_requires_its_own_ordered_retry_chain_and_final_input() {
+        for op in [
+            "prep_put_blob",
+            "prep_put_manifest",
+            "read_head",
+            "compare_and_advance",
+            "put_blob",
+        ] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let i = records
+                .iter()
+                .position(
+                    |r| matches!(r, Record::Sample(s) if s.scenario == "contention" && s.op == op),
+                )
+                .unwrap();
+            let Record::Sample(original) = records[i].clone() else {
+                unreachable!()
+            };
+            let start = original.start_unix_ns.unwrap();
+            let mut failure = original.clone();
+            failure.outcome = "error".into();
+            failure.error_code = Some("storage_error".into());
+            failure.sqlite_code = Some("DatabaseBusy/5".into());
+            failure.object = None;
+            failure.result = None;
+            failure.ns = 0;
+            failure.start_unix_ns = Some(start - 2);
+            let reopen = Sample {
+                scenario: "contention".into(),
+                op: "reopen".into(),
+                process: original.process,
+                pid: original.pid,
+                outcome: "ok".into(),
+                start_unix_ns: Some(start - 1),
+                ..Default::default()
+            };
+            let mut retry = original;
+            retry.attempt = 1;
+            records.splice(
+                i..=i,
+                [
+                    Record::Sample(failure),
+                    Record::Sample(reopen),
+                    Record::Sample(retry),
+                ],
+            );
+            save(tmp.path(), &records);
+            assert_valid(tmp.path());
+            // Changing a successful retry's input must fail even with a matching summary.
+            let Record::Sample(s) = &mut records[i + 2] else {
+                unreachable!()
+            };
+            s.bytes = Some(999);
+            save(tmp.path(), &records);
+            assert_rejected(
+                tmp.path(),
+                "retries_repeat_exact_input_after_uncertain_errors",
+            );
+            // Deleting both the failure and reopen still cannot leave attempt 1 as initial.
+            records.drain(i..i + 2);
+            save(tmp.path(), &records);
+            assert_rejected(
+                tmp.path(),
+                "retries_repeat_exact_input_after_uncertain_errors",
+            );
+        }
+        let tmp = copied_run("ci-run-1");
+        let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+        records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "contention" && s.op == "prep_put_manifest" && s.process == Some(0) && s.index == 0));
+        save(tmp.path(), &records);
+        assert_rejected(
+            tmp.path(),
+            "worker_actions_match_fixture_and_final_evidence",
+        );
+    }
+
+    #[test]
+    fn parent_resolution_requires_exhausted_chain_and_its_successful_reopen() {
+        for op in ["compare_and_advance", "put_blob"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let i = records.iter().position(|r| matches!(r, Record::Sample(s) if s.scenario == "contention" && s.op == op && (op == "put_blob" || s.outcome == "accepted"))).unwrap();
+            let Record::Sample(original) = records[i].clone() else {
+                unreachable!()
+            };
+            let mut attempts = Vec::new();
+            for attempt in 0..=crate::contention::MAX_RETRIES {
+                let mut failure = original.clone();
+                failure.attempt = attempt;
+                failure.outcome = "error".into();
+                failure.error_code = Some("storage_error".into());
+                failure.sqlite_code = Some("DatabaseBusy/5".into());
+                failure.object = None;
+                failure.result = None;
+                failure.ns = 0;
+                failure.start_unix_ns =
+                    Some(original.start_unix_ns.unwrap() - 8 + u64::from(attempt) * 2);
+                let mut reopen = Sample {
+                    scenario: "contention".into(),
+                    op: "reopen".into(),
+                    process: original.process,
+                    pid: original.pid,
+                    outcome: "ok".into(),
+                    start_unix_ns: failure.start_unix_ns.map(|n| n + 1),
+                    ..Default::default()
+                };
+                attempts.push(Record::Sample(failure));
+                if attempt < crate::contention::MAX_RETRIES {
+                    attempts.push(Record::Sample(reopen));
+                } else {
+                    let parent = records
+                        .iter()
+                        .find_map(|r| match r {
+                            Record::Sample(s) if s.op == "final_history" => Some(s),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let mut resolution = original.clone();
+                    resolution.op = if op == "put_blob" {
+                        "resolve_blob_put"
+                    } else {
+                        "resolve_unresolved"
+                    }
+                    .into();
+                    resolution.attempt = attempt + 1;
+                    resolution.pid = parent.pid;
+                    resolution.ns = 0;
+                    resolution.start_unix_ns = parent.start_unix_ns.map(|n| n - 1);
+                    reopen = resolution.clone();
+                    reopen.op = "resolve_reopen".into();
+                    reopen.outcome = "ok".into();
+                    reopen.start_unix_ns = parent.start_unix_ns.map(|n| n - 2);
+                    let insert = records
+                        .iter()
+                        .position(|r| matches!(r, Record::Sample(s) if s.op == "final_history"))
+                        .unwrap();
+                    records.splice(
+                        insert..insert,
+                        [Record::Sample(reopen), Record::Sample(resolution)],
+                    );
+                }
+            }
+            records.splice(i..=i, attempts);
+            save(tmp.path(), &records);
+            assert_valid(tmp.path());
+            let r = records
+                .iter_mut()
+                .find_map(|r| match r {
+                    Record::Sample(s) if s.op == "resolve_reopen" => Some(s),
+                    _ => None,
+                })
+                .unwrap();
+            r.outcome = "error".into();
+            r.error_code = Some("storage_error".into());
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "every_retry_followed_a_recorded_reopen");
+        }
+    }
+
+    #[test]
+    fn disk_evidence_rejects_zero_shrink_and_missing_clones_with_matching_summary() {
+        for tamper in ["zero", "shrink", "missing", "duplicate"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let i = records
+                .iter()
+                .position(|r| matches!(r, Record::Disk(d) if d.label == "after_clone_1"))
+                .unwrap();
+            match tamper {
+                "zero" | "shrink" => {
+                    let Record::Disk(d) = &mut records[i] else {
+                        unreachable!()
+                    };
+                    d.stored_bytes = if tamper == "zero" {
+                        0
+                    } else {
+                        d.stored_bytes - 1
+                    };
+                    if tamper == "zero" {
+                        d.files = 0;
+                        d.physical_bytes = Some(0);
+                    }
+                }
+                "missing" => {
+                    records.remove(i);
+                }
+                "duplicate" => {
+                    records.insert(i, records[i].clone());
+                }
+                _ => unreachable!(),
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "clone_storage_not_payload_proportional");
+        }
+    }
 }

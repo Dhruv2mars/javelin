@@ -202,7 +202,7 @@ impl Params {
     }
 
     /// Order-of-magnitude bytes of stored content a write may re-read and re-hash, from
-    /// reading the source (every write validates the accepted history and Layer graph).
+    /// reading the source (World advances validate history; Layer mutations validate graphs).
     /// It bounds fixture growth; it is an estimate, not a measured cost or a claimed cause.
     pub fn estimated_validation_bytes(&self) -> u64 {
         let fixture = Fixture::new(self.seed, self.binary_max);

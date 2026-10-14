@@ -119,26 +119,22 @@ pub struct Usage {
 }
 
 /// Logical = sum of file lengths. Physical = allocated blocks (Unix only; None elsewhere).
-pub fn disk_usage(dir: &Path) -> Usage {
+pub fn disk_usage(dir: &Path) -> std::io::Result<Usage> {
     let mut usage = Usage {
         physical: if cfg!(unix) { Some(0) } else { None },
         logical: 0,
         files: 0,
     };
-    walk(dir, &mut usage);
-    usage
+    walk(dir, &mut usage)?;
+    Ok(usage)
 }
 
-fn walk(dir: &Path, usage: &mut Usage) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
-            continue;
-        };
+fn walk(dir: &Path, usage: &mut Usage) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let meta = fs::symlink_metadata(entry.path())?;
         if meta.is_dir() {
-            walk(&entry.path(), usage);
+            walk(&entry.path(), usage)?;
         } else if meta.is_file() {
             usage.logical += meta.len();
             usage.files += 1;
@@ -149,8 +145,14 @@ fn walk(dir: &Path, usage: &mut Usage) {
                     *p += meta.blocks() * 512;
                 }
             }
+        } else {
+            return Err(std::io::Error::other(format!(
+                "disk probe found a non-regular entry: {}",
+                entry.path().display()
+            )));
         }
     }
+    Ok(())
 }
 
 /// Peak resident set of this process. macOS reports bytes, Linux kilobytes.
@@ -176,5 +178,38 @@ pub fn peak_rss_bytes() -> Option<u64> {
     #[cfg(not(unix))]
     {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_probe_reports_missing_or_incomplete_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(disk_usage(&tmp.path().join("missing")).is_err());
+        fs::write(tmp.path().join("file"), b"1234").unwrap();
+        assert!(disk_usage(&tmp.path().join("file")).is_err());
+        let usage = disk_usage(tmp.path()).unwrap();
+        assert_eq!((usage.logical, usage.files), (4, 1));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("missing", tmp.path().join("link")).unwrap();
+            assert!(disk_usage(tmp.path()).is_err());
+            std::fs::remove_file(tmp.path().join("link")).unwrap();
+            if unsafe { libc::geteuid() } != 0 {
+                use std::os::unix::fs::PermissionsExt;
+                let denied = tmp.path().join("denied");
+                fs::create_dir(&denied).unwrap();
+                fs::set_permissions(&denied, fs::Permissions::from_mode(0o0)).unwrap();
+                let probe = disk_usage(tmp.path());
+                fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
+                assert!(
+                    probe.is_err(),
+                    "partial traversal must not return the readable file's totals"
+                );
+            }
+        }
     }
 }

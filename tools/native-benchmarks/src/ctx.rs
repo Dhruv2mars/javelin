@@ -75,8 +75,9 @@ impl Ctx {
         self.records.push(Record::Sample(sample));
     }
 
-    pub fn disk(&mut self, label: &str, payload: Option<u64>, objects: Option<u64>) {
-        let usage = disk_usage(&self.dir.join(".javelin"));
+    pub fn disk(&mut self, label: &str, payload: Option<u64>, objects: Option<u64>) -> R<()> {
+        let usage = disk_usage(&self.dir.join(".javelin"))
+            .map_err(|e| format!("disk_probe_failed at {label}: {e}"))?;
         self.records.push(Record::Disk(Disk {
             scenario: self.name.clone(),
             label: label.into(),
@@ -86,6 +87,7 @@ impl Ctx {
             payload_bytes: payload,
             objects,
         }));
+        Ok(())
     }
 
     pub fn memory(&mut self, process: Option<u32>) {

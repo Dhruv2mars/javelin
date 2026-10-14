@@ -143,7 +143,7 @@ fn retried<T>(
         ctx.push(s);
         match result {
             Ok(value) => return Ok(value),
-            Err(_) if again => reopen(ctx, repo, dir, w),
+            Err(_) if again => reopen(ctx, repo, dir, w)?,
             Err(e) => return Err(e.into()),
         }
     }
@@ -201,6 +201,7 @@ fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: u
             i as u64,
             |s: &mut Sample, id: Option<&ObjectId>| {
                 s.bytes = Some(payload.len() as u64);
+                s.content = Some(payload.clone());
                 s.object = id.map(|id| id.to_string());
             },
             |r| r.put_blob(payload.as_bytes()),
@@ -212,6 +213,7 @@ fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: u
                 executable: false,
             },
         )])?;
+        let input = serde_json::to_string(manifest.entries())?;
         manifests.push(retried(
             ctx,
             &mut repo,
@@ -219,7 +221,10 @@ fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: u
             w,
             "prep_put_manifest",
             i as u64,
-            |s: &mut Sample, id: Option<&ObjectId>| s.object = id.map(|id| id.to_string()),
+            |s: &mut Sample, id: Option<&ObjectId>| {
+                s.content = Some(input.clone());
+                s.object = id.map(|id| id.to_string());
+            },
             |r| r.put_manifest(&manifest),
         )?);
     }
@@ -289,7 +294,7 @@ fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: u
             if !again {
                 break;
             }
-            reopen(ctx, &mut repo, dir, w);
+            reopen(ctx, &mut repo, dir, w)?;
         }
     }
     for j in 0..blobs {
@@ -330,14 +335,27 @@ fn worker_body(ctx: &mut Ctx, dir: &str, w: u32, seed: u64, ops: usize, blobs: u
 }
 
 /// Reopens after an uncertain error; its cost is a separate sample, not part of any retry.
-fn reopen(ctx: &mut Ctx, repo: &mut Repository, dir: &str, w: u32) {
+fn reopen(ctx: &mut Ctx, repo: &mut Repository, dir: &str, w: u32) -> R<()> {
     let (ns, opened) = timed(|| Repository::open(dir));
     let mut s = ctx.sample("reopen", 0, ns, &opened);
     s.process = Some(w);
     ctx.push(s);
-    if let Ok(fresh) = opened {
-        *repo = fresh;
-    }
+    *repo = opened?;
+    Ok(())
+}
+
+fn resolve_reopen(ctx: &mut Ctx, dir: &Path, prior: &Sample) -> R<Repository> {
+    let (ns, opened) = timed(|| Repository::open(dir));
+    let mut s = ctx.sample("resolve_reopen", prior.index, ns, &opened);
+    s.process = prior.process;
+    s.attempt = prior.attempt + 1;
+    s.operation = prior.operation.clone();
+    s.expected = prior.expected;
+    s.manifest = prior.manifest.clone();
+    s.content = prior.content.clone();
+    s.bytes = prior.bytes;
+    ctx.push(s);
+    Ok(opened?)
 }
 
 pub fn run(ctx: &mut Ctx) -> R<()> {
@@ -412,6 +430,9 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
             }
         }
     }
+    for s in &samples {
+        ctx.records.push(Record::Sample(s.clone()));
+    }
     // Resolve every operation whose final attempt was an error by repeating the same
     // operation ID and input; the durable outcome (accepted or stale) is then known.
     let mut last: BTreeMap<String, Sample> = BTreeMap::new();
@@ -423,7 +444,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
     }
     let mut resolutions = Vec::new();
     for (operation, s) in last.iter().filter(|(_, s)| s.outcome == "error") {
-        let mut repo = Repository::open(&dir)?;
+        let mut repo = resolve_reopen(ctx, &dir, s)?;
         let manifest = ObjectId::parse(s.manifest.as_deref().unwrap())?;
         let (mut r, _) = advance(
             ctx,
@@ -437,6 +458,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
             s.process,
         );
         r.index = s.index;
+        ctx.push(r.clone());
         resolutions.push(r);
     }
     // A blob put whose final attempt was an uncertain error is re-put with the same
@@ -449,7 +471,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         }
     }
     for s in last_put.values().filter(|s| s.outcome == "error") {
-        let mut repo = Repository::open(&dir)?;
+        let mut repo = resolve_reopen(ctx, &dir, s)?;
         let key = s.content.clone().unwrap_or_default();
         let bytes = blob_bytes(p.seed, &key);
         let (ns, result) = timed(|| repo.put_blob(&bytes));
@@ -459,12 +481,10 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         r.content = Some(key);
         r.bytes = Some(bytes.len() as u64);
         r.object = result.as_ref().ok().map(|id| id.to_string());
+        ctx.push(r.clone());
         resolutions.push(r);
     }
     samples.extend(resolutions);
-    for s in &samples {
-        ctx.records.push(Record::Sample(s.clone()));
-    }
     samples.extend(seeded);
     // Post-run checks through fresh handles.
     let mut repo = Repository::open(&dir)?;
@@ -590,7 +610,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         }
         ctx.push(r);
     }
-    ctx.disk("after_contention", None, Some(check.objects as u64));
+    ctx.disk("after_contention", None, Some(check.objects as u64))?;
     if failures.is_empty() {
         Ok(())
     } else {

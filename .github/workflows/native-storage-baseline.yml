@@ -57,7 +57,9 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee ../../ci-logs/clippy.log
 
       - name: Test the measurement tool
-        run: cargo test --locked 2>&1 | tee ../../ci-logs/test.log
+        run: |
+          cargo test --locked 2>&1 | tee ../../ci-logs/test.log
+          cargo test --locked --release 2>&1 | tee ../../ci-logs/test-release.log
 
       - name: Build release tool
         run: cargo build --locked --release 2>&1 | tee ../../ci-logs/release-build.log
