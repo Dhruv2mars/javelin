@@ -143,6 +143,9 @@ try {
         Stop-Provider 'd'; Stop-Provider 'e'
         Audit 'd' 'final'; Audit 'e' 'final'; Audit 'a' 'final'
     }
+    Step 'hardening-reproduction' {
+        . (Join-Path $Owned 'user-tools/hardening-repro.ps1')
+    }
     Step 'common-probe' {
         $common = Join-Path $frozen 'base-common'
         foreach ($name in @('pa', 'pb', 'pc')) { Start-Provider $name 'cfapi' $common }

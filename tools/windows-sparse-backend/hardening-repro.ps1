@@ -1,0 +1,101 @@
+# Dot-sourced by the ordinary proof user, against unchanged inherited sparse.exe.
+if ($env:CAPTURE_PROOF_MODE -ne 'inherited-control' -or $admin -or
+    $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or -not $IsWindows) { throw 'Hosted ordinary-user control required.' }
+$control = Join-Path $Owned 'hardening-control.exe'
+$repro = [ordered]@{ schema = 1; mode = $env:CAPTURE_PROOF_MODE; identity = $summary.identity;
+    sourceSHA = $env:SOURCE_SHA; commands = @(); cases = [ordered]@{}; errors = @() }
+function Repro-Command([string]$Label, [string]$File, [string[]]$Arguments, [int]$Budget = 8000) {
+    $info = [Diagnostics.ProcessStartInfo]::new($sparse)
+    $info.UseShellExecute = $false; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    foreach ($a in @('bounded', "$Budget", $File) + $Arguments) { $info.ArgumentList.Add($a) }
+    $p = [Diagnostics.Process]::new(); $p.StartInfo = $info
+    $row = [ordered]@{ label = $Label; executable = $File; argv = $Arguments; budgetMs = $Budget }
+    try {
+        [void]$p.Start(); $row.pid = $p.Id
+        $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+        if (-not $p.WaitForExit($Budget + 6000)) { $p.Kill($true); [void]$p.WaitForExit(5000); throw 'Wrapper exceeded bound.' }
+        $row.exitCode = $p.ExitCode; $row.stdout = $o.GetAwaiter().GetResult(); $row.stderr = $e.GetAwaiter().GetResult()
+    } catch { $row.error = $_.ToString() }
+    finally { $p.Dispose(); $repro.commands += $row }
+    return $row
+}
+function Repro-Capture([string]$Label, [string]$Root) {
+    $out = Join-Path $Owned "staging/repro-$Label"
+    $r = Repro-Command "capture-$Label" $sparse @('capture', $native, $Root, $out)
+    $manifest = Join-Path $out 'manifest.tsv'
+    $records = if (Test-Path -LiteralPath $manifest) { Get-Content -Raw -LiteralPath $manifest } else { $null }
+    $blobs = if (Test-Path -LiteralPath (Join-Path $out 'blobs')) {
+        @(Get-ChildItem -LiteralPath (Join-Path $out 'blobs') -File | ForEach-Object {
+            @{ name = $_.Name; bytes = $_.Length; digest = (Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant() }
+        })
+    } else { @() }
+    return @{ command = $r; manifest = $records; blobs = $blobs }
+}
+try {
+    # Both cases retain a real base identity while declaring another logical length.
+    foreach ($case in @(@('zero', 4096, 0), @('short', 16384, 4096))) {
+        $name = "hpartial-$($case[0])"; $r = Join-Path $Owned $name
+        try {
+            Start-Provider $name 'cfapi' $native
+            $create = Repro-Command "placeholder-$($case[0])" $control @('placeholder', $r, 'partial.bin', "$($case[1])", 'bytes.bin')
+            $move = Repro-Command "rename-$($case[0])" $sparse @('move', (Join-Path $r 'partial.bin'), (Join-Path $r 'moved-partial.bin'))
+            $hydrate = if ($case[2]) { Repro-Command "hydrate-$($case[0])" $control @('hydrate', (Join-Path $r 'moved-partial.bin'), "$($case[2])") } else { $null }
+            Stop-Provider $name
+            $state = Repro-Command "state-$($case[0])" $sparse @('audit', $r)
+            $stream = Repro-Command "stream-$($case[0])" $control @('stream', (Join-Path $r 'moved-partial.bin'))
+            $capture = Repro-Capture "partial-$($case[0])" $r
+            $repro.cases["partial-$($case[0])"] = @{ create = $create; move = $move; hydrate = $hydrate; state = $state; stream = $stream; capture = $capture }
+        } catch { $repro.errors += "partial-$($case[0]): $_" }
+        finally { if ($providers.ContainsKey($name)) { Stop-Provider $name } }
+    }
+    # Only the disposable sibling fixture can be the target of this junction.
+    $outside = Join-Path $Owned 'outside-control'
+    New-Item -ItemType Directory -Path $outside | Out-Null
+    $sentinel = Join-Path $outside 'sentinel.txt'
+    Set-Content -LiteralPath $sentinel -Value 'outside-owned-control-sentinel'
+    $before = (Get-FileHash -LiteralPath $sentinel).Hash
+    $r = Join-Path $Owned 'hjunction'; $junction = Join-Path $r 'outside'
+    try {
+        Start-Provider 'hjunction' 'cfapi' $native; Stop-Provider 'hjunction'
+        New-Item -ItemType Junction -Path $junction -Target $outside | Out-Null
+        $a = Repro-Command 'junction-audit' $sparse @('audit', $r)
+        $c = Repro-Capture 'junction' $r
+        $repro.cases.junction = @{ audit = $a; capture = $c; sentinelDigest = $before.ToLowerInvariant();
+            outsideUnchanged = (Get-FileHash -LiteralPath $sentinel).Hash -eq $before }
+    } finally {
+        if (Test-Path -LiteralPath $junction) {
+            $remove = Repro-Command 'remove-junction-without-traversal' $control @('unlink-directory', $junction)
+            if ($remove.exitCode -ne 0) { throw 'Junction removal failed; refuse recursive cleanup.' }
+        }
+        if ($providers.ContainsKey('hjunction')) { Stop-Provider 'hjunction' }
+    }
+    # An unhydrated snapshot root wrongly resolves its in-sync identities against base after a marker edit.
+    try {
+        Start-Provider 'hmarker' 'cfapi' $native (Join-Path $frozen 'snap'); Stop-Provider 'hmarker'
+        Set-Content -LiteralPath (Join-Path $Owned 'hmarker.registered') -Value 'snapshot=-' -NoNewline
+        $repro.cases.marker = Repro-Capture 'marker' (Join-Path $Owned 'hmarker')
+    } finally { if ($providers.ContainsKey('hmarker')) { Stop-Provider 'hmarker' } }
+    # Validate source loading before any hydration. These snapshots are writable copies, never the frozen one.
+    $cases = [ordered]@{
+        outsideBlob = "F`tREADME.txt`t..\outside-blob`n"
+        digestMismatch = "F`tREADME.txt`t$('0' * 64)`n"
+        duplicate = "F`tREADME.txt`t$('0' * 64)`nF`tREADME.txt`t$('0' * 64)`n"
+        prefix = "F`tx`t$('0' * 64)`nF`tx\y`t$('0' * 64)`n"
+        outsideLink = "L`tinside-link`t..\outside-control\sentinel.txt`n"
+    }
+    foreach ($label in $cases.Keys) {
+        $snapshot = Join-Path $Owned "staging/manifest-$label"
+        New-Item -ItemType Directory -Path (Join-Path $snapshot 'blobs') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $snapshot 'outside-blob') -Value 'outside blob directory'
+        Set-Content -LiteralPath (Join-Path $snapshot "blobs/$('0' * 64)") -Value 'digest mismatch'
+        [IO.File]::WriteAllText((Join-Path $snapshot 'manifest.tsv'), $cases[$label], [Text.UTF8Encoding]::new($false))
+        $name = "hmanifest-$($label.ToLowerInvariant())"; $accepted = $false
+        try { Start-Provider $name 'cfapi' $native $snapshot; $accepted = $true }
+        catch { $repro.errors += "manifest-${label}: $_" }
+        finally { if ($providers.ContainsKey($name)) { Stop-Provider $name } }
+        $repro.cases["manifest-$label"] = @{ loaded = $accepted; manifest = $cases[$label] }
+    }
+} catch { $repro.errors += $_.ToString() }
+finally {
+    $repro | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath (Join-Path $Evidence 'hardening-repro.json')
+}

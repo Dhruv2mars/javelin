@@ -200,8 +200,9 @@ Owned paths: `tools/windows-sparse-backend/**`,
 and this appended checklist. Existing evidence stays immutable.
 
 - [x] Recover the same clean app-bound worktree and branch at exact dependency.
-- [ ] Open and T3-link one draft PR; report planning SHA and ownership to hub.
-- [ ] Compare two minimal identity/capture designs with independent Codex support.
+- [x] Open and T3-link draft PR #19; report planning SHA `a2528fa` and ownership to hub.
+- [x] Compare two minimal identity/capture designs with independent Codex support.
+- [x] Prepare hosted-only controls while leaving inherited `sparse.cpp` unchanged.
 - [ ] Reproduce defects on unchanged inherited source in disposable hosted Windows.
 - [ ] Implement minimal fixes and focused adversarial regressions.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.

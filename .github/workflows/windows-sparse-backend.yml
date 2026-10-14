@@ -8,6 +8,8 @@ on:
       - tools/windows-sparse-backend/checks.mjs
       - tools/windows-sparse-backend/sparse.cpp
       - tools/windows-sparse-backend/projfs-provider.cpp
+      - tools/windows-sparse-backend/hardening-repro.ps1
+      - tools/windows-sparse-backend/hardening-control.cpp
       - .github/workflows/windows-sparse-backend.yml
   workflow_dispatch:
 
@@ -24,6 +26,7 @@ jobs:
     timeout-minutes: 12
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CAPTURE_PROOF_MODE: inherited-control
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

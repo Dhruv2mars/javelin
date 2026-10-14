@@ -60,6 +60,7 @@ try {
         setupIdentity = $identity.Name; setupAdministrator = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
     $here = 'tools/windows-sparse-backend'
     foreach ($path in @("$here/run.ps1", "$here/user-run.ps1", "$here/checks.mjs", "$here/sparse.cpp", "$here/projfs-provider.cpp",
+        "$here/hardening-repro.ps1", "$here/hardening-control.cpp",
         '.github/workflows/windows-sparse-backend.yml', 'tools/workspace-probe/probe.mjs', 'tools/workspace-probe/atomic-writer.mjs')) {
         $result.sources[$path] = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
     }
@@ -91,6 +92,7 @@ try {
     $dev = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
     # The pinned PR #9 provider keeps its original flags; the new provider targets Server 2022 (build 20348) headers.
     foreach ($build in @(@('sparse', 'CldApi.lib Bcrypt.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
+        @('hardening-control', 'CldApi.lib Bcrypt.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
         @('projfs-provider', 'ProjectedFSLib.lib Ole32.lib', '/DNTDDI_VERSION=0x0A000008'))) {
         $flags = "/nologo /Bv /std:c++20 /W4 /WX /EHsc /D_WIN32_WINNT=0x0A00 $($build[2])"
         $batch = Join-Path $owned "build-$($build[0]).cmd"
@@ -115,7 +117,7 @@ try {
     New-Item -ItemType Directory -Path $tools, $frozen, (Join-Path $owned 'user-results'), (Join-Path $owned 'staging') | Out-Null
     Copy-Item -LiteralPath (Get-Command bun.exe -CommandType Application).Source -Destination (Join-Path $tools 'bun.exe')
     foreach ($name in @('probe.mjs', 'atomic-writer.mjs')) { Copy-Item -LiteralPath "tools/workspace-probe/$name" -Destination (Join-Path $tools $name) }
-    foreach ($name in @('checks.mjs', 'user-run.ps1')) { Copy-Item -LiteralPath "$here/$name" -Destination (Join-Path $tools $name) }
+    foreach ($name in @('checks.mjs', 'user-run.ps1', 'hardening-repro.ps1')) { Copy-Item -LiteralPath "$here/$name" -Destination (Join-Path $tools $name) }
     $seed = Invoke-Bounded 'fixture-seed-native' (Join-Path $tools 'bun.exe') @((Join-Path $tools 'checks.mjs'), $owned, $adminResults, 'seed')
     if ($seed.exitCode -ne 0) { throw 'Native fixtures could not be seeded.' }
     New-Item -ItemType Directory -Path (Join-Path $frozen 'base-common') | Out-Null
@@ -141,7 +143,7 @@ try {
     $result.baseTrees = @{ native = Get-Tree (Join-Path $frozen 'base-native'); common = Get-Tree (Join-Path $frozen 'base-common') }
     $pwsh = (Get-Process -Id $PID).Path
     $argv = @('bounded', '190000', $pwsh, '-NoProfile', '-File', (Join-Path $tools 'user-run.ps1'), '-Owned', $owned, '-Username', $username)
-    $child = Start-Process -FilePath (Join-Path $owned 'sparse.exe') -ArgumentList ($argv | ForEach-Object { '"' + $_ + '"' }) -Credential $credential `
+    $child = Start-Process -FilePath (Join-Path $owned 'hardening-control.exe') -ArgumentList ($argv | ForEach-Object { '"' + $_ + '"' }) -Credential $credential `
         -WorkingDirectory $owned -RedirectStandardOutput (Join-Path $evidence 'ordinary-user.stdout.txt') -RedirectStandardError (Join-Path $evidence 'ordinary-user.stderr.txt') -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(205)
     while (-not $child.HasExited -and [DateTime]::UtcNow -lt $deadline) {
@@ -181,7 +183,9 @@ try {
     try {
         if ([IO.Path]::GetDirectoryName($owned) -ne $tempParent -or
             (Get-Content -Raw -LiteralPath (Join-Path $owned 'owner.txt')).Trim() -ne $token) { throw 'Owned cleanup boundary mismatch.' }
-        foreach ($name in @('a', 'b', 'd', 'e', 'cr', 'pa', 'pb', 'pc', 'pr')) {
+        $rootNames = @('a', 'b', 'd', 'e', 'cr', 'pa', 'pb', 'pc', 'pr')
+        $rootNames += @(Get-ChildItem -LiteralPath $owned -Directory | Where-Object Name -Match '^h[a-z0-9-]+$' | ForEach-Object Name)
+        foreach ($name in $rootNames) {
             $root = Join-Path $owned $name
             if (Test-Path -LiteralPath $root) {
                 $unregister = & (Join-Path $owned 'sparse.exe') unregister $root
