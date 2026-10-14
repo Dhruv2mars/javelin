@@ -127,69 +127,109 @@ backend INCONCLUSIVE, and every summary scope is INCONCLUSIVE.
 
 **Source hashes.** The runner hashed sources after a Windows checkout, which
 converted LF to CRLF. Every retained source file is the `21b2dda` blob with that
-conversion applied. `source-transform.json` records both the canonical LF hash and
-the cloud hash for each file. The audit accepts the current tree only if it matches
-directly or after that one conversion. Clone with `core.autocrlf=false` so the
-retained bytes stay exact.
+conversion applied, and `source-transform.json` records the canonical LF hash and
+the cloud hash for each file. Audit limit: the owned verifier checks retained
+source bytes against the cloud hashes, and checks the current tree directly or
+after CRLF conversion. It does not read `source-transform.json` and does not bind
+canonical bytes to a Git blob. Runtime and audit tools deliberately avoid Git. The
+hub separately confirmed all 10 tested blobs and the CRLF conversion. Clone with
+`core.autocrlf=false` so the retained bytes stay exact.
 
 **Final run records (raw files in `final-attempt/raw/`).**
 
 - Prerequisites: `feature.json` shows Client-ProjFS already `Enabled` before
-  setup, so no enable or restart happened;
-  compiler and API checks are ready. Setup ran as elevated `runneradmin`
-  (`summary.json` `ordinaryUserVerified: false`).
-- Non-admin execution: `runtime-summary.json` records the disposable user
-  `jvpabfa80caf2ab` with `administrator: false`. The provider started, four roots
-  were projected, and all providers stopped. That user's account was then removed
-  (`backend.json`). The run records a non-admin SID, but the summary scope
-  `non-admin-provider` stays INCONCLUSIVE because the backend did not pass.
-- Native phases: 14 of 15 exited 0 with phase verdict VERIFIED. They are
-  job-termination, base, metadata, hydrate, build, build-clean, mutate,
-  clone-snapshot, clone-verify, four recovery phases and final.
-  `directory-rename` exited 3: `rename dir -> native-renamed-dir` failed with
-  `ENOTSUP`. Directory rename on a projected root is therefore unsupported in this provider.
+  setup, so no enable or restart happened. Compiler and API checks were ready.
+  Setup ran as elevated `runneradmin` (`summary.json` `ordinaryUserVerified: false`).
+- Non-admin execution: `runtime-summary.json` records disposable user
+  `jvpabfa80caf2ab` with `administrator: false`. Providers started on four roots
+  and all stopped; the account was then removed (`backend.json`). These phases
+  were executed as non-admin, but the summary scope `non-admin-provider` stays
+  INCONCLUSIVE because the backend gate failed.
+- Native phases: 14 of 15 exited 0 with phase verdict VERIFIED (job-termination,
+  base, metadata, hydrate, build, build-clean, mutate, clone-snapshot,
+  clone-verify, four recovery phases, final). Each is only as strong as its
+  assertions, limited below. The `metadata` phase checks file size only; metadata
+  edits were not tested.
+- Directory rename: `directory-rename` exited 3. It renamed only base directory
+  `a/dir` while that directory was a projected placeholder (state 1 in
+  `state-placeholder-a.json`), and got `ENOTSUP`. The provider's
+  `PRJ_NOTIFY_PRE_RENAME` handler returns `S_OK`, so the provider itself did not
+  deny the rename. Renaming a locally created or full directory was not tested.
+  The finding is: renaming a projected base placeholder directory fails with
+  ENOTSUP here. It is not a claim about all directories.
 - Common probe: unchanged `probe.mjs --backend paths` exited 1. Four checks were
   VERIFIED: text/binary read, in-place writes, relative symlink and watch.
-  NOT VERIFIED: create/atomic-save/rename/delete (`mv dir renamed-dir`: "Function
-  not implemented"), directory traversal, external compiler (`'9\r\n' !== '9\n'`,
-  a POSIX newline assumption), independent writer and writer interruption (writer
-  exited before readiness), and final base/peer integrity. Clone is INCONCLUSIVE
-  by design. These are open failures, not passes.
+  NOT VERIFIED:
+  - create/atomic-save/rename/delete: `mv dir renamed-dir` reported "Function
+    not implemented", the same base-directory rename case.
+  - directory traversal: it still saw `delete.txt` and `dir/nested.txt`.
+  - external compiler: `'9\r\n' !== '9\n'`, a POSIX newline assumption. The check
+    stopped there, so the peer compile never ran.
+  - independent writer and writer interruption: the writer exited before
+    readiness with `EPERM` from `fsync`. The hub review traces this to the
+    directory fsync after rename (`atomic-writer.mjs:15`); the captured stack
+    does not name the line.
+  - final base/peer integrity: leftover files such as `concurrent.txt` differed
+    from expectations.
+  Clone is INCONCLUSIVE by design. Leftover probe files (`concurrent.txt`,
+  `recovery.txt`, `probe-app.exe`) also ended up in the native clone fixture.
 - Sparse clone: `native-clone-snapshot.json` copied only eight full (state 8)
-  private files, 64,088 bytes. That includes the 55,820-byte build output.
-  It recorded tombstones for `delete.txt` and `dir`. The unchanged symlink
-  `inside-link` is referenced from the immutable base, not copied. Metadata
-  preservation is INCONCLUSIVE. In fresh root `d`, `clone-verify` compiled and
-  ran `main.c`. The fixture base is about 8 KiB, so this run cannot show that a
-  sparse snapshot is smaller than a full copy at repository scale.
-- Kill/restart recovery: in `native-recovery-reopen-after.json`, renamed bytes
-  were preserved, no temporary file remained, and the deletion stayed in place
-  after the provider restarted on the same root.
+  files, 64,088 bytes in total. Most of that is leftover probe output, including
+  the 55,820-byte `probe-app.exe`. It recorded tombstones for `delete.txt` and
+  `dir`, and referenced the unchanged symlink `inside-link` from the immutable
+  base. `aliases` is empty, so alias reuse of renamed unchanged files was not
+  exercised. Fresh root `d` compiled and ran `main.c`. Only one clone was made;
+  sharing one snapshot across several clones was NOT verified. Metadata
+  preservation is INCONCLUSIVE. The fixture base is about 8 KiB, so this run cannot
+  show that a sparse snapshot is smaller than a full copy at repository scale.
+- Snapshot immutability: snapshot files were made read-only with `chmod 0o444`,
+  which on Windows only sets the read-only attribute. The parent directory is
+  owned by and fully controlled by the user, who could clear that attribute. The
+  refused write in `clone-verify` proves the attribute was set; it does not prove
+  an access-controlled immutable snapshot. Base-tree protection is separate and
+  stronger: the shared base grants the user read/execute only, and the `base`
+  phase was refused a write.
+- Provider kill/restart: each kill happened after write handles were closed. The
+  first kill came after `native-recovery.txt` and `.saving` were written and
+  synced. On reopen both still existed, the deletion held, and the persisted
+  instance identity matched (asserted on this first reopen only). The `.saving`
+  rename happened before the second kill, so "temporary absent" after that reopen
+  reflects the completed rename. This shows completed local state survives
+  provider termination and reopen. It does not show recovery from a kill during
+  a write, or atomic-save recovery.
 - Child termination: there are 17 `WINDOWS_JOB` records in
   `ordinary-user.stderr.txt`, all `timedOut=0 activeAfterTermination=0`.
   `cleanup.json` lists 20 children, none timed out, all exit 0.
   The owned GUID root was removed with no error.
 - Cache state and cost (`state-*.json`, `PRJ_FILE_STATE`: 1 placeholder,
-  3 hydrated placeholder, 8 full, 16 tombstone). Before the provider served
-  roots, every entry in `state-initial-{a,b,c}` returned HRESULT `0x80070171`
-  with 0 allocated bytes. That is a query error, not a classified virtual state.
-  Root `a` after mutation had 9 full, 2 tombstones and 135,256 allocated bytes.
-  Peers `b` and `c` held only placeholders and hydrated placeholders with no
-  tombstones. `b`'s state counts did not change between the probe and the end,
-  which supports cross-root isolation at state level. Hydrated-only entries (state 3) were not copied into the clone.
-  Some states still query with errors, and allocation counts use NTFS clusters,
-  so storage cost stays INCONCLUSIVE.
+  3 hydrated placeholder, 8 full, 16 tombstone). Each `state-initial-{a,b,c}`
+  audit ran after that root's provider was started and then stopped. Every entry
+  returned HRESULT `0x80070171` with 0 allocated bytes. The cause is unconfirmed,
+  so these entries are not classified. Root `a` after mutation had 9 full files,
+  2 tombstones and 135,256 allocated bytes. Peer `b` also holds full files:
+  `concurrent.txt` (its own `B\n` written by the common probe) and `inside-link`.
+  `inside-link` is also full in `c`. So peers are not placeholders and hydration
+  only. These records show no leak of `a`'s content, but they do not prove
+  isolation by state counts. Some queries still fail, and allocation counts use
+  NTFS clusters, so storage cost stays INCONCLUSIVE.
 
-**Verdicts.** The offline archive/source audit is VERIFIED. Native read/write,
-hydrate, build, mutate, sparse clone and restart recovery phases are VERIFIED as
-phase results only. Directory rename is NOT VERIFIED (ENOTSUP), and so are the
-listed common-probe checks. Storage cost, metadata preservation and ordinary-user
-scope are INCONCLUSIVE. The projected backend, product Gate 2 and GA are
-INCONCLUSIVE and not accepted.
+**Verdicts.** The offline archive/source audit is VERIFIED, within the limit
+above. The executed native phases are recorded as phase results with the scope
+limits listed. NOT VERIFIED: directory rename (projected base placeholder,
+ENOTSUP) and the listed common-probe checks. INCONCLUSIVE: storage cost,
+metadata edits/preservation, multi-clone sharing, permission-enforced snapshot
+immutability, mid-write kill recovery, ordinary-user scope, the projected
+backend, product Gate 2 and GA. None of these are accepted.
 
-Open items, deliberately left for later units: support or work around directory
-rename, and decide how the common probe should handle Windows CRLF and POSIX
-writer assumptions. This unit changes neither the provider nor the common probe.
+**Inherited documentation.** The Windows status in inherited
+`docs/workspace-verification.md` predates this run and is stale. This unit
+does not own that file. For Windows ProjFS, this document and PR #9 supersede it.
+
+Open items, deliberately left for later units: directory rename (including local
+and full directories), Windows CRLF and fsync assumptions in the common probe,
+leftover-file isolation between probe and native fixtures, ACL-enforced snapshot
+immutability, and mid-write kill recovery. This unit changes neither the provider
+nor the common probe.
 
 ## Rerun and audit
 
@@ -227,7 +267,7 @@ rtk proxy bun tools/windows-workspace-proof/verify-evidence.mjs
 ```
 
 The audit checks original archive digest, raw file hashes, source hashes, exact run
-and artifact identity, job steps and label, prerequisite command outcomes, identity,
+and artifact identity, job label, prerequisite command outcomes, identity,
 scratch cleanup and explicit INCONCLUSIVE backend scopes. For the final run it also
 asserts the recorded open failures, sparse clone contents, restart recovery and child exits. It never projects a root
 or invokes platform setup. Its success means the bounded collection evidence is
