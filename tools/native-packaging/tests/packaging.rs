@@ -339,18 +339,41 @@ fn archive_bytes_are_deterministic_for_the_same_binary_and_epoch() {
         fs::read(&b.archive).unwrap()
     );
     // Entry metadata is normalized: build-record epoch, root ownership, fixed modes.
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
-        fs::File::open(&b.archive).unwrap(),
-    ));
     let mut count = 0;
-    for entry in archive.entries().unwrap() {
-        let entry = entry.unwrap();
-        let header = entry.header();
-        assert_eq!(header.mtime().unwrap(), EPOCH.parse::<u64>().unwrap());
-        assert_eq!((header.uid().unwrap(), header.gid().unwrap()), (0, 0));
-        let mode = header.mode().unwrap();
-        assert!(matches!(mode, 0o755 | 0o644), "{mode:o}");
-        count += 1;
+    if b.archive.extension().unwrap() == "zip" {
+        let mut archive = zip::ZipArchive::new(fs::File::open(&b.archive).unwrap()).unwrap();
+        for index in 0..archive.len() {
+            let file = archive.by_index(index).unwrap();
+            let t = file.last_modified().unwrap();
+            // 1781000000 is 2026-06-09 10:13:20 UTC.
+            assert_eq!(
+                (
+                    t.year(),
+                    t.month(),
+                    t.day(),
+                    t.hour(),
+                    t.minute(),
+                    t.second()
+                ),
+                (2026, 6, 9, 10, 13, 20)
+            );
+            let mode = file.unix_mode().unwrap() & 0o777;
+            assert!(matches!(mode, 0o755 | 0o644), "{mode:o}");
+            count += 1;
+        }
+    } else {
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+            fs::File::open(&b.archive).unwrap(),
+        ));
+        for entry in archive.entries().unwrap() {
+            let entry = entry.unwrap();
+            let header = entry.header();
+            assert_eq!(header.mtime().unwrap(), EPOCH.parse::<u64>().unwrap());
+            assert_eq!((header.uid().unwrap(), header.gid().unwrap()), (0, 0));
+            let mode = header.mode().unwrap();
+            assert!(matches!(mode, 0o755 | 0o644), "{mode:o}");
+            count += 1;
+        }
     }
     assert!(count > 40, "{count} entries");
 }
