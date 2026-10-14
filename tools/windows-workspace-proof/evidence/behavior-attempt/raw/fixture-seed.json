@@ -1,0 +1,18 @@
+{
+  "name": "fixture-seed",
+  "executable": "D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\user-tools\\bun.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\user-tools\\probe.mjs",
+    "--seed",
+    "D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base"
+  ],
+  "timeoutMs": 30000,
+  "pid": 6700,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "Seeded D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\n",
+  "stderr": ""
+}

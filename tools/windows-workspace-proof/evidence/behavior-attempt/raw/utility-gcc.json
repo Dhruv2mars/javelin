@@ -1,0 +1,16 @@
+{
+  "name": "utility-gcc",
+  "executable": "C:\\mingw64\\bin\\gcc.exe",
+  "argv": [
+    "--version"
+  ],
+  "timeoutMs": 30000,
+  "pid": 7988,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "gcc.exe (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0\r\nCopyright (C) 2024 Free Software Foundation, Inc.\r\nThis is free software; see the source for copying conditions.  There is NO\r\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\r\n\r\n",
+  "stderr": ""
+}

@@ -1,0 +1,30 @@
+{
+  "id": "job-termination",
+  "verdict": "VERIFIED",
+  "commands": [
+    {
+      "argv": [
+        "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\\provider.exe",
+        "bounded",
+        "1500",
+        "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\\user-tools\\bun.exe",
+        "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\\user-tools\\checks.mjs",
+        "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b",
+        "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\\user-results",
+        "hang-parent"
+      ],
+      "exitCode": 124,
+      "stdout": "",
+      "stderr": "WINDOWS_JOB parent=6020 timedOut=1 exit=124 activeAfterTermination=0\r\n"
+    }
+  ],
+  "evidence": {
+    "parent": {
+      "pid": 6020
+    },
+    "child": {
+      "pid": 8076
+    },
+    "scope": "actual suspended/assigned Windows job kills hung parent and child; active job processes reached zero"
+  }
+}

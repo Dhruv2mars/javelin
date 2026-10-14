@@ -1,0 +1,9 @@
+started root=D:\a\_temp\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\a instance={E404CDB7-373C-4437-B8C1-E4D255B3EDEF} alignment=512 entries=8
+notification 8 README.txt destination=
+notification 1024 README.txt destination=
+notification 2 README.txt destination=
+notification 2 value.h destination=
+notification 4 native-recovery.txt destination=
+notification 1024 native-recovery.txt destination=
+notification 4 native-recovery.txt.saving destination=
+notification 1024 native-recovery.txt.saving destination=
