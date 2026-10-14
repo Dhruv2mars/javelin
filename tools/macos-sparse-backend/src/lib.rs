@@ -674,21 +674,25 @@ impl NFSFileSystem for Overlay {
         if is_dir && !self.children(&st, &rel)?.is_empty() {
             return Err(nfsstat3::NFS3ERR_NOTEMPTY);
         }
-        self.add_whiteouts(&mut st, &[&rel])?;
-        let up = self.tree(&rel);
-        if fs::symlink_metadata(&up).is_ok() {
-            if is_dir {
-                fs::remove_dir(&up)
-            } else {
-                fs::remove_file(&up)
+        let result = (|| {
+            self.add_whiteouts(&mut st, &[&rel])?;
+            let up = self.tree(&rel);
+            if fs::symlink_metadata(&up).is_ok() {
+                if is_dir {
+                    fs::remove_dir(&up)
+                } else {
+                    fs::remove_file(&up)
+                }
+                .map_err(io_err)?;
+                sync_dir(up.parent().unwrap()).map_err(io_err)?;
             }
-            .map_err(io_err)?;
-            // Deleted handles go stale before the fallible sync.
+            Ok(())
+        })();
+        // Whatever step failed, handles to an entry that is no longer visible go stale.
+        if self.locate(&st, &rel).is_none() {
             Self::forget(&mut st, &rel);
-            sync_dir(up.parent().unwrap()).map_err(io_err)?;
         }
-        Self::forget(&mut st, &rel);
-        Ok(())
+        result
     }
 
     async fn rename(

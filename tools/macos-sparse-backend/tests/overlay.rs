@@ -705,3 +705,27 @@ async fn whiteout_memory_matches_manifest_when_upper_sync_fails() {
     );
     assert!(id(&reopened, "README.txt").await.is_err());
 }
+
+#[tokio::test]
+async fn removed_base_handle_goes_stale_when_whiteout_sync_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    let old = id(&a, "keep.txt").await.unwrap();
+    let upper = fx.upper("a");
+    fs::set_permissions(&upper, fs::Permissions::from_mode(0o300)).unwrap();
+    let result = a.remove(root, &b"keep.txt".as_slice().into()).await;
+    fs::set_permissions(&upper, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result.is_err(), "unreadable upper must make the sync fail");
+    write_new(&a, "", "keep.txt", b"replacement\n").await;
+    assert_ne!(
+        id(&a, "keep.txt").await.unwrap(),
+        old,
+        "recreated file must get a new handle"
+    );
+    assert_eq!(
+        a.getattr(old).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_STALE as u32
+    );
+}
