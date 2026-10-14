@@ -1,8 +1,6 @@
 name: Mechanical merge
 
 on:
-  push:
-    branches: [feat/mechanical-merge-engine]
   pull_request:
     paths:
       - crates/javelin-merge/**
