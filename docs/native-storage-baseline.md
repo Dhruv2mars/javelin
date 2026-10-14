@@ -32,9 +32,11 @@ cargo build --release --locked
 Profiles `smoke` (tests), `ci` (hosted-runner size), `local` (laptop) and `stress`
 (heavier contention; defined but never run, so unmeasured). Size
 overrides exist; every value has a hard cap and a derived cap on the estimated bytes
-a write may re-read (`estimated_validation_bytes` ≤ 32 GiB), because the source
-suggests every write re-validates stored history and Layer graphs, so naive caps are
-quadratic. The estimate is read from source, not measured. A non-release build is
+a write may re-read (`estimated_validation_bytes` ≤ 32 GiB). `compare_and_advance`
+validates history inside its IMMEDIATE transaction, and Layer mutations validate
+stored Layer graphs. These growing traversals can make naive fixture caps quadratic.
+`put_blob` does not validate history. The estimate is read from source, not measured.
+A non-release build is
 refused unless `--allow-debug-build`, and `verify` fails debug evidence the same way.
 
 Own `Cargo.lock`, empty `[workspace]`, path dependency `../..`. `build.rs` embeds
@@ -74,7 +76,9 @@ The tool never invokes Git (a regression test puts a failing `git` shim on `PATH
 Summary equals recomputation from raw samples; provenance and release build;
 clean scenario exits; no errors outside contention; contention errors only
 BUSY/LOCKED by SQLite code; contiguous attempt numbers, identical input per attempt,
-retries only after uncertain errors and a recorded reopen; every operation and blob
+retries only after each action's uncertain error and successful reopen in the same
+worker/PID and recorded order, including setup writes and head reads; worker/index
+coverage and setup objects bind the final World inputs; every operation and blob
 has a durable outcome; one accepted winner per contiguous version with history matching
 every acknowledged accept and no unexplained entry; stale `actual` greater than
 `expected`, bounded by the final head and consistent with real-time order; first
@@ -83,15 +87,25 @@ records; replaying every operation ID returns the identical outcome and leaves
 repository files byte-identical; same ID with a different manifest is rejected;
 acknowledged blobs read back byte-equal by identity; workers completed all operations;
 no budget truncation; no mismatch samples; clone heads start at the source checkpoint
-and the layer count matches; clone storage is not payload-proportional (skipped when
+and the layer count matches; failed disk traversal terminates the scenario with
+`disk_probe_failed`, so its disk evidence is inconclusive; initialized repositories
+must have bytes and files, and clone stored bytes/files cannot shrink; clone storage
+is not payload-proportional (skipped when
 the payload is too small to tell). Tests tamper with each of these and require the
 named check to fail. Fixed-seed reproducibility is tested too: the ingest API
 object digest `ce53b3e27112fdd4…` is identical on all three hosts below.
 
 ## Evidence
 
-Tested tool source: `4149da97368bca3f68d0773d40bc801bfbced4b3` (native source
-`e56fc86`; later commits add only evidence and docs). Evidence is under
+Original measured tool source: `4149da97368bca3f68d0773d40bc801bfbced4b3`, native source
+`e56fc86`. The Codex r2 corrections change the verifier, disk error propagation and
+retry recording, not the fixtures or native source. Original run files and source
+labels are unchanged. Old setup samples identify input by worker/index/seed and the
+fixed source generator, so their exact setup bytes are inferred from that source.
+New runs explicitly set `record_format_version: 2` in `run.json` and require the
+payload and public manifest entries in `content`. Version 1 is the original format;
+its files and summaries are not converted. Parent resolution now records its reopen. Neither source nor
+raw values are retroactively relabeled. Evidence is under
 `tools/native-benchmarks/evidence/`; rerun `native-bench verify` on any run directory.
 
 | Source | Machine | Runs |
@@ -111,14 +125,18 @@ errors in the 3 × 3 `ci` runs. Counts below are in each run's `summary.json`.
 
 ### Medians and tails, in ms (raw samples in `samples.jsonl`)
 
+Percentiles use nearest rank on raw integer nanoseconds. Table values then round to
+nearest millisecond, with half milliseconds rounded up; the ingest row retains one
+decimal place. Raw samples and summaries retain their original nanosecond values.
+
 | Measure | M1 mini `ci` ×3 | hosted Linux `ci` ×3 | hosted macOS `ci` ×3 |
 | --- | --- | --- | --- |
 | ingest `put_blob` p50 (n=300) | 12.9, 12.9, 13.0 | 1.0, 1.0, 0.9 | 2.6, 2.1, 2.2 |
 | history `compare_and_advance`, p50 of first / last quarter in time (n=30) | 65/383, 46/417, 104/323 | 33/253, 33/243, 34/256 | 55/321, 37/264, 36/342 |
-| `clone_layer` p50 / max (n=24) | 714/2089, 603/1541, 581/1248 | 481/615, 495/626, 493/619 | 649/909, 580/836, 686/1062 |
+| `clone_layer` p50 / max (n=24) | 714/2089, 603/1541, 581/1248 | 481/615, 494/626, 493/619 | 649/909, 580/836, 686/1062 |
 | baseline uncontended advance p50 (n=8) | 28, 32, 26 | 11, 11, 11 | 15, 14, 19 |
-| contention accepted p50 / p95 / max | 62/280/770, 33/191/225, 59/144/311 | 21/31/39, 16/30/92, 20/31/46 | 19/32/58, 24/49/89, 18/53/89 |
-| contention stale p50 / p95 / max | 132/1049/1779, 81/1708/4799, 84/1217/2042 | 21/194/845, 21/347/745, 21/442/741 | 30/419/1346, 31/441/1094, 87/930/1298 |
+| contention accepted p50 / p95 / max | 62/280/770, 33/191/225, 59/144/311 | 21/31/39, 16/30/92, 20/30/46 | 19/32/58, 24/48/89, 18/53/89 |
+| contention stale p50 / p95 / max | 132/1049/1779, 81/1708/4799, 84/1217/2042 | 21/194/845, 20/347/746, 21/442/741 | 29/419/1346, 31/441/1094, 87/930/1298 |
 
 Contention counts per run (accepted + stale = 100 operations): M1 47+53, 74+26, 57+43;
 Linux 49+51, 54+46, 48+52; macOS 64+36, 59+41, 66+34. Barrier release skew ranged from
@@ -157,13 +175,14 @@ reproduced in the retained runs and are **not** evidence either way.
 
 ## Observations (measured, not causal)
 
-- Per-write latency grows with accumulated state. In every environment the history
+- History advance latency grows with accumulated state. In every environment the history
   advance is several times slower, and the `history()`/`check()` reads tens of times
   slower, at the end than at the start of the 30-version build (e.g. advance 65→383 ms and
   `history()` 10→379 ms in the first M1 run). The
   `local` run, with about 3.3× the files, shows about 3.1–4.0× the last-quarter advance
-  time (1299 ms vs 323–417 ms in the three M1 `ci` runs). This is consistent with the source re-validating stored
-  history on each write, but this tool did not profile, so the cause is unconfirmed.
+  time (1299 ms vs 323–417 ms in the three M1 `ci` runs). `compare_and_advance` validates stored
+  history inside its IMMEDIATE transaction. The tool did not profile the growth, so
+  its cause remains unconfirmed. `put_blob` does not run this history validation.
   Pooled percentiles across such a series mix states; `summary.json` flags those groups
   (`pooled_across_changing_state`) and gives first/last-quarter medians.
 - `clone_layer` p50 of about 0.5–0.7 s for a 1 MiB shared payload is an API-level
@@ -202,7 +221,7 @@ reproduced in the retained runs and are **not** evidence either way.
 1. Have the native owner add a cheap public head-read: the contention workers had to
    call `history()` (full validation) to learn the head, which cost 12–25 ms p50 on
    macOS and grows with history. Also export effective connection pragmas.
-2. Decide whether per-write full-history validation is intended; if not, a later
+2. Decide whether full-history validation on every World advance is intended; if not, a later
    change must keep immutability and not cache stale history to buy speed. Rerun this
    tool before and after and compare series, not pooled percentiles.
 3. Before any Layer capture or clone latency is promised to users, measure on the
