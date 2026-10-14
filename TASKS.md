@@ -294,4 +294,36 @@ detected. Hosted runs passed on all three OSes for `58fadbf` (38505510520) and
 failure) are addressed. Native read allocation remains hub API gap 3.
 Final tested source `02c7427ef18bedf933ab4a75bc8d7d46cd9dce3b` passed hosted run
 38508849025 on Linux, macOS and Windows: 21 tests per OS, release build, and a PATH
-git-shim control of without=0 and with=97. Later commits are documentation-only.
+git-shim control of without=0 and with=97. Head `29457a8` added documentation only.
+
+### Fresh hub Codex r2 corrections and dependency wait
+
+Done for this correction pass means the documentation matches the audit's actual
+allocation and storage evidence, corrected refusal fixtures pass locally, only
+owned paths change, and the hub receives the committed result. This does not close
+the HIGH Want allocation gap or provide fresh hosted acceptance.
+
+- [x] Read fresh audit `acceptance.md`, `experiments.log` and `framing-experiment.log` in `/tmp/javelin-hub-audit-pr15-codex-r2/notes`.
+- [x] Correct retained-object claims: the failed request does not publish; valid prefixes and mismatched actual bytes can persist and later legitimate requests may reference them.
+- [x] Narrow sub-4-KiB allocation evidence to four fixtures; add the legal 16-MiB outer-frame counterexample.
+- [x] Document existing UTF-8 Error codes in unfrozen version 1 and assert actual round-trip behavior.
+- [x] Keep Publish as foundation CAS against current World; record that Layer binding requires newly negotiated semantics, since v1 rejects trailing bytes.
+- [x] Verify corrected fixtures, formatting and Clippy locally and record the result.
+- [x] Commit corrected fixtures and notify the hub of local evidence, retaining PR #15.
+- [ ] Wait for the hub's accepted native-object-access exact SHA before any dependent rebase or migration. PR #18 implementation alone is not acceptance.
+- [ ] After acceptance, migrate typed availability, cap-before-allocation reads, pre-store content-ID checks and ObjectId bytes within the same PR/owned paths.
+- [ ] After migration, obtain fresh independent review and three-OS exact-head source proofs. Historical `02c7427` proofs do not cover new changes.
+
+The audit's 55-byte Want for a 32-MiB blob causes a largest Rust allocation of
+33,554,432 bytes. Its eight-reference manifest fixture causes 268,446,277 bytes of
+cumulative Rust allocation, not peak RSS, excluding SQLite C allocations. Hosted
+receiver exposure remains BLOCKED HIGH. Quotas and retention remain future work.
+This pass changes documentation and test fixtures only, with no runtime codec or
+native source changes, no new PR, no watcher and no scheduler.
+
+VERIFIED locally: correction fixtures `c133fab941fec7dc2eecfb81b05e1b1e0db44db4`,
+Rust 1.99.0 on macOS arm64, `cargo fmt --all -- --check`,
+`cargo clippy --locked --all-targets -- -D warnings` and
+`cargo test --locked --all-targets` pass, 21 tests. NOT VERIFIED for these new
+fixtures: fresh independent review and three-OS exact-head source proofs.
+The 24 compiling-mutant proof is historical and was not rerun this pass.

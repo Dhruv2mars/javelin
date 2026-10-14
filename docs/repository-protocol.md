@@ -1,6 +1,7 @@
 # Repository protocol message codec
 
-Status: bounded initial protocol direction. Not hosting acceptance.
+Status: bounded initial protocol direction. Hosted receiver exposure is BLOCKED
+by HIGH stored-object allocation amplification. Not hosting acceptance.
 Source base: accepted native Layer state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`,
 an unmerged dependency. This unit cannot claim independent acceptance.
 
@@ -75,7 +76,11 @@ else is `truncated`. A body that ends inside a field or has trailing bytes is `m
 | `22` | Stored | count `u32` |
 | `30` | Publish | operation (len `u8`, ASCII), expected `u64`, manifest id |
 | `31` | Outcome | `0`, number `u64`, manifest id, operation; or `1`, actual `u64` |
-| `7f` | Error | code (len `u8`, ASCII), detail (len `u16`, UTF-8, ≤ 1024) |
+| `7f` | Error | code (len `u8`, UTF-8), detail (len `u16`, UTF-8, ≤ 1024) |
+
+Error-code lengths count bytes. Encoding refuses codes above 255 bytes.
+Non-ASCII codes such as `é` round-trip. Version 1 remains unfrozen;
+this documents existing behavior rather than freezing external compatibility.
 
 Manifest entry kinds are 0 regular, 1 executable regular, and 2 symlink. Paths must
 be strictly ascending by bytes, which matches the native sorted map and rejects duplicates.
@@ -102,9 +107,12 @@ The codec enforces each limit at its boundary:
   except Error, where it reserves the maximum detail length. It checks every count,
   length, depth and the total first.
 
-`tests/alloc.rs` uses a counting allocator to show that each refusal allocates less
-than 4 KiB. Blobs above 8 MiB cannot transfer in version 1; streaming or chunking
-needs a new version.
+`tests/alloc.rs` uses a counting allocator to show that its four specific oversize
+encode, decode, frame-header and count fixtures each allocate less than 4 KiB.
+This is not a bound for every refusal. A legal 16 MiB outer frame containing an
+oversized inner blob allocates the 16 MiB frame buffer before refusing the blob.
+The outer-frame allocation stays within the wire budget. Blobs above 8 MiB cannot
+transfer in version 1; streaming or chunking needs a new version.
 
 These limits bound protocol buffers only. Native reads of objects that are already
 stored are not bounded. Want probes read whole objects. A sender reads each source
@@ -115,12 +123,21 @@ references. The receiver refuses duplicate Want items, so one frame cannot probe
 same object repeatedly. Repeated frames and many distinct objects still cost a full
 read each. This is retained API gap 3; the public API has no bounded read or existence check.
 
+Fresh hub Codex audit r2 reproduced a 55-byte Hello-plus-Want session causing a
+33,554,432-byte largest Rust allocation for a stored 32 MiB blob. A 55-byte session
+probing a manifest with eight references to that blob caused 268,446,277 bytes of
+cumulative Rust allocation. These are allocation measurements, not peak RSS, and
+exclude SQLite C allocations. Neither request advanced World. Hosted receiver
+exposure remains blocked until the accepted native API is integrated and verified.
+
 ## Receiver rules
 
 - Want must not repeat an item. Each item is probed with the typed public readers. Only `missing_object` for that exact ID
   counts as missing. A wrong-kind or corrupt object refuses the session.
 - Blobs are stored with `put_blob`. The returned ID must equal the claim, otherwise
-  `id_mismatch`.
+  `id_mismatch`. Failed batches do not publish but can retain a valid prefix and
+  mismatched bytes under their actual ID. Later valid requests may reference these
+  immutable objects. There is no batch rollback or retention cleanup.
 - Manifests are rebuilt with `RepoPath::parse`, `FileEntry` and `Manifest::new`, then
   stored with `put_manifest`. That call refuses missing and wrong-kind blob references,
   so blobs must arrive first. The returned ID must equal the claim.
@@ -128,6 +145,8 @@ read each. This is retained API gap 3; the public API has no bounded read or exi
   necessarily a Layer's or revision's original base. Composing nonintersecting work
   onto a newer head, and binding Layers, revisions, authorization or provenance to a
   Publish, are later versioned integration work. This command claims none of them.
+  Such semantics need a newly negotiated version or message. Appending fields to
+  version 1 Publish is incompatible because the decoder refuses trailing bytes.
 - Publish parses through `OperationId::parse` and `VersionNumber::new`. It then calls
   `compare_and_advance`, which revalidates the whole graph. Only that call writes a
   World reference. Its result is adapted through `Outcome::from_native`, an explicit
@@ -162,7 +181,7 @@ The follow-up round was single-model.
   An incremental publish sends exactly one new blob. The test also checks a
   version-refusal process.
 - `tests/receiver.rs` covers a valid-hash blob claim with other content, a manifest ID
-  claimed for blob bytes, a mismatched manifest claim that is never publishable,
+  claimed for blob bytes, a mismatched manifest claim refused without publication,
   wrong-kind Want, manifest-entry and Publish references, a manifest sent before its
   blobs, and unsorted, duplicate, invalid, colliding, unknown-kind and non-UTF-8 paths.
   It also covers oversize frame, count, entry, blob, path length and depth limits,
@@ -174,7 +193,9 @@ The follow-up round was single-model.
   Accepted outcomes with the wrong number, manifest or operation, and Stale outcomes
   that are not beyond `expected`.
 - `tests/alloc.rs` measures allocation with a counting allocator. Oversize encode,
-  decode, frame header and count refusals each allocate less than 4 KiB.
+  decode, frame header and count refusals in its four specific fixtures each allocate
+  less than 4 KiB. Its legal outer-frame fixture demonstrates allocation of the full
+  frame before an oversized inner blob is refused.
 - `bun scripts/mutate.ts` removes each of 24 protocol guards in turn. It first requires
   that the mutant compiles, then requires that the suite fails, and it does so for every one. The guards cover:
   - blob and manifest ID comparisons;
@@ -205,9 +226,11 @@ passing tests, formatting, Clippy and a successful release build. Each job log s
 
 These gaps were worked around through the public API only. Nothing private was copied.
 
-1. No public content-ID function. The receiver must store bytes before learning their
-   ID, so a mismatched claim leaves an unreferenced immutable object. It is never
-   referenced or published, but nothing collects it. A public
+1. No public content-ID function on this dependency. The receiver must store bytes
+   before learning their ID. A failed request does not publish and can leave
+   unreferenced immutable objects, including a valid batch prefix and mismatched
+   bytes under their actual ID. Later legitimate requests may reference and publish
+   them. Nothing collects them. A public
    `ObjectId::for_blob(&[u8])` and `ObjectId::for_manifest(&Manifest)` would allow
    comparison before storing.
 2. No raw byte conversion for `ObjectId`. The codec converts through lowercase hex.
@@ -219,6 +242,24 @@ These gaps were worked around through the public API only. Nothing private was c
 4. Native `VersionNumber`, `RepoPath`, `OperationId`, `WorldVersion` and
    `AdvanceOutcome` are serialize-only, as intended. This crate keeps its own
    validated DTO.
+
+Core PR #18 implements the requested object access additions. This protocol has
+not migrated to them. Migration waits for the hub's accepted native-object-access
+exact SHA; implementation in another branch is not acceptance. Pre-store ID checks
+will prevent storing mismatched items, while hosting quotas and retention remain
+future work. Fresh independent review and three-OS exact-head checks are required
+after migration. The earlier `02c7427` evidence does not verify these corrections
+or a future migration.
+
+Correction fixtures at `c133fab941fec7dc2eecfb81b05e1b1e0db44db4` passed locally on
+macOS arm64 with Rust 1.99.0: `cargo fmt --all -- --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, and
+`cargo test --locked --all-targets`, with 21 tests passing. Only
+`tests/alloc.rs` and `tests/receiver.rs` changed in that commit. They reproduce
+retention and later native publication, the legal 16 MiB frame allocation, and
+UTF-8 Error-code round trips. Runtime and wire bytes are unchanged from `02c7427`.
+These corrections have not had fresh independent review or three-OS exact-head
+verification. The 24-mutant result above is historical, not rerun for this pass.
 
 ## Known limits
 
