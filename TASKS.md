@@ -228,7 +228,7 @@ No autosave, Stack/Publish, macOS/Windows binding, Gate 2 or GA claim.
 - [x] Add gated Linux mount/process tests and the hosted runtime workflow with raw evidence.
 - [x] Run an independent read-only review and fix its verified findings (see the doc).
 - [x] Inspect actual hosted results and artifacts; record exact executable SHA and verdicts.
-- [ ] Report PR, source and proof completion to the hub.
+- [x] Report PR, source and proof completion to the hub (message `linux-layer-runtime-completion-93f9eaa`).
 
 Executable source `93f9eaa00421f3c5efbaac79449bc22699c464b1` is VERIFIED for the
 bounded Linux binding in hosted runs 38503434985 (attempt 2) and 38503753472.
