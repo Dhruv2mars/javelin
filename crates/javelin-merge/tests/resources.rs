@@ -75,7 +75,7 @@ fn deeply_nested_paths_and_long_common_prefixes_are_bounded() {
     let parent = manifest(0, &["a".into()]);
     let child_path = "a/".repeat(511) + "zz";
     assert_eq!(child_path.len(), Resource::PathBytes.limit() as usize);
-    let child = manifest(1, &[child_path.clone()]);
+    let child = manifest(1, std::slice::from_ref(&child_path));
     let no_load = |_| -> Result<Vec<u8>, ()> { panic!("metadata only") };
     let outcome = merge(&empty, &parent, &child, no_load).unwrap();
     assert_eq!(outcome.conflicts.len(), 2);
