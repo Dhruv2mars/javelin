@@ -214,19 +214,27 @@ unverified. No source changes were made.
 
 Owner thread: independent implementation worker for hub e659350e. Owns only
 `tools/native-benchmarks/**`, `docs/native-storage-baseline.md`,
-`.github/workflows/native-storage-baseline.yml` and this section. Draft PR targets
+`.github/workflows/native-storage-baseline.yml` and this section. Draft PR #16 targets
 `feat/native-layer-checkpoints`. Measured source is the unmerged dependency
 `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; this PR cannot claim independent
 acceptance. Done: committed rerunnable release tool, raw macOS and hosted Linux runs
 with fixture inventory and host/source provenance, `verify` re-checking recorded
 outcomes, defect-detecting regressions, honest recommendations. Windows unmeasured.
 
-- [ ] Read instructions, contract, TASKS and decisions at `e56fc86`.
-- [x] Compare two designs and select the standalone driver (see doc).
-- [ ] Open and register exactly one draft PR; report planning SHA to hub.
-- [ ] Independent read-only plan review; record limitations.
-- [ ] Build tool, fixtures, scenarios, verify command, regressions.
-- [ ] Real macOS runs with raw artifacts.
-- [ ] Hosted Linux (and macOS) run via own workflow; inspect downloaded artifacts.
-- [ ] Independent code review; fix findings.
-- [ ] Write recommendations and handoff; report to hub.
+- [x] Read instructions, contract, TASKS and decisions at `e56fc86`.
+- [x] Compare designs and select the standalone driver (see doc).
+- [x] Open and register exactly one draft PR (#16); report planning SHA `11fc70c` to hub.
+- [x] Independent read-only plan review r1 (claude-opus-5-5): found quadratic
+  validation cost, pooled-percentile and retry gaps; all applied.
+- [x] Build tool, fixtures, four scenarios, `verify` (30 checks), 24 tests.
+- [x] Independent read-only code review r1 (claude-opus-5-5): 15 findings fixed
+  (lost raw samples, vacuous checks, debug evidence, workflow evidence upload,
+  Linux RSS, overflow); each has a regression.
+- [x] Real macOS runs (3 x ci, 1 x local) with raw artifacts, tested source `4149da9`.
+- [x] Hosted Linux and macOS runs and Windows compile-only via own workflow, run
+  38507388389; downloaded artifacts re-verified locally.
+- [x] Write results, limits and recommendations in `docs/native-storage-baseline.md`.
+- [ ] Final doc review and hub handoff.
+
+Windows performance, mounted-Layer cost, hosted-service cost, power-loss durability,
+scale and GA thresholds are NOT VERIFIED and not claimed.
