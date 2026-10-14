@@ -184,8 +184,8 @@ pub fn encode(message: &Message) -> Vec<u8> {
     out
 }
 
-/// Decodes one complete frame body. Every count and length is checked against
-/// both its fixed limit and the remaining bytes before anything is allocated.
+/// Decodes one complete frame body. Every count and length is checked against its
+/// fixed limit, and every field against the remaining bytes, before it is copied.
 pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
     let mut r = Reader(body);
     let message = match r.u8()? {
@@ -201,8 +201,8 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
         }
         HELLO_OK => Message::HelloOk { version: r.u16()? },
         tag @ (WANT | MISSING) => {
-            let n = r.count(MAX_WANT, 33)?;
-            let mut items = Vec::with_capacity(n);
+            let n = r.count(MAX_WANT)?;
+            let mut items = Vec::new();
             for _ in 0..n {
                 let kind = match r.u8()? {
                     1 => Kind::Blob,
@@ -218,8 +218,8 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             }
         }
         BLOBS => {
-            let n = r.count(MAX_BLOBS, 36)?;
-            let mut blobs = Vec::with_capacity(n);
+            let n = r.count(MAX_BLOBS)?;
+            let mut blobs = Vec::new();
             for _ in 0..n {
                 let id = r.id()?;
                 let len = r.u32()? as usize;
@@ -231,8 +231,8 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             Message::Blobs(blobs)
         }
         MANIFESTS => {
-            let n = r.count(MAX_MANIFESTS, 36)?;
-            let mut manifests = Vec::with_capacity(n);
+            let n = r.count(MAX_MANIFESTS)?;
+            let mut manifests = Vec::new();
             for _ in 0..n {
                 let id = r.id()?;
                 manifests.push((id, r.manifest()?));
@@ -349,14 +349,12 @@ impl<'a> Reader<'a> {
         let hex: String = self.take(32)?.iter().map(|b| format!("{b:02x}")).collect();
         Ok(ObjectId::parse(&hex)?)
     }
-    /// Checks a count against its limit and against the minimum encoded element size.
-    fn count(&mut self, max: usize, min_size: usize) -> Result<usize, ProtocolError> {
+    /// Checks a count against its fixed limit. Collections grow only as elements are
+    /// actually decoded, so memory stays proportional to the received frame.
+    fn count(&mut self, max: usize) -> Result<usize, ProtocolError> {
         let n = self.u32()? as usize;
         if n > max {
             return Err(limit("count exceeds limit"));
-        }
-        if n.saturating_mul(min_size) > self.0.len() {
-            return Err(malformed("count exceeds message length"));
         }
         Ok(n)
     }
@@ -368,8 +366,8 @@ impl<'a> Reader<'a> {
         Ok(OperationId::parse(self.short_str()?)?)
     }
     fn manifest(&mut self) -> Result<Manifest, ProtocolError> {
-        let n = self.count(MAX_ENTRIES, 35)?;
-        let mut entries = Vec::with_capacity(n);
+        let n = self.count(MAX_ENTRIES)?;
+        let mut entries = Vec::new();
         let mut previous: Option<&[u8]> = None;
         for _ in 0..n {
             let len = self.u16()? as usize;

@@ -215,8 +215,10 @@ fn refuses_manifest_before_its_blobs() {
     refused(&mut dest, &input, "missing_object");
 }
 
+type RawEntry<'a> = (&'a [u8], u8, ObjectId);
+
 /// Builds a Manifests body by hand so invalid shapes can be expressed.
-fn manifest_body(claim: ObjectId, entries: &[(&[u8], u8, ObjectId)]) -> Vec<u8> {
+fn manifest_body(claim: ObjectId, entries: &[RawEntry]) -> Vec<u8> {
     let mut body = vec![0x21];
     body.extend(1u32.to_be_bytes());
     body.extend(raw(claim));
@@ -236,7 +238,7 @@ fn refuses_malformed_manifests() {
     let (id, blobs, _) = fixture(&mut source);
     let b = blobs[0].0;
     let (_d, mut dest) = repo();
-    let cases: Vec<(Vec<(&[u8], u8, ObjectId)>, &str)> = vec![
+    let cases: Vec<(Vec<RawEntry>, &str)> = vec![
         (vec![(b"b", 0, b), (b"a", 0, b)], "malformed"),
         (vec![(b"a", 0, b), (b"a", 0, b)], "malformed"),
         (vec![(b"../x", 0, b)], "invalid_input"),
