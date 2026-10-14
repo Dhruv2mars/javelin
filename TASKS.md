@@ -542,6 +542,16 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   The separate `gpt-6-astra` follow-up/trail audit failed from a usage limit
   before returning a review. It is not evidence of independent acceptance of
   the fix; its bounded follow-up remains open. Prior `87f2acd` acceptance stands.
+- [x] Accept the two corrected guards at `b8b40ce` after fresh Codex
+  `gpt-6-sol` round 3. The reviewer ran all 15 review tests in a separate export,
+  reversed each guard to reproduce the relevant failure, restored source
+  byte-for-byte, checked legitimate same-repository replay, and independently
+  matched nine source hashes, 15 behavior plus one property test and the empty
+  example diff on all three hosted OSes. Final `e0343a8` differs only in TASKS.
+  Proof: `/tmp/javelin-pr13-codex-review-b8b40ce-20261014` and round 3 below.
+  The existing permissions-epoch refusal can still expose `seen` before the
+  publisher role is checked. A future public adapter must authorize callers or
+  normalize that refusal. This does not accept hosted authorization or Publish.
 - Integration obligation for the Publish and hosting units: the model has no
   published or closed state, so `check_publishable` keeps allowing an already
   published revision. The publisher must record publication or close the
@@ -769,16 +779,32 @@ resumed the same stopped owners only after checking activity and pending runs.
   workflow; planning `935f38a`. Its typed Load/Resource refusals, table/work
   budgets and faster 2,000-line case are owner-reported, not yet accepted.
   A 4,000-line refusal is not a faster successful merge. Stack remains gated.
+- PR #21 source review at `edc9293` is now inspected by the hub, not merely
+  owner-reported. The actual `RESULT.txt`, independent-harness and resource logs
+  under `/tmp/javelin-pr21-review-FgkoAb` report no material source finding,
+  35 debug/release tests, 30,770 mask-enumerated matching pairs and 1,727,880
+  changed triplets with 6,528 clean results and no every-pair violation/skips.
+  The hub matched all three production-module hashes against scratch,
+  reviewed `edc9293` and pushed `884d51c` blobs. The review does not certify
+  mutation runs, hosted execution, universal correctness, or caller allocation.
+  Actual GitHub checks at `884d51c` show Linux/macOS component jobs successful;
+  Windows component and Linux/Windows native jobs remain pending at inspection.
+  The existing owner watcher retains check waiting and artifact collection.
+  Component acceptance remains open; no duplicate review or workstream launched.
 - PR #15 waits for PR #18 hub acceptance; whole-Layer Publish follows the next
   accepted native head, without a competing root writer. PRs #16/#17 retain
   their existing owners and PRs for verifier/installer repairs.
 
 #### Pending hub acceptance follow-ups
 
-- [ ] Review-model fix and decision-trail round 3, on committed hub `8a24989`:
+- [x] Review-model fix and decision-trail round 3, on committed hub `8a24989`:
   `node:delegated-task:command%3Amcp%3A1415e1d9-77b8-4515-9821-4c8b3a8d6a87%3Adelegate-task%3Ajavelin-hub-pr13-b8b40ce-trail-r3-8a24989-20261014`.
   Uses Codex `gpt-6-sol` after the Astra round failed; same-family limitation
   remains. Includes original findings, responses and the user's platform answer.
+  Completed: corrected guards accepted as bounded; no material trail overclaim
+  found in `8a24989`. Review cutoff is that commit and hub activity through
+  2026-10-14 18:12:29 UTC. Later `e8cf8f9` and subsequent root additions are
+  outside the independent trail review and must not be labelled reviewed by it.
 - [ ] Corrected benchmark-tool acceptance round 3 at reviewed `ebd3083`, hosted
   `3acc660`, final evidence `100395b`:
   `node:delegated-task:command%3Amcp%3A1415e1d9-77b8-4515-9821-4c8b3a8d6a87%3Adelegate-task%3Ajavelin-hub-pr16-ebd3083-correction-r3-20261014`.
