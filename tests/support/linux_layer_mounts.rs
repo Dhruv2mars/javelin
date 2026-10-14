@@ -1550,10 +1550,11 @@ fn committed_capture_survives_a_transient_replay_failure() {
     // Another writer holds the database, so replay verification fails transiently.
     let blocker =
         rusqlite::Connection::open(repo_dir.path().join(".javelin/repository.sqlite3")).unwrap();
-    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // EXCLUSIVE blocks readers too, so even the native ownership lookup fails.
+    blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
     let first = rt.recover(&mut repo).unwrap();
-    let status = rt.status(&repo, &layer).unwrap();
     blocker.execute_batch("COMMIT").unwrap();
+    let status = rt.status(&repo, &layer).unwrap();
     let second = rt.recover(&mut repo).unwrap();
     let after = rt.status(&repo, &layer).unwrap();
     save(
@@ -1563,15 +1564,16 @@ fn committed_capture_survives_a_transient_replay_failure() {
         "pendingAfterFirst": status.pending, "secondRecovery": second,
         "boundAfterSecond": after.bound_revision, "frozenAfterSecond": after.frozen}),
     );
-    // Ownership is decided from the recorded candidate and native rows, so a busy
-    // database either delays adoption (still pending) or does not matter at all;
-    // it must never abandon the view's own commit.
+    assert_eq!(first.failures.len(), 1, "blocked lookup did not fail");
     assert!(
-        status.pending.as_deref() == Some("committed") || status.bound_revision == 1,
+        status.frozen && status.pending.as_deref() == Some("committed"),
         "own commit abandoned"
     );
-    assert!(first.failures.len() + first.pending_resolved == 1);
-    assert_eq!(after.bound_revision, 1, "own commit not adopted");
+    assert_eq!(second.pending_resolved, 1);
+    assert_eq!(
+        after.bound_revision, 1,
+        "own commit not adopted after the transient failure"
+    );
     assert!(!after.frozen && after.pending.is_none());
     assert_eq!(repo.layer_history(&layer).unwrap().len(), 2);
     save(
