@@ -201,7 +201,11 @@ logs as artifacts.
 - Rename detection is out of scope. A rename is a delete plus an add.
 - Large files are held fully in memory, three versions at once. Exact `RawMyers`
   has no cost bound on pathological inputs, and each candidate separator costs two
-  more exact diffs. Performance is unmeasured.
+  more exact diffs. Measured once on an Apple Silicon laptop, release build,
+  2,000-line files: far-apart edits 0.3 ms; one side reversed 176 ms; both sides
+  rewriting 20% of lines scattered throughout 2.75 s. The scattered case is the
+  separator cost. A forward/backward LCS table would make it one pass, which is
+  future work if real repositories hit it.
 - No semantic language-aware merging exists, by design.
 
 ## Future gated adapter
