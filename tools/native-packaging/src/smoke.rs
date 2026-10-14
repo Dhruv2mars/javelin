@@ -9,7 +9,7 @@ use std::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{Error, Result, exe_name, read, sha256_file, util::write};
+use crate::{Error, Result, exe_name, package::MANIFEST_FILE, read, sha256_file, util::write};
 
 pub const SHIM_MARKER_ENV: &str = "JAVELIN_PACK_GIT_SHIM_MARKER";
 pub const SHIM_EXIT: i32 = 97;
@@ -61,7 +61,8 @@ fn unique_dir(label: &str) -> Result<PathBuf> {
         std::process::id()
     ));
     fs::create_dir_all(&dir)?;
-    Ok(fs::canonicalize(dir)?)
+    // Not canonicalized: Windows verbatim `\\?\` paths are unreliable in PATH entries.
+    Ok(crate::util::absolute(&dir)?)
 }
 
 fn run(path: &OsString, marker: &Path, cwd: &Path, args: &[&str]) -> Result<Output> {
@@ -78,10 +79,24 @@ fn json(output: &Output) -> Option<Value> {
 }
 
 pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
-    let bin_dir = fs::canonicalize(bin_dir)?;
+    let bin_dir = crate::util::absolute(bin_dir)?;
     let binary = bin_dir.join(exe_name("javelin"));
     let binary_sha256 = sha256_file(&binary)?;
     let mut s = Smoke { checks: Vec::new() };
+    // An unpacked package names its own binary hash; compare when it is present.
+    if let Some(manifest) = bin_dir
+        .parent()
+        .map(|p| p.join(MANIFEST_FILE))
+        .filter(|p| p.is_file())
+    {
+        let value: Value = serde_json::from_slice(&read(&manifest)?)?;
+        let listed = value["binary"]["sha256"].as_str().unwrap_or("");
+        s.check(
+            "binary hash matches PACKAGE.json",
+            listed == binary_sha256,
+            format!("{binary_sha256} vs {listed}"),
+        );
+    }
     if let Some(expected) = expected_sha256 {
         s.check(
             "binary hash matches expected",
@@ -93,7 +108,8 @@ pub fn smoke(bin_dir: &Path, expected_sha256: Option<&str>) -> Result<Report> {
     let work = unique_dir("work")?;
     let project = work.join("project");
     fs::create_dir(&project)?;
-    let git_ancestor = project.ancestors().find(|a| a.join(".git").exists());
+    let real_project = fs::canonicalize(&project)?;
+    let git_ancestor = real_project.ancestors().find(|a| a.join(".git").exists());
     s.check(
         "project is outside any Git worktree",
         git_ancestor.is_none(),
