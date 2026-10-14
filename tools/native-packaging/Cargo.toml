@@ -1,0 +1,24 @@
+[package]
+name = "javelin-native-packaging"
+version = "0.1.0"
+edition = "2024"
+description = "Development packaging for the native Javelin CLI; not a public release tool"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "javelin-pack"
+path = "src/main.rs"
+
+[dependencies]
+flate2 = "1.1.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tar = "0.4.46"
+toml = "1.1.8"
+zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
