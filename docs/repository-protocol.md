@@ -89,12 +89,27 @@ receiver closes the session.
 
 Fixed version 1 limits are 16 MiB per frame, 8 MiB per blob, and 1,024 blobs, 4,096
 Want items or 16 manifests per batch. Manifests may hold 65,536 entries, paths 4,096
-bytes, and path depth 256 segments. The frame length is checked from the header before
-its buffer is allocated. Counts are checked against their limit before decoding.
-Collections grow only as elements decode, so memory stays proportional to the
-received frame. Lengths are checked before bytes are copied. The sender verifies
-every frame it writes against the same decoder and refuses oversize blobs locally.
-Blobs above 8 MiB cannot transfer in version 1; streaming or chunking needs a new version.
+bytes, and path depth 256 segments.
+
+The codec enforces each limit at its boundary:
+
+- `read_frame` checks the frame length from the header before allocating a buffer.
+- `decode` refuses bodies above the frame limit on entry.
+- Counts are checked against their limit before decoding. Collections grow only as
+  elements decode, so decode memory stays proportional to the received frame.
+- Lengths are checked before bytes are copied.
+- `encode` computes the exact size and checks every count, length, depth and the
+  total before it allocates the output.
+
+`tests/alloc.rs` uses a counting allocator to show that each refusal allocates less
+than 4 KiB. Blobs above 8 MiB cannot transfer in version 1; streaming or chunking
+needs a new version.
+
+These limits bound protocol buffers only. Native reads of objects that are already
+stored are not bounded. Want probes read whole objects. A sender reads each source
+blob before checking its size. A receiver repository that holds a large blob can
+therefore be made to allocate that blob's size by a small Want. This is retained
+API gap 3; the public API has no bounded read or existence check.
 
 ## Receiver rules
 
@@ -105,10 +120,17 @@ Blobs above 8 MiB cannot transfer in version 1; streaming or chunking needs a ne
 - Manifests are rebuilt with `RepoPath::parse`, `FileEntry` and `Manifest::new`, then
   stored with `put_manifest`. That call refuses missing and wrong-kind blob references,
   so blobs must arrive first. The returned ID must equal the claim.
+- `expected` is the World head the caller compares against at publication. It is not
+  necessarily a Layer's or revision's original base. Composing nonintersecting work
+  onto a newer head, and binding Layers, revisions, authorization or provenance to a
+  Publish, are later versioned integration work. This command claims none of them.
 - Publish parses through `OperationId::parse` and `VersionNumber::new`. It then calls
   `compare_and_advance`, which revalidates the whole graph. Only that call writes a
   World reference. Its result is adapted through `Outcome::from_native`, an explicit
   DTO. No serialize-only native type is deserialized.
+- The reference sender trusts no reply. Missing must list only offered objects, each
+  at most once. An Accepted outcome must have number `expected + 1`, the requested
+  manifest and the requested operation. A Stale outcome must report `actual > expected`.
 - Identical replay returns the durable original outcome. The same operation ID with a
   changed expected version or manifest returns `operation_id_reused`. A Publish whose
   reply is lost is retried with identical input in a new session.
@@ -116,7 +138,11 @@ Blobs above 8 MiB cannot transfer in version 1; streaming or chunking needs a ne
 ## Evidence
 
 Local, macOS arm64, Rust 1.99.0, `cargo test --locked --all-targets` in
-`crates/javelin-protocol`: 14 tests passed, with formatting and Clippy `-D warnings` clean.
+`crates/javelin-protocol`: 20 tests passed, with formatting and Clippy `-D warnings` clean.
+
+Review r1 by Codex `gpt-6.1-sol` (high) on `58fadbf` found no unverified World
+reference. It raised one high, three medium and two low findings. All were addressed
+in this PR, except the high native-read allocation, which is retained as API gap 3.
 
 - `tests/process.rs` builds two separate repositories and runs the actual binary as
   separate sender and receiver processes. The test only relays frames. It drops the
@@ -133,16 +159,29 @@ Local, macOS arm64, Rust 1.99.0, `cargo test --locked --all-targets` in
   header and body truncation, trailing bytes, empty and unknown frames, unsupported
   versions, messages before Hello, and Publish beyond head. Each case asserts the
   refusal code sent to the peer and an unchanged World.
-- Guard-removal mutation checks found that removing each of 13 guards fails the suite:
-  blob and manifest ID comparisons, count, frame, blob, path and depth limits, path
-  order, trailing bytes, header truncation, required negotiation, version refusal, and
-  Want kind separation. A fourteenth guard, count against remaining bytes, survived
-  because preallocation was already bounded. It was removed together with preallocation.
+- `tests/sender.rs` runs the reference sender against a scripted malicious receiver.
+  It refuses duplicate and unoffered Missing items before sending objects. It refuses
+  Accepted outcomes with the wrong number, manifest or operation, and Stale outcomes
+  that are not beyond `expected`.
+- `tests/alloc.rs` measures allocation with a counting allocator. Oversize encode,
+  decode, frame header and count refusals each allocate less than 4 KiB.
+- `bun scripts/mutate.ts` removes each of 23 protocol guards in turn, and the suite fails
+  for every one. The guards cover:
+  - blob and manifest ID comparisons;
+  - decoder count, frame, blob, path and depth limits;
+  - encoder total, blob and depth limits;
+  - path order, trailing bytes and header truncation;
+  - required negotiation, version refusal and Want kind separation;
+  - sender Missing deduplication and subset checks;
+  - the Accepted number, manifest and operation checks, and the Stale bound.
+  An earlier count-versus-remaining guard was unobservable because preallocation was
+  already bounded. It was removed together with preallocation.
 
 Hosted evidence: `.github/workflows/repository-protocol.yml` runs the same checks on
-Linux, macOS and Windows. A failing `git` shim is placed first on PATH and must
-never run. The shim is meaningful only on Unix runners because Windows process
-creation does not resolve a shell script named `git`.
+Linux, macOS and Windows. It compiles a native failing `git` shim (`git.exe` on
+Windows) and places it first on PATH. A positive control first proves that Rust's
+`Command::new("git")` resolves the shim. The test step then requires that the shim
+never ran. The earlier shell-script shim at `58fadbf` could not intercept on Windows.
 
 ## API gaps for the hub
 
@@ -155,8 +194,10 @@ These gaps were worked around through the public API only. Nothing private was c
    comparison before storing.
 2. No raw byte conversion for `ObjectId`. The codec converts through lowercase hex.
    `ObjectId::from_bytes([u8; 32])` and `as_bytes()` would remove that detour.
-3. No public existence check. Want reads whole objects; `manifest_bytes` also
-   revalidates the manifest graph. A typed `has_blob` and `has_manifest` would be cheaper.
+3. No public existence check or bounded read. Want reads whole objects, and
+   `manifest_bytes` also reads every referenced blob to revalidate the graph. Review
+   r1 reproduced a 55-byte session that caused a 32 MiB allocation for a stored blob.
+   A typed `has_blob`/`has_manifest`, or a size-bounded read, is needed to close this.
 4. Native `VersionNumber`, `RepoPath`, `OperationId`, `WorldVersion` and
    `AdvanceOutcome` are serialize-only, as intended. This crate keeps its own
    validated DTO.
@@ -165,8 +206,9 @@ These gaps were worked around through the public API only. Nothing private was c
 
 Every limit below is retained explicitly; none is claimed as solved.
 
-- One object per frame-bounded batch. There is no streaming, resumable transfer or
-  large-file support.
+- Every object must fit in one frame. Batches may hold many objects up to the frame
+  and count limits. There is no streaming, resumable transfer or large-file support.
+- Want probe memory is bounded only by the largest stored object (API gap 3).
 - Whole-manifest transfer only. There is no delta or history negotiation, and no
   multi-version fetch or clone.
 - No transport security, authentication, authorization, rate limiting or quotas.

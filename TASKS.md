@@ -279,7 +279,7 @@ checkpoint, trace or collaboration format is claimed.
 - [x] Compare JSON framing and compact binary candidates with the actual caller.
 - [x] Implement negotiation, have/want, bounded blob and manifest batches, and publish.
 - [x] Use validated wire DTOs; never deserialize native serialize-only types.
-- [x] Refuse malicious, malformed, oversize, truncated, replayed and changed input.
+- [x] Refuse malicious, malformed, oversize and truncated input, and changed input under a reused operation ID; identical replay returns the durable outcome.
 - [x] Prove separate-process transfer, lost reply and retry between two repositories.
 - [x] Record API gaps for the hub instead of copying private native internals.
 - [ ] Obtain independent review and hosted three-platform evidence.

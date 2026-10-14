@@ -59,12 +59,28 @@ jobs:
       - name: Lint protocol targets
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee ci-logs/clippy.log
 
-      - name: Test protocol with a failing git shim first on PATH
+      - name: Install failing git shim and prove Rust resolves it
         run: |
-          shim="$RUNNER_TEMP/git-shim"
+          shim="$PWD/ci-git-shim"
           mkdir -p "$shim"
-          printf '#!/bin/sh\ntouch "%s/invoked"\nexit 97\n' "$shim" > "$shim/git"
-          chmod +x "$shim/git"
+          printf '%s\n' 'fn main() {' \
+            '    let dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();' \
+            '    std::fs::write(dir.join("invoked"), b"git was invoked").unwrap();' \
+            '    std::process::exit(97);' '}' > "$PWD/ci-git-shim/git_shim.rs"
+          printf '%s\n' 'fn main() {' \
+            '    let status = std::process::Command::new("git").arg("--version").status().unwrap();' \
+            '    assert_eq!(status.code(), Some(97), "Rust did not resolve the git shim");' '}' > "$PWD/ci-git-shim/git_probe.rs"
+          rustc -o "$shim/git$EXE_SUFFIX" "$PWD/ci-git-shim/git_shim.rs"
+          rustc -o "$PWD/ci-git-shim/git_probe$EXE_SUFFIX" "$PWD/ci-git-shim/git_probe.rs"
+          PATH="$shim:$PATH" "$PWD/ci-git-shim/git_probe$EXE_SUFFIX"
+          test -e "$shim/invoked"
+          rm "$shim/invoked"
+          echo "shim=$shim" >> "$GITHUB_ENV"
+        env:
+          EXE_SUFFIX: ${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Test protocol with the git shim first on PATH
+        run: |
           PATH="$shim:$PATH" cargo test --locked --all-targets -- --nocapture 2>&1 | tee ci-logs/test.log
           test ! -e "$shim/invoked"
 
