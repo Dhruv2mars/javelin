@@ -122,9 +122,17 @@ mod helper {
         // invocations that bypass the library lock, so a view cannot be thawed
         // while its frozen upper is being listed.
         let _lock = rt.lock()?;
+        // Every verb that can change mount or storage state advances one runtime
+        // epoch, even if it later fails. A caller that sees the same epoch before
+        // and after its reads knows no thaw, remount or unmount happened between.
+        let epoch = rt.epoch()?;
+        if !matches!(verb.as_str(), "list" | "status" | "epoch") {
+            rt.set_epoch(epoch + 1)?;
+        }
         let tokens: Vec<&str> = tokens.iter().map(String::as_str).collect();
         let none = |r: R<()>| r.map(|()| None);
         match (verb.as_str(), tokens.as_slice()) {
+            ("epoch", []) => Ok(Some(json!({ "epoch": epoch }).to_string())),
             ("stage", [key]) => rt.stage(key, None).map(Some),
             ("stage", [key, lower]) => rt.stage(key, Some(lower)).map(Some),
             ("freeze", ["stage", key]) => none(rt.remount(&rt.stage_mount(cache_key(key)?), true)),
@@ -132,15 +140,30 @@ mod helper {
             ("thaw", ["view", slot]) => none(rt.remount(&rt.view_mount(slot_token(slot)?), false)),
             ("list", ["stage", key]) => {
                 let key = cache_key(key)?;
-                rt.list(&rt.stage_mount(key), &rt.stage_dir(key).join("upper"))
-                    .map(Some)
+                rt.list(
+                    &rt.stage_mount(key),
+                    &rt.stage_dir(key).join("upper"),
+                    epoch,
+                )
+                .map(Some)
             }
             ("list", ["view", slot]) => {
                 let slot = slot_token(slot)?;
-                rt.list(&rt.view_mount(slot), &rt.view_dir(slot).join("upper"))
-                    .map(Some)
+                rt.list(
+                    &rt.view_mount(slot),
+                    &rt.view_dir(slot).join("upper"),
+                    epoch,
+                )
+                .map(Some)
             }
-            ("seal", [key]) => none(rt.seal(cache_key(key)?)),
+            ("seal", [key, listed]) => {
+                if listed.parse::<u64>().ok() != Some(epoch) {
+                    return Err(Failure::Busy(
+                        "stage changed after its verified listing".into(),
+                    ));
+                }
+                none(rt.seal(cache_key(key)?))
+            }
             ("abort", [key]) => none(rt.abort(cache_key(key)?)),
             ("mount-view", [slot, mode @ ("rw" | "ro"), lowers @ ..]) => rt
                 .mount_view(slot_token(slot)?, *mode == "ro", lowers)
@@ -168,6 +191,19 @@ mod helper {
                 .all(|c| !c.is_empty() && c != "." && c != "..");
         if !ok {
             return invalid("runtime root must be a normalized absolute [A-Za-z0-9_./-] path");
+        }
+        // Runtime names never contain dots, so they can never collide with the
+        // `.<name>.javelin-init` staging directories that `init` may remove.
+        let name = root.rsplit('/').next().unwrap_or_default();
+        if !name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric())
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return invalid("runtime name must be [A-Za-z0-9][A-Za-z0-9_-]*");
         }
         Ok(PathBuf::from(root))
     }
@@ -515,6 +551,25 @@ mod helper {
             Ok(file)
         }
 
+        fn epoch(&self) -> R<u64> {
+            match fs::read_to_string(self.root.join("hidden/epoch")) {
+                Ok(text) => text
+                    .trim()
+                    .parse()
+                    .map_err(|_| Failure::Io("corrupt runtime epoch".into())),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(0),
+                Err(e) => Err(e.into()),
+            }
+        }
+
+        fn set_epoch(&self, value: u64) -> R<()> {
+            let temporary = self.root.join("hidden/epoch.tmp");
+            fs::write(&temporary, value.to_string())?;
+            fs::File::open(&temporary)?.sync_all()?;
+            fs::rename(&temporary, self.root.join("hidden/epoch"))?;
+            Ok(())
+        }
+
         fn stage_dir(&self, key: &str) -> PathBuf {
             self.root.join("hidden/stage").join(key)
         }
@@ -623,7 +678,7 @@ mod helper {
         }
 
         /// Lists the upper only while its overlay superblock is frozen read-only.
-        fn list(&self, target: &Path, upper: &Path) -> R<String> {
+        fn list(&self, target: &Path, upper: &Path, epoch: u64) -> R<String> {
             let row = self.overlay_at(target)?;
             if !row.readonly || !row.super_options.split(',').any(|o| o == "ro") {
                 return invalid("upper listing requires a frozen read-only overlay");
@@ -633,7 +688,7 @@ mod helper {
             if !self.overlay_at(target)?.readonly {
                 return invalid("overlay thawed during upper listing");
             }
-            Ok(json!({ "entries": entries }).to_string())
+            Ok(json!({ "epoch": epoch, "entries": entries }).to_string())
         }
 
         fn seal(&self, key: &str) -> R<()> {
@@ -815,9 +870,23 @@ mod helper {
             assert!(lower_keys(&[&format!("c{h}"), &format!("b{h}")]).is_ok());
             assert!(lower_keys(&[&format!("b{h}"), &format!("c{h}")]).is_err());
             assert!(lower_keys(&[&format!("c{h}")]).is_err());
-            assert!(root_syntax("/var/lib/javelin-ci/rt.1").is_ok());
+            assert!(root_syntax("/var/lib/javelin-ci/rt-1").is_ok());
+            assert!(root_syntax("/var/lib/javelin.ci/rt_1").is_ok());
             for bad in [
-                "", "/", "rel/x", "/a//b", "/a/./b", "/a/../b", "/a/b/", "/a,b", "/a:b", "/a b",
+                "/p/.rt-y.javelin-init",
+                "/p/rt.1",
+                "/p/-rt",
+                "/p/_rt",
+                "",
+                "/",
+                "rel/x",
+                "/a//b",
+                "/a/./b",
+                "/a/../b",
+                "/a/b/",
+                "/a,b",
+                "/a:b",
+                "/a b",
             ] {
                 assert!(root_syntax(bad).is_err(), "{bad}");
             }
