@@ -240,9 +240,9 @@ impl Overlay {
         f.write_all(&body).map_err(io_err)?;
         f.sync_all().map_err(io_err)?;
         fs::rename(&tmp, self.upper.join("whiteouts")).map_err(io_err)?;
-        sync_dir(&self.upper).map_err(io_err)?;
+        // The manifest is replaced; memory must match it even if the sync fails.
         st.whiteouts = next;
-        Ok(())
+        sync_dir(&self.upper).map_err(io_err)
     }
 
     /// Creates upper directories for every ancestor, copying base modes.
@@ -683,6 +683,8 @@ impl NFSFileSystem for Overlay {
                 fs::remove_file(&up)
             }
             .map_err(io_err)?;
+            // Deleted handles go stale before the fallible sync.
+            Self::forget(&mut st, &rel);
             sync_dir(up.parent().unwrap()).map_err(io_err)?;
         }
         Self::forget(&mut st, &rel);

@@ -649,3 +649,59 @@ async fn rename_handles_follow_bytes_when_directory_sync_fails() {
         nfsstat3::NFS3ERR_STALE as u32
     );
 }
+
+#[tokio::test]
+async fn removed_handle_goes_stale_when_directory_sync_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    a.mkdir(a.root_dir(), &b"sub".as_slice().into())
+        .await
+        .unwrap();
+    write_new(&a, "sub", "x", b"first\n").await;
+    let sub = id(&a, "sub").await.unwrap();
+    let old = id(&a, "sub/x").await.unwrap();
+    let dir = fx.upper("a").join("tree/sub");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).unwrap();
+    let result = a.remove(sub, &b"x".as_slice().into()).await;
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        result.is_err(),
+        "unreadable directory must make the sync fail"
+    );
+    write_new(&a, "sub", "x", b"second\n").await;
+    assert_ne!(
+        id(&a, "sub/x").await.unwrap(),
+        old,
+        "recreated file must get a new handle"
+    );
+    assert_eq!(
+        a.getattr(old).await.unwrap_err() as u32,
+        nfsstat3::NFS3ERR_STALE as u32
+    );
+}
+
+#[tokio::test]
+async fn whiteout_memory_matches_manifest_when_upper_sync_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let upper = fx.upper("a");
+    fs::set_permissions(&upper, fs::Permissions::from_mode(0o300)).unwrap();
+    let result = a.remove(a.root_dir(), &b"keep.txt".as_slice().into()).await;
+    fs::set_permissions(&upper, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result.is_err(), "unreadable upper must make the sync fail");
+    assert!(
+        id(&a, "keep.txt").await.is_err(),
+        "live view must match the replaced manifest"
+    );
+    a.remove(a.root_dir(), &b"README.txt".as_slice().into())
+        .await
+        .unwrap();
+    let reopened = fx.open("a");
+    assert!(
+        id(&reopened, "keep.txt").await.is_err(),
+        "later update must keep the earlier whiteout"
+    );
+    assert!(id(&reopened, "README.txt").await.is_err());
+}
