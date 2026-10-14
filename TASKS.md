@@ -446,6 +446,15 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
 - Owns: crates/javelin-protocol/**; docs/repository-protocol.md; repository-protocol.yml and its own appended TASKS section.
 - Done: Bounded versioned codec and verified object transfer/reference receiver between real native repositories.
 - Implementation/evidence acceptance is pending. No product gate is checked by launch.
+- Submitted source `58fadbf1896160590ac8aed66d1d0b596a5c410a` independently
+  passes fourteen tests in the hub's exact isolated export on Darwin arm64,
+  Rust 1.93.0. Tests launch the actual sender and receiver across two repositories,
+  drop a committed reply, retry in fresh processes and verify incremental transfer.
+  The receiver stores through public native APIs and compares claimed IDs before
+  World references advance. Refused input can leave unreferenced objects.
+  Transport security, authentication, whole-Layer Publish, traces and hosting
+  remain outside this unit. Current-head hosted results and owner review are pending;
+  this local check does not accept the protocol dependency.
 
 #### Javelin review and applied-permission state machine
 
@@ -503,6 +512,10 @@ or decoding. Root Cargo/src/native tests remain outside these units' ownership.
 Integration, core exports, Stack adaptation, durable collaboration and actual
 publication authorization require later bounded native work. The reviewed plan
 and dependency rules are in `docs/parallel-build-plan.md`.
+- Read-only design task `javelin-whole-layer-publish-grounding-r1-20261014` is
+  preparing the next native publication boundary and its verification plan.
+  It writes no implementation and creates no PR or scheduler. Native code work
+  remains gated on corrected PR #10 acceptance and relevant component interfaces.
 
 
 ### Hub continuation and review
