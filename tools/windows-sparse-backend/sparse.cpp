@@ -22,6 +22,8 @@
 #include <stdexcept>
 
 namespace fs = std::filesystem;
+// Documented ParamSize: offset of the operation member plus its size (SDK 10.0.26100 has no helper macro).
+#define PARAM_SIZE(field) static_cast<ULONG>(FIELD_OFFSET(CF_OPERATION_PARAMETERS, field) + RTL_FIELD_SIZE(CF_OPERATION_PARAMETERS, field))
 enum Kind { File, Directory, Link };
 struct Entry { Kind kind = File; std::wstring source, target; FILE_BASIC_INFO info{}; INT64 size = 0; };
 struct NoCase {
@@ -160,7 +162,7 @@ struct Provider {
             if (static_cast<INT64>(data.size()) != found->second.size) throw std::runtime_error("immutable source size changed");
         } catch (const std::exception& error) { note("fetch-data-error %s", error.what()); status = STATUS_CLOUD_FILE_UNSUCCESSFUL; }
         auto op = operation(info, CF_OPERATION_TYPE_TRANSFER_DATA);
-        CF_OPERATION_PARAMETERS p{}; p.ParamSize = CF_SIZE_OF_OP_PARAM(TransferData); p.TransferData.CompletionStatus = status;
+        CF_OPERATION_PARAMETERS p{}; p.ParamSize = PARAM_SIZE(TransferData); p.TransferData.CompletionStatus = status;
         if (status == STATUS_SUCCESS) { p.TransferData.Buffer = data.data(); p.TransferData.Offset.QuadPart = 0; p.TransferData.Length.QuadPart = static_cast<LONGLONG>(data.size()); }
         else { p.TransferData.Offset = parameters->FetchData.RequiredFileOffset; p.TransferData.Length = parameters->FetchData.RequiredLength; }
         HRESULT hr = CfExecute(&op, &p);
@@ -181,7 +183,7 @@ struct Provider {
             create[i].FileIdentityLength = static_cast<DWORD>(ids[i].size() * sizeof(wchar_t)); create[i].Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC;
         }
         auto op = operation(info, CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS);
-        CF_OPERATION_PARAMETERS p{}; p.ParamSize = CF_SIZE_OF_OP_PARAM(TransferPlaceholders);
+        CF_OPERATION_PARAMETERS p{}; p.ParamSize = PARAM_SIZE(TransferPlaceholders);
         p.TransferPlaceholders.Flags = CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION;
         p.TransferPlaceholders.CompletionStatus = status;
         if (status == STATUS_SUCCESS) {
@@ -195,14 +197,14 @@ struct Provider {
     }
     static void CALLBACK notifyRename(const CF_CALLBACK_INFO* info, const CF_CALLBACK_PARAMETERS* parameters) {
         auto op = operation(info, CF_OPERATION_TYPE_ACK_RENAME);
-        CF_OPERATION_PARAMETERS p{}; p.ParamSize = CF_SIZE_OF_OP_PARAM(AckRename); p.AckRename.CompletionStatus = STATUS_SUCCESS;
+        CF_OPERATION_PARAMETERS p{}; p.ParamSize = PARAM_SIZE(AckRename); p.AckRename.CompletionStatus = STATUS_SUCCESS;
         HRESULT hr = CfExecute(&op, &p);
         note("notify-rename key=%s from=%s to=%s flags=%lu ack=%08lx", utf8(identity(info)).c_str(), utf8(info->NormalizedPath).c_str(),
             utf8(parameters->Rename.TargetPath).c_str(), static_cast<unsigned long>(parameters->Rename.Flags), static_cast<unsigned long>(hr));
     }
     static void CALLBACK notifyDelete(const CF_CALLBACK_INFO* info, const CF_CALLBACK_PARAMETERS*) {
         auto op = operation(info, CF_OPERATION_TYPE_ACK_DELETE);
-        CF_OPERATION_PARAMETERS p{}; p.ParamSize = CF_SIZE_OF_OP_PARAM(AckDelete); p.AckDelete.CompletionStatus = STATUS_SUCCESS;
+        CF_OPERATION_PARAMETERS p{}; p.ParamSize = PARAM_SIZE(AckDelete); p.AckDelete.CompletionStatus = STATUS_SUCCESS;
         HRESULT hr = CfExecute(&op, &p);
         note("notify-delete key=%s path=%s ack=%08lx", utf8(identity(info)).c_str(), utf8(info->NormalizedPath).c_str(), static_cast<unsigned long>(hr));
     }
