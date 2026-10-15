@@ -501,10 +501,10 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - Failures remain failures. No native binding, Gate 2, platform acceptance or GA claim.
 - [x] Recover prior commands and clean source; no prior edits, PR or review existed.
 - [x] Read local rules and hub TASKS, build contract, decisions and PR11 audit evidence.
-- [ ] Open and T3-link exactly one planning draft; report ownership to hub.
-- [ ] Compare at least two fixture designs and record chosen bounds.
-- [ ] Implement bounded runner using inherited CLI, without backend changes.
-- [ ] Verify offline audit rejects tampering and missing/false phase outcomes.
+- [x] Open and T3-link draft PR #20 at planning `0828bab`; report ownership to hub.
+- [x] Compare two fixture designs in the suitability document and independent Codex design r1.
+- [x] Implement Bun supervisor, isolated Python wire/ordinary-path worker and C API probe using unchanged inherited CLI.
+- [x] Offline audit negative controls reject changed bytes, missing logs/phases, duplicates, unfinished phases, wrong external identity and resealed false success/cleanup/alias results.
 - [ ] Execute hosted attempt, retain failures, audit exact-source artifacts and cleanup.
 - [ ] Obtain independent read-only Codex source/evidence review and resolve proof gaps.
 - [ ] Report tested SHA, doc head, limits, findings and next smallest recommendation to hub.
