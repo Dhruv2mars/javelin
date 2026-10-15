@@ -508,3 +508,8 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - [ ] Execute hosted attempt, retain failures, audit exact-source artifacts and cleanup.
 - [ ] Obtain independent read-only Codex source/evidence review and resolve proof gaps.
 - [ ] Report tested SHA, doc head, limits, findings and next smallest recommendation to hub.
+
+- First workflow source `32d7da8`, run `38716043185`, failed validation before any
+  runner/job existed. `actionlint` reproduced disallowed job-level `runner.temp`.
+  Retained run metadata under validation `attempts/`; moved it to step env.
+  This is INCONCLUSIVE setup evidence, with no mounted result or cleanup claim.

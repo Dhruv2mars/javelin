@@ -20,7 +20,6 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 20
     env:
-      SUITABILITY_OUT: ${{ runner.temp }}/suitability-evidence
       PROOF_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       PYTHONDONTWRITEBYTECODE: 1
       CARGO_TERM_COLOR: never
@@ -34,6 +33,8 @@ jobs:
           bun-version: 1.3.13
       - name: Bounded hosted fixture and cleanup
         timeout-minutes: 17
+        env:
+          SUITABILITY_OUT: ${{ runner.temp }}/suitability-evidence
         shell: bash
         run: |
           ulimit -c 0
@@ -43,6 +44,8 @@ jobs:
       - name: Audit actual raw outcomes
         if: always()
         timeout-minutes: 1
+        env:
+          SUITABILITY_OUT: ${{ runner.temp }}/suitability-evidence
         shell: bash
         run: |
           python3 -I tools/macos-backend-validation/audit.py "$SUITABILITY_OUT" "$PROOF_SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/suitability-audit.json"
