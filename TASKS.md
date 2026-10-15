@@ -800,10 +800,16 @@ resumed the same stopped owners only after checking activity and pending runs.
   The owner's bulk artifact-inspection command was rejected by the provider
   safety filter. The hub returned the ordinary compile repair as the next
   bounded step from structured diagnostics, without retrying that command.
-  The owner reports pushed `809e71d` with inherited-compatible SDK includes,
-  a compile-only control that stops before account/fixture creation and a
-  failing job verdict for source blockers. Actual hosted compile proof is
-  pending under that owner's single watcher. This is not runtime acceptance.
+  Compile-only attempt `809e71d` also failed before runtime. The corrected
+  exact source `5683058` is VERIFIED for compilation only in run `38695682464`.
+  The hub inspected all three compiler records: exit 0, no warning text or
+  timeout, explicit `compileOnly=true`, empty blockers, no account creation
+  and successful cleanup. All 26 retained artifact files match the ZIP;
+  artifact `11953468938` digest matches actual GitHub metadata. Root checks:
+  `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-pr19-compile-fizc70p_/verification.json`.
+  Attempts remain separate. Owner-reported `80f03d0` enables the next inherited
+  runtime control in the same PR. Runtime reproduction and hardening remain
+  NOT VERIFIED under that owner's existing watcher; no product gate changes.
 - PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
   planning `0828bab`. It leaves the inherited backend unchanged and measures
   same-mount restart, filename aliases, traversal, scale and host prerequisites
