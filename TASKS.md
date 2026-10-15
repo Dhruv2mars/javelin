@@ -685,6 +685,13 @@ The existing hourly hub scheduler is unchanged. No second scheduler is created.
   new regressions. The older automatically resumed audit missed these stronger
   fixtures; its recommendation does not override the concrete failures.
   Development-only scope, Windows reproducibility and release gates remain open.
+  Corrected source `3bc782f` is now pushed in the same PR. Review r5 ended
+  with a provider cybersecurity-risk rejection and receives no approval credit.
+  After confirming no live predecessor, the owner requested r6 limited to
+  read-only source, portability and existing-regression inspection, with no
+  execution, new inputs or probes. Actual hosted three-OS run `38716016126`
+  and that review remain pending under the existing owner. Acceptance is HELD;
+  a narrower review does not by itself verify runtime refusal behavior.
 
 #### Javelin native storage cost and contention measurements
 
@@ -849,10 +856,20 @@ resumed the same stopped owners only after checking activity and pending runs.
   another provider safety rejection during the owner's investigation; the owner
   subsequently resumed for permitted work after the user's quota-reset message.
   A green collection job is not hardening acceptance.
+  The owner has pushed fixture source `0d63827` after a permitted SDK
+  precondition review, with strict creation/identity/size checks. Corrected
+  runtime evidence remains pending. Owner-reported junction, marker and malformed
+  manifest observations remain distinct from the unestablished partial-file
+  cases and require hub inspection before being credited as reproductions.
 - PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
   planning `0828bab`. It leaves the inherited backend unchanged and measures
   same-mount restart, filename aliases, traversal, scale and host prerequisites
   on a disposable Mac runner. This is not native binding or acceptance.
+  Runner `32d7da8` is pushed; T3 confirms the owner's single PR watcher is
+  active. Local syntax checks and nine offline negative controls are
+  owner-reported, not hosted proof. Actual macOS 26 evidence and fresh final
+  source/evidence review are pending. The backend remains inherited `39a065b`;
+  the 50,000-file ceiling is explicitly inconclusive, not an executed result.
 - PR #21 owns `crates/javelin-merge/**`, its bounded-merge doc and focused
   workflow; planning `935f38a`. Bounded component accepted at actual tested
   `884d51c` after source-review and three-OS artifact inspection. Typed
