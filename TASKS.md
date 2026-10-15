@@ -278,9 +278,9 @@ workflows, Linux binding/helper, CLI, crates, probes and other docs are excluded
 
 - [x] Read local AGENTS/RTK and current hub TASKS, build contract and decisions.
 - [x] Confirm clean checkout at the exact accepted parent and define done.
-- [ ] Open one draft PR targeting `feat/bounded-native-object-access`, T3-link it,
+- [x] Open one draft PR targeting `feat/bounded-native-object-access`, T3-link it,
   and report planning SHA, PR, branch and owned paths to the hub before code.
-- [ ] Trace current storage and Layer invariants; compare two simple shapes;
+- [x] Trace current storage and Layer invariants; compare two simple shapes;
   record caller usage, types, signatures, module ownership and decisions.
 - [ ] Complete independent Codex architect review against exact parent source.
 - [ ] Implement atomic format 3 publications and typed durable outcomes, full
@@ -301,3 +301,16 @@ workflows, Linux binding/helper, CLI, crates, probes and other docs are excluded
   dependencies and limits to the hub; release the one owner watcher on handoff.
 
 
+
+Planning registration: PR [#23](https://github.com/Dhruv2mars/javelin/pull/23),
+branch `feat/whole-layer-publish`, planning `878132a`, sketch `da3911e`.
+Hub notification `whole-layer-publish-planning-pr23-878132a-20261015` delivered
+before implementation. Architect round 1 is the sole live reviewer, task
+`javelin-publish-pr23-architect-r1-3a54021-20261015`, Codex `gpt-6.1-sol`, high,
+with actual current-source review requested. Report target
+`/tmp/javelin-publish-pr23-architect-r1.md`. No completed verdict yet.
+
+Baseline proof has native-source diff empty from `3a54021`; logs are
+`/tmp/javelin-publish-pr23/baseline-environment.log` and `baseline-tests.log`.
+The initial complete locked debug all-target/all-features test run is still
+in progress while the architect review runs. No baseline pass is claimed yet.
