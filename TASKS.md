@@ -222,10 +222,11 @@ Done: a public caller computes canonical kind-tagged IDs before storage, roundtr
 - [x] Implement scoped native APIs and downstream public caller regressions at `f13aa3c` / `3a54021`; standalone release-linked caller passes.
 - [x] Measure Rust allocation for both kinds, 32 MiB blob, bounded 8 MiB read and referenced graphs; distinguish SQLite C counters, stack scratch and cumulative RSS in the doc.
 - [x] Run nine focused regressions, fmt, warnings-denied Clippy, full locked tests and release build. Exact `3a54021` passes 75 local tests, one ignored actor.
-- [ ] Review exact source independently and fix reproduced material findings.
+- [x] Complete independent Codex final source review r3 at exact `3a54021`, no material findings. Parent inspected four fresh adversarial tests, seven guard/allocation mutations, four snapshot/read-only mutations and 19 unchanged inherited functions. Report `/tmp/javelin-pr18-review-r3-u6hlbcfs/RESULT.md`; no source fix required.
 - [x] Inspect exact `3a54021` native run `38570590391`: 75/75/60 pass, 17/1/1 ignored; all 18 logs checked, three ZIP digests and contents match. Windows omissions and inherited Linux watch failure `38570590258` remain explicit.
-- [ ] Send tested SHA, doc head, scope, raw paths, APIs, outcome and blockers to hub; leave draft unmerged.
+- [x] Hand off exact tested `3a54021`, docs-only proof head `5d3b59d`, completed r3, scope, APIs, raw paths and limits to the hub; leave draft unmerged. Final docs commit changes no native source. Stop the sole T3 watcher before handoff. Hub acceptance remains required for PR15 migration and whole-Layer Publish.
 - [x] Recover usage-limited final review rounds 1/2 without duplicating live runs. Their partial proofs are not completed reviews. Fresh Codex round 3 reviews exact `3a54021` with original brief and failure history; no source changes or suite reruns solely for reset.
+- [x] Inspect automatic docs-head native run `38715948870` at `5d3b59d`: same 75/75/60 tests, 17/1/1 ignored; all 18 logs and three ZIP digests/contents match. Later inherited runtime `38715948876` passes 16/16, without erasing failed watch evidence `38570590258` or accepting file-watch reliability.
 
 ## Workstream: Linux Layer runtime binding
 

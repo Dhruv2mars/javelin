@@ -162,8 +162,39 @@ retained under `/tmp/javelin-native-object-access/linux-runtime-38570590258/`
 and `linux-runtime-failure.log`. Linux source and workflow are unchanged here;
 this does not close the dependency's already inconclusive file-watch behavior.
 
-Final independent source review remains pending. Usage failures in final review
-rounds 1 and 2 are not completed reviews; round 3 carries the original brief,
-design ruling and partial evidence. The hub alone accepts the tested native SHA.
+Final independent Codex source review round 3 completed at exact `3a54021` with
+no material findings. It checked cap-before-allocation, canonical IDs and direct
+byte conversion, streamed tail corruption, error precedence, snapshot scope and
+handle release. Nineteen inherited integrity function bodies remain unchanged.
+Four fresh adversarial tests pass. Seven guard/allocation mutations fail their
+named committed regressions after successful compilation. Four additional
+temporary snapshot/read-only mutations also compile and fail the deterministic
+probe, which blocks independent writes at eleven metadata/BLOB boundaries.
+Temporary instrumentation is confined to the review export; product source is
+unchanged. The parent inspected the report, source comparisons and raw outputs.
+
+Report and fresh raw proof: `/tmp/javelin-pr18-review-r3-u6hlbcfs/RESULT.md`,
+`adversarial.log`, `snapshot-baseline.log`, `snapshot-results.json`,
+`inherited-functions-rechecked.json` and `final-identity.json`. Earlier mutation
+and baseline outputs are under `/tmp/javelin-pr18-review-r2-0vu68gyr/`; round 3
+verified their exact source and actual failures before reusing them. Usage
+failures in rounds 1 and 2 are not completed reviews. Review diversity remains
+limited to the same Codex model family. No requested source proof remains open.
+
+The docs-only head `5d3b59d066518463da249690bedf614aaba4e92b` has the same
+native source. Its automatic
+[native run 38715948870](https://github.com/Dhruv2mars/javelin/actions/runs/38715948870)
+also passes 75 / 75 / 60 tests, with 17 / 1 / 1 ignored. The parent inspected
+all eighteen logs and successful job steps, and verified all three ZIP digests
+and file contents. Artifacts Linux `11963067714`, Windows `11962988017` and
+macOS `11962932682` expire 2026-10-29 UTC. Raw logs and inspection records are
+`/tmp/javelin-native-object-access/ci-38715948870/`,
+`artifact-inspection-38715948870.json` and `archive-verification-38715948870.json`.
+The automatic Linux runtime run `38715948876` passes 16/16 with cleanup complete.
+This later pass does not supersede the retained failed watch evidence or establish
+file-watch reliability. No Linux implementation change was made.
+
+The hub alone accepts the tested native SHA. Protocol PR #15 API migration and
+whole-Layer Publish wait for that explicit acceptance. The draft stays unmerged.
 
 This unit does not verify a protocol adapter, hosting, whole-Layer Publish or GA.
