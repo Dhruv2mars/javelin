@@ -932,7 +932,8 @@ resumed the same stopped owners only after checking activity and pending runs.
   Completed with no actionable findings. The hub inspected its acceptance,
   tamper and hosted reports plus raw comparison results before bounded acceptance.
   This is not a numerical release requirement or Gate 6 pass.
-- [ ] Complete the independent trail review of hub checkpoint `432bbe6`:
+- [x] Complete a fresh independent trail review at hub checkpoint `e596898`,
+  following the failed review attempts at `432bbe6`:
   `javelin-hub-checkpoint-trail-432bbe6-codex-r1-20261015`.
   Codex `gpt-5.6-terra` failed at a usage limit, automatically resumed, then
   failed again with no pending child runs. It returned no completed review.
@@ -942,11 +943,17 @@ resumed the same stopped owners only after checking activity and pending runs.
   that capacity has reset. A fresh Codex trail round may now proceed after its
   task liveness check. Neither failed attempt receives review credit. Existing
   owners and the hourly hub continuation are retained.
-  Fresh round 2 now reviews committed `e596898` with Codex `gpt-6-sol`, after
+  Fresh round 2 reviewed committed `e596898` with Codex `gpt-6-sol`, after
   confirming the original task has no pending child runs:
   `node:delegated-task:command%3Amcp%3Aae6122ba-5fdd-407b-b4cb-0a1b0d503f4d%3Adelegate-task%3Ajavelin-hub-trail-r2-e596898-codex-reset-20261015`.
-  It includes the original brief, earlier review limits and the user's reset
-  instruction. It is active, not completed evidence; model diversity remains
+  It completed with one low wording flag and no other material trail overclaim.
+  The hub read `/tmp/javelin-hub-trail-r2-e596898-review.md` and checked the
+  cited planning commit. Decision row 69's "measured nativee56 unchanged" is
+  superseded by an appended correction: PR22 targets unchanged native `e56fc86`;
+  measurements were pending at planning `a7cf694`. The earlier row is retained.
+  Review scope is `8a24989..e596898` and corroborating T3 activity through
+  2026-10-15 09:48:54 UTC. Later additions are outside that verdict. The failed
+  `432bbe6` attempts still receive no review credit, and model diversity remains
   limited to the Codex family under the user's routing instruction.
 
 #### Next native unit: whole-Layer Publish
