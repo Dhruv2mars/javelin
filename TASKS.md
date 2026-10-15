@@ -88,6 +88,35 @@ Bounded foundation and probe units have been verified. Follow-on workstreams run
 from reviewed, explicit dependencies; complete product workflows remain open.
 PRs are never merged without explicit user instruction.
 
+### Hub status check on 2026-10-15
+
+Done for this check is an evidence-backed inventory of live owners, completed
+units and the next acceptance dependency, without restarting failed quota runs.
+At 09:42 UTC, T3 lists no active implementation or review turns. The hub is active.
+Twenty draft PRs, #3 through #22, remain linked, open and unmerged.
+
+| Work | Current coordination state | Next step |
+| --- | --- | --- |
+| Accepted core, Layer state, Linux binding, review model, benchmarks and bounded merge | Bounded units complete; retain their evidence and stopped owners | Integrate only through a dependency-ready later PR; do not restart from a failed provider status alone |
+| PR #18 bounded native access | Three-OS artifact proof inspected; required source review stopped on quota | Finish an independent source review before hub acceptance |
+| PR #15 protocol | Intentionally waiting for accepted PR #18; hosted resource limits still open | Migrate the same PR to the accepted native API, then review and verify |
+| PR #17 packaging | Local corrections retained; review stopped on quota | Resume the same owner and review, then inspect exact-source hosted proof |
+| PR #20 macOS suitability and PR #22 profiling | Partial work retained; owners stopped on quota | Resume the same app-bound owners when routing/capacity permits |
+| PR #19 Windows capture | Compilation verified; runtime control collected but reproduction unverified; owner stopped after provider rejection | Resolve fixture preconditions within permitted work before hardening acceptance |
+
+The user has been asked whether to retain Codex-only routing while its worker
+quota is exhausted or temporarily use another configured provider for the
+quota-blocked work. That answer does not authorize bypassing a safety rejection.
+Do not create replacement threads or repeat quota-failing reviews while waiting.
+The existing hourly continuation stays in place; no new scheduler is needed.
+
+The next product milestone is a complete local developer workflow. Whole-Layer
+Publish remains behind PR #18 acceptance, followed by Stack/refresh integration,
+automatic checkpoints, existing-project adoption and three-platform ordinary
+paths. Hosted identity, repository service, browser collaboration and public
+release acceptance remain separate unfinished product work. Component tests do
+not close those milestones.
+
 ### Native repository foundation
 
 - Thread: `t3-thread://v1/mcp:0b3d92f7-a705-4ba5-9bb6-b5ca62612768`.
@@ -810,6 +839,13 @@ resumed the same stopped owners only after checking activity and pending runs.
   Attempts remain separate. Owner-reported `80f03d0` enables the next inherited
   runtime control in the same PR. Runtime reproduction and hardening remain
   NOT VERIFIED under that owner's existing watcher; no product gate changes.
+  The subsequent run `38696161679` at `80f03d0` completed collection, created
+  the proof account and cleaned up. The hub inspected its retained summary and
+  command outcomes: both placeholder creations failed, as did their rename and
+  read controls. Successful capture commands do not prove the intended partial
+  placeholder case when its fixture preconditions failed. T3 activity records
+  another provider safety rejection during the owner's investigation; the owner
+  is currently stopped. A green collection job is not hardening acceptance.
 - PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
   planning `0828bab`. It leaves the inherited backend unchanged and measures
   same-mount restart, filename aliases, traversal, scale and host prerequisites
