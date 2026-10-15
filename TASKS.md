@@ -93,7 +93,8 @@ PRs are never merged without explicit user instruction.
 Done for this check is an evidence-backed inventory of live owners, completed
 units and the next acceptance dependency, without restarting failed quota runs.
 At 09:42 UTC, T3 lists no active implementation or review turns. The hub is active.
-Twenty draft PRs, #3 through #22, remain linked, open and unmerged.
+That snapshot had twenty linked, open, unmerged draft PRs, #3 through #22.
+The subsequent Publish unit is separately registered below as PR #23.
 
 | Work | Current coordination state | Next step |
 | --- | --- | --- |
@@ -103,6 +104,7 @@ Twenty draft PRs, #3 through #22, remain linked, open and unmerged.
 | PR #17 packaging | Local corrections retained; same Codex owner resumed and fresh review launched | Inspect the completed review, then exact-source hosted proof |
 | PR #20 macOS suitability and PR #22 profiling | Same app-bound Codex owners resumed with their retained partial work | Complete each owned bounded unit and inspect actual evidence |
 | PR #19 Windows capture | Compilation verified; runtime control collected but reproduction unverified; same owner resumed for permitted fixture work | Resolve fixture preconditions within permitted work before hardening acceptance |
+| PR #23 whole-Layer Publish | Sole new native writer on accepted PR18 source; planning draft registered | Compare current-source shapes, obtain architect review, then implement and prove the bounded API |
 
 The user then confirmed that Codex limits are reset and directed continued Codex
 use everywhere. At 09:46 UTC the hub checked for live project turns before
@@ -802,6 +804,7 @@ resumed the same stopped owners only after checking activity and pending runs.
 | macOS mounted suitability | `mcp:d0d0bcfd-88ec-4d2f-bcde-0526e2d4b795` | `test/macos-backend-suitability` / `test/macos-sparse-backend` | `61aae6f` | [#20](https://github.com/Dhruv2mars/javelin/pull/20) |
 | Bounded mechanical merge | `mcp:f51d22d4-d73a-45e4-b17f-154b825352a8` | `perf/bounded-mechanical-merge` / `feat/mechanical-merge-engine` | `61ecdd9` | [#21](https://github.com/Dhruv2mars/javelin/pull/21) |
 | Native validation cost profile | `mcp:6475b5a3-414c-4199-99bf-09ed865c1991` | `perf/native-validation-profile` / `perf/native-storage-baseline` | `100395b` | [#22](https://github.com/Dhruv2mars/javelin/pull/22) |
+| Native whole-Layer Publish | `mcp:0699dd96-be4b-41d4-b82b-33c5a0e73e03` | `feat/whole-layer-publish` / `feat/bounded-native-object-access` | `3a54021` | [#23](https://github.com/Dhruv2mars/javelin/pull/23) |
 
 - Worktrees are `/Users/dhruv2mars/.t3/worktrees/javelin/` plus each branch with
   `/` replaced by `-`; bindings were selected by `t3_thread_launch`, not shell
@@ -832,6 +835,9 @@ resumed the same stopped owners only after checking activity and pending runs.
   The hub matched all ten source identities to actual tested blobs and the
   reviewer's exact repository source bytes. Docs head `5d3b59d` changes only
   TASKS and its doc from tested `3a54021`; its automatic jobs are separate evidence.
+  Final handoff `11c41c9` also differs only in those two files, as the hub
+  confirmed. T3 watcher release and native-source closure are owner-reported;
+  no further PR18 source edits are commissioned.
   Same-model-family review limits remain. Encoded-byte caps are not parser-heap,
   SQLite/RSS or CPU bounds. Existing full graph validation is preserved.
   PR15 may now migrate to this exact accepted source; the next core writer is
@@ -927,6 +933,11 @@ resumed the same stopped owners only after checking activity and pending runs.
 - PR #15 and whole-Layer Publish are now dependency-ready on accepted `3a54021`,
   without competing root writers. PRs #16/#17 retain
   their existing owners and PRs for verifier/installer repairs.
+  The hub sent the exact acceptance signal to the same PR15 owner. Local rebase
+  `d1fb504` contains only its crate, doc, workflow and TASKS relative to `3a54021`;
+  the hub checked the file list. Retargeting the same PR to
+  `feat/bounded-native-object-access` is authorized but was not yet reflected
+  in GitHub at inspection. Migration and new-source verification remain pending.
 
 #### Pending hub acceptance follow-ups
 
@@ -971,9 +982,25 @@ resumed the same stopped owners only after checking activity and pending runs.
 #### Next native unit: whole-Layer Publish
 
 - PR #18 at exact `3a54021` is accepted on top of PR10's accepted `8137111`.
-  Whole-Layer Publish may now start as the sole new root writer on that reviewed
-  native head. PR18 is limited to evidence-only handoff. Publish is not stacked
-  on PR #12, #13 or #15, and does not imply protocol or filesystem acceptance.
+  Whole-Layer Publish is commissioned in app-bound thread
+  [Javelin native whole-Layer Publish](t3-thread://v1/mcp:0699dd96-be4b-41d4-b82b-33c5a0e73e03),
+  branch `feat/whole-layer-publish`, draft [PR #23](https://github.com/Dhruv2mars/javelin/pull/23)
+  targeting `feat/bounded-native-object-access`. The hub checked no existing
+  Publish implementation thread or branch before launch. Planning `878132a`
+  follows `1651e7c` with TASKS-only changes; GitHub confirms an open draft and
+  T3 confirms `/Users/dhruv2mars/.t3/worktrees/javelin/feat-whole-layer-publish`.
+  The PR is linked to owner and hub before implementation.
+  It is the sole new root writer on exact `3a54021`; PR18 is evidence-only.
+  It is not stacked on PR #12, #13 or #15 and does not accept those components
+  or filesystem behavior independently.
+- Owned scope is new `src/publish.rs`, focused repository/layer/lib changes,
+  publication/process/format regressions, its doc, a necessary native format
+  note and its appended checklist. Cargo, workflows, Linux helper/binding,
+  CLI, sibling crates and platform probes are excluded. Done requires a
+  current-source comparison of two shapes, independent architect/source review,
+  durable publication and terminal native Layer state, real concurrency/kill/
+  retry/corruption/guard tests and exact-source three-OS native evidence.
+  No implementation or product gate is accepted merely by commissioning.
 - Design selected: one `publish_layer` call composing `head World + Layer delta`
   inside one IMMEDIATE SQLite transaction, with durable `Published`, `Conflict`
   and `LayerStale` outcomes, operation-ID idempotency across later advances,
@@ -987,6 +1014,12 @@ resumed the same stopped owners only after checking activity and pending runs.
   attribution is declared in the Publish input and recorded in the receipt; agent
   context is one opaque Blob reference for now; format 2 stores are rejected
   without migration. The contract now records the read-only rule.
+- World intersection compares the immutable base and locked head manifests
+  end to end. A net revert to base permits composition; independent changes to
+  the same new result still conflict. Both must be pinned by tests. Logical
+  native capture/discard refusal is in this unit; making an already mounted
+  view read-only remains a separate binding requirement. A future permission
+  guard is not authenticated identity, a transferable ticket or hosted policy.
 - Acceptance tests (a) through (k) in the design cover base-head publish,
   nonintersecting advance without refresh, exact/prefix/delete-modify conflicts,
   stale/discarded/second publish, retry identity, kill-point atomicity, concurrent
