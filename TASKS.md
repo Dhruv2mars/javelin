@@ -925,6 +925,12 @@ resumed the same stopped owners only after checking activity and pending runs.
   that capacity has reset. A fresh Codex trail round may now proceed after its
   task liveness check. Neither failed attempt receives review credit. Existing
   owners and the hourly hub continuation are retained.
+  Fresh round 2 now reviews committed `e596898` with Codex `gpt-6-sol`, after
+  confirming the original task has no pending child runs:
+  `node:delegated-task:command%3Amcp%3Aae6122ba-5fdd-407b-b4cb-0a1b0d503f4d%3Adelegate-task%3Ajavelin-hub-trail-r2-e596898-codex-reset-20261015`.
+  It includes the original brief, earlier review limits and the user's reset
+  instruction. It is active, not completed evidence; model diversity remains
+  limited to the Codex family under the user's routing instruction.
 
 #### Next native unit: whole-Layer Publish
 
