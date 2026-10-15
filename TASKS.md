@@ -227,6 +227,7 @@ Done: a public caller computes canonical kind-tagged IDs before storage, roundtr
 - [x] Hand off exact tested `3a54021`, docs-only proof head `5d3b59d`, completed r3, scope, APIs, raw paths and limits to the hub; leave draft unmerged. Final docs commit changes no native source. Stop the sole T3 watcher before handoff. Hub acceptance remains required for PR15 migration and whole-Layer Publish.
 - [x] Recover usage-limited final review rounds 1/2 without duplicating live runs. Their partial proofs are not completed reviews. Fresh Codex round 3 reviews exact `3a54021` with original brief and failure history; no source changes or suite reruns solely for reset.
 - [x] Inspect automatic docs-head native run `38715948870` at `5d3b59d`: same 75/75/60 tests, 17/1/1 ignored; all 18 logs and three ZIP digests/contents match. Later inherited runtime `38715948876` passes 16/16, without erasing failed watch evidence `38570590258` or accepting file-watch reliability.
+- [x] Record HUB ACCEPTED exact native source `3a54021b15ac5002c21f492b6bed07740c682421`, pushed hub commit `1791618`. Source work is complete; future changes here are evidence/docs only. Watcher released. Acceptance covers bounded object-only/canonical capped-byte guarantees, not parser heap/RSS/CPU/Linux watching. PR15 migration and the next native Publish writer proceed only under hub direction; no merge.
 
 ## Workstream: Linux Layer runtime binding
 

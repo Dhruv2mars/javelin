@@ -194,7 +194,16 @@ The automatic Linux runtime run `38715948876` passes 16/16 with cleanup complete
 This later pass does not supersede the retained failed watch evidence or establish
 file-watch reliability. No Linux implementation change was made.
 
-The hub alone accepts the tested native SHA. Protocol PR #15 API migration and
-whole-Layer Publish wait for that explicit acceptance. The draft stays unmerged.
+The hub accepted exact native source
+`3a54021b15ac5002c21f492b6bed07740c682421`, recorded in pushed hub commit
+`1791618`. Acceptance covers the bounded object-only and canonical capped-byte
+guarantees above. It establishes no parser-heap, RSS, CPU or Linux-watch guarantee.
+The hub independently inspected the actual source, raw platform artifacts and
+completed round-3 review proofs before acceptance.
+
+Native source work in this thread is complete. Subsequent commits contain only
+owned evidence/docs. Protocol PR #15 migrates in its existing PR under hub
+direction; the whole-Layer Publish unit owns subsequent native source work.
+The sole T3 watcher was released before handoff. The draft stays unmerged.
 
 This unit does not verify a protocol adapter, hosting, whole-Layer Publish or GA.
