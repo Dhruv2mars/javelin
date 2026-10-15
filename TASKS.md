@@ -774,12 +774,36 @@ resumed the same stopped owners only after checking activity and pending runs.
   bytes validate their own canonical encoding without walking referenced blobs.
   Full read/history/check/publication validation remains unchanged. The hub
   accepted this explicit object-only guarantee, not a verified graph claim.
-  Source/tests `f13aa3c` / `3a54021` and allocation reductions are owner-reported;
-  exact-source review and hosted evidence remain pending.
+  Source/tests `f13aa3c` / `3a54021` are not yet accepted. The hub inspected
+  actual run `38570590391` and all three retained six-file artifacts, matched
+  their ZIP digests to GitHub metadata and recounted 75/75/60 passing tests
+  on Linux/macOS/Windows, with 17/1/1 ignored. Nine API tests and one allocation
+  test run on each OS. Formatting, Clippy, tests, release build and upload steps
+  succeeded. Rust allocation logs distinguish object-only availability from
+  bounded canonical reads and report SQLite separately; they are not RSS bounds.
+  Root artifact checks are at
+  `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-pr18-artifact-7kkgfvxo/verification.json`.
+  Source-review round 2 automatically resumed after its original failure, so
+  no duplicate was launched. It later failed at the provider usage limit.
+  Fresh source acceptance remains open, and PR15/whole-Layer Publish still wait.
+  Separate inherited runtime run `38570590258` failed 15/16 gated tests because
+  watch notifications were not verified. Cleanup succeeded. This does not close
+  the existing watch limitation or accept a new Linux runtime result.
 - PR #19 owns `tools/windows-sparse-backend/**`, a focused capture doc and its
   Windows workflow. Its first interrupted run was resumed in the same binding
   after the user's continuation. Planning `a2528fa`, unchanged-backend control
   `bd42718`; actual hosted reproduction and fixes are not yet verified by hub.
+  The hub read run `38570489714` summary and compiler diagnostics. Despite
+  workflow success, the new helper compilation exited 2 with SDK
+  `CompletionStatus` C3646/C4430 errors; no proof account was created.
+  This is a source-build failure, not backend verification. Cleanup succeeded.
+  The owner's bulk artifact-inspection command was rejected by the provider
+  safety filter. The hub returned the ordinary compile repair as the next
+  bounded step from structured diagnostics, without retrying that command.
+  The owner reports pushed `809e71d` with inherited-compatible SDK includes,
+  a compile-only control that stops before account/fixture creation and a
+  failing job verdict for source blockers. Actual hosted compile proof is
+  pending under that owner's single watcher. This is not runtime acceptance.
 - PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
   planning `0828bab`. It leaves the inherited backend unchanged and measures
   same-mount restart, filename aliases, traversal, scale and host prerequisites
@@ -808,8 +832,10 @@ resumed the same stopped owners only after checking activity and pending runs.
   The 2,000-line release case took 29.166/65.872/66.718 ms on those runners.
   General correctness, preservation of all previously accepted inputs, caller
   allocation/capacity, loader I/O/CPU and concurrency remain outside this proof.
-  Final docs-only `de5e4bb` has identical component/workflow bytes; its automatic
-  checks remain with the existing owner watcher, not a new hub watcher.
+  Final docs-only `de5e4bb` has identical component/workflow bytes. The owner
+  inspected final-head run `38614757686` and released its watcher, as confirmed
+  in T3 activity. Accepted evidence remains the hub-inspected `884d51c` run;
+  no final-head artifact rerun is required to establish unchanged source bytes.
 - PR #22 owns `tools/native-profiles/**`, `docs/native-validation-profile.md`,
   `.github/workflows/native-validation-profile.yml` and its appended checklist.
   Planning `a7cf694` precedes implementation; draft is linked to owner and hub.
@@ -844,6 +870,14 @@ resumed the same stopped owners only after checking activity and pending runs.
   Completed with no actionable findings. The hub inspected its acceptance,
   tamper and hosted reports plus raw comparison results before bounded acceptance.
   This is not a numerical release requirement or Gate 6 pass.
+- [ ] Complete the independent trail review of hub checkpoint `432bbe6`:
+  `javelin-hub-checkpoint-trail-432bbe6-codex-r1-20261015`.
+  Codex `gpt-5.6-terra` failed at a usage limit, automatically resumed, then
+  failed again with no pending child runs. It returned no completed review.
+  Do not credit this checkpoint as independently trail-reviewed. The provider
+  reports a reset on October 20, 2026 at 11:01 AM, with no timezone in the error.
+  Existing owners and the hourly hub continuation are retained; quota failures
+  are not reasons to launch duplicate threads, repeated reviews or a scheduler.
 
 #### Next native unit: whole-Layer Publish
 
