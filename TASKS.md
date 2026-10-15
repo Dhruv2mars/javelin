@@ -98,17 +98,19 @@ Twenty draft PRs, #3 through #22, remain linked, open and unmerged.
 | Work | Current coordination state | Next step |
 | --- | --- | --- |
 | Accepted core, Layer state, Linux binding, review model, benchmarks and bounded merge | Bounded units complete; retain their evidence and stopped owners | Integrate only through a dependency-ready later PR; do not restart from a failed provider status alone |
-| PR #18 bounded native access | Three-OS artifact proof inspected; required source review stopped on quota | Finish an independent source review before hub acceptance |
+| PR #18 bounded native access | Three-OS artifact proof inspected; same Codex owner resumed after confirmed reset | Finish an independent source review before hub acceptance |
 | PR #15 protocol | Intentionally waiting for accepted PR #18; hosted resource limits still open | Migrate the same PR to the accepted native API, then review and verify |
-| PR #17 packaging | Local corrections retained; review stopped on quota | Resume the same owner and review, then inspect exact-source hosted proof |
-| PR #20 macOS suitability and PR #22 profiling | Partial work retained; owners stopped on quota | Resume the same app-bound owners when routing/capacity permits |
-| PR #19 Windows capture | Compilation verified; runtime control collected but reproduction unverified; owner stopped after provider rejection | Resolve fixture preconditions within permitted work before hardening acceptance |
+| PR #17 packaging | Local corrections retained; same Codex owner resumed and fresh review launched | Inspect the completed review, then exact-source hosted proof |
+| PR #20 macOS suitability and PR #22 profiling | Same app-bound Codex owners resumed with their retained partial work | Complete each owned bounded unit and inspect actual evidence |
+| PR #19 Windows capture | Compilation verified; runtime control collected but reproduction unverified; same owner resumed for permitted fixture work | Resolve fixture preconditions within permitted work before hardening acceptance |
 
-The user has been asked whether to retain Codex-only routing while its worker
-quota is exhausted or temporarily use another configured provider for the
-quota-blocked work. That answer does not authorize bypassing a safety rejection.
-Do not create replacement threads or repeat quota-failing reviews while waiting.
-The existing hourly continuation stays in place; no new scheduler is needed.
+The user then confirmed that Codex limits are reset and directed continued Codex
+use everywhere. At 09:46 UTC the hub checked for live project turns before
+resuming the same owners for PRs #17/#18/#19/#20/#22. No live child review was
+duplicated. Completed units stay stopped, PR15 still waits for accepted PR18,
+and there is no provider switch or replacement implementation thread. The reset
+does not authorize bypassing a safety rejection. The existing hourly continuation
+stays in place; no new scheduler is needed.
 
 The next product milestone is a complete local developer workflow. Whole-Layer
 Publish remains behind PR #18 acceptance, followed by Stack/refresh integration,
@@ -845,7 +847,8 @@ resumed the same stopped owners only after checking activity and pending runs.
   read controls. Successful capture commands do not prove the intended partial
   placeholder case when its fixture preconditions failed. T3 activity records
   another provider safety rejection during the owner's investigation; the owner
-  is currently stopped. A green collection job is not hardening acceptance.
+  subsequently resumed for permitted work after the user's quota-reset message.
+  A green collection job is not hardening acceptance.
 - PR #20 owns `tools/macos-backend-validation/**`, its suitability doc/workflow;
   planning `0828bab`. It leaves the inherited backend unchanged and measures
   same-mount restart, filename aliases, traversal, scale and host prerequisites
@@ -918,8 +921,10 @@ resumed the same stopped owners only after checking activity and pending runs.
   failed again with no pending child runs. It returned no completed review.
   Do not credit this checkpoint as independently trail-reviewed. The provider
   reports a reset on October 20, 2026 at 11:01 AM, with no timezone in the error.
-  Existing owners and the hourly hub continuation are retained; quota failures
-  are not reasons to launch duplicate threads, repeated reviews or a scheduler.
+  That historical quota report is superseded by the user's later confirmation
+  that capacity has reset. A fresh Codex trail round may now proceed after its
+  task liveness check. Neither failed attempt receives review credit. Existing
+  owners and the hourly hub continuation are retained.
 
 #### Next native unit: whole-Layer Publish
 
