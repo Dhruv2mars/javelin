@@ -273,8 +273,8 @@ Owns only `tools/native-profiles/**`, `docs/native-validation-profile.md`,
 Branch `perf/native-validation-profile` targets `perf/native-storage-baseline`.
 Starting dependency `100395b8d5bdd58efc82b7ffcca6414926a09188` preserves accepted,
 unmerged native `e56fc86`. The user confirms hub r3 acceptance of the corrected
-benchmark tool at `ebd3083` and hosted `3acc660`; current hub files still show
-that review pending. No independent native acceptance or Gate 6 credit here.
+benchmark tool at `ebd3083` and hosted `3acc660`, now recorded by hub
+commit `432bbe6`. No independent native acceptance or Gate 6 credit here.
 
 Done means a rerunnable public-API profiling tool, precommitted hypotheses and
 matched controls, honest bounded local Mac and disposable Ubuntu evidence,
@@ -284,8 +284,8 @@ and hosted checks. No core optimization, schema or trust change. Attribution
 is INCONCLUSIVE wherever profiling is unavailable. GA requires all three OSes.
 
 - [x] Verify exact dependency, local instructions and current hub contract/trail.
-- [ ] Open and T3-link exactly one draft before implementation; report plan to hub.
-- [ ] Compare two designs, get Codex feedback and commit fixture/hypothesis/budget plan before measuring.
+- [x] Open and T3-link exactly one draft PR22 before implementation; report a7cf694 to hub.
+- [x] Compare two designs, get completed Codex design-r1 feedback and commit fixture/hypothesis/budget plan before measuring. See docs/native-validation-profile.md.
 - [ ] Implement bounded public-API producer and independent evidence verifier.
 - [ ] Re-read integrity guarantees and retain exact outcome/history checks.
 - [ ] Capture local optimized control and available CPU/heap profiling with overhead labels.
