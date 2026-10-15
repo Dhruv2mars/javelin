@@ -70,6 +70,14 @@ does not establish runtime reproduction. The raw attempt is retained separately
 under `hardening-evidence/1-control-bd42718`. A focused compile-only control
 precedes further runtime assertions. No hardening result is verified.
 
+The compile-only run `38695475455` at `809e71d` failed with the same missing
+`NTSTATUS` type. Adding `ntstatus.h` supplied constants but did not declare the
+type. The helper must also match the inherited provider's `bcrypt.h` include
+before `cfapi.h`. This failed attempt is retained under
+`hardening-evidence/2-compile-809e71d`; no proof account was created and cleanup
+completed. Microsoft distinguishes the type from the status-code constants in
+its [NTSTATUS documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-ntstatus-values).
+
 Production registration, antivirus/indexer interaction, logoff,
 shell behavior, provider-only termination, arbitrary concurrent editing, and
 power-loss durability remain unconfirmed.

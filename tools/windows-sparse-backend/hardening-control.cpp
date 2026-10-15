@@ -4,6 +4,7 @@
 #include <windows.h>
 #undef WIN32_NO_STATUS
 #include <ntstatus.h>
+#include <bcrypt.h>
 #include <cfapi.h>
 #include <filesystem>
 #include <fstream>
