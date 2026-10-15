@@ -24,6 +24,13 @@ static std::wstring quote(const std::wstring& argument) {
     }
     out.append(slashes * 2, L'\\'); return out + L'"';
 }
+static void diagnostic(HRESULT hr) {
+    char message[512]{};
+    DWORD code = HRESULT_CODE(hr);
+    DWORD count = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, code, 0, message, sizeof(message), nullptr);
+    std::fprintf(stderr, "SDK errorCode=%lu messageChars=%lu message=%s\n", code, count, message);
+}
 // Limits the complete ordinary-user process tree without changing inherited sparse.cpp.
 static int bounded(int argc, wchar_t** argv) {
     DWORD wall = static_cast<DWORD>(std::stoul(argv[2]));
@@ -70,14 +77,44 @@ int wmain(int argc, wchar_t** argv) {
         CF_PLACEHOLDER_CREATE_INFO entry{};
         entry.RelativeFileName = argv[3];
         entry.FsMetadata.BasicInfo.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        FILETIME time{}; GetSystemTimeAsFileTime(&time);
+        LARGE_INTEGER stamp{}; stamp.HighPart = static_cast<LONG>(time.dwHighDateTime); stamp.LowPart = time.dwLowDateTime;
+        entry.FsMetadata.BasicInfo.CreationTime = stamp; entry.FsMetadata.BasicInfo.LastAccessTime = stamp;
+        entry.FsMetadata.BasicInfo.LastWriteTime = stamp; entry.FsMetadata.BasicInfo.ChangeTime = stamp;
         entry.FsMetadata.FileSize.QuadPart = std::stoll(argv[4]);
         entry.FileIdentity = argv[5];
         entry.FileIdentityLength = static_cast<DWORD>(std::wcslen(argv[5]) * sizeof(wchar_t));
+        entry.Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC;
         DWORD processed = 0;
         HRESULT hr = CfCreatePlaceholders(argv[2], &entry, 1, CF_CREATE_FLAG_NONE, &processed);
+        if (FAILED(hr)) diagnostic(hr);
         std::printf("{\"hr\":\"%08lx\",\"entryHr\":\"%08lx\",\"processed\":%lu,\"size\":%lld}\n",
             static_cast<unsigned long>(hr), static_cast<unsigned long>(entry.Result), processed, entry.FsMetadata.FileSize.QuadPart);
         return FAILED(hr) || FAILED(entry.Result) ? 1 : 0;
+    }
+    if (argc == 4 && std::wcscmp(argv[1], L"inspect") == 0) {
+        HANDLE file = CreateFileW(argv[2], FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (file == INVALID_HANDLE_VALUE) { std::printf("{\"openError\":%lu}\n", GetLastError()); return 1; }
+        std::vector<BYTE> buffer(sizeof(CF_PLACEHOLDER_STANDARD_INFO) + 4096); DWORD returned = 0;
+        HRESULT hr = CfGetPlaceholderInfo(file, CF_PLACEHOLDER_INFO_STANDARD, buffer.data(), static_cast<DWORD>(buffer.size()), &returned);
+        FILE_STANDARD_INFO size{}; FILE_ATTRIBUTE_TAG_INFO tag{};
+        BOOL sized = GetFileInformationByHandleEx(file, FileStandardInfo, &size, sizeof(size));
+        BOOL tagged = GetFileInformationByHandleEx(file, FileAttributeTagInfo, &tag, sizeof(tag));
+        CloseHandle(file);
+        if (FAILED(hr) || !sized || !tagged || returned < sizeof(CF_PLACEHOLDER_STANDARD_INFO)) {
+            diagnostic(hr); std::printf("{\"hr\":\"%08lx\",\"metadataComplete\":false}\n", static_cast<unsigned long>(hr)); return 1;
+        }
+        const auto* info = reinterpret_cast<const CF_PLACEHOLDER_STANDARD_INFO*>(buffer.data());
+        bool validLength = info->FileIdentityLength <= returned - FIELD_OFFSET(CF_PLACEHOLDER_STANDARD_INFO, FileIdentity) &&
+            info->FileIdentityLength % sizeof(wchar_t) == 0;
+        std::wstring id = validLength ? std::wstring(reinterpret_cast<const wchar_t*>(info->FileIdentity), info->FileIdentityLength / sizeof(wchar_t)) : L"";
+        bool matches = validLength && id == argv[3];
+        std::printf("{\"identityMatches\":%s,\"logicalBytes\":%lld,\"state\":%lu,\"onDiskBytes\":%lld,\"modifiedBytes\":%lld}\n",
+            matches ? "true" : "false", size.EndOfFile.QuadPart,
+            static_cast<unsigned long>(CfGetPlaceholderStateFromAttributeTag(tag.FileAttributes, tag.ReparseTag)),
+            info->OnDiskDataSize.QuadPart, info->ModifiedDataSize.QuadPart);
+        return matches ? 0 : 1;
     }
     if (argc == 4 && std::wcscmp(argv[1], L"hydrate") == 0) {
         HANDLE file = CreateFileW(argv[2], GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,

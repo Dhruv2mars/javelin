@@ -214,6 +214,11 @@ and this appended checklist. Existing evidence stays immutable.
   Run `38695682464` at `5683058` compiles all three binaries with exit 0,
   no warnings, no timeouts, no blockers, no proof account and complete cleanup.
 - [ ] Reproduce defects on unchanged inherited source in disposable hosted Windows.
+  Run `38696161679` at `80f03d0` establishes junction capture, editable-marker
+  acceptance and malformed-manifest loading. Partial zero/short controls are
+  NOT ESTABLISHED: creation failed `8007018b`, subsequent paths were missing.
+  Actual nonadmin SID, cleanup, unchanged base/snapshot and prior bounded phases
+  inspected. Preserve all raw records; SDK/fixture preconditions remain next.
 - [ ] Implement minimal fixes and focused adversarial regressions.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.
 - [ ] Inspect exact-source raw evidence and independent post-fix adversarial review.

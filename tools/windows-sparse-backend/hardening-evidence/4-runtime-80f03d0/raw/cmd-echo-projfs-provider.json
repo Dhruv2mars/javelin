@@ -1,0 +1,17 @@
+{
+  "name": "cmd-echo-projfs-provider",
+  "executable": "C:\\Windows\\System32\\cmd.exe",
+  "argv": [
+    "/d",
+    "/c",
+    "echo",
+    "cmd-ok"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 1512,
+  "stdout": "cmd-ok\r\n",
+  "stderr": ""
+}

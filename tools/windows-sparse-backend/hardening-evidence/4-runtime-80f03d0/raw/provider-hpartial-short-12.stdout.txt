@@ -1,0 +1,3 @@
+registered root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hpartial-short rootPlaceholders=12
+started root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hpartial-short entries=19
+stopped root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hpartial-short

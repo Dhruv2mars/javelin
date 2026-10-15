@@ -1,0 +1,17 @@
+{
+  "name": "fixture-seed-native",
+  "executable": "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\user-tools\\bun.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\user-tools\\checks.mjs",
+    "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d",
+    "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\admin-results",
+    "seed"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 6228,
+  "stdout": "",
+  "stderr": ""
+}

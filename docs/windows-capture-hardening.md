@@ -89,3 +89,46 @@ no proof account and complete cleanup. Archive digest is
 This establishes compiler compatibility only. The next control enables runtime
 fixtures against the unchanged inherited capture source and records Win32 read
 errors separately from the inherited stream-reader result.
+
+Run `38696161679` at `80f03d0` reached the ordinary-user fixture. Its archive
+digest matches `a9fc5caf705c54c4bf28a2860c27e0dedfeeb1bb0c31baf82f018809fbe7208d`.
+The actual token was nonadministrator SID
+`S-1-5-21-1000861503-3182281758-1041194900-1003`. Cleanup completed; the base and
+frozen snapshot remained unchanged. The previous rename, ordinary operations,
+clone and restart phases returned zero. The common probe returned its known
+failure code 1.
+
+Both partial fixture creations returned `8007018b`, with zero entries processed.
+Rename and read then failed because the file did not exist. Their successful
+captures recorded no private blobs. These cases are NOT ESTABLISHED, and prove
+neither zero-read nor short-read capture. No hardening implementation may be
+accepted on that evidence. The next fixture records the runner's system error
+message and stops each case when a required setup step fails. Missing
+preconditions must fail the collection workflow after cleanup.
+
+Other bounded observations in this same unchanged-source run are separate:
+
+- The walker listed the owned outside sentinel through a directory junction.
+  Capture accepted its 32 bytes as a private blob with the sentinel's digest;
+  the outside fixture stayed unchanged. The junction was explicitly removed
+  without traversal before recursive cleanup.
+- A stopped snapshot-served root accepted capture after its editable marker was
+  changed to `snapshot=-`. The manifest contained base references to names absent
+  from the base, including `created.txt` and `completed.txt`.
+- Providers started from manifests containing a blob name outside `blobs`, a
+  digest/content mismatch, duplicate records, file-prefix conflict, and an
+  outside relative link. These observations establish loading acceptance only;
+  this fixture did not read the malformed views through ordinary filesystem paths.
+
+The raw attempt remains immutable under `hardening-evidence/4-runtime-80f03d0`.
+
+Independent Codex high review `windows-pr19-sdk-preconditions-r1` confirmed the
+missing setup and compared helper creation to the inherited successful path.
+The next fixture creates while registered but disconnected, supplies the same
+timestamps and in-sync flag, then reconnects for rename/hydration. These are
+fixture corrections, not a demonstrated cause of the earlier HRESULT. Opened
+handle metadata must establish identity and logical length before proceeding.
+The runner's system error message is retained on API failure. A case succeeds
+as a reproduction only when the existing moved partial file has the intended
+failed zero/short read and capture accepts that prefix; command success alone
+cannot establish it.

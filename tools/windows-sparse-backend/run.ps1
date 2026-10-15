@@ -173,6 +173,11 @@ try {
     $result.userWrapperExit = $child.ExitCode
     Copy-Item -Path (Join-Path $owned 'user-results/*') -Destination $evidence
     Copy-Item -Path (Join-Path $adminResults '*') -Destination $evidence
+    $reproductionPath = Join-Path $evidence 'hardening-repro.json'
+    if (-not (Test-Path -LiteralPath $reproductionPath) -or
+        (Get-Content -Raw -LiteralPath $reproductionPath | ConvertFrom-Json).verdict -ne 'COLLECTED') {
+        $result.blockers += 'Inherited control preconditions or observations incomplete; no reproduction verdict.'
+    }
     if ($result.freeze) { $result.snapshotUnchangedAtEnd = (ConvertTo-Json (Get-Tree (Join-Path $frozen 'snap')) -Depth 4) -eq (ConvertTo-Json $result.freeze.tree -Depth 4) }
     $result.baseUnchangedAtEnd = (ConvertTo-Json (Get-Tree (Join-Path $frozen 'base-native')) -Depth 4) -eq (ConvertTo-Json $result.baseTrees.native -Depth 4)
 } catch {
