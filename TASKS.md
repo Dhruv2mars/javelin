@@ -98,8 +98,8 @@ Twenty draft PRs, #3 through #22, remain linked, open and unmerged.
 | Work | Current coordination state | Next step |
 | --- | --- | --- |
 | Accepted core, Layer state, Linux binding, review model, benchmarks and bounded merge | Bounded units complete; retain their evidence and stopped owners | Integrate only through a dependency-ready later PR; do not restart from a failed provider status alone |
-| PR #18 bounded native access | Three-OS artifact proof inspected; same Codex owner resumed after confirmed reset | Finish an independent source review before hub acceptance |
-| PR #15 protocol | Intentionally waiting for accepted PR #18; hosted resource limits still open | Migrate the same PR to the accepted native API, then review and verify |
+| PR #18 bounded native access | Accepted exact source `3a54021` after completed r3 and artifact inspection | Finish evidence-only handoff; no further native source edits |
+| PR #15 protocol | PR18 dependency is now accepted; hosted resource limits still open | Migrate the same PR to accepted `3a54021`, then review and verify |
 | PR #17 packaging | Local corrections retained; same Codex owner resumed and fresh review launched | Inspect the completed review, then exact-source hosted proof |
 | PR #20 macOS suitability and PR #22 profiling | Same app-bound Codex owners resumed with their retained partial work | Complete each owned bounded unit and inspect actual evidence |
 | PR #19 Windows capture | Compilation verified; runtime control collected but reproduction unverified; same owner resumed for permitted fixture work | Resolve fixture preconditions within permitted work before hardening acceptance |
@@ -806,13 +806,14 @@ resumed the same stopped owners only after checking activity and pending runs.
 - Worktrees are `/Users/dhruv2mars/.t3/worktrees/javelin/` plus each branch with
   `/` replaced by `-`; bindings were selected by `t3_thread_launch`, not shell
   worktree creation. Starting dependencies remain unmerged.
-- PR #18 is the only root native writer. Owns focused domain/repository/library
+- PR #18 completed the bounded root native unit. It owns focused domain/repository/library
   exports and tests, minimal Cargo feature changes and its doc. Streamed
   `has_blob`/`has_manifest` verifies kind, hash and size only; bounded Manifest
   bytes validate their own canonical encoding without walking referenced blobs.
   Full read/history/check/publication validation remains unchanged. The hub
   accepted this explicit object-only guarantee, not a verified graph claim.
-  Source/tests `f13aa3c` / `3a54021` are not yet accepted. The hub inspected
+  Exact source `3a54021b15ac5002c21f492b6bed07740c682421` is now HUB ACCEPTED
+  for the bounded native object APIs. The hub inspected
   actual run `38570590391` and all three retained six-file artifacts, matched
   their ZIP digests to GitHub metadata and recounted 75/75/60 passing tests
   on Linux/macOS/Windows, with 17/1/1 ignored. Nine API tests and one allocation
@@ -823,7 +824,18 @@ resumed the same stopped owners only after checking activity and pending runs.
   `/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-hub-pr18-artifact-7kkgfvxo/verification.json`.
   Source-review round 2 automatically resumed after its original failure, so
   no duplicate was launched. It later failed at the provider usage limit.
-  Fresh source acceptance remains open, and PR15/whole-Layer Publish still wait.
+  Fresh independent r3 completed with no material findings. The hub read
+  `/tmp/javelin-pr18-review-r3-u6hlbcfs/RESULT.md`, actual four-test adversarial
+  output, the eleven-boundary snapshot baseline and four compiled snapshot/
+  read-only mutation results. Seven earlier compiled guard/allocation mutations
+  were inspected by that reviewer. Nineteen inherited functions remain unchanged.
+  The hub matched all ten source identities to actual tested blobs and the
+  reviewer's exact repository source bytes. Docs head `5d3b59d` changes only
+  TASKS and its doc from tested `3a54021`; its automatic jobs are separate evidence.
+  Same-model-family review limits remain. Encoded-byte caps are not parser-heap,
+  SQLite/RSS or CPU bounds. Existing full graph validation is preserved.
+  PR15 may now migrate to this exact accepted source; the next core writer is
+  the separate whole-Layer Publish unit, not another PR18 source change.
   Separate inherited runtime run `38570590258` failed 15/16 gated tests because
   watch notifications were not verified. Cleanup succeeded. This does not close
   the existing watch limitation or accept a new Linux runtime result.
@@ -912,8 +924,8 @@ resumed the same stopped owners only after checking activity and pending runs.
   pending requests existed. PR18 and PR17 must inspect failed review tasks
   before commissioning fresh rounds; PR19 must inspect the actual hosted
   control result before fixes. No replacement worktrees, PRs or scheduler.
-- PR #15 waits for PR #18 hub acceptance; whole-Layer Publish follows the next
-  accepted native head, without a competing root writer. PRs #16/#17 retain
+- PR #15 and whole-Layer Publish are now dependency-ready on accepted `3a54021`,
+  without competing root writers. PRs #16/#17 retain
   their existing owners and PRs for verifier/installer repairs.
 
 #### Pending hub acceptance follow-ups
@@ -958,10 +970,10 @@ resumed the same stopped owners only after checking activity and pending runs.
 
 #### Next native unit: whole-Layer Publish
 
-- PR #10 at `8137111` is now accepted as a bounded dependency. The next root
-  writer first delivers bounded object lookups for the protocol's unresolved
-  allocation gap. Whole-Layer Publish follows that reviewed native head; no
-  competing root writer is launched. It is not stacked on PR #12, #13 or #15.
+- PR #18 at exact `3a54021` is accepted on top of PR10's accepted `8137111`.
+  Whole-Layer Publish may now start as the sole new root writer on that reviewed
+  native head. PR18 is limited to evidence-only handoff. Publish is not stacked
+  on PR #12, #13 or #15, and does not imply protocol or filesystem acceptance.
 - Design selected: one `publish_layer` call composing `head World + Layer delta`
   inside one IMMEDIATE SQLite transaction, with durable `Published`, `Conflict`
   and `LayerStale` outcomes, operation-ID idempotency across later advances,
