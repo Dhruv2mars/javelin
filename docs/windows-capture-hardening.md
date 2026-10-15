@@ -63,7 +63,13 @@ establish writer/provider termination before supported capture.
 
 ## Current status
 
-The first unchanged-source reproduction is being prepared. No hardening result
-is verified. Production registration, antivirus/indexer interaction, logoff,
+Run `38570489714` at `bd42718` stopped at helper compilation, exit 2 with SDK
+`CompletionStatus` type errors because `NTSTATUS` was undeclared. No ordinary
+proof account was created; cleanup completed. Its successful collection job
+does not establish runtime reproduction. The raw attempt is retained separately
+under `hardening-evidence/1-control-bd42718`. A focused compile-only control
+precedes further runtime assertions. No hardening result is verified.
+
+Production registration, antivirus/indexer interaction, logoff,
 shell behavior, provider-only termination, arbitrary concurrent editing, and
 power-loss durability remain unconfirmed.

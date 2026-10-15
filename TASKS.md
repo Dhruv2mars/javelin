@@ -203,6 +203,11 @@ and this appended checklist. Existing evidence stays immutable.
 - [x] Open and T3-link draft PR #19; report planning SHA `a2528fa` and ownership to hub.
 - [x] Compare two minimal identity/capture designs with independent Codex support.
 - [x] Prepare hosted-only controls while leaving inherited `sparse.cpp` unchanged.
+- [x] Retain run `38570489714` at `bd42718` as a failed helper compile attempt.
+  Workflow success was collection only: helper compile exit 2, `NTSTATUS` missing
+  in cfapi declarations, account not created, cleanup complete. No runtime
+  reproduction or backend result was established.
+- [ ] Confirm helper header compatibility in a focused hosted compile-only control.
 - [ ] Reproduce defects on unchanged inherited source in disposable hosted Windows.
 - [ ] Implement minimal fixes and focused adversarial regressions.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.

@@ -112,6 +112,10 @@ try {
         $result.sources["binary/$($build[0]).exe"] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $owned "$($build[0]).exe")).Hash.ToLowerInvariant()
     }
     if ($result.blockers.Count) { throw "Prerequisite blocked: $($result.blockers -join '; ')" }
+    if ($env:CAPTURE_COMPILE_ONLY -eq 'true') {
+        $result.compileOnly = $true
+        return
+    }
     # Fixtures live in an administrator-owned container. The proof user receives read/execute only.
     $tools = Join-Path $owned 'user-tools'
     New-Item -ItemType Directory -Path $tools, $frozen, (Join-Path $owned 'user-results'), (Join-Path $owned 'staging') | Out-Null
@@ -216,3 +220,4 @@ try {
     if ($transcriptStarted) { Stop-Transcript | Out-Null }
 }
 if (-not $result.cleanupVerified) { throw 'Owned cleanup failed; inspect artifact.' }
+if ($result.blockers.Count) { throw 'Proof collection encountered a blocker; inspect raw artifact.' }

@@ -1,6 +1,9 @@
 // Disposable hosted fixture helper. Does not replace or modify the inherited capture implementation.
 #define WIN32_LEAN_AND_MEAN
+#define WIN32_NO_STATUS
 #include <windows.h>
+#undef WIN32_NO_STATUS
+#include <ntstatus.h>
 #include <cfapi.h>
 #include <filesystem>
 #include <fstream>
