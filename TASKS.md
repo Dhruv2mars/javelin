@@ -219,12 +219,13 @@ Done: a public caller computes canonical kind-tagged IDs before storage, roundtr
 - [x] Read local instructions and current hub TASKS, build contract and decisions.
 - [x] Open/link draft [PR #18](https://github.com/Dhruv2mars/javelin/pull/18); report planning `06a1093` to hub.
 - [x] Compare both shapes in independent Codex design `native-object-access-design-r1-06a1093`; select streaming with kind-specific methods. Hub confirmed object-only guarantees.
-- [ ] Implement scoped native APIs and downstream public caller regressions.
-- [ ] Measure Rust allocation for 32 MiB blob, bounded 8 MiB read, manifests and referenced graphs; distinguish SQLite C buffers and RSS.
-- [ ] Run focused tests, fmt, Clippy with warnings denied, locked tests and release build.
+- [x] Implement scoped native APIs and downstream public caller regressions at `f13aa3c` / `3a54021`; standalone release-linked caller passes.
+- [x] Measure Rust allocation for both kinds, 32 MiB blob, bounded 8 MiB read and referenced graphs; distinguish SQLite C counters, stack scratch and cumulative RSS in the doc.
+- [x] Run nine focused regressions, fmt, warnings-denied Clippy, full locked tests and release build. Exact `3a54021` passes 75 local tests, one ignored actor.
 - [ ] Review exact source independently and fix reproduced material findings.
-- [ ] Inspect same-PR inherited three-OS exact-head raw logs/artifacts and Windows omissions.
+- [x] Inspect exact `3a54021` native run `38570590391`: 75/75/60 pass, 17/1/1 ignored; all 18 logs checked, three ZIP digests and contents match. Windows omissions and inherited Linux watch failure `38570590258` remain explicit.
 - [ ] Send tested SHA, doc head, scope, raw paths, APIs, outcome and blockers to hub; leave draft unmerged.
+- [x] Recover usage-limited final review rounds 1/2 without duplicating live runs. Their partial proofs are not completed reviews. Fresh Codex round 3 reviews exact `3a54021` with original brief and failure history; no source changes or suite reruns solely for reset.
 
 ## Workstream: Linux Layer runtime binding
 
