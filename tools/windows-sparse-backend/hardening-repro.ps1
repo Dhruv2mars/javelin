@@ -42,9 +42,10 @@ try {
             $hydrate = if ($case[2]) { Repro-Command "hydrate-$($case[0])" $control @('hydrate', (Join-Path $r 'moved-partial.bin'), "$($case[2])") } else { $null }
             Stop-Provider $name
             $state = Repro-Command "state-$($case[0])" $sparse @('audit', $r)
+            $read = Repro-Command "read-$($case[0])" $control @('read', (Join-Path $r 'moved-partial.bin'))
             $stream = Repro-Command "stream-$($case[0])" $control @('stream', (Join-Path $r 'moved-partial.bin'))
             $capture = Repro-Capture "partial-$($case[0])" $r
-            $repro.cases["partial-$($case[0])"] = @{ create = $create; move = $move; hydrate = $hydrate; state = $state; stream = $stream; capture = $capture }
+            $repro.cases["partial-$($case[0])"] = @{ create = $create; move = $move; hydrate = $hydrate; state = $state; read = $read; stream = $stream; capture = $capture }
         } catch { $repro.errors += "partial-$($case[0]): $_" }
         finally { if ($providers.ContainsKey($name)) { Stop-Provider $name } }
     }

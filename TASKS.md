@@ -207,10 +207,12 @@ and this appended checklist. Existing evidence stays immutable.
   Workflow success was collection only: helper compile exit 2, `NTSTATUS` missing
   in cfapi declarations, account not created, cleanup complete. No runtime
   reproduction or backend result was established.
-- [ ] Confirm helper header compatibility in a focused hosted compile-only control.
+- [x] Confirm helper header compatibility in a focused hosted compile-only control.
   Run `38695475455` at `809e71d` still failed with undeclared `NTSTATUS`;
   `ntstatus.h` supplies constants, while the inherited provider also includes
   `bcrypt.h` before `cfapi.h`. Retained this failed compile attempt unchanged.
+  Run `38695682464` at `5683058` compiles all three binaries with exit 0,
+  no warnings, no timeouts, no blockers, no proof account and complete cleanup.
 - [ ] Reproduce defects on unchanged inherited source in disposable hosted Windows.
 - [ ] Implement minimal fixes and focused adversarial regressions.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.

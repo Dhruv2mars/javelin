@@ -81,3 +81,11 @@ its [NTSTATUS documentation](https://learn.microsoft.com/en-us/windows-hardware/
 Production registration, antivirus/indexer interaction, logoff,
 shell behavior, provider-only termination, arbitrary concurrent editing, and
 power-loss durability remain unconfirmed.
+
+Compile-only run `38695682464` at `5683058` built all three native executables
+with exit 0, no warnings and no timeouts. The summary records no blockers,
+no proof account and complete cleanup. Archive digest is
+`c4dedfddde6000deaffe2421d5958fc63c19befc83a0af4efcf12445f3a2f6aa`.
+This establishes compiler compatibility only. The next control enables runtime
+fixtures against the unchanged inherited capture source and records Win32 read
+errors separately from the inherited stream-reader result.

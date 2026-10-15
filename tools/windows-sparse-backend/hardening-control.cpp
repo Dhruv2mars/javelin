@@ -89,6 +89,21 @@ int wmain(int argc, wchar_t** argv) {
         std::printf("{\"hr\":\"%08lx\",\"requested\":%lld}\n", static_cast<unsigned long>(hr), length.QuadPart);
         return FAILED(hr) ? 1 : 0;
     }
+    if (argc == 3 && std::wcscmp(argv[1], L"read") == 0) {
+        HANDLE file = CreateFileW(argv[2], GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) { std::printf("{\"openError\":%lu}\n", GetLastError()); return 1; }
+        LARGE_INTEGER size{}; BOOL sized = GetFileSizeEx(file, &size);
+        char buffer[1024]; DWORD got = 0, error = 0; size_t total = 0;
+        while (total <= 256 * 1024) {
+            if (!ReadFile(file, buffer, sizeof(buffer), &got, nullptr)) { error = GetLastError(); break; }
+            total += got; if (!got) break;
+        }
+        CloseHandle(file);
+        std::printf("{\"sizeKnown\":%s,\"logicalBytes\":%lld,\"readBytes\":%zu,\"readError\":%lu}\n",
+            sized ? "true" : "false", size.QuadPart, total, error);
+        return error || !sized || total != static_cast<size_t>(size.QuadPart) ? 1 : 0;
+    }
     if (argc == 3 && std::wcscmp(argv[1], L"stream") == 0) {
         std::ifstream input(std::filesystem::path(argv[2]), std::ios::binary);
         bool opened = input.is_open();

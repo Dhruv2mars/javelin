@@ -1,0 +1,2 @@
+exit=0 cwd=D:\a\javelin\javelin pwd=D:\a\javelin\javelin
+cmd-ok

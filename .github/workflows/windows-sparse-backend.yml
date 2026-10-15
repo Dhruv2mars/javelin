@@ -27,7 +27,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CAPTURE_PROOF_MODE: inherited-control
-      CAPTURE_COMPILE_ONLY: 'true'
+      CAPTURE_COMPILE_ONLY: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
