@@ -332,9 +332,10 @@ final checkpoint. Root `TASKS.md` belongs to the hub and is unchanged.
 - [x] Read instructions, runtime/helper behavior and native publication boundary.
 - [x] Implement `LinuxLayerRuntime::publish` and terminal publication reconciliation.
 - [x] Compile the public caller signature and notify the hub and CLI owner.
-- [ ] Add and inspect focused mounted/process publication regressions.
-- [ ] Run formatting, lint, relevant native checks and disposable hosted proof.
-- [ ] Open one regular dependent PR, T3-link it and report evidence/blockers.
+- [x] Add and inspect focused mounted/process publication regressions.
+- [x] Run formatting, lint, all 97 local native tests and the release build.
+- [ ] Run and inspect disposable hosted Linux publication proof.
+- [ ] Open one regular PR against main, T3-link it and report evidence/blockers.
 
 ```rust
 let receipt = runtime.publish(&mut repo, &layer, &operation,
