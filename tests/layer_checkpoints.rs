@@ -300,7 +300,6 @@ fn valid_same_base_checkpoint_cannot_replace_stale_discard_candidate() {
 #[test]
 fn valid_head_and_accepted_candidate_cannot_switch_layer_world_base() {
     let (root, mut repo, entry) = small_fixture();
-    let worlds = repo.history().unwrap();
     let initial = repo
         .create_layer(&id("base-zero"), &repo.layer_base(version(0)).unwrap())
         .unwrap();
@@ -325,7 +324,7 @@ fn valid_head_and_accepted_candidate_cannot_switch_layer_world_base() {
     )
     .unwrap();
     repo.read_checkpoint(other.checkpoint()).unwrap();
-    assert_eq!(repo.history().unwrap(), worlds);
+    assert!(repo.history().is_err());
     assert_binding_damage_rejected(&root, &mut repo, &head);
 }
 
