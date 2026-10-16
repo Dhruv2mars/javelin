@@ -1284,6 +1284,25 @@ so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
 
+## Bounded native object access
+
+Dependency: exact hub-accepted tested `8137111cb00a227f0f225ef4debe7ca1bf891e98` from unmerged PR #10. This unit does not independently accept its base. Branch `feat/bounded-native-object-access`; target `feat/linux-layer-workspaces`.
+
+Done: a public caller computes canonical kind-tagged IDs before storage, roundtrips 32 bytes without hex, and performs typed availability and bounded reads without allocating arbitrary payloads or referenced graphs. Existing corruption and publication checks remain intact.
+
+- [x] Read local instructions and current hub TASKS, build contract and decisions.
+- [x] Open/link draft [PR #18](https://github.com/Dhruv2mars/javelin/pull/18); report planning `06a1093` to hub.
+- [x] Compare both shapes in independent Codex design `native-object-access-design-r1-06a1093`; select streaming with kind-specific methods. Hub confirmed object-only guarantees.
+- [x] Implement scoped native APIs and downstream public caller regressions at `f13aa3c` / `3a54021`; standalone release-linked caller passes.
+- [x] Measure Rust allocation for both kinds, 32 MiB blob, bounded 8 MiB read and referenced graphs; distinguish SQLite C counters, stack scratch and cumulative RSS in the doc.
+- [x] Run nine focused regressions, fmt, warnings-denied Clippy, full locked tests and release build. Exact `3a54021` passes 75 local tests, one ignored actor.
+- [x] Complete independent Codex final source review r3 at exact `3a54021`, no material findings. Parent inspected four fresh adversarial tests, seven guard/allocation mutations, four snapshot/read-only mutations and 19 unchanged inherited functions. Report `/tmp/javelin-pr18-review-r3-u6hlbcfs/RESULT.md`; no source fix required.
+- [x] Inspect exact `3a54021` native run `38570590391`: 75/75/60 pass, 17/1/1 ignored; all 18 logs checked, three ZIP digests and contents match. Windows omissions and inherited Linux watch failure `38570590258` remain explicit.
+- [x] Hand off exact tested `3a54021`, docs-only proof head `5d3b59d`, completed r3, scope, APIs, raw paths and limits to the hub; leave draft unmerged. Final docs commit changes no native source. Stop the sole T3 watcher before handoff. Hub acceptance remains required for PR15 migration and whole-Layer Publish.
+- [x] Recover usage-limited final review rounds 1/2 without duplicating live runs. Their partial proofs are not completed reviews. Fresh Codex round 3 reviews exact `3a54021` with original brief and failure history; no source changes or suite reruns solely for reset.
+- [x] Inspect automatic docs-head native run `38715948870` at `5d3b59d`: same 75/75/60 tests, 17/1/1 ignored; all 18 logs and three ZIP digests/contents match. Later inherited runtime `38715948876` passes 16/16, without erasing failed watch evidence `38570590258` or accepting file-watch reliability.
+- [x] Record HUB ACCEPTED exact native source `3a54021b15ac5002c21f492b6bed07740c682421`, pushed hub commit `1791618`. Source work is complete; future changes here are evidence/docs only. Watcher released. Acceptance covers bounded object-only/canonical capped-byte guarantees, not parser heap/RSS/CPU/Linux watching. PR15 migration and the next native Publish writer proceed only under hub direction; no merge.
+
 ## Workstream: Linux Layer runtime binding
 
 Owns one draft PR targeting `feat/native-layer-checkpoints` at exact native state
