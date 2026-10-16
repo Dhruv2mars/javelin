@@ -6,7 +6,7 @@ use sha2::Digest;
 
 use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
 
-const FORMAT: i64 = 2;
+const FORMAT: i64 = 3;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 const SCHEMA: &str = "
@@ -33,7 +33,7 @@ CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 PRAGMA application_id=1245795916;
-PRAGMA user_version=2;
+PRAGMA user_version=3;
 ";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -108,6 +108,7 @@ impl Repository {
             }
             tx.execute_batch(SCHEMA)?;
             tx.execute_batch(crate::layer::SCHEMA)?;
+            tx.execute_batch(crate::publish::SCHEMA)?;
             for table in [
                 "objects",
                 "versions",
@@ -115,6 +116,7 @@ impl Repository {
                 "repository_identity",
                 "layer_heads",
                 "layer_attempts",
+                "publications",
             ] {
                 for action in ["UPDATE", "DELETE"] {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
@@ -128,8 +130,7 @@ impl Repository {
             )?;
         } else {
             validate_format(&tx)?;
-            history_in(&tx)?;
-            crate::layer::check_layers(&tx)?;
+            validate_state_in(&tx)?;
         }
         #[cfg(test)]
         test_boundary("init_before_commit");
@@ -255,7 +256,7 @@ impl Repository {
     /// Reads the complete ordered sequence and validates all reachable content.
     pub fn history(&self) -> Result<Vec<WorldVersion>> {
         let tx = self.conn.unchecked_transaction()?;
-        let history = history_in(&tx)?;
+        let history = validate_state_in(&tx)?;
         tx.commit()?;
         Ok(history)
     }
@@ -279,10 +280,13 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let history = history_in(&tx)?;
+        let history = validate_state_in(&tx)?;
         let head = history
             .last()
             .ok_or_else(|| Error::CorruptRepository("missing initial World".into()))?;
+        if crate::publish::operation_exists_in(&tx, operation)? {
+            return Err(Error::OperationIdReused(operation.clone()));
+        }
         if let Some(attempt) = attempt_in(&tx, operation)? {
             if attempt.expected != expected || attempt.manifest != manifest {
                 return Err(Error::OperationIdReused(operation.clone()));
@@ -356,7 +360,7 @@ impl Repository {
                 "invalid foreign-key references".into(),
             ));
         }
-        let history = history_in(&tx)?;
+        let history = validate_state_in(&tx)?;
         let objects = tx
             .prepare("SELECT id,kind FROM objects ORDER BY id")?
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
@@ -388,6 +392,16 @@ impl Repository {
         tx.commit()?;
         Ok(report)
     }
+}
+
+/// Full state validation is above the raw World and Layer validators. Checkpoint
+/// base validation uses history_in, so it never recursively validates publications.
+pub(crate) fn validate_state_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
+    validate_format(conn)?;
+    let history = history_in(conn)?;
+    crate::layer::check_layers(conn)?;
+    crate::publish::check_publications(conn, &history)?;
+    Ok(history)
 }
 
 fn validate_directory(path: &Path) -> Result<()> {
