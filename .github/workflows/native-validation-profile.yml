@@ -1,11 +1,8 @@
 name: Native validation profile
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "tools/native-profiles/**"
-      - "docs/native-validation-profile.md"
-      - ".github/workflows/native-validation-profile.yml"
+# Diagnostic measurements are explicit runs. Verifier/document changes should
+# reuse retained raw evidence instead of automatically repeating the matrix.
 
 permissions:
   contents: read

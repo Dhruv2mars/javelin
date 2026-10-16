@@ -29,7 +29,7 @@ export async function verifyProfiles(dir) {
         assert(mode!=="control" && !result.tools[mode==="cpu"?"perf":"heaptrack"].path,"missing available profiler run");
         reports.push({action,mode,status:"INCONCLUSIVE",reason:run.reason});continue;
       }
-      const rows=parse(run.stdout);
+      const rows=run.exit_code!==0||run.reason?[]:parse(run.stdout);
       const loop=rows.find(r=>r.type==="profile_loop");
       if(run.exit_code!==0 || run.reason || !loop) {
         assert(mode!=="control","INCONCLUSIVE unprofiled control failed");
