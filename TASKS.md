@@ -1356,25 +1356,118 @@ bounded Linux binding. File-watch reliability remains INCONCLUSIVE (2 failures i
 discard followed by `recover`; re-binding them is follow-on work. Gate 2 and GA
 are not claimed.
 
-## Filesystem verification workstream
+## Workstream: review and permission model
 
-Owned by `test/layer-filesystem-contract`, based on `chore/ga-build-plan`.
-Done means a committed bounded probe that uses ordinary paths and external tools,
-reports per-capability verdicts, and records host prerequisites and a provisional
-next-step recommendation. A production backend recommendation remains unconfirmed
-until a real sparse Layer sharing immutable base content passes Gate 2. Directory
-and clonefile controls verify the probe only. This PR may finish with a VERIFIED
-probe and an INCONCLUSIVE sparse-backend result.
-Only this workstream's checklist is updated here. Global gates remain unverified.
+Owner: review-permission-model thread, draft PR against `feat/native-layer-checkpoints`.
+Source: worktree starts at exact `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`
+(hub-accepted Layer state dependency, not merged). This PR depends on that
+unmerged base and cannot claim independent acceptance.
+Owned paths: `crates/javelin-collaboration/**`, `docs/review-permission-model.md`,
+`.github/workflows/review-permission-model.yml`, and this section.
 
-- [x] Read build instructions and define the self-verifiable outcome.
-- [x] Open exactly one draft PR and register it with T3 Code: [#5](https://github.com/Dhruv2mars/javelin/pull/5).
-- [x] Discover host filesystem, FSKit, SDK, signing, and installation prerequisites. FSClient executes; Xcode build exits 69 for unaccepted license; zero valid signing identities. No Layer mounted.
-- [x] Build a backend-agnostic behavior probe and explicit directory/clonefile controls.
-- [x] Exercise bytes, mutations, traversal, symlinks, watches, compiler access, isolation, and process interruption. Both controls pass eleven checks on this host.
-- [x] Verify the probe catches a broken isolation control and records unsupported capabilities. Hardlink leakage fails; caller-prepared paths report clone provisioning INCONCLUSIVE.
-- [x] Verify review repairs for canonical output paths, fresh watchers, clone write readback, and wall-time bounds. Hub independently reproduced controls and regressions at `0f15db2`.
-- [x] Use a unique verifier output directory by default, per hub concurrency review, and rerun the final verifier. Final executable source `bce352e`; omitted-output run exits 0 into unique `javelin-probe-evidence-6sxr25`.
-- [x] Repair final review findings and exercise hard-link and FIFO report rejection plus actual external-tool subprocess termination on wall expiry. Directory and clonefile still pass eleven checks.
-- [x] Commit reproducible host evidence, official platform sources, gaps, and the smallest next step. `docs/workspace-verification.md` and `tools/workspace-probe/evidence/macos-arm64/` preserve actual results. Production recommendation and real sparse Gate 2 remain INCONCLUSIVE.
-- [x] Report final evidence and verdict to the hub, leaving PR #5 draft and unmerged. Final source `bce352ec4e5f78eb98c71facba68b872d3e11118`; probe VERIFIED, sparse backend and Gate 2 INCONCLUSIVE. Stable completion message `filesystem-pr5-completion-evidence-v1`.
+Done means: a pure deterministic Rust library (own Cargo.lock, empty `[workspace]`,
+path dependency on the root crate) with no SQLite, HTTP, identity provider,
+durable store, or World advance; tests exercise a real repository-backed revision
+reference, author takeover refusal, approval invalidation on code/context/base change,
+role, revocation, and public-contributor limits, operation-ID retry binding, stale
+expected revisions, reordered commands, and immutable comment/revision history;
+fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
+
+- [x] Read worktree and root instructions, contract, decisions, and public core API.
+- [x] Open and register exactly one draft PR; report plan to the hub.
+- [x] Compare at least two caller API candidates with an architecture review.
+- [x] Implement the selected state machine and `check_publishable`.
+- [x] Add behavior tests with a repository-backed fixture and property tests.
+- [x] Add the three-OS workflow and inspect actual hosted artifacts.
+  `351102d`: run https://github.com/Dhruv2mars/javelin/actions/runs/38505916927
+  passed on Linux x64, macOS ARM64, and Windows x64. Downloaded all three artifacts:
+  each records commit `351102d`, 13 behavior + 1 property test passing, and an empty
+  example oracle diff. Linux ran 16/16 guard mutations caught. The Linux source
+  SHA256 values match local files. Earlier `363a3e3` Windows failed only on the CRLF
+  oracle comparison (run 38505130417), fixed in `64d6436`.
+- [x] Run an independent read-only review and fix material findings.
+- [x] Review r1 (Codex gpt-6.1-sol high, read-only, `363a3e3`): no high findings.
+  Fixed Windows CRLF oracle comparison (`64d6436`); added base-only binding test
+  and committed 16-guard `scripts/mutations.sh`; corrected doc claims.
+- [x] Review r2 (same model, `351102d`): r1 closed, no state-machine defect.
+  Fixed: mutation runner now requires a passing baseline and treats compile
+  failure, non-applied, or unnamed failure as errors; exit trap keeps status;
+  renamed mislabeled mutation to `skip_permission_validation`. Negative runner
+  check: compile-error, no-match, and harmless mutations each fail the script.
+- [x] Review r3 (same model, `8c5ea80`): r2 closed; one low diagnostic defect
+  (no-match grep under pipefail exited before printing the unnamed-failure
+  message). Fixed; an aborting-test probe now prints the message and exits 1.
+- [x] Hub audit: integration doc now separates the immutable proposal base from
+  the publication-locked World head; nonintersecting advances do not force
+  refresh or invalidate approvals (`681be58`, doc-only).
+- [x] Review r4: Codex hit its usage limit (task failed, no output). Replaced
+  by a Claude Opus 5.5 medium-effort read-only subagent on `87f2acd`: no high or
+  medium findings; r3 fix closed (abort probe exit 1, full script 16/16); three
+  low wording fixes applied (doc-only). Limitation: r4 was not by the Codex
+  reviewer used in r1-r3.
+- [x] Tested source `87f2acd`: run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38507448220 passed on
+  Linux x64, macOS ARM64, and Windows x64. Artifacts record that commit, 13
+  behavior + 1 property test passing, empty oracle diff; Linux 16/16 mutations
+  caught. Linux and macOS logged SHA256 values match all nine hashed files; Windows
+  matches after CRLF conversion.
+- [x] Hand off exact tested source, scopes, and retained limits to the hub.
+
+### PR #13 low-finding follow-up
+
+Done means both ordering regressions fail without their fixes, legitimate
+same-repository retries retain their semantics, local checks pass, and raw hosted
+Linux, macOS, and Windows logs verify the pushed source head. Prior bounded
+acceptance at `87f2acd` remains separate from this follow-up.
+
+- [x] Inspect interrupted edits and keep changes within this unit's owned paths.
+- [x] Check publisher access and Maintain role before request/revision inspection.
+- [x] Check permission repository identity before accepted-command replay.
+- [x] Add both regression tests and preserve retries after revoked grants/older epochs.
+- [x] Correct nine-file wording and document publication/closure integration obligation.
+- [x] Prove each regression fails when its corresponding fix is reverted.
+  `publish_state_before_access` is caught by
+  `publish_access_refusal_does_not_reveal_revision_state`;
+  `replay_before_repository` is caught by
+  `identical_replay_requires_same_repository_but_not_current_grants_or_epoch`.
+- [x] Run formatting, warnings-denied Clippy, full tests, example diff, and mutations.
+  Rust 1.99.0 on local macOS passed fmt, Clippy `-D warnings`, 15 behavior tests
+  plus one 400-seed property test, and the compiled release example with an empty
+  oracle diff. All 18 mutations compiled and failed named tests. Evidence is in
+  `/tmp/javelin-pr13-low-fixes/`. The example needs an existing fixture directory;
+  the first invocation lacked it, and the corrected invocation passed.
+- [x] Push tested source and inspect raw three-OS hosted logs at that exact head.
+  VERIFIED source `b8b40ce20c8e075d16dee2e91cc7731fdb73931d`, run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38532925240. All three jobs
+  passed on Rust 1.99.0: Linux x64, macOS ARM64, and Windows x64. Downloaded
+  raw job logs and all three artifacts to
+  `/tmp/javelin-pr13-low-fixes/hosted-38532925240/`. Each records the exact SHA,
+  matching nine file hashes, fmt, warnings-denied Clippy, 15 behavior tests plus
+  one property test, release example, and an empty oracle diff. Windows hashes
+  match source after LF-to-CRLF conversion. Linux caught all 18 mutations,
+  including each new regression when its ordering fix was reverted.
+  Artifacts: Linux `11877769906`, macOS `11878900892`, Windows `11878204730`,
+  expiring 2026-10-28 UTC. `audit-summary.txt` records the inspected checks.
+- [x] Stop the single T3 watcher, confirm draft PR linkage, and report evidence to hub.
+  Exactly one linked draft PR #13 remains open and unmerged. Final evidence
+  update changes only `TASKS.md`; crate and workflow still match tested `b8b40ce`.
+  Follow-up diff from `e0f0a19` names only `TASKS.md`,
+  `crates/javelin-collaboration/src/lib.rs`,
+  `crates/javelin-collaboration/tests/review.rs`,
+  `crates/javelin-collaboration/scripts/mutations.sh`, and
+  `docs/review-permission-model.md`. No native source or workflow changes.
+  Bounded pure component and these two fixes are VERIFIED. Durable/provider
+  integration, atomic publication/rechecking, publication/closure persistence,
+  and complete hosted workflows remain NOT VERIFIED and outside this unit.
+
+### Integration with main on 2026-10-16
+
+PR #13 is now a regular PR targeting `main`. Its native dependencies have been
+merged by the hub. The draft and unmerged dependency notes above are historical.
+
+- [x] Merge `origin/main`, preserving its full checklist and current working rules.
+- [x] Resolve the TASKS-only conflict and retain this workstream.
+- [x] Run diff checks and relevant component tests, then push this same PR.
+  The diff against main passes whitespace checks; all 15 behavior tests and the
+  property test pass with Rust 1.99.0. Regenerated the component lockfile to add
+  main's native `libc` dependency. No component source changed during resolution.
