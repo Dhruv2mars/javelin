@@ -1356,100 +1356,118 @@ bounded Linux binding. File-watch reliability remains INCONCLUSIVE (2 failures i
 discard followed by `recover`; re-binding them is follow-on work. Gate 2 and GA
 are not claimed.
 
-## Workstream: repository protocol message codec
+## Workstream: review and permission model
 
-Owner: separate T3 implementation thread commissioned by hub
-`e659350e-23d8-4473-98e8-d3609b784340`. Branch `feat/repository-protocol`, draft PR
-originally against `feat/native-layer-checkpoints`. Planning source is exact accepted Layer state
-`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; that base is an unmerged accepted
-dependency, so this PR cannot claim independent acceptance. Owned paths only:
-`crates/javelin-protocol/**`, `docs/repository-protocol.md`,
-`.github/workflows/repository-protocol.yml`, and this section.
+Owner: review-permission-model thread, draft PR against `feat/native-layer-checkpoints`.
+Source: worktree starts at exact `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`
+(hub-accepted Layer state dependency, not merged). This PR depends on that
+unmerged base and cannot claim independent acceptance.
+Owned paths: `crates/javelin-collaboration/**`, `docs/review-permission-model.md`,
+`.github/workflows/review-permission-model.yml`, and this section.
 
-Done means `cargo test --locked` in `crates/javelin-protocol` passes a versioned
-codec, a reference receiver on the public native API, adversarial refusals that
-leave World unchanged, and a runnable sender/receiver process test between two
-separate repositories with a lost reply and retry. The same suite passes in its own
-hosted workflow. No HTTP, authentication, public endpoint, provider deployment,
-checkpoint, trace or collaboration format is claimed.
+Done means: a pure deterministic Rust library (own Cargo.lock, empty `[workspace]`,
+path dependency on the root crate) with no SQLite, HTTP, identity provider,
+durable store, or World advance; tests exercise a real repository-backed revision
+reference, author takeover refusal, approval invalidation on code/context/base change,
+role, revocation, and public-contributor limits, operation-ID retry binding, stale
+expected revisions, reordered commands, and immutable comment/revision history;
+fmt, Clippy, and tests pass locally and on hosted Linux, macOS, and Windows.
 
-- [x] Open the draft PR, link it, and report planning source and owned paths to the hub.
-- [x] Compare JSON framing and compact binary candidates with the actual caller.
-- [x] Implement negotiation, have/want, bounded blob and manifest batches, and publish.
-- [x] Use validated wire DTOs; never deserialize native serialize-only types.
-- [x] Refuse malicious, malformed, oversize and truncated input, and changed input under a reused operation ID; identical replay returns the durable outcome.
-- [x] Prove separate-process transfer, lost reply and retry between two repositories.
-- [x] Record API gaps for the hub instead of copying private native internals.
-- [x] Obtain independent review and hosted three-platform evidence.
-- [x] Hub: public bounded read or existence check, content-ID and raw ObjectId byte APIs accepted at `3a54021` (gaps 1-3).
+- [x] Read worktree and root instructions, contract, decisions, and public core API.
+- [x] Open and register exactly one draft PR; report plan to the hub.
+- [x] Compare at least two caller API candidates with an architecture review.
+- [x] Implement the selected state machine and `check_publishable`.
+- [x] Add behavior tests with a repository-backed fixture and property tests.
+- [x] Add the three-OS workflow and inspect actual hosted artifacts.
+  `351102d`: run https://github.com/Dhruv2mars/javelin/actions/runs/38505916927
+  passed on Linux x64, macOS ARM64, and Windows x64. Downloaded all three artifacts:
+  each records commit `351102d`, 13 behavior + 1 property test passing, and an empty
+  example oracle diff. Linux ran 16/16 guard mutations caught. The Linux source
+  SHA256 values match local files. Earlier `363a3e3` Windows failed only on the CRLF
+  oracle comparison (run 38505130417), fixed in `64d6436`.
+- [x] Run an independent read-only review and fix material findings.
+- [x] Review r1 (Codex gpt-6.1-sol high, read-only, `363a3e3`): no high findings.
+  Fixed Windows CRLF oracle comparison (`64d6436`); added base-only binding test
+  and committed 16-guard `scripts/mutations.sh`; corrected doc claims.
+- [x] Review r2 (same model, `351102d`): r1 closed, no state-machine defect.
+  Fixed: mutation runner now requires a passing baseline and treats compile
+  failure, non-applied, or unnamed failure as errors; exit trap keeps status;
+  renamed mislabeled mutation to `skip_permission_validation`. Negative runner
+  check: compile-error, no-match, and harmless mutations each fail the script.
+- [x] Review r3 (same model, `8c5ea80`): r2 closed; one low diagnostic defect
+  (no-match grep under pipefail exited before printing the unnamed-failure
+  message). Fixed; an aborting-test probe now prints the message and exits 1.
+- [x] Hub audit: integration doc now separates the immutable proposal base from
+  the publication-locked World head; nonintersecting advances do not force
+  refresh or invalidate approvals (`681be58`, doc-only).
+- [x] Review r4: Codex hit its usage limit (task failed, no output). Replaced
+  by a Claude Opus 5.5 medium-effort read-only subagent on `87f2acd`: no high or
+  medium findings; r3 fix closed (abort probe exit 1, full script 16/16); three
+  low wording fixes applied (doc-only). Limitation: r4 was not by the Codex
+  reviewer used in r1-r3.
+- [x] Tested source `87f2acd`: run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38507448220 passed on
+  Linux x64, macOS ARM64, and Windows x64. Artifacts record that commit, 13
+  behavior + 1 property test passing, empty oracle diff; Linux 16/16 mutations
+  caught. Linux and macOS logged SHA256 values match all nine hashed files; Windows
+  matches after CRLF conversion.
+- [x] Hand off exact tested source, scopes, and retained limits to the hub.
 
-Draft PR: https://github.com/Dhruv2mars/javelin/pull/15, linked in T3 Code.
-Binary candidate B was selected over JSON candidate A; the rationale and fixture sizes
-are in `docs/repository-protocol.md`. Locally, Rust 1.99.0 passes 21 tests with
-formatting and Clippy clean. `bun scripts/mutate.ts` reports 24/24 guard removals
-detected. Hosted runs passed on all three OSes for `58fadbf` (38505510520) and
-`d2530fe` (38507397981). Review r1 (Codex) and r2 (Claude, after a Codex usage-limit
-failure) are addressed. Native read allocation remains hub API gap 3.
-Final tested source `02c7427ef18bedf933ab4a75bc8d7d46cd9dce3b` passed hosted run
-38508849025 on Linux, macOS and Windows: 21 tests per OS, release build, and a PATH
-git-shim control of without=0 and with=97. Head `29457a8` added documentation only.
+### PR #13 low-finding follow-up
 
-### Historical hub Codex r2 corrections and dependency wait
+Done means both ordering regressions fail without their fixes, legitimate
+same-repository retries retain their semantics, local checks pass, and raw hosted
+Linux, macOS, and Windows logs verify the pushed source head. Prior bounded
+acceptance at `87f2acd` remains separate from this follow-up.
 
-Done for this correction pass means the documentation matches the audit's actual
-allocation and storage evidence, corrected refusal fixtures pass locally, only
-owned paths change, and the hub receives the committed result. This does not close
-the HIGH Want allocation gap or provide fresh hosted acceptance.
+- [x] Inspect interrupted edits and keep changes within this unit's owned paths.
+- [x] Check publisher access and Maintain role before request/revision inspection.
+- [x] Check permission repository identity before accepted-command replay.
+- [x] Add both regression tests and preserve retries after revoked grants/older epochs.
+- [x] Correct nine-file wording and document publication/closure integration obligation.
+- [x] Prove each regression fails when its corresponding fix is reverted.
+  `publish_state_before_access` is caught by
+  `publish_access_refusal_does_not_reveal_revision_state`;
+  `replay_before_repository` is caught by
+  `identical_replay_requires_same_repository_but_not_current_grants_or_epoch`.
+- [x] Run formatting, warnings-denied Clippy, full tests, example diff, and mutations.
+  Rust 1.99.0 on local macOS passed fmt, Clippy `-D warnings`, 15 behavior tests
+  plus one 400-seed property test, and the compiled release example with an empty
+  oracle diff. All 18 mutations compiled and failed named tests. Evidence is in
+  `/tmp/javelin-pr13-low-fixes/`. The example needs an existing fixture directory;
+  the first invocation lacked it, and the corrected invocation passed.
+- [x] Push tested source and inspect raw three-OS hosted logs at that exact head.
+  VERIFIED source `b8b40ce20c8e075d16dee2e91cc7731fdb73931d`, run
+  https://github.com/Dhruv2mars/javelin/actions/runs/38532925240. All three jobs
+  passed on Rust 1.99.0: Linux x64, macOS ARM64, and Windows x64. Downloaded
+  raw job logs and all three artifacts to
+  `/tmp/javelin-pr13-low-fixes/hosted-38532925240/`. Each records the exact SHA,
+  matching nine file hashes, fmt, warnings-denied Clippy, 15 behavior tests plus
+  one property test, release example, and an empty oracle diff. Windows hashes
+  match source after LF-to-CRLF conversion. Linux caught all 18 mutations,
+  including each new regression when its ordering fix was reverted.
+  Artifacts: Linux `11877769906`, macOS `11878900892`, Windows `11878204730`,
+  expiring 2026-10-28 UTC. `audit-summary.txt` records the inspected checks.
+- [x] Stop the single T3 watcher, confirm draft PR linkage, and report evidence to hub.
+  Exactly one linked draft PR #13 remains open and unmerged. Final evidence
+  update changes only `TASKS.md`; crate and workflow still match tested `b8b40ce`.
+  Follow-up diff from `e0f0a19` names only `TASKS.md`,
+  `crates/javelin-collaboration/src/lib.rs`,
+  `crates/javelin-collaboration/tests/review.rs`,
+  `crates/javelin-collaboration/scripts/mutations.sh`, and
+  `docs/review-permission-model.md`. No native source or workflow changes.
+  Bounded pure component and these two fixes are VERIFIED. Durable/provider
+  integration, atomic publication/rechecking, publication/closure persistence,
+  and complete hosted workflows remain NOT VERIFIED and outside this unit.
 
-- [x] Read fresh audit `acceptance.md`, `experiments.log` and `framing-experiment.log` in `/tmp/javelin-hub-audit-pr15-codex-r2/notes`.
-- [x] Correct retained-object claims: the failed request does not publish; valid prefixes and mismatched actual bytes can persist and later legitimate requests may reference them.
-- [x] Narrow sub-4-KiB allocation evidence to four fixtures; add the legal 16-MiB outer-frame counterexample.
-- [x] Document existing UTF-8 Error codes in unfrozen version 1 and assert actual round-trip behavior.
-- [x] Keep Publish as foundation CAS against current World; record that Layer binding requires newly negotiated semantics, since v1 rejects trailing bytes.
-- [x] Verify corrected fixtures, formatting and Clippy locally and record the result.
-- [x] Commit corrected fixtures and notify the hub of local evidence, retaining PR #15.
-- [x] Wait for the hub's accepted native-object-access exact SHA before any dependent rebase or migration. PR #18 implementation alone is not acceptance.
-- [x] After acceptance, migrate typed availability, cap-before-allocation reads, pre-store content-ID checks and ObjectId bytes within the same PR/owned paths.
-The earlier requirement for another review and three-OS artifact-audit round was
-superseded by the Oct 16 user workflow. Historical `02c7427` proofs do not cover new changes.
+### Integration with main on 2026-10-16
 
-The audit's 55-byte Want for a 32-MiB blob causes a largest Rust allocation of
-33,554,432 bytes. Its eight-reference manifest fixture causes 268,446,277 bytes of
-cumulative Rust allocation, not peak RSS, excluding SQLite C allocations. Hosted
-receiver exposure at that pre-migration source remained BLOCKED HIGH.
-Quotas and retention remain future work.
-That pass changed documentation and test fixtures only, with no runtime codec or
-native source changes, no new PR, no watcher and no scheduler.
+PR #13 is now a regular PR targeting `main`. Its native dependencies have been
+merged by the hub. The draft and unmerged dependency notes above are historical.
 
-VERIFIED locally: correction fixtures `c133fab941fec7dc2eecfb81b05e1b1e0db44db4`,
-Rust 1.99.0 on macOS arm64, `cargo fmt --all -- --check`,
-`cargo clippy --locked --all-targets -- -D warnings` and
-`cargo test --locked --all-targets` pass, 21 tests. NOT VERIFIED for these new
-fixtures: fresh independent review and three-OS exact-head source proofs.
-The 24 compiling-mutant proof is historical and was not rerun this pass.
-
-### Accepted native object access migration
-
-The hub accepted PR #18 source `3a54021b15ac5002c21f492b6bed07740c682421`,
-recorded in hub `1791618`. Rebase completed at `d1fb504`; root files match exact
-accepted source. PR #15 now targets main after hub integration.
-Remote `5d3b59d` adds native documentation only and is not the tested native source.
-Historical evidence above retains its original SHA labels and does not verify this
-migration. The original bounded codec/process outcome still applies.
-The Oct 16 user instruction supersedes the earlier review/audit cycle. Done for
-this wave means public native-access migration, relevant behavioral checks,
-a ready regular PR #15, and a brief result to the hub. No additional process rebase,
-review round, artifact audit or evidence-only finishing commit is required.
-
-- [x] Rebase onto accepted exact `3a54021`, preserving accepted TASKS prefix and only owned paths in the diff.
-- [x] Replace Want probes, capped sender reads, pre-store hash checks and ObjectId byte conversions with accepted public APIs; remove old workarounds.
-- [x] Check 55-byte Want allocation controls, kind/corruption/oversize/pre-store refusals and retained-prefix behavior.
-- [x] Run formatting, Clippy, 25 component tests, two release process tests with Git-shim controls and seven focused migration mutations.
-- [x] Prepare the checked migration for regular PR #15; the hub owns integration and merging.
-- [x] Merge main `32f269e`, preserve its hub rules/checklist plus this section, and pass both focused process tests with migrated protocol bytes unchanged.
-
-Retained limits include Manifests/Publish full graph and history CPU/memory work,
-parser heap beyond the encoded-byte cap, SQLite C allocations and RSS, repeated
-hashing work, quotas/retention, operation principal namespaces, and the 16-MiB outer
-frame reservation. There is no HTTP, authentication, provider or GA claim. Whole-Layer
-Publish is not this dependency and v1 Publish does not gain Layer fields.
+- [x] Merge `origin/main`, preserving its full checklist and current working rules.
+- [x] Resolve the TASKS-only conflict and retain this workstream.
+- [x] Run diff checks and relevant component tests, then push this same PR.
+  The diff against main passes whitespace checks; all 15 behavior tests and the
+  property test pass with Rust 1.99.0. Regenerated the component lockfile to add
+  main's native `libc` dependency. No component source changed during resolution.
