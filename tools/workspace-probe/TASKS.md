@@ -26,5 +26,5 @@ Only this workstream's checklist is updated here. Global gates remain unverified
 Done means missing or unreadable FSKit SDK headers preserve the collected host report with INCONCLUSIVE checks. No install or mount.
 
 - [x] Read Greptile discussion4292225951 and confirm the unconditional header reads.
-- [ ] Reproduce lost evidence with a focused regression, then guard each header read.
-- [ ] Verify saved reports for missing and unreadable headers, preserve current main root checklist, and push existing regular PR #5.
+- [x] Reproduce lost evidence with a focused regression, then guard each header read. The original missing-definitions case exits 1 before saving; each read now records its own INCONCLUSIVE error and continues.
+- [x] Verify saved reports for missing and unreadable headers with `rtk proxy bun test tools/workspace-probe/discover.test.mjs`: four cases pass on macOS. Preserve current main root checklist exactly; historical evidence and the main filesystem probe are unchanged.

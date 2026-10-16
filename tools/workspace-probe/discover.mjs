@@ -20,6 +20,14 @@ async function run(argv, env) {
     return null;
   }
 }
+async function readSdkHeader(sdk, name) {
+  const path = join(sdk, 'System/Library/Frameworks/FSKit.framework/Headers', name);
+  try { return await fs.readFile(path, 'utf8'); }
+  catch (error) {
+    report.checks.push({ id: `SDK-header:${name}`, path, verdict: 'INCONCLUSIVE', errorCode: error.code, evidence: error.message });
+    return null;
+  }
+}
 const scratch = await fs.mkdtemp(join(tmpdir(), 'javelin-fs-discovery-'));
 try {
   if (platform() === 'darwin') {
@@ -40,10 +48,10 @@ try {
       report.checks.push({ id: path, verdict: await fs.stat(path).catch(() => null) ? 'VERIFIED' : 'NOT VERIFIED' });
     }
     if (sdk) {
-      const definitions = await fs.readFile(join(sdk, 'System/Library/Frameworks/FSKit.framework/Headers/FSKitDefines.h'), 'utf8');
-      report.sdkAvailability = definitions.split('\n').filter(line => /^#define FSKIT_API_AVAILABILITY_V/.test(line));
-      const headers = await fs.readFile(join(sdk, 'System/Library/Frameworks/FSKit.framework/Headers/FSClient.h'), 'utf8');
-      report.mountClientRequiresV3 = /mountSingleVolumeForResource:[\s\S]*?FSKIT_API_AVAILABILITY_V3/.test(headers);
+      const definitions = await readSdkHeader(sdk, 'FSKitDefines.h');
+      if (definitions !== null) report.sdkAvailability = definitions.split('\n').filter(line => /^#define FSKIT_API_AVAILABILITY_V/.test(line));
+      const headers = await readSdkHeader(sdk, 'FSClient.h');
+      if (headers !== null) report.mountClientRequiresV3 = /mountSingleVolumeForResource:[\s\S]*?FSKIT_API_AVAILABILITY_V3/.test(headers);
     }
     const executable = join(scratch, 'fskit-discovery');
     const built = await run(['cc', '-Wall', '-Wextra', '-Werror', '-fobjc-arc', '-framework', 'Foundation', '-framework', 'FSKit', join(here, 'fskit-discovery.m'), '-o', executable]);
