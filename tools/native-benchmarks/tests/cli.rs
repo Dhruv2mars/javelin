@@ -87,9 +87,18 @@ fn write_lines(dir: &Path, lines: &[Value]) {
 
 /// Copies the baseline, applies a tamper to its raw files, and returns verify output.
 fn tampered(edit: impl FnOnce(&Path)) -> String {
+    tampered_from(baseline(), edit)
+}
+
+// Live workers may all advance successfully; stale-only checks use fixed raw records.
+fn stale_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("evidence/macos-4149da9/ci-run-1")
+}
+
+fn tampered_from(source: &Path, edit: impl FnOnce(&Path)) -> String {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("copy");
-    copy_dir(baseline(), &dir);
+    copy_dir(source, &dir);
     edit(&dir);
     let result = bench(&["verify", dir.to_str().unwrap(), "--allow-debug-build"]);
     assert!(
@@ -324,14 +333,12 @@ fn verifier_detects_two_winners_for_one_version() {
 
 #[test]
 fn verifier_detects_stale_that_could_not_be_stale() {
-    let out = tampered(|d| {
+    let out = tampered_from(&stale_fixture(), |d| {
         let mut lines = read_lines(d);
         let stale = contention_ops(&lines, "compare_and_advance")
             .into_iter()
             .find(|&i| lines[i]["outcome"] == "stale");
-        let Some(i) = stale else {
-            panic!("smoke run produced no stale outcome to tamper")
-        };
+        let i = stale.expect("retained fixture contains a recorded stale outcome");
         lines[i]["result"] = lines[i]["expected"].clone();
         write_lines(d, &lines);
     });
@@ -673,7 +680,7 @@ fn verifier_detects_non_busy_errors_head_misuse_and_real_time_violations() {
         write_lines(d, &lines);
     });
     assert_fails(&head, "advance_expected_matches_observed_head");
-    let time = tampered(|d| {
+    let time = tampered_from(&stale_fixture(), |d| {
         let mut lines = read_lines(d);
         let i = contention_ops(&lines, "compare_and_advance")
             .into_iter()

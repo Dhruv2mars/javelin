@@ -430,16 +430,38 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
     ));
 
     // Layers: every capture applied; clone storage is not proportional to the shared payload.
-    let captures = samples
+    let mut captures: Vec<_> = samples
         .iter()
-        .filter(|s| s.scenario == "layers" && s.op.starts_with("capture_layer"));
-    let all_applied = captures
-        .clone()
-        .all(|s| s.op == "capture_layer_big" || s.outcome == "applied");
+        .copied()
+        .filter(|s| s.scenario == "layers" && s.op == "capture_layer")
+        .collect();
+    captures.sort_by_key(|s| s.index);
+    let rounds = run["params"]["layer_rounds"].as_u64().unwrap_or(0);
+    let all_applied = rounds > 0
+        && captures.len() as u64 == rounds
+        && captures
+            .iter()
+            .enumerate()
+            .all(|(i, s)| s.index == i as u64 + 1 && s.attempt == 0 && s.outcome == "applied");
     out.push(check(
         "layer_captures_applied",
-        all_applied && captures.count() > 0,
-        "capture outcomes",
+        all_applied,
+        format!(
+            "{} ordinary captures, {rounds} configured rounds, each applied exactly once",
+            captures.len()
+        ),
+    ));
+    let big: Vec<_> = samples
+        .iter()
+        .copied()
+        .filter(|s| s.scenario == "layers" && s.op == "capture_layer_big")
+        .collect();
+    out.push(check(
+        "layer_big_capture_checked",
+        big.len() == 1 && big[0].index == 0 && big[0].attempt == 0
+            && big[0].outcome == "ok" && big[0].bytes.is_some()
+            && big[0].bytes == run["params"]["big_blob_bytes"].as_u64(),
+        "one successful big capture of the configured payload; clean scenario exit requires Applied",
     ));
     let disks: Vec<_> = records
         .iter()
@@ -922,6 +944,57 @@ mod tests {
             checks.iter().any(|c| c.name == name && !c.ok),
             "missing failure: {name}"
         );
+    }
+
+    #[test]
+    fn every_configured_capture_round_is_required_once_and_applied() {
+        for tamper in ["all", "last", "duplicate", "repeated_index", "stale"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let positions: Vec<_> = records.iter().enumerate().filter_map(|(i, r)| {
+                matches!(r, Record::Sample(s) if s.scenario == "layers" && s.op == "capture_layer").then_some(i)
+            }).collect();
+            match tamper {
+                "all" => records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "layers" && s.op == "capture_layer")),
+                "last" => { records.remove(*positions.last().unwrap()); }
+                "duplicate" => { records.insert(positions[0], records[positions[0]].clone()); }
+                "repeated_index" => { let Record::Sample(s) = &mut records[*positions.last().unwrap()] else { unreachable!() }; s.index = 1; }
+                "stale" => { let Record::Sample(s) = &mut records[positions[0]] else { unreachable!() }; s.outcome = "stale".into(); }
+                _ => unreachable!()
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "layer_captures_applied");
+        }
+    }
+
+    #[test]
+    fn big_capture_is_checked_separately() {
+        for tamper in ["missing", "duplicate", "stale", "size"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let i = records.iter().position(|r| matches!(r, Record::Sample(s) if s.scenario == "layers" && s.op == "capture_layer_big")).unwrap();
+            match tamper {
+                "missing" => {
+                    records.remove(i);
+                }
+                "duplicate" => {
+                    records.insert(i, records[i].clone());
+                }
+                "stale" | "size" => {
+                    let Record::Sample(s) = &mut records[i] else {
+                        unreachable!()
+                    };
+                    if tamper == "stale" {
+                        s.outcome = "stale".into();
+                    } else {
+                        s.bytes = Some(0);
+                    }
+                }
+                _ => unreachable!(),
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "layer_big_capture_checked");
+        }
     }
 
     #[test]
