@@ -112,8 +112,8 @@ Timeouts or budget stops are INCONCLUSIVE and remain in raw evidence.
 No scaling beyond the matrix. Per native child: wall 90 seconds, CPU 60 seconds,
 RSS 256 MiB; profile children may use RSS 512 MiB and CPU 60 seconds. Enforce CPU
 with unprivileged rlimit, wall with parent timeout, and RSS with child observations
-at phase boundaries plus parent polling where available. Polling is not a strict
-instantaneous RSS guarantee; report overshoot and polling availability. Linux
+at phase boundaries. A phase-boundary RSS observation is not an instantaneous hard limit on macOS;
+report overshoot and stop at the next boundary. Linux
 also limits address space for ordinary children. Active fixture files cap at
 128 MiB; retained fixture/evidence total caps at 1 GiB. Check disk during runs
 and stop rather than scale. No more than two native workers concurrently.
@@ -156,7 +156,45 @@ not preserve this contract.
 
 ## Evidence status
 
-No measurements yet. CPU/heap attribution, controls, hosted execution and verifier
-validation remain unverified. The eventual verifier checks recorded consistency,
+Measurement results are specific to each retained run. The PR result records
+local evidence paths, hosted run/artifact identity and measured conclusions.
+The October 16 flow uses proportional checks without a new review round. The eventual verifier checks recorded consistency,
 digests, coverage, controls and recomputed summaries without modifying input
 bytes. It does not authenticate arbitrary fabricated datasets.
+
+## Run and inspect
+
+Use Rust 1.93.0, Bun 1.3.13 and RTK. No development checkout command belongs
+in these runtime commands. The source label is opaque caller input; the driver
+never resolves it. Source and executable digests bind actual measured bytes.
+
+```sh
+rtk cargo build --manifest-path tools/native-profiles/Cargo.toml --release --locked
+rtk proxy bun tools/native-profiles/run.mjs run NEW_CONTROLS_DIR CHECKED_OUT_SHA
+rtk proxy bun tools/native-profiles/verify.mjs NEW_CONTROLS_DIR
+rtk proxy bun tools/native-profiles/profile.mjs NEW_PROFILE_DIR CHECKED_OUT_SHA
+rtk proxy bun tools/native-profiles/verify-profile.mjs NEW_PROFILE_DIR
+```
+
+The full matrix contains 84 ordinary samples, three two-process races and 180
+native child executions. Summary observations include separately timed head
+discovery and the blob negative control for each action. There are 231 timing
+observations, 77 three-repetition medians and 66 paired ratio groups. Setup,
+replay and race records are validated and retained separately. The profile loop
+runs 400 history calls, or one stale call and 399 exact stale replays. It measures
+steady repeated validation, not 400 new publication requests.
+
+Each output directory is new. Raw failures and timeouts remain present and make
+the controls run incomplete. Verifiers never rewrite data. They recompute
+coverage, fixture pools, histories, exact outcomes, retry chains and summaries,
+then check all file digests. They detect meaningful inconsistent edits even
+with a newly hashed inventory, but do not authenticate fabricated datasets.
+Profile verification checks seeded fixtures, fixed loop counts, final history
+and check counts, and reports unavailable profilers as INCONCLUSIVE. Native
+public-API readback establishes object identity; verifier code does not copy
+private native hashing or decoding.
+
+The owned Ubuntu workflow checks formatting, Clippy, driver and verifier tests,
+then runs the matrix and profiling on its exact checked-out PR head. Raw output
+and failures are retained for 14 days. Windows, mounted sparse filesystems,
+provider cost, throughput scale, Gate 6 and GA remain unverified.

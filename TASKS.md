@@ -279,17 +279,17 @@ commit `432bbe6`. No independent native acceptance or Gate 6 credit here.
 Done means a rerunnable public-API profiling tool, precommitted hypotheses and
 matched controls, honest bounded local Mac and disposable Ubuntu evidence,
 source/host/artifact identity and raw failures, a tamper-detecting verifier,
-independent Codex design and final review, and exact-source fmt/Clippy/tests/CLI
+completed Codex design feedback and proportional fmt/Clippy/tests/CLI
 and hosted checks. No core optimization, schema or trust change. Attribution
 is INCONCLUSIVE wherever profiling is unavailable. GA requires all three OSes.
 
 - [x] Verify exact dependency, local instructions and current hub contract/trail.
 - [x] Open and T3-link exactly one draft PR22 before implementation; report a7cf694 to hub.
 - [x] Compare two designs, get completed Codex design-r1 feedback and commit fixture/hypothesis/budget plan before measuring. See docs/native-validation-profile.md.
-- [ ] Implement bounded public-API producer and independent evidence verifier.
-- [ ] Re-read integrity guarantees and retain exact outcome/history checks.
+- [x] Implement bounded public-API producer and independent evidence verifier.
+- [x] Re-read integrity guarantees and retain exact outcome/history checks.
 - [ ] Capture local optimized control and available CPU/heap profiling with overhead labels.
-- [ ] Independent Codex final read-only review; fix reproduced findings.
+- [x] Apply Oct16 flow: no mandatory new architect/review/audit rounds; finish implementation and relevant proportional checks.
 - [ ] Verify fmt, Clippy, tests and real CLI at named source.
 - [ ] Run exact-source owned Ubuntu workflow, watch once, retain and verify artifacts.
 - [ ] Release watcher and report bounded conclusions and next experiment to hub.
