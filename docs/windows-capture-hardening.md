@@ -132,3 +132,49 @@ The runner's system error message is retained on API failure. A case succeeds
 as a reproduction only when the existing moved partial file has the intended
 failed zero/short read and capture accepts that prefix; command success alone
 cannot establish it.
+
+## Implemented hardening, hosted verification pending
+
+The retained failed run `38716055510` at `0d63827` establishes the zero-read
+defect. The real renamed partial file had logical length 4096. Win32 read opened
+it and failed with error 362, while the inherited stream reader opened it,
+returned zero bytes with no stream error, and capture accepted an empty private
+blob. The 16384-byte case had 12288 bytes resident, but its read also returned
+zero bytes before failure. A returned nonzero short prefix is not confirmed.
+
+Capture now refuses uncertain partial files before content reads. Fully
+dehydrated renamed files may still reference the base when identity, logical
+length, on-disk bytes and modified bytes match the safe case. Materialized reads
+use a pinned handle, deny concurrent write/delete opens, check Win32 read status
+and exact length, and enforce the 256 KiB file bound.
+
+The shared walker pins directory and entry handles, rejects junctions and unknown
+reparses before descending, and caps entries at 128, depth at 16 components,
+relative paths at 512 characters and elapsed traversal at 10 seconds. Symlink
+records must name declared files within the root; capture never reads their
+targets. Manifests reject malformed or ambiguous records and Windows path
+aliases. Blob names are lowercase SHA-256 digests. Content is verified before
+exposure and again immediately before hydration.
+
+An administrator-owned per-root configuration under the frozen fixture binds
+root volume/file identity, root path, base and snapshot mode. Both serve and
+capture validate it; the editable marker is diagnostic only. Supported capture
+requires administrator-protected root and local objects with no proof-user write
+or ACL rights, plus a free provider/capture lease. The fixture applies protection
+without enumerating unpopulated cloud directories or following reparses, then
+restores writable access. An existing writer blocks this transition. This is a
+bounded offline capture requiring trusted preparation, not production live
+snapshot support or authentication against an arbitrary same-user provider.
+
+All reads and validation finish before staging begins. A fresh pending directory
+is validated before rename to the selected output; refusal cannot replace an
+existing output. Process death may leave an unselected `.pending` directory,
+which is refused on retry until explicitly removed. Power-loss durability is
+not claimed.
+
+The focused Windows checks include partial-file refusal, junctions, relative
+link escape, marker edits, actual token SID self-grants, active provider/writer
+refusal and retry, limits, malformed manifests, missing/tampered/truncated blobs,
+and mutation before hydration. Existing ordinary operations, seven Cloud Files
+rename cases, clone isolation and restart checks still run. Verify a downloaded
+artifact against current source with `bun tools/windows-sparse-backend/verify-hardening.mjs <attempt-directory>`.

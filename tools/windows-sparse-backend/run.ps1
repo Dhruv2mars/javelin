@@ -60,7 +60,7 @@ try {
         setupIdentity = $identity.Name; setupAdministrator = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
     $here = 'tools/windows-sparse-backend'
     foreach ($path in @("$here/run.ps1", "$here/user-run.ps1", "$here/checks.mjs", "$here/sparse.cpp", "$here/projfs-provider.cpp",
-        "$here/hardening-repro.ps1", "$here/hardening-control.cpp",
+        "$here/hardening-repro.ps1", "$here/hardening-control.cpp", "$here/hardening-checks.ps1",
         '.github/workflows/windows-sparse-backend.yml', 'tools/workspace-probe/probe.mjs', 'tools/workspace-probe/atomic-writer.mjs')) {
         $result.sources[$path] = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
     }
@@ -91,8 +91,8 @@ try {
     $installation = (Invoke-Bounded 'compiler-discovery' $vswhere @('-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath')).stdout.Trim()
     $dev = Join-Path $installation 'Common7/Tools/VsDevCmd.bat'
     # The pinned PR #9 provider keeps its original flags; the new provider targets Server 2022 (build 20348) headers.
-    foreach ($build in @(@('sparse', 'CldApi.lib Bcrypt.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
-        @('hardening-control', 'CldApi.lib Bcrypt.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
+    foreach ($build in @(@('sparse', 'CldApi.lib Bcrypt.lib Advapi32.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
+        @('hardening-control', 'CldApi.lib Bcrypt.lib Advapi32.lib', '/DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A'),
         @('projfs-provider', 'ProjectedFSLib.lib Ole32.lib', '/DNTDDI_VERSION=0x0A000008'))) {
         $flags = "/nologo /Bv /std:c++20 /W4 /WX /EHsc /D_WIN32_WINNT=0x0A00 $($build[2])"
         $batch = Join-Path $owned "build-$($build[0]).cmd"
@@ -121,7 +121,7 @@ try {
     New-Item -ItemType Directory -Path $tools, $frozen, (Join-Path $owned 'user-results'), (Join-Path $owned 'staging') | Out-Null
     Copy-Item -LiteralPath (Get-Command bun.exe -CommandType Application).Source -Destination (Join-Path $tools 'bun.exe')
     foreach ($name in @('probe.mjs', 'atomic-writer.mjs')) { Copy-Item -LiteralPath "tools/workspace-probe/$name" -Destination (Join-Path $tools $name) }
-    foreach ($name in @('checks.mjs', 'user-run.ps1', 'hardening-repro.ps1')) { Copy-Item -LiteralPath "$here/$name" -Destination (Join-Path $tools $name) }
+    foreach ($name in @('checks.mjs', 'user-run.ps1', 'hardening-repro.ps1', 'hardening-checks.ps1')) { Copy-Item -LiteralPath "$here/$name" -Destination (Join-Path $tools $name) }
     $seed = Invoke-Bounded 'fixture-seed-native' (Join-Path $tools 'bun.exe') @((Join-Path $tools 'checks.mjs'), $owned, $adminResults, 'seed')
     if ($seed.exitCode -ne 0) { throw 'Native fixtures could not be seeded.' }
     New-Item -ItemType Directory -Path (Join-Path $frozen 'base-common') | Out-Null
@@ -144,6 +144,8 @@ try {
         if ($set.exitCode -ne 0) { throw "ACL step $($acl[0]) failed." }
     }
     [void](Invoke-Bounded 'frozen-acl-readback' (Join-Path $system 'icacls.exe') @($frozen, '/T'))
+    New-Item -ItemType Directory -Path (Join-Path $frozen 'bindings') | Out-Null
+    [void](Invoke-Bounded 'bindings-owner' (Join-Path $system 'icacls.exe') @((Join-Path $frozen 'bindings'), '/setowner', '*S-1-5-32-544'))
     $result.baseTrees = @{ native = Get-Tree (Join-Path $frozen 'base-native'); common = Get-Tree (Join-Path $frozen 'base-common') }
     $pwsh = (Get-Process -Id $PID).Path
     $argv = @('bounded', '190000', $pwsh, '-NoProfile', '-File', (Join-Path $tools 'user-run.ps1'), '-Owned', $owned, '-Username', $username)
@@ -151,6 +153,30 @@ try {
         -WorkingDirectory $owned -RedirectStandardOutput (Join-Path $evidence 'ordinary-user.stdout.txt') -RedirectStandardError (Join-Path $evidence 'ordinary-user.stderr.txt') -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(205)
     while (-not $child.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        foreach ($controlRequest in @(Get-ChildItem -LiteralPath $owned -Filter 'control-*.request.json' -File)) {
+            $reply = [ordered]@{ ok = $false; error = $null }
+            try {
+                $requestData = Get-Content -Raw -LiteralPath $controlRequest.FullName | ConvertFrom-Json
+                if ($requestData.name -notmatch '^(a|b|d|e|cr|pa|pb|pc|h[a-z0-9-]+)$') { throw 'Unsupported owned root.' }
+                $targetRoot = Join-Path $owned $requestData.name
+                if ($requestData.operation -eq 'bind') {
+                    if ($requestData.base -notin @((Join-Path $frozen 'base-native'), (Join-Path $frozen 'base-rename'), (Join-Path $frozen 'base-common'))) { throw 'Unsupported base.' }
+                    if ($requestData.snapshot -ne '-' -and $requestData.snapshot -ne (Join-Path $frozen 'snap') -and
+                        -not ([IO.Path]::GetFullPath($requestData.snapshot)).StartsWith((Join-Path $owned 'staging') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsupported snapshot.' }
+                    $r = Invoke-Bounded "bind-$($requestData.name)" (Join-Path $owned 'sparse.exe') @('bind', $requestData.base, $requestData.snapshot, $targetRoot)
+                    if ($r.exitCode -ne 0) { throw 'Protected root binding failed.' }
+                    $r = Invoke-Bounded "binding-owner-$($requestData.name)" (Join-Path $system 'icacls.exe') @((Join-Path $frozen "bindings/$($requestData.name).txt"), '/setowner', '*S-1-5-32-544')
+                    if ($r.exitCode -ne 0) { throw 'Protected binding owner failed.' }
+                } elseif ($requestData.operation -in @('seal', 'unseal')) {
+                    $sid = (Get-LocalUser -Name $username).SID.Value
+                    $r = Invoke-Bounded "$($requestData.operation)-$($requestData.name)" (Join-Path $owned 'sparse.exe') @('access', $targetRoot, $sid, $requestData.operation)
+                    if ($r.exitCode -ne 0) { throw 'Quiescent root ACL step failed.' }
+                } else { throw 'Unsupported fixture operation.' }
+                $reply.ok = $true
+            } catch { $reply.error = $_.ToString() }
+            $reply | ConvertTo-Json | Set-Content -LiteralPath ($controlRequest.FullName + '.done')
+            Remove-Item -LiteralPath $controlRequest.FullName
+        }
         $request = Join-Path $owned 'freeze.request'
         if ((Test-Path -LiteralPath $request) -and -not $result.freeze) {
             # Freeze: an administrator copy becomes administrator-owned, read-only and not writable by the proof user.
@@ -173,10 +199,16 @@ try {
     $result.userWrapperExit = $child.ExitCode
     Copy-Item -Path (Join-Path $owned 'user-results/*') -Destination $evidence
     Copy-Item -Path (Join-Path $adminResults '*') -Destination $evidence
-    $reproductionPath = Join-Path $evidence 'hardening-repro.json'
+    $reproductionPath = Join-Path $evidence 'hardening-checks.json'
     if (-not (Test-Path -LiteralPath $reproductionPath) -or
-        (Get-Content -Raw -LiteralPath $reproductionPath | ConvertFrom-Json).verdict -ne 'COLLECTED') {
-        $result.blockers += 'Inherited control preconditions or observations incomplete; no reproduction verdict.'
+        (Get-Content -Raw -LiteralPath $reproductionPath | ConvertFrom-Json).verdict -ne 'VERIFIED') {
+        $result.blockers += 'Capture hardening regressions did not pass.'
+    }
+    $userSummary = Get-Content -Raw -LiteralPath (Join-Path $evidence 'user-summary.json') | ConvertFrom-Json
+    if ($userSummary.errors.Count -or -not $userSummary.providersStopped) { $result.blockers += 'User fixture errors or live providers.' }
+    foreach ($phase in $userSummary.phases.PSObject.Properties) {
+        $expected = if ($phase.Name -eq 'common-probe') { 1 } else { 0 }
+        if ($phase.Value -ne $expected) { $result.blockers += "Unexpected phase result $($phase.Name): $($phase.Value)" }
     }
     if ($result.freeze) { $result.snapshotUnchangedAtEnd = (ConvertTo-Json (Get-Tree (Join-Path $frozen 'snap')) -Depth 4) -eq (ConvertTo-Json $result.freeze.tree -Depth 4) }
     $result.baseUnchangedAtEnd = (ConvertTo-Json (Get-Tree (Join-Path $frozen 'base-native')) -Depth 4) -eq (ConvertTo-Json $result.baseTrees.native -Depth 4)

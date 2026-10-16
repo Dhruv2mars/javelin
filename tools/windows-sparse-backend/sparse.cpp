@@ -7,6 +7,10 @@
 #include <ntstatus.h>
 #include <bcrypt.h>
 #include <cfapi.h>
+#include <aclapi.h>
+#include <sddl.h>
+#include <sstream>
+#include <algorithm>
 #include <filesystem>
 #include <iterator>
 #include <fstream>
@@ -25,7 +29,7 @@ namespace fs = std::filesystem;
 // Documented ParamSize: offset of the operation member plus its size (SDK 10.0.26100 has no helper macro).
 #define PARAM_SIZE(field) static_cast<ULONG>(FIELD_OFFSET(CF_OPERATION_PARAMETERS, field) + RTL_FIELD_SIZE(CF_OPERATION_PARAMETERS, field))
 enum Kind { File, Directory, Link };
-struct Entry { Kind kind = File; std::wstring source, target; FILE_BASIC_INFO info{}; INT64 size = 0; };
+struct Entry { Kind kind = File; std::wstring source, target; FILE_BASIC_INFO info{}; INT64 size = 0; std::string digest; };
 struct NoCase {
     bool operator()(const std::wstring& a, const std::wstring& b) const {
         return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
@@ -74,10 +78,161 @@ static void require(HRESULT hr, const char* operation) {
 template <class T> static void set16(T& field, USHORT value) {
     static_assert(sizeof(T) == sizeof(USHORT)); std::memcpy(&field, &value, sizeof(value));
 }
+struct Handle {
+    HANDLE value;
+    explicit Handle(HANDLE h) : value(h) { if (h == INVALID_HANDLE_VALUE) throw std::runtime_error("open bounded object"); }
+    ~Handle() { CloseHandle(value); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+};
+static Handle openObject(const fs::path& path, DWORD access = FILE_READ_ATTRIBUTES | READ_CONTROL) {
+    return Handle(CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+}
+static FILE_ATTRIBUTE_TAG_INFO attributes(HANDLE h) {
+    FILE_ATTRIBUTE_TAG_INFO t{};
+    if (!GetFileInformationByHandleEx(h, FileAttributeTagInfo, &t, sizeof(t))) throw std::runtime_error("object attributes");
+    return t;
+}
+static bool cloud(DWORD tag) { return (tag & ~0x0000f000UL) == IO_REPARSE_TAG_CLOUD; }
+static void supported(HANDLE h, bool links = true) {
+    auto t = attributes(h);
+    if ((t.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud(t.ReparseTag) && !(links && t.ReparseTag == IO_REPARSE_TAG_SYMLINK))
+        throw std::runtime_error("unsupported reparse tag");
+}
+static void protectedObject(HANDLE h) {
+    PSID owner = nullptr; PACL acl = nullptr; PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (GetSecurityInfo(h, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, nullptr, &acl, nullptr, &descriptor) != ERROR_SUCCESS) throw std::runtime_error("security descriptor");
+    auto trusted = [](PSID sid) { return IsWellKnownSid(sid, WinBuiltinAdministratorsSid) || IsWellKnownSid(sid, WinLocalSystemSid); };
+    bool ok = owner && trusted(owner) && acl;
+    constexpr DWORD writes = GENERIC_ALL | GENERIC_WRITE | WRITE_DAC | WRITE_OWNER | DELETE |
+        FILE_DELETE_CHILD | FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
+    for (DWORD i = 0; ok && i < acl->AceCount; ++i) {
+        void* raw = nullptr;
+        if (!GetAce(acl, i, &raw)) { ok = false; break; }
+        const auto* header = static_cast<ACE_HEADER*>(raw);
+        if (header->AceFlags & INHERIT_ONLY_ACE) continue;
+        if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) { ok = false; break; }
+        auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
+        if ((ace->Mask & writes) && !trusted(&ace->SidStart)) ok = false;
+    }
+    LocalFree(descriptor);
+    if (!ok) throw std::runtime_error("capture requires administrator-protected quiescent objects");
+}
 static std::vector<char> bytes(const fs::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) throw std::runtime_error("cannot read bounded source file");
-    return std::vector<char>(std::istreambuf_iterator<char>(input), {});
+    auto file = openObject(path, GENERIC_READ); supported(file.value, false);
+    FILE_STANDARD_INFO before{}, after{};
+    if (!GetFileInformationByHandleEx(file.value, FileStandardInfo, &before, sizeof(before)) || before.Directory ||
+        before.NumberOfLinks != 1 || before.EndOfFile.QuadPart < 0 || before.EndOfFile.QuadPart > 256 * 1024)
+        throw std::runtime_error("bounded file metadata");
+    std::vector<char> data(static_cast<size_t>(before.EndOfFile.QuadPart));
+    DWORD received = 0;
+    if (!ReadFile(file.value, data.data(), static_cast<DWORD>(data.size()), &received, nullptr) || received != data.size())
+        throw std::runtime_error("failed or short source read");
+    if (!GetFileInformationByHandleEx(file.value, FileStandardInfo, &after, sizeof(after)) || after.EndOfFile.QuadPart != before.EndOfFile.QuadPart)
+        throw std::runtime_error("source changed during read");
+    return data;
+}
+static void validPath(const std::wstring& path) {
+    if (path.empty() || path.size() > 512 || std::count(path.begin(), path.end(), L'\\') >= 16) throw std::runtime_error("path bound");
+    size_t start = 0;
+    for (size_t i = 0; i <= path.size(); ++i) {
+        if (i < path.size() && (path[i] < 32 || std::wcschr(L"/:*?\"<>|", path[i]))) throw std::runtime_error("invalid path character");
+        if (i < path.size() && path[i] != L'\\') continue;
+        auto part = path.substr(start, i - start); start = i + 1;
+        if (part.empty() || part.back() == L'.' || part.back() == L' ') throw std::runtime_error("path alias");
+        auto stem = part.substr(0, part.find(L'.'));
+        if (same(stem, L"con") || same(stem, L"prn") || same(stem, L"aux") || same(stem, L"nul") ||
+            (stem.size() == 4 && (same(stem.substr(0, 3), L"com") || same(stem.substr(0, 3), L"lpt")) && stem[3] >= L'1' && stem[3] <= L'9'))
+            throw std::runtime_error("reserved path");
+    }
+}
+static std::wstring linkTarget(const fs::path& path) {
+    auto target = fs::read_symlink(path).wstring(); validPath(target); return target;
+}
+struct WalkBudget { size_t entries = 0; ULONGLONG started = GetTickCount64(); };
+template <class Visit> static void walkAt(const fs::path& root, const std::wstring& relative, Visit& visit, WalkBudget& budget, bool frozen, bool metadataReparses) {
+    auto directory = openObject(relative.empty() ? root : root / relative); supported(directory.value, false);
+    if (frozen) protectedObject(directory.value);
+    WIN32_FIND_DATAW data{};
+    HANDLE found = FindFirstFileExW(((relative.empty() ? root : root / relative) / L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (found == INVALID_HANDLE_VALUE) {
+        if (GetLastError() == ERROR_FILE_NOT_FOUND) return;
+        throw std::runtime_error("enumerate directory");
+    }
+    try {
+        do {
+            std::wstring name = data.cFileName;
+            if (name == L"." || name == L"..") continue;
+            auto path = relative.empty() ? name : relative + L"\\" + name;
+            validPath(path);
+            if (++budget.entries > 128 || GetTickCount64() - budget.started > 10000) throw std::runtime_error("walk bound");
+            auto object = openObject(root / path); if (!metadataReparses) supported(object.value);
+            if (frozen) protectedObject(object.value);
+            auto tag = attributes(object.value);
+            if (tag.FileAttributes != data.dwFileAttributes || ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && tag.ReparseTag != data.dwReserved0))
+                throw std::runtime_error("entry changed during walk");
+            if (visit(path, data)) walkAt(root, path, visit, budget, frozen, metadataReparses);
+        } while (FindNextFileW(found, &data));
+        if (GetLastError() != ERROR_NO_MORE_FILES) throw std::runtime_error("incomplete enumeration");
+    } catch (...) { FindClose(found); throw; }
+    FindClose(found);
+}
+template <class Visit> static void walk(const fs::path& root, const std::wstring& relative, Visit visit, bool frozen = false, bool metadataReparses = false) {
+    WalkBudget budget; walkAt(root, relative, visit, budget, frozen, metadataReparses);
+}
+static std::wstring objectId(HANDLE h) {
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h, &info)) throw std::runtime_error("object identity");
+    return std::to_wstring(info.dwVolumeSerialNumber) + L":" + std::to_wstring(info.nFileIndexHigh) + L":" + std::to_wstring(info.nFileIndexLow);
+}
+struct RootLease {
+    HANDLE mutex;
+    explicit RootLease(const fs::path& root) {
+        auto h = openObject(root);
+        auto name = L"Local\\JavelinSparseProof-" + objectId(h.value);
+        mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+        if (!mutex) throw std::runtime_error("root lease");
+        DWORD result = WaitForSingleObject(mutex, 0);
+        if (result != WAIT_OBJECT_0 && result != WAIT_ABANDONED) { CloseHandle(mutex); throw std::runtime_error("root provider or capture is active"); }
+    }
+    ~RootLease() { ReleaseMutex(mutex); CloseHandle(mutex); }
+};
+static fs::path bindingPath(const fs::path& root) { return root.parent_path() / L"frozen" / L"bindings" / (root.filename().wstring() + L".txt"); }
+static std::wstring normalizedPath(const fs::path& path) { return fs::absolute(path).lexically_normal().wstring(); }
+static void ownedRoot(const fs::path& root) {
+    wchar_t temporary[32768]{};
+    DWORD length = GetEnvironmentVariableW(L"RUNNER_TEMP", temporary, 32768);
+    auto container = root.parent_path().filename().wstring();
+    const std::wstring prefix = L"javelin-sparse-proof-";
+    if (!length || length >= 32768 || !same(normalizedPath(root.parent_path().parent_path()), normalizedPath(temporary)) ||
+        container.size() != prefix.size() + 32 || container.substr(0, prefix.size()) != prefix ||
+        container.substr(prefix.size()).find_first_not_of(L"0123456789abcdef") != std::wstring::npos)
+        throw std::runtime_error("outside owned hosted fixture");
+    validPath(root.filename().wstring());
+}
+static void bindRoot(const fs::path& base, const fs::path& snapshot, const fs::path& root) {
+    ownedRoot(root);
+    auto container = openObject(bindingPath(root).parent_path()); protectedObject(container.value);
+    auto h = openObject(root); supported(h.value, false);
+    if (fs::exists(bindingPath(root))) throw std::runtime_error("root already bound");
+    std::ofstream out(bindingPath(root), std::ios::binary);
+    out << utf8(normalizedPath(root)) << "\n" << utf8(normalizedPath(base)) << "\n" << (snapshot.empty() ? "-" : utf8(normalizedPath(snapshot))) << "\n" << utf8(objectId(h.value)) << "\n";
+    out.close(); if (!out) throw std::runtime_error("binding write");
+}
+static std::wstring approvedRoot(const fs::path& base, const fs::path& root) {
+    ownedRoot(root);
+    auto frozen = openObject(root.parent_path() / L"frozen"); protectedObject(frozen.value); supported(frozen.value, false);
+    auto bindings = openObject(bindingPath(root).parent_path()); protectedObject(bindings.value); supported(bindings.value, false);
+    auto record = openObject(bindingPath(root)); protectedObject(record.value); supported(record.value, false);
+    auto content = bytes(bindingPath(root)); std::istringstream in(std::string(content.begin(), content.end()));
+    std::string r, b, snapshot, id, extra;
+    if (!std::getline(in, r) || !std::getline(in, b) || !std::getline(in, snapshot) || !std::getline(in, id) || std::getline(in, extra)) throw std::runtime_error("root binding format");
+    auto h = openObject(root); supported(h.value, false);
+    if (!same(wide(r), normalizedPath(root)) || !same(wide(b), normalizedPath(base)) || wide(id) != objectId(h.value)) throw std::runtime_error("root binding mismatch");
+    return wide(snapshot);
 }
 static std::string sha256(const std::vector<char>& data) {
     unsigned char digest[32];
@@ -94,48 +249,65 @@ static FILE_BASIC_INFO now(DWORD attributes) {
 }
 static View scan(const fs::path& base) {
     View view;
-    for (const auto& item : fs::recursive_directory_iterator(base)) {
-        Entry entry; auto name = item.path().lexically_relative(base).wstring();
-        entry.source = item.path().wstring();
-        if (item.is_symlink()) { entry.kind = Link; entry.target = fs::read_symlink(item.path()).wstring(); }
-        else if (item.is_directory()) entry.kind = Directory;
-        else {
-            entry.size = static_cast<INT64>(item.file_size());
-            if (entry.size > 256 * 1024) throw std::runtime_error("fixture file exceeds 256 KiB bound");
-        }
-        WIN32_FILE_ATTRIBUTE_DATA data{};
-        if (!GetFileAttributesExW(entry.source.c_str(), GetFileExInfoStandard, &data)) throw std::runtime_error("base metadata");
+    walk(base, L"", [&](const std::wstring& name, const WIN32_FIND_DATAW& data) {
+        Entry entry; entry.source = (base / name).wstring();
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && data.dwReserved0 == IO_REPARSE_TAG_SYMLINK) { entry.kind = Link; entry.target = linkTarget(entry.source); }
+        else if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) entry.kind = Directory;
+        else { entry.size = (static_cast<INT64>(data.nFileSizeHigh) << 32) | data.nFileSizeLow; entry.digest = sha256(bytes(entry.source)); }
         std::memcpy(&entry.info.CreationTime, &data.ftCreationTime, sizeof(FILETIME));
         std::memcpy(&entry.info.LastAccessTime, &data.ftLastAccessTime, sizeof(FILETIME));
         std::memcpy(&entry.info.LastWriteTime, &data.ftLastWriteTime, sizeof(FILETIME));
         entry.info.ChangeTime = entry.info.LastWriteTime;
         entry.info.FileAttributes = entry.kind == Directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
-        view[name] = entry;
-        if (view.size() > 128) throw std::runtime_error("fixture exceeds 128 entries");
-    }
+        view[name] = entry; return entry.kind == Directory;
+    });
     return view;
 }
 // Snapshot manifest: D deleted path, N new directory, B base reference, F private blob, L symlink.
 static View load(const fs::path& base, const fs::path& snapshot) {
     auto baseView = scan(base); View view = baseView;
     if (snapshot.empty()) return view;
-    std::ifstream manifest(snapshot / L"manifest.tsv", std::ios::binary); std::string raw;
-    if (!manifest) throw std::runtime_error("snapshot manifest missing");
+    auto snapshotRoot = openObject(snapshot); auto blobsRoot = openObject(snapshot / L"blobs");
+    if ((attributes(snapshotRoot.value).FileAttributes | attributes(blobsRoot.value).FileAttributes) & FILE_ATTRIBUTE_REPARSE_POINT)
+        throw std::runtime_error("snapshot directories must not be reparse points");
+    auto content = bytes(snapshot / L"manifest.tsv");
+    std::istringstream manifest(std::string(content.begin(), content.end())); std::string raw;
+    std::set<std::wstring, NoCase> destinations, deletions; size_t rows = 0; bool writes = false;
     while (std::getline(manifest, raw)) {
+        if (++rows > 256) throw std::runtime_error("manifest row bound");
         std::vector<std::wstring> field; size_t start = 0; auto line = wide(raw);
         for (size_t i = 0; i <= line.size(); ++i) if (i == line.size() || line[i] == L'\t') { field.push_back(line.substr(start, i - start)); start = i + 1; }
-        if (field.size() < 2 || field[0].size() != 1 || field[1].empty()) throw std::runtime_error("invalid snapshot record");
-        auto& path = field[1];
-        if (field[0] == L"D") {
+        if (field.size() < 2 || field[0].size() != 1) throw std::runtime_error("invalid snapshot record");
+        auto& path = field[1]; validPath(path);
+        if (field[0] == L"D" && field.size() == 2) {
+            if (writes || !baseView.count(path) || !deletions.insert(path).second) throw std::runtime_error("ambiguous deletion");
             for (auto it = view.begin(); it != view.end();) it = same(it->first, path) || under(it->first, path) ? view.erase(it) : std::next(it);
-        } else if (field[0] == L"N") { Entry entry; entry.kind = Directory; entry.info = now(FILE_ATTRIBUTE_DIRECTORY); view[path] = entry; }
-        else if (field.size() == 3 && field[0] == L"B") view[path] = baseView.at(field[2]);
-        else if (field.size() == 3 && field[0] == L"F") {
-            Entry entry; entry.source = (snapshot / L"blobs" / field[2]).wstring(); entry.size = static_cast<INT64>(fs::file_size(entry.source));
-            entry.info = now(FILE_ATTRIBUTE_NORMAL); view[path] = entry;
-        } else if (field.size() == 3 && field[0] == L"L") { Entry entry; entry.kind = Link; entry.target = field[2]; view[path] = entry; }
-        else throw std::runtime_error("unknown snapshot record");
+            continue;
+        }
+        writes = true;
+        if (!destinations.insert(path).second) throw std::runtime_error("duplicate destination");
+        if (field[0] == L"N" && field.size() == 2) { Entry entry; entry.kind = Directory; entry.info = now(FILE_ATTRIBUTE_DIRECTORY); view[path] = entry; }
+        else if (field.size() == 3 && field[0] == L"B") {
+            validPath(field[2]); auto original = baseView.find(field[2]);
+            if (original == baseView.end() || original->second.kind != File) throw std::runtime_error("invalid base reference");
+            view[path] = original->second;
+        } else if (field.size() == 3 && field[0] == L"F") {
+            const auto& digest = field[2];
+            if (digest.size() != 64 || digest.find_first_not_of(L"0123456789abcdef") != std::wstring::npos) throw std::runtime_error("invalid blob digest name");
+            Entry entry; entry.source = (snapshot / L"blobs" / digest).wstring(); auto data = bytes(entry.source);
+            entry.digest = sha256(data);
+            if (entry.digest != utf8(digest)) throw std::runtime_error("blob digest mismatch");
+            entry.size = static_cast<INT64>(data.size()); entry.info = now(FILE_ATTRIBUTE_NORMAL); view[path] = entry;
+        } else if (field.size() == 3 && field[0] == L"L") {
+            validPath(field[2]); Entry entry; entry.kind = Link; entry.target = field[2]; view[path] = entry;
+        } else throw std::runtime_error("unknown snapshot record");
         if (view.size() > 128) throw std::runtime_error("view exceeds 128 entries");
+    }
+    for (const auto& [path, entry] : view) {
+        auto p = parent(path);
+        if (!p.empty() && (!view.count(p) || view.at(p).kind != Directory)) throw std::runtime_error("view prefix conflict");
+        if (entry.kind == Link && (!p.empty() || !view.count(entry.target) || view.at(entry.target).kind != File))
+            throw std::runtime_error("link target must name a declared file from the root");
     }
     return view;
 }
@@ -160,7 +332,7 @@ struct Provider {
             if (found == self->view.end() || found->second.kind != File) throw std::runtime_error("no file entry");
             if (same(leaf(key), L"slow.bin") && fs::exists(self->slow)) { note("fetch-slow-wait key=%s", utf8(key).c_str()); Sleep(45000); }
             data = bytes(found->second.source);
-            if (static_cast<INT64>(data.size()) != found->second.size) throw std::runtime_error("immutable source size changed");
+            if (static_cast<INT64>(data.size()) != found->second.size || sha256(data) != found->second.digest) throw std::runtime_error("immutable source size changed");
         } catch (const std::exception& error) { note("fetch-data-error %s", error.what()); status = STATUS_CLOUD_FILE_UNSUCCESSFUL; }
         auto op = operation(info, CF_OPERATION_TYPE_TRANSFER_DATA);
         CF_OPERATION_PARAMETERS p{}; p.ParamSize = PARAM_SIZE(TransferData); p.TransferData.CompletionStatus = status;
@@ -210,9 +382,13 @@ struct Provider {
         note("notify-delete key=%s path=%s ack=%08lx", utf8(identity(info)).c_str(), utf8(info->NormalizedPath).c_str(), static_cast<unsigned long>(hr));
     }
     int serve(const fs::path& base, const fs::path& snapshot, const fs::path& owned, const fs::path& stop, const fs::path& ready) {
+        if (!same(approvedRoot(base, owned), snapshot.empty() ? L"-" : normalizedPath(snapshot))) throw std::runtime_error("provider binding mode mismatch");
+        RootLease lease(owned);
         root = owned; slow = root.wstring() + L".slow"; view = load(base, snapshot); self = this;
         auto marker = root.wstring() + L".registered";
-        if (!fs::exists(marker)) {
+        std::vector<BYTE> registrationInfo(sizeof(CF_SYNC_ROOT_STANDARD_INFO) + 4096); DWORD registrationSize = 0;
+        HRESULT registered = CfGetSyncRootInfoByPath(root.c_str(), CF_SYNC_ROOT_INFO_STANDARD, registrationInfo.data(), static_cast<DWORD>(registrationInfo.size()), &registrationSize);
+        if (FAILED(registered)) {
             fs::create_directory(root);
             std::wstring syncIdentity = L"javelin-sparse-proof";
             CF_SYNC_REGISTRATION registration{}; registration.StructSize = sizeof(registration);
@@ -267,6 +443,31 @@ static void expose() {
     if (!set) throw std::runtime_error("placeholder compatibility API missing");
     set(2); // PHCM_EXPOSE_PLACEHOLDERS: this process inspects cloud reparse state instead of hiding it.
 }
+// Hosted administrator fixture operation. Inspect reparses themselves, never their targets.
+static void rootAccess(const fs::path& root, const std::wstring& sid, bool seal) {
+    ownedRoot(root); expose();
+    std::wstring sddl = L"O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;" + std::wstring(seal ? L"FRFX" : L"FA") + L";;;" + sid + L")";
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) throw std::runtime_error("fixture access descriptor");
+    PSID owner = nullptr; BOOL defaulted = FALSE, present = FALSE; PACL acl = nullptr;
+    GetSecurityDescriptorOwner(descriptor, &owner, &defaulted); GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted);
+    auto apply = [&](const fs::path& path) {
+        auto h = openObject(path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC | WRITE_OWNER);
+        if (SetSecurityInfo(h.value, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            owner, nullptr, acl, nullptr) != ERROR_SUCCESS) throw std::runtime_error("fixture access change");
+    };
+    try {
+        apply(root);
+        walk(root, L"", [&](const std::wstring& path, const WIN32_FIND_DATAW& data) {
+            apply(root / path);
+            auto state = CfGetPlaceholderStateFromFindData(&data);
+            bool reparse = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            return (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (!reparse || cloud(data.dwReserved0)) &&
+                !(state != CF_PLACEHOLDER_STATE_INVALID && (state & CF_PLACEHOLDER_STATE_PARTIAL));
+        }, false, true);
+    } catch (...) { LocalFree(descriptor); throw; }
+    LocalFree(descriptor);
+}
 struct Local { Kind kind; std::wstring base, blob, target; CF_PLACEHOLDER_STATE state; };
 static std::wstring placeholderIdentity(const fs::path& path) {
     HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -276,61 +477,66 @@ static std::wstring placeholderIdentity(const fs::path& path) {
     HRESULT hr = CfGetPlaceholderInfo(handle, CF_PLACEHOLDER_INFO_BASIC, buffer.data(), static_cast<DWORD>(buffer.size()), &returned);
     CloseHandle(handle); require(hr, "CfGetPlaceholderInfo");
     auto info = reinterpret_cast<CF_PLACEHOLDER_BASIC_INFO*>(buffer.data());
+    if (returned < FIELD_OFFSET(CF_PLACEHOLDER_BASIC_INFO, FileIdentity) ||
+        info->FileIdentityLength > returned - FIELD_OFFSET(CF_PLACEHOLDER_BASIC_INFO, FileIdentity) || info->FileIdentityLength % sizeof(wchar_t))
+        throw std::runtime_error("invalid placeholder identity length");
     return std::wstring(reinterpret_cast<wchar_t*>(info->FileIdentity), info->FileIdentityLength / sizeof(wchar_t));
-}
-template <class Visit> static void walk(const fs::path& root, const std::wstring& relative, Visit visit) {
-    WIN32_FIND_DATAW data{}; auto pattern = (relative.empty() ? root : root / relative) / L"*";
-    HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
-    if (find == INVALID_HANDLE_VALUE) throw std::runtime_error("enumerate local directory");
-    do {
-        std::wstring name = data.cFileName;
-        if (name == L"." || name == L"..") continue;
-        auto path = relative.empty() ? name : relative + L"\\" + name;
-        if (visit(path, data)) walk(root, path, visit);
-    } while (FindNextFileW(find, &data));
-    FindClose(find);
 }
 // Quiescent capture: the provider is stopped and partial directories are never enumerated.
 static int capture(const fs::path& base, const fs::path& root, const fs::path& out) {
-    // Identities resolve against the base only, so a root served from a snapshot is refused rather than misread.
-    std::ifstream marker(fs::path(root.wstring() + L".registered")); std::string served;
-    if (!std::getline(marker, served) || served != "snapshot=-") throw std::runtime_error("capture supports base-served roots only");
+    if (approvedRoot(base, root) != L"-") throw std::runtime_error("capture supports base-served roots only");
+    auto frozenRoot = openObject(root); supported(frozenRoot.value, false); protectedObject(frozenRoot.value);
+    RootLease lease(root);
+    if (fs::exists(out) || fs::exists(fs::path(out.wstring() + L".pending"))) throw std::runtime_error("capture output or staging already exists");
     expose();
     auto baseView = scan(base); std::map<std::wstring, Local, NoCase> local;
-    fs::create_directories(out / L"blobs");
+    std::map<std::wstring, std::vector<char>> privateBlobs;
     walk(root, L"", [&](const std::wstring& path, const WIN32_FIND_DATAW& data) {
         auto full = root / path; auto state = CfGetPlaceholderStateFromFindData(&data);
         bool directory = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
         if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && data.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
-            local[path] = { Link, L"", L"", fs::read_symlink(full).wstring(), state }; return false;
+            local[path] = { Link, L"", L"", linkTarget(full), state }; return false;
         }
         if (state != CF_PLACEHOLDER_STATE_INVALID && (state & CF_PLACEHOLDER_STATE_PLACEHOLDER)) {
             auto id = placeholderIdentity(full);
+            auto original = baseView.find(id);
+            if (original == baseView.end() || (directory ? original->second.kind != Directory : original->second.kind != File)) throw std::runtime_error("invalid placeholder identity");
             if (directory && (state & CF_PLACEHOLDER_STATE_PARTIAL)) {
                 for (const auto& [name, entry] : baseView)
                     if (same(name, id) || under(name, id)) local[path + name.substr(id.size())] = { entry.kind, name, L"", entry.target, state };
                 return false;
             }
             if (directory) { local[path] = { Directory, id, L"", L"", state }; return true; }
-            if (state & CF_PLACEHOLDER_STATE_IN_SYNC) { local[path] = { File, id, L"", L"", state }; return false; }
-            // A rename clears in-sync on the moved entry. Unchanged bytes still reference the immutable base entry:
-            // a dehydrated placeholder has no local bytes, and a hydrated one is compared with its base source.
-            auto original = baseView.find(id);
-            if (original != baseView.end() && original->second.kind == File) {
-                INT64 size = (static_cast<INT64>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
-                bool dehydrated = (state & CF_PLACEHOLDER_STATE_PARTIAL) && size == original->second.size;
-                if (dehydrated || sha256(bytes(full)) == sha256(bytes(original->second.source))) {
-                    local[path] = { File, id, L"", L"", state }; return false;
-                }
+            INT64 size = (static_cast<INT64>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+            if (state & CF_PLACEHOLDER_STATE_PARTIAL) {
+                auto h = openObject(full);
+                std::vector<BYTE> infoBuffer(sizeof(CF_PLACEHOLDER_STANDARD_INFO) + 4096); DWORD returned = 0;
+                require(CfGetPlaceholderInfo(h.value, CF_PLACEHOLDER_INFO_STANDARD, infoBuffer.data(), static_cast<DWORD>(infoBuffer.size()), &returned), "partial metadata");
+                if (returned < FIELD_OFFSET(CF_PLACEHOLDER_STANDARD_INFO, FileIdentity)) throw std::runtime_error("short partial metadata");
+                auto* info = reinterpret_cast<CF_PLACEHOLDER_STANDARD_INFO*>(infoBuffer.data());
+                if (size != original->second.size || info->OnDiskDataSize.QuadPart != 0 || info->ModifiedDataSize.QuadPart != 0)
+                    throw std::runtime_error("uncertain partial file cannot be captured");
+                local[path] = { File, id, L"", L"", state }; return false;
+            }
+            if (size == original->second.size && (state & CF_PLACEHOLDER_STATE_IN_SYNC)) { local[path] = { File, id, L"", L"", state }; return false; }
+            if (size == original->second.size && sha256(bytes(full)) == original->second.digest) {
+                local[path] = { File, id, L"", L"", state }; return false;
             }
         } else if (directory) { local[path] = { Directory, L"", L"", L"", state }; return true; }
         auto content = bytes(full); auto digest = sha256(content);
-        std::ofstream blob(out / L"blobs" / wide(digest), std::ios::binary);
-        blob.write(content.data(), static_cast<std::streamsize>(content.size())); blob.close();
-        if (!blob) throw std::runtime_error("snapshot blob write failed");
+        privateBlobs[wide(digest)] = std::move(content);
         local[path] = { File, L"", wide(digest), L"", state }; return false;
-    });
-    std::ofstream manifest(out / L"manifest.tsv", std::ios::binary); std::set<std::wstring, NoCase> deleted;
+    }, true);
+    if (local.size() > 128) throw std::runtime_error("expanded capture entry bound");
+    const fs::path pending(out.wstring() + L".pending");
+    fs::create_directories(pending / L"blobs");
+    struct Staging { fs::path path; ~Staging() { std::error_code error; fs::remove_all(path, error); } } staging{pending};
+    for (const auto& [digest, data] : privateBlobs) {
+        std::ofstream blob(pending / L"blobs" / digest, std::ios::binary);
+        blob.write(data.data(), static_cast<std::streamsize>(data.size())); blob.close();
+        if (!blob) throw std::runtime_error("snapshot blob write failed");
+    }
+    std::ofstream manifest(pending / L"manifest.tsv", std::ios::binary); std::set<std::wstring, NoCase> deleted;
     size_t copies = 0, references = 0, deletions = 0;
     for (const auto& [path, entry] : baseView) {
         auto found = local.find(path);
@@ -349,6 +555,8 @@ static int capture(const fs::path& base, const fs::path& root, const fs::path& o
     }
     manifest.close();
     if (!manifest) throw std::runtime_error("snapshot manifest write failed");
+    (void)load(base, pending);
+    fs::rename(pending, out);
     std::printf("{\"privateCopies\":%zu,\"references\":%zu,\"deletions\":%zu,\"entries\":%zu}\n", copies, references, deletions, local.size());
     return 0;
 }
@@ -453,6 +661,9 @@ int wmain(int argc, wchar_t** argv) {
         std::wstring verb = argc > 1 ? argv[1] : L"";
         if (argc >= 4 && verb == L"bounded") return bounded(argc, argv);
         if (argc == 7 && verb == L"serve") { Provider provider; return provider.serve(argv[2], std::wcscmp(argv[3], L"-") ? fs::path(argv[3]) : fs::path(), argv[4], argv[5], argv[6]); }
+        if (argc == 5 && verb == L"access") { rootAccess(argv[2], argv[3], std::wcscmp(argv[4], L"seal") == 0); return 0; }
+        if (argc == 5 && verb == L"bind") { bindRoot(argv[2], std::wcscmp(argv[3], L"-") ? fs::path(argv[3]) : fs::path(), argv[4]); return 0; }
+        if (argc == 3 && verb == L"validate") { auto h = openObject(argv[2]); protectedObject(h.value); return 0; }
         if (argc == 5 && verb == L"capture") return capture(argv[2], argv[3], argv[4]);
         if (argc == 3 && verb == L"audit") return audit(argv[2]);
         if (argc == 3 && verb == L"unregister") { HRESULT hr = CfUnregisterSyncRoot(argv[2]); std::printf("{\"unregister\":\"%08lx\"}\n", static_cast<unsigned long>(hr)); return FAILED(hr); }

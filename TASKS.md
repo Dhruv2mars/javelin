@@ -220,6 +220,12 @@ and this appended checklist. Existing evidence stays immutable.
   Actual nonadmin SID, cleanup, unchanged base/snapshot and prior bounded phases
   inspected. Preserve all raw records; SDK/fixture preconditions remain next.
 - [ ] Implement minimal fixes and focused adversarial regressions.
+  Oct16 resumed flow: implementation and proportional hosted checks in this same
+  PR; no new mandatory review or evidence-only finishing commit. Retained
+  `38716055510` proves failed-read empty-blob acceptance on unchanged source;
+  nonzero returned short prefixes remain unconfirmed. Checked reads, bounded
+  traversal, validated manifests/digests, protected binding and quiescent capture
+  refusal are implemented; focused Windows checks pending.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.
 - [ ] Inspect exact-source raw evidence and independent post-fix adversarial review.
 - [ ] Run fresh-head offline verifier and tamper checks; report scope and limits to hub.

@@ -1,0 +1,82 @@
+{
+  "identity": {
+    "sid": "S-1-5-21-3213014087-2684668049-2838998412-1003",
+    "administrator": false,
+    "name": "runnervmgnbhw\\jvs98e3201d96e6"
+  },
+  "phases": {
+    "job-termination": 0,
+    "protect-base": 0,
+    "rename-projfs": 0,
+    "rename-cfapi": 0,
+    "native-ops": 0,
+    "audit-before-hydration-kill-a": 0,
+    "audit-after-hydration-kill-a": 0,
+    "closed-write": 0,
+    "audit-after-write-kill-a": 0,
+    "after-kills": 0,
+    "audit-before-capture-a": 0,
+    "audit-final-b": 0,
+    "capture": 0,
+    "protect-snapshot": 0,
+    "tree-a": 0,
+    "clones": 0,
+    "audit-final-d": 0,
+    "audit-final-e": 0,
+    "audit-final-a": 0,
+    "hardening-reproduction": 3,
+    "common-probe": 1,
+    "audit-final-pa": 0,
+    "audit-final-pb": 0,
+    "audit-final-pc": 0
+  },
+  "errors": [],
+  "providersStopped": true,
+  "registeredRoots": [
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\cr",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\a",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\b",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\d",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\e",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hpartial-zero",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hpartial-short",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hjunction",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmarker",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-outsideblob",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-digestmismatch",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-duplicate",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-prefix",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-outsidelink",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pa",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pb",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pc"
+  ],
+  "readerExitAfterProviderKill": 0,
+  "holdersAliveBeforeKill": [
+    true,
+    true
+  ],
+  "holderExitCodes": [
+    -1,
+    -1
+  ],
+  "unregister": {
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\cr": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\a": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\b": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\d": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\e": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hpartial-zero": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hpartial-short": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hjunction": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmarker": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-outsideblob": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-digestmismatch": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-duplicate": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-prefix": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\hmanifest-outsidelink": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pa": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pb": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-98e3201d96e646df828ec13371361050\\pc": "{\"unregister\":\"00000000\"}"
+  }
+}

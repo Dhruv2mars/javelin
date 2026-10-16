@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { userInfo } from 'node:os';
+
 
 const [owned, evidence, phase] = process.argv.slice(2);
 assert.equal(process.platform, 'win32');
@@ -71,7 +71,11 @@ async function protection(target, file, container) {
   const before = await fs.readFile(file);
   const attrib = run(['attrib.exe', '-R', file], target, true);
   const after = run(['attrib.exe', file], target, true);
-  const grant = run(['icacls.exe', file, '/grant', `${userInfo().username}:F`], target, true);
+  const identity = run(['whoami.exe', '/user', '/fo', 'csv', '/nh'], target);
+  const sid = identity.stdout.match(/S-1-5-[0-9-]+/)?.[0];
+  assert.ok(sid, 'actual token SID required');
+  const grant = run(['icacls.exe', file, '/grant', `*${sid}:F`], target, true);
+  result.evidence.actualGranteeSID = sid;
   const owner = run(['takeown.exe', '/f', file], target, true);
   const checks = {
     attributeStillReadOnly: after.stdout.slice(0, Math.max(0, after.stdout.toLowerCase().indexOf(file.toLowerCase()))).includes('R'),
