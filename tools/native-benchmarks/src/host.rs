@@ -35,17 +35,34 @@ fn grep_first(text: Value, key: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// The one mount-table line for the device that holds the work directory.
+/// The mount-table line for the mountpoint df reports for the work directory.
 fn mount_entry(df: &Value, mounts: Value) -> Value {
-    let device = df
-        .as_str()
-        .and_then(|t| t.lines().nth(1))
-        .and_then(|l| l.split_whitespace().next());
-    match (device, mounts.as_str()) {
-        (Some(device), Some(table)) => table
+    let mountpoint = df.as_str().and_then(|t| t.lines().nth(1)).and_then(|line| {
+        let mut rest = line.trim_start();
+        for _ in 0..5 {
+            rest = rest.split_once(char::is_whitespace)?.1.trim_start();
+        }
+        (!rest.is_empty()).then_some(rest)
+    });
+    match (mountpoint, mounts.as_str()) {
+        (Some(mountpoint), Some(table)) => table
             .lines()
-            .find(|l| l.starts_with(&format!("{device} ")))
-            .map(|l| json!(l))
+            .find(|line| {
+                let path = if let Some((_, rest)) = line.split_once(" on ") {
+                    rest.rsplit_once(" (").map(|(path, _)| path)
+                } else {
+                    line.split_whitespace().nth(1)
+                };
+                path.is_some_and(|path| {
+                    // Linux mount-table escapes; decode backslash last to avoid decoding twice.
+                    path.replace("\\040", " ")
+                        .replace("\\011", "\t")
+                        .replace("\\012", "\n")
+                        .replace("\\134", "\\")
+                        == mountpoint
+                })
+            })
+            .map(|line| json!(line))
             .unwrap_or(Value::Null),
         _ => Value::Null,
     }
@@ -184,6 +201,39 @@ pub fn peak_rss_bytes() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mount_entry_uses_the_reported_mountpoint() {
+        let df = json!(
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/root 1000 100 900 10% /work space\n"
+        );
+        let mounts = json!(
+            "/dev/root / ext4 rw,nobarrier 0 0\n/dev/root /work\\040space ext4 rw,sync 0 0\n"
+        );
+        assert_eq!(
+            mount_entry(&df, mounts),
+            json!("/dev/root /work\\040space ext4 rw,sync 0 0")
+        );
+    }
+
+    #[test]
+    fn mount_entry_handles_bsd_paths_backslashes_and_missing_mounts() {
+        let df = json!(
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 1000 100 900 10% /Volumes/bench work\n"
+        );
+        let expected = "/dev/disk3s1 on /Volumes/bench work (apfs, local)";
+        let mounts = json!(format!("/dev/disk3s1 on / (apfs, read-only)\n{expected}\n"));
+        assert_eq!(mount_entry(&df, mounts), json!(expected));
+        assert_eq!(
+            mount_entry(&df, json!("/dev/disk3s1 on / (apfs)\n")),
+            Value::Null
+        );
+        let df = json!(
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/root 1000 100 900 10% /work\\040literal\n"
+        );
+        let expected = "/dev/root /work\\134040literal ext4 rw 0 0";
+        assert_eq!(mount_entry(&df, json!(expected)), json!(expected));
+    }
 
     #[test]
     fn disk_probe_reports_missing_or_incomplete_traversal() {

@@ -349,6 +349,40 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
             by_content.entry(c).or_default().push(o);
         }
     }
+    let pass = |op: &str| {
+        let mut rows: Vec<_> = samples
+            .iter()
+            .copied()
+            .filter(|s| s.scenario == "ingest" && s.op == op)
+            .collect();
+        rows.sort_by_key(|s| s.index);
+        rows
+    };
+    let first_pass = pass("put_blob");
+    let duplicate_pass = pass("put_blob_duplicate");
+    let files = run["params"]["files"].as_u64().unwrap_or(0);
+    let complete = files > 0
+        && first_pass.len() as u64 == files
+        && duplicate_pass.len() as u64 == files
+        && inventory["ingest"]["files"].as_u64() == Some(files)
+        && first_pass
+            .iter()
+            .zip(&duplicate_pass)
+            .enumerate()
+            .all(|(i, (a, b))| {
+                a.index == i as u64
+                    && b.index == i as u64
+                    && a.attempt == 0
+                    && b.attempt == 0
+                    && a.outcome == "ok"
+                    && b.outcome == "ok"
+                    && a.content.as_deref() == Some(format!("file:{i}").as_str())
+                    && a.content == b.content
+                    && a.bytes.is_some()
+                    && a.bytes == b.bytes
+                    && a.object.is_some()
+                    && a.object == b.object
+            });
     let stable = by_content
         .values()
         .all(|ids| ids.windows(2).all(|w| w[0] == w[1]));
@@ -359,10 +393,14 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         .collect();
     out.push(check(
         "ingest_ids_stable_and_inventoried",
-        stable && !by_content.is_empty() && inventory["ingest"]["unique_objects"] == unique.len(),
+        complete
+            && stable
+            && !by_content.is_empty()
+            && inventory["ingest"]["unique_objects"] == unique.len(),
         format!(
-            "{} contents, {} unique objects",
-            by_content.len(),
+            "{} first puts, {} duplicate puts, {files} expected per pass; {} unique objects",
+            first_pass.len(),
+            duplicate_pass.len(),
             unique.len()
         ),
     ));
@@ -373,12 +411,22 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         .filter(|s| s.scenario == "history" && s.op == "compare_and_advance")
         .collect();
     let sequential = hist.iter().enumerate().all(|(n, s)| {
-        s.outcome == "accepted" && s.result == Some(n as u64 + 1) && s.expected == Some(n as u64)
+        s.outcome == "accepted"
+            && s.index == n as u64 + 1
+            && s.attempt == 0
+            && s.result == Some(n as u64 + 1)
+            && s.expected == Some(n as u64)
     });
     out.push(check(
         "history_advances_sequential",
-        sequential && !hist.is_empty(),
-        format!("{} advances", hist.len()),
+        sequential
+            && !hist.is_empty()
+            && Some(hist.len() as u64) == run["params"]["history"].as_u64(),
+        format!(
+            "{} advances, {} expected",
+            hist.len(),
+            run["params"]["history"]
+        ),
     ));
 
     // Layers: every capture applied; clone storage is not proportional to the shared payload.
@@ -874,6 +922,35 @@ mod tests {
             checks.iter().any(|c| c.name == name && !c.ok),
             "missing failure: {name}"
         );
+    }
+
+    #[test]
+    fn ingest_requires_both_complete_passes() {
+        for tamper in ["duplicate_pass", "original_index", "repeated_index"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            match tamper {
+                "duplicate_pass" => records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "ingest" && s.op == "put_blob_duplicate")),
+                "original_index" => records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "ingest" && s.op == "put_blob" && s.index == 0)),
+                "repeated_index" => {
+                    let Record::Sample(s) = records.iter_mut().find(|r| matches!(r, Record::Sample(s) if s.scenario == "ingest" && s.op == "put_blob_duplicate" && s.index == 1)).unwrap() else { unreachable!() };
+                    s.index = 0;
+                }
+                _ => unreachable!()
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "ingest_ids_stable_and_inventoried");
+        }
+    }
+
+    #[test]
+    fn history_requires_full_configured_advance_count() {
+        let tmp = copied_run("ci-run-1");
+        let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+        let last = records.iter().rposition(|r| matches!(r, Record::Sample(s) if s.scenario == "history" && s.op == "compare_and_advance")).unwrap();
+        records.remove(last);
+        save(tmp.path(), &records);
+        assert_rejected(tmp.path(), "history_advances_sequential");
     }
 
     #[test]

@@ -527,7 +527,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
             finals.insert(key, s.clone());
         }
     }
-    let before = dir_digest(&dir.join(".javelin"));
+    let before = dir_digest(&dir.join(".javelin"))?;
     let mut first_manifests = Vec::new();
     for (operation, fin) in &finals {
         let manifest = ObjectId::parse(fin.manifest.as_deref().unwrap())?;
@@ -556,7 +556,7 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
         .into();
         ctx.push(s);
     }
-    let unchanged = before == dir_digest(&dir.join(".javelin"));
+    let unchanged = before == dir_digest(&dir.join(".javelin"))?;
     ctx.push(Sample {
         scenario: ctx.name.clone(),
         op: "replay_database_unchanged".into(),
@@ -619,21 +619,21 @@ pub fn run(ctx: &mut Ctx) -> R<()> {
 }
 
 /// Hash of every repository file; proves replays do not modify stored bytes.
-fn dir_digest(dir: &Path) -> String {
-    let mut names: Vec<_> = std::fs::read_dir(dir)
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
+fn dir_digest(dir: &Path) -> std::io::Result<String> {
+    let mut names = std::fs::read_dir(dir)?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
     names.sort();
     let mut all = String::new();
     for name in names {
-        let bytes = std::fs::read(&name).unwrap_or_default();
+        let bytes = std::fs::read(&name)?;
         all.push_str(&format!(
             "{}:{};",
             name.file_name().unwrap().to_string_lossy(),
             sha256_hex(&bytes)
         ));
     }
-    sha256_hex(all.as_bytes())
+    Ok(sha256_hex(all.as_bytes()))
 }
 
 /// Builds an accepted history before the barrier so each contended advance has a
@@ -742,4 +742,46 @@ fn baseline(ctx: &mut Ctx, repo: &mut Repository, mut head: u64, out: &mut Vec<S
         head += 1;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_digest_input_must_not_look_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(dir_digest(&tmp.path().join("missing")).is_err());
+        let before = dir_digest(&empty).unwrap();
+        let file = empty.join("file");
+        std::fs::write(&file, b"content").unwrap();
+        assert_ne!(before, dir_digest(&empty).unwrap());
+        assert_eq!(dir_digest(&empty).unwrap(), dir_digest(&empty).unwrap());
+        std::fs::create_dir(empty.join("not-a-file")).unwrap();
+        assert!(dir_digest(&empty).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn digest_propagates_directory_and_file_permission_errors() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("store");
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("data");
+        std::fs::write(&file, b"content").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o0)).unwrap();
+        let unreadable_file = dir_digest(&dir);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(unreadable_file.is_err());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o0)).unwrap();
+        let unreadable_dir = dir_digest(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(unreadable_dir.is_err());
+    }
 }
