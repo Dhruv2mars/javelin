@@ -1,0 +1,585 @@
+{
+  "verdict": "NOT VERIFIED",
+  "sourceSHA": "0b6e757d3feb3f994f8f4d3e2e9ffccf90e8e824",
+  "identity": {
+    "administrator": false,
+    "name": "runnervmgnbhw\\jvsde9e3c3e9af8",
+    "sid": "S-1-5-21-3213014087-2684668049-2838998412-1003"
+  },
+  "commands": [
+    {
+      "exitCode": 0,
+      "label": "create-hpartial-zero",
+      "stdout": "{\"hr\":\"00000000\",\"entryHr\":\"00000000\",\"processed\":1,\"size\":4096}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 7352,
+      "stderr": "WINDOWS_JOB parent=6824 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "placeholder",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+        "partial.bin",
+        "4096",
+        "bytes.bin"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "move-hpartial-zero",
+      "stdout": "{\"operation\":\"move\",\"ok\":true,\"win32\":0}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 2764,
+      "stderr": "WINDOWS_JOB parent=7864 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "move",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\partial.bin",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\moved.bin"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "state-hpartial-zero",
+      "stdout": "{\"entries\":[{\"path\":\"bytes.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":12288,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold-file.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"delete.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":13,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir2\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir3\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"inside-link\",\"attributes\":1056,\"reparseTag\":2684354572,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"main.c\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":90,\"allocatedBytes\":0,\"error\":0},{\"path\":\"moved.bin\",\"attributes\":4199968,\"reparseTag\":2415919130,\"placeholderState\":49,\"logicalBytes\":4096,\"allocatedBytes\":0,\"error\":0},{\"path\":\"notes.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":1280,\"allocatedBytes\":0,\"error\":0},{\"path\":\"README.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":17,\"allocatedBytes\":0,\"error\":0},{\"path\":\"slow.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":9000,\"allocatedBytes\":0,\"error\":0},{\"path\":\"value.h\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0}]}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 7616,
+      "stderr": "WINDOWS_JOB parent=5044 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "audit",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "label": "read-hpartial-zero",
+      "stdout": "{\"sizeKnown\":true,\"logicalBytes\":4096,\"readBytes\":0,\"readError\":362}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 1700,
+      "stderr": "WINDOWS_JOB parent=7688 timedOut=0 exit=1 activeAfterTermination=0\r\n",
+      "argv": [
+        "read",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\moved.bin"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "hpartial-zero",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 556,
+      "stderr": "sparse proof error: uncertain partial file cannot be captured\r\nWINDOWS_JOB parent=6684 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-hpartial-zero"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "create-hpartial-resident",
+      "stdout": "{\"hr\":\"00000000\",\"entryHr\":\"00000000\",\"processed\":1,\"size\":16384}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 1816,
+      "stderr": "WINDOWS_JOB parent=8028 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "placeholder",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+        "partial.bin",
+        "16384",
+        "bytes.bin"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "move-hpartial-resident",
+      "stdout": "{\"operation\":\"move\",\"ok\":true,\"win32\":0}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 5256,
+      "stderr": "WINDOWS_JOB parent=96 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "move",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\partial.bin",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\moved.bin"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "hydrate-hpartial-resident",
+      "stdout": "{\"hr\":\"00000000\",\"requested\":4096}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 6496,
+      "stderr": "WINDOWS_JOB parent=8160 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "hydrate",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\moved.bin",
+        "4096"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "state-hpartial-resident",
+      "stdout": "{\"entries\":[{\"path\":\"bytes.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":12288,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold-file.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"delete.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":13,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir2\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir3\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"inside-link\",\"attributes\":1056,\"reparseTag\":2684354572,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"main.c\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":90,\"allocatedBytes\":0,\"error\":0},{\"path\":\"moved.bin\",\"attributes\":4199968,\"reparseTag\":2415919130,\"placeholderState\":49,\"logicalBytes\":16384,\"allocatedBytes\":65536,\"error\":0},{\"path\":\"notes.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":1280,\"allocatedBytes\":0,\"error\":0},{\"path\":\"README.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":17,\"allocatedBytes\":0,\"error\":0},{\"path\":\"slow.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":9000,\"allocatedBytes\":0,\"error\":0},{\"path\":\"value.h\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0}]}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 6068,
+      "stderr": "WINDOWS_JOB parent=332 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "audit",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "label": "read-hpartial-resident",
+      "stdout": "{\"sizeKnown\":true,\"logicalBytes\":16384,\"readBytes\":0,\"readError\":362}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 4224,
+      "stderr": "WINDOWS_JOB parent=2296 timedOut=0 exit=1 activeAfterTermination=0\r\n",
+      "argv": [
+        "read",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\moved.bin"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "hpartial-resident",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 4772,
+      "stderr": "sparse proof error: uncertain partial file cannot be captured\r\nWINDOWS_JOB parent=7948 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-hpartial-resident"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "junction",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 3676,
+      "stderr": "sparse proof error: unsupported reparse tag\r\nWINDOWS_JOB parent=1104 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-junction"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "audit-junction",
+      "stdout": "{\"entries\":[{\"path\":\"bytes.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":12288,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold-file.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"delete.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":13,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir2\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir3\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"inside-link\",\"attributes\":1056,\"reparseTag\":2684354572,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"main.c\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":90,\"allocatedBytes\":0,\"error\":0},{\"path\":\"notes.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":1280,\"allocatedBytes\":0,\"error\":0}",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 6412,
+      "stderr": "sparse proof error: unsupported reparse tag\r\nWINDOWS_JOB parent=5420 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "audit",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "unlink-junction",
+      "stdout": "{\"removed\":true,\"error\":0}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hardening-control.exe",
+      "pid": 2004,
+      "stderr": "WINDOWS_JOB parent=5820 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "unlink-directory",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\\outside"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "outside-link",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 3008,
+      "stderr": "sparse proof error: path alias\r\nWINDOWS_JOB parent=1864 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-outside-link"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "snapshot-mode",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 6400,
+      "stderr": "sparse proof error: capture supports base-served roots only\r\nWINDOWS_JOB parent=2640 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-snapshot-mode"
+      ]
+    },
+    {
+      "exitCode": 5,
+      "label": "binding-self-grant",
+      "stdout": "Successfully processed 0 files; Failed processing 1 files\r\n",
+      "executable": "C:\\Windows\\System32\\icacls.exe",
+      "pid": 2644,
+      "stderr": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt: Access is denied.\r\nWINDOWS_JOB parent=5576 timedOut=0 exit=5 activeAfterTermination=0\r\n",
+      "argv": [
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt",
+        "/grant",
+        "*S-1-5-21-3213014087-2684668049-2838998412-1003:F"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "binding-owner",
+      "stdout": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt NT AUTHORITY\\SYSTEM:(I)(F)\n                                                                                             BUILTIN\\Administrators:(I)(F)\n                                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(I)(RX)\n\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+      "executable": "C:\\Windows\\System32\\icacls.exe",
+      "pid": 5180,
+      "stderr": "WINDOWS_JOB parent=6164 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "provider-active",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 6276,
+      "stderr": "sparse proof error: root provider or capture is active\r\nWINDOWS_JOB parent=6008 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-provider-active"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "unsealed-capture",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 3916,
+      "stderr": "sparse proof error: capture requires administrator-protected quiescent objects\r\nWINDOWS_JOB parent=6172 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\unsealed"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "label": "retry",
+      "stdout": "{\"privateCopies\":1,\"references\":13,\"deletions\":0,\"entries\":20}\r\n",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 5540,
+      "stderr": "WINDOWS_JOB parent=7380 timedOut=0 exit=0 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-retry"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "retry",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 2924,
+      "stderr": "sparse proof error: capture output or staging already exists\r\nWINDOWS_JOB parent=3740 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-retry"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "oversize",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 5076,
+      "stderr": "sparse proof error: bounded file metadata\r\nWINDOWS_JOB parent=5460 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "capture",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\fixed-oversize"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "entry-budget",
+      "stdout": "{\"entries\":[{\"path\":\"bytes.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":12288,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold-file.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"delete.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":13,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir2\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir3\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-1\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-10\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-100\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-101\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-102\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-103\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-104\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-105\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-106\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-107\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-108\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-109\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-11\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-110\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-111\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-112\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-113\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-114\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-115\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-116\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-117\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-118\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-119\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-12\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-120\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-121\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-122\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-123\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-124\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-125\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-126\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-127\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-128\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-129\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-13\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-14\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-15\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-16\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-17\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-18\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-19\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-2\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-20\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-21\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-22\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-23\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-24\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-25\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-26\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-27\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-28\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-29\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-3\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-30\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-31\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-32\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-33\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-34\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-35\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-36\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-37\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-38\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-39\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-4\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-40\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-41\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-42\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-43\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-44\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-45\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-46\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-47\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-48\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-49\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-5\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-50\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-51\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-52\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-53\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-54\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-55\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-56\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-57\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-58\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-59\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-6\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-60\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-61\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-62\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-63\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-64\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-65\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-66\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-67\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-68\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-69\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-7\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-70\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-71\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-72\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-73\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-74\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-75\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-76\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-77\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-78\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-79\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-8\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-80\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-81\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-82\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-83\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-84\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-85\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-86\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-87\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-88\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-89\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-9\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-90\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"extra-91\",\"attributes\":32,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0}",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 6876,
+      "stderr": "sparse proof error: walk bound\r\nWINDOWS_JOB parent=4416 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "audit",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "depth-budget",
+      "stdout": "{\"entries\":[{\"path\":\"bytes.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":12288,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"cold-file.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"delete.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":13,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir2\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"dir3\",\"attributes\":4199440,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"inside-link\",\"attributes\":1056,\"reparseTag\":2684354572,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"main.c\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":90,\"allocatedBytes\":0,\"error\":0},{\"path\":\"notes.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":1280,\"allocatedBytes\":0,\"error\":0},{\"path\":\"README.txt\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":17,\"allocatedBytes\":0,\"error\":0},{\"path\":\"slow.bin\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":9000,\"allocatedBytes\":0,\"error\":0},{\"path\":\"value.h\",\"attributes\":4199968,\"reparseTag\":2415935514,\"placeholderState\":57,\"logicalBytes\":16,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0},{\"path\":\"x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\\\\x\",\"attributes\":16,\"reparseTag\":0,\"placeholderState\":0,\"logicalBytes\":0,\"allocatedBytes\":0,\"error\":0}",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 2684,
+      "stderr": "sparse proof error: path bound\r\nWINDOWS_JOB parent=2092 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "audit",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-escape",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 5600,
+      "stderr": "sparse proof error: invalid blob digest name\r\nWINDOWS_JOB parent=7872 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-escape",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-absolute",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 8120,
+      "stderr": "sparse proof error: invalid path character\r\nWINDOWS_JOB parent=5488 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-absolute",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-ads",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 8084,
+      "stderr": "sparse proof error: invalid path character\r\nWINDOWS_JOB parent=5500 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-ads",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-missing",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 2384,
+      "stderr": "open-object path=D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-missing\\blobs\\ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff error=2\r\nsparse proof error: open bounded object\r\nWINDOWS_JOB parent=5124 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-missing",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-mismatch",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 7644,
+      "stderr": "sparse proof error: blob digest mismatch\r\nWINDOWS_JOB parent=6664 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-mismatch",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-duplicate",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 2724,
+      "stderr": "sparse proof error: duplicate destination\r\nWINDOWS_JOB parent=5748 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-duplicate",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-prefix",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 4232,
+      "stderr": "sparse proof error: view prefix conflict\r\nWINDOWS_JOB parent=7712 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-prefix",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-malformed",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 3888,
+      "stderr": "sparse proof error: unknown snapshot record\r\nWINDOWS_JOB parent=348 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-malformed",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-base",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 7416,
+      "stderr": "sparse proof error: invalid base reference\r\nWINDOWS_JOB parent=4352 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-base",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base.ready"
+      ]
+    },
+    {
+      "exitCode": 2,
+      "label": "manifest-link",
+      "stdout": "",
+      "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+      "pid": 7520,
+      "stderr": "sparse proof error: path alias\r\nWINDOWS_JOB parent=7084 timedOut=0 exit=2 activeAfterTermination=0\r\n",
+      "argv": [
+        "serve",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-link",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link.stop",
+        "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link.ready"
+      ]
+    }
+  ],
+  "checks": [
+    "create-hpartial-zero child job empty",
+    "hpartial-zero placeholder exists",
+    "move-hpartial-zero child job empty",
+    "hpartial-zero renamed",
+    "state-hpartial-zero child job empty",
+    "hpartial-zero partial state established",
+    "read-hpartial-zero child job empty",
+    "hpartial-zero real read failure established",
+    "hpartial-zero child job empty",
+    "hpartial-zero refused for expected reason",
+    "hpartial-zero selected no snapshot",
+    "hpartial-zero left no staging",
+    "create-hpartial-resident child job empty",
+    "hpartial-resident placeholder exists",
+    "move-hpartial-resident child job empty",
+    "hpartial-resident renamed",
+    "hydrate-hpartial-resident child job empty",
+    "state-hpartial-resident child job empty",
+    "hpartial-resident partial state established",
+    "read-hpartial-resident child job empty",
+    "hpartial-resident real read failure established",
+    "hpartial-resident child job empty",
+    "hpartial-resident refused for expected reason",
+    "hpartial-resident selected no snapshot",
+    "hpartial-resident left no staging",
+    "junction child job empty",
+    "junction refused for expected reason",
+    "junction selected no snapshot",
+    "junction left no staging",
+    "audit-junction child job empty",
+    "audit refuses junction before outside entry",
+    "unlink-junction child job empty",
+    "outside fixture unchanged",
+    "outside-link child job empty",
+    "outside-link refused for expected reason",
+    "outside-link selected no snapshot",
+    "outside-link left no staging",
+    "snapshot-mode child job empty",
+    "snapshot-mode refused for expected reason",
+    "snapshot-mode selected no snapshot",
+    "snapshot-mode left no staging",
+    "binding-self-grant child job empty",
+    "actual SID cannot grant itself config writes",
+    "binding-owner child job empty",
+    "protected binding ACL readback recorded",
+    "provider-active child job empty",
+    "active provider capture refused",
+    "unsealed-capture child job empty",
+    "unprotected active-edit mode refused",
+    "retry child job empty",
+    "quiescent capture succeeds after refusal",
+    "retry child job empty",
+    "retry cannot replace selected snapshot",
+    "previous snapshot unchanged after refusal",
+    "oversize child job empty",
+    "oversize refused for expected reason",
+    "oversize selected no snapshot",
+    "oversize left no staging",
+    "entry-budget child job empty",
+    "entry budget refuses bounded walk",
+    "depth-budget child job empty",
+    "path depth budget refuses bounded walk",
+    "manifest-escape child job empty",
+    "manifest escape refused before exposure",
+    "manifest-absolute child job empty",
+    "manifest absolute refused before exposure",
+    "manifest-ads child job empty",
+    "manifest ads refused before exposure",
+    "manifest-missing child job empty",
+    "manifest missing refused before exposure",
+    "manifest-mismatch child job empty",
+    "manifest mismatch refused before exposure",
+    "manifest-duplicate child job empty",
+    "manifest duplicate refused before exposure",
+    "manifest-prefix child job empty",
+    "manifest prefix refused before exposure",
+    "manifest-malformed child job empty",
+    "manifest malformed refused before exposure",
+    "manifest-base child job empty",
+    "manifest base refused before exposure",
+    "manifest-link child job empty",
+    "manifest link refused before exposure"
+  ],
+  "error": "Exception calling \"WriteAllBytes\" with \"2\" argument(s): \"Value cannot be null. (Parameter 'bytes')\""
+}

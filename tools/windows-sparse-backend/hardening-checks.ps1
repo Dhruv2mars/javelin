@@ -121,7 +121,9 @@ try {
     foreach ($label in $rows.Keys) {
         $snapshot = Join-Path $Owned "staging/invalid-$label"
         [IO.Directory]::CreateDirectory((Join-Path $snapshot 'blobs')) | Out-Null
-        [IO.File]::WriteAllBytes((Join-Path $snapshot "blobs/$digest"), $(if ($label -eq 'truncated') { [byte[]]::new(0) } else { $payload }))
+        $blobContent = $payload
+        if ($label -eq 'truncated') { $blobContent = [byte[]]::new(0) }
+        [IO.File]::WriteAllBytes((Join-Path $snapshot "blobs/$digest"), $blobContent)
         [IO.File]::WriteAllBytes((Join-Path $snapshot "blobs/$('0' * 64)"), $payload)
         [IO.File]::WriteAllText((Join-Path $snapshot 'manifest.tsv'), $rows[$label], [Text.UTF8Encoding]::new($false))
         $name = "hmanifest-$label"; $root = Join-Path $Owned $name

@@ -1,0 +1,107 @@
+{
+  "ownedRoot": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d",
+  "removed": true,
+  "error": null,
+  "roots": {
+    "a": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "b": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "d": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "e": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "cr": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "pa": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "pb": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "pc": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "pr": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hactive": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hbudget": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hjunction": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-absolute": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-ads": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-base": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-duplicate": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-escape": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-link": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-malformed": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-mismatch": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-missing": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmanifest-prefix": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hmarker": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hpartial-resident": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    },
+    "hpartial-zero": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": true
+    }
+  }
+}

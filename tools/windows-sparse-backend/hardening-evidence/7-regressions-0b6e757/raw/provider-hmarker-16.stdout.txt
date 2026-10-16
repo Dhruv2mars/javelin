@@ -1,0 +1,3 @@
+registered root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hmarker rootPlaceholders=13
+started root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hmarker entries=21
+stopped root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hmarker
