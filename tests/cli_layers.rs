@@ -317,6 +317,7 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
         let help = invoke(root.path(), &args);
         assert!(help.status.success());
         let help = String::from_utf8(help.stdout).unwrap();
+        assert!(help.starts_with("Javelin native repository foundation\n"));
         for text in [
             "create",
             "--checkpoint",
