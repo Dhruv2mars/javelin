@@ -15,7 +15,7 @@ fn snapshot(repo: &mut Repository, bytes: &[u8]) -> (ObjectId, ObjectId) {
     let blob = repo.put_blob(bytes).unwrap();
     let manifest = Manifest::new([(
         RepoPath::parse("src/data.bin").unwrap(),
-        FileEntry {
+        FileEntry::Regular {
             content: blob,
             executable: true,
         },
@@ -93,7 +93,7 @@ fn path_and_manifest_boundaries() {
         assert!(OperationId::parse(id).is_err());
     }
     assert!(VersionNumber::new(u64::MAX).is_err());
-    let entry = FileEntry {
+    let entry = FileEntry::Regular {
         content: ObjectId::parse(&"0".repeat(64)).unwrap(),
         executable: false,
     };
@@ -413,7 +413,7 @@ fn manifest_preparation_rejects_missing_or_wrong_kind_references() {
     for content in [initial, ObjectId::parse(&"0".repeat(64)).unwrap()] {
         let manifest = Manifest::new([(
             RepoPath::parse("file").unwrap(),
-            FileEntry {
+            FileEntry::Regular {
                 content,
                 executable: false,
             },
@@ -427,6 +427,96 @@ fn manifest_preparation_rejects_missing_or_wrong_kind_references() {
     );
     assert_eq!(repo.check().unwrap().objects, 1);
     assert_eq!(repo.check().unwrap().attempts, 0);
+}
+
+#[test]
+fn stale_only_candidate_graph_corruption_is_rejected_by_every_history_validator() {
+    for damage_manifest in [false, true] {
+        for delete in [false, true] {
+            let root = TempDir::new().unwrap();
+            let mut repo = Repository::init(root.path()).unwrap();
+            let (_, accepted) = snapshot(&mut repo, b"accepted");
+            let (blob, stale) = snapshot(&mut repo, b"only stale");
+            repo.compare_and_advance(&op("accepted"), version(0), accepted)
+                .unwrap();
+            repo.compare_and_advance(&op("stale"), version(0), stale)
+                .unwrap();
+            let db = raw(&root);
+            db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER objects_no_UPDATE; DROP TRIGGER objects_no_DELETE;").unwrap();
+            let damaged = if damage_manifest { stale } else { blob };
+            if delete {
+                db.execute("DELETE FROM objects WHERE id=?1", [damaged.to_string()])
+                    .unwrap();
+            } else {
+                db.execute(
+                    "UPDATE objects SET bytes=x'00' WHERE id=?1",
+                    [damaged.to_string()],
+                )
+                .unwrap();
+            }
+            assert!(repo.history().is_err());
+            assert!(repo.version(version(0)).is_err());
+            assert!(Repository::init(root.path()).is_err());
+            assert!(
+                repo.compare_and_advance(&op("new"), version(1), accepted)
+                    .is_err()
+            );
+            assert!(
+                repo.compare_and_advance(&op("stale"), version(0), stale)
+                    .is_err()
+            );
+            assert!(repo.check().is_err());
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM attempts", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM versions", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                2
+            );
+        }
+    }
+}
+
+#[test]
+fn invalid_stale_outcome_ordering_is_rejected_without_new_worlds_or_attempts() {
+    for expected in [0, 1] {
+        let root = TempDir::new().unwrap();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let (_, manifest) = snapshot(&mut repo, b"data");
+        repo.compare_and_advance(&op("accepted"), version(0), manifest)
+            .unwrap();
+        repo.compare_and_advance(&op("stale"), version(0), manifest)
+            .unwrap();
+        let db = raw(&root);
+        db.execute_batch("DROP TRIGGER attempts_no_UPDATE;")
+            .unwrap();
+        db.execute(
+            "UPDATE attempts SET expected=?1,result=?1 WHERE id='stale'",
+            [expected],
+        )
+        .unwrap();
+        assert!(matches!(repo.history(), Err(Error::CorruptRepository(_))));
+        assert!(repo.version(version(0)).is_err());
+        assert!(Repository::init(root.path()).is_err());
+        assert!(
+            repo.compare_and_advance(&op("new"), version(1), manifest)
+                .is_err()
+        );
+        assert!(repo.check().is_err());
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM attempts", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM versions", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
 }
 
 #[test]

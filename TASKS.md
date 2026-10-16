@@ -1149,6 +1149,50 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
 - Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
 
+## Workstream: native Layer checkpoints
+
+Owns one draft PR targeting `chore/native-cross-platform-ci`. Done is the bounded
+API/process outcome in `docs/layer-checkpoints.md`, including falsifiable sparse
+sharing, recovery, concurrency and corruption evidence. Filesystem binding and
+automatic capture remain required follow-on work. Do not change probes/workflows.
+
+- [x] Read instructions, latest hub contract, accepted core and source ownership.
+- [x] Ground the store and compare complete sparse deltas with checkpoint chains.
+- [x] Create planning commit and immediately register the single draft PR [#8](https://github.com/Dhruv2mars/javelin/pull/8).
+- [x] Implement typed Layer bases, sparse checkpoints, clone, head updates and discard.
+- [x] Add core stale-manifest/outcome regressions and Layer behavioral/process checks.
+- [x] Run all foundational tests, formatting, Clippy and release build locally.
+- [x] Inspect our exact source's inherited three-OS CI and retained logs.
+- [x] Report exact source, artifacts, verdict and follow-on work to the hub.
+
+Original native API/process checks passed 43 tests, one ignored actor, on Darwin arm64
+Rust 1.93.0. The documented caller also ran against the production release library
+and release CLI integrity inspection. Sparse sharing and limits are recorded in
+`docs/layer-checkpoints.md`. Exact source `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3`
+passed native CI run [38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999).
+Downloaded and inspected all three six-file log artifacts: Linux/macOS 43 tests,
+Windows 41 tests, one ignored actor each, all 14 process checks on every runner.
+The accepted PR6 base is `0c8582ddcb175d7bd4d2752e73f795651f810a6f`.
+That original run predates the evidence repair below. Filesystem binding and
+autosave remain follow-on.
+
+- [x] Independently prove canonical delta normalization and byte encoding guards.
+- [x] Cover valid-graph binding tamper, stale-only recovery, exact-path deletion and opaque IDs.
+- [x] Restore each mutation, run corrected local/hosted checks and report exact source.
+- [x] Record hub acceptance, corrected hosted proof and known limits; docs-only handoff.
+
+Corrected code/tests `0a75b1a26e4ca3fbdf7f93a5ae7162c2e0f73b61` pass 52 local
+tests in debug/release, one ignored actor, plus fmt/Clippy/release build and the
+production-library example. Independent normalization/byte/candidate-base/discard
+guard removals fail the new targeted tests. The base scan overlaps accepted-attempt
+binding; its single removal retains rejection, while removal of both fails the test.
+Hub accepted exact source `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`. Corrected
+run [38468818530](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530)
+passed 52 Linux/macOS and 50 Windows tests, 14 process and 18 Layer checks each,
+plus fmt/Clippy/release. Fresh R2 review closed the guard gap with no material new
+bug. Ordinary paths, autosave, full Publish, Gate2 and GA remain unverified; the
+Linux binding unit starts from e56. Format/workflow/probes remain unchanged.
+
 ## Workstream: native repository foundation
 
 Owns one draft PR based on `chore/ga-build-plan`. Done means a fresh non-Git
