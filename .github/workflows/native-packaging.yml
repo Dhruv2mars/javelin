@@ -1,0 +1,213 @@
+name: Native development packages
+
+# Builds, packages, installs, and smokes the native CLI as a development / pre-GA
+# archive on three hosted operating systems. It publishes nothing: no release, tag,
+# registry, secret, or PATH change. Git appears only to check out source and read the
+# commit time for SOURCE_DATE_EPOCH; every command under test is Git-free.
+on:
+  pull_request:
+    paths:
+      - tools/native-packaging/**
+      - .github/workflows/native-packaging.yml
+      - Cargo.toml
+      - Cargo.lock
+      - LICENSE
+      - src/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: 1
+  PACK: cargo run --locked --quiet --manifest-path tools/native-packaging/Cargo.toml --
+
+jobs:
+  package:
+    name: Package / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout
+        # Developer setup: without this the Windows checkout rewrites sources to CRLF,
+        # so Cargo.lock, LICENSE, and the built bytes would differ from the commit.
+        run: git config --global core.autocrlf false
+
+      - name: Check out committed source
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          mkdir -p ci-logs
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy 2>&1 | tee ci-logs/toolchain-install.log
+
+      - name: Record runner, compiler, and source time
+        env:
+          CHECKED_OUT_COMMIT: ${{ steps.checkout.outputs.commit }}
+        run: |
+          # Developer setup: commit time only; nothing below runs Git.
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA=$CHECKED_OUT_COMMIT" >> "$GITHUB_ENV"
+          {
+            printf 'commit=%s\nrunner=%s\narchitecture=%s\nimage=%s\nimage_version=%s\n' "$CHECKED_OUT_COMMIT" "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" "$ImageVersion"
+            printf 'source_date_epoch=%s\n' "$(git log -1 --format=%ct)"
+            rustc --version --verbose
+            cargo --version
+          } 2>&1 | tee ci-logs/environment.log
+
+      - name: Check packager formatting and lint
+        run: |
+          cargo fmt --manifest-path tools/native-packaging/Cargo.toml -- --check 2>&1 | tee ci-logs/packager-format.log
+          cargo clippy --locked --all-targets --manifest-path tools/native-packaging/Cargo.toml -- -D warnings 2>&1 | tee ci-logs/packager-clippy.log
+
+      - name: Test packager against the real CLI
+        run: cargo test --locked --manifest-path tools/native-packaging/Cargo.toml -- --nocapture 2>&1 | tee ci-logs/packager-test.log
+
+      - name: Build release CLI
+        run: $PACK build --source . --out work/build 2>&1 | tee ci-logs/build.log
+
+      - name: Inspect binary platform requirements
+        run: |
+          bin=work/build/target/release/javelin
+          [ "$RUNNER_OS" = Windows ] && bin=$bin.exe
+          {
+            echo "# Informational: what the binary declares, not a tested minimum OS version."
+            case "$RUNNER_OS" in
+              macOS) file "$bin"; otool -l "$bin" | grep -A4 LC_BUILD_VERSION ;;
+              Linux) file "$bin"; ldd "$bin"; objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 ;;
+              Windows) echo "PE inspection not performed; minimum Windows version unconfirmed" ;;
+            esac
+          } 2>&1 | tee ci-logs/platform-inspection.log
+
+      - name: Package archive and checksum
+        run: $PACK package --build work/build --source . --source-sha "$SOURCE_SHA" --out work/dist 2>&1 | tee ci-logs/package.log
+
+      - name: Install into a fresh path and smoke through PATH
+        run: |
+          archive=$(find work/dist -maxdepth 1 -name 'javelin-development-*' ! -name '*.sha256' | head -1)
+          $PACK install --archive "$archive" --checksum "$archive.sha256" --dest work/install/javelin 2>&1 | tee ci-logs/install.log
+          $PACK smoke --bin-dir work/install/javelin/bin 2>&1 | tee ci-logs/smoke.log
+
+      - name: Reproducibility attempt (two builds, different directories)
+        run: |
+          $PACK repro --source . --work work/repro --report ci-logs/repro-report.json 2>&1 | tee ci-logs/repro.log
+          echo "packaged binary sha256:" | tee -a ci-logs/repro.log
+          grep -o '"binary_sha256": "[0-9a-f]*"' work/build/build-record.json | tee -a ci-logs/repro.log
+
+      - name: Retain package artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: native-package-${{ matrix.os }}
+          path: work/dist/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Retain logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: native-packaging-logs-${{ matrix.os }}-${{ github.run_attempt }}
+          path: |
+            ci-logs/
+            work/build/build-record.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  download-smoke:
+    name: Download smoke / ${{ matrix.os }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout
+        # Developer setup: without this the Windows checkout rewrites sources to CRLF,
+        # so Cargo.lock, LICENSE, and the built bytes would differ from the commit.
+        run: git config --global core.autocrlf false
+
+      - name: Check out committed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: |
+          mkdir -p ci-logs
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal 2>&1 | tee ci-logs/toolchain-install.log
+
+      - name: Download the packaged artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-package-${{ matrix.os }}
+          path: downloaded
+
+      - name: Verify checksum and extract with native tools (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd downloaded
+          find . -maxdepth 1 -type f -exec wc -c {} + | tee ../ci-logs/downloaded-files.log
+          if command -v sha256sum >/dev/null; then sha256sum -c ./*.sha256; else shasum -a 256 -c ./*.sha256; fi 2>&1 | tee ../ci-logs/native-checksum.log
+          fresh="$RUNNER_TEMP/native-extract"
+          mkdir "$fresh"
+          tar -xzf ./*.tar.gz -C "$fresh"
+          top=$(find "$fresh" -mindepth 1 -maxdepth 1 -type d | head -1)
+          echo "BIN_DIR=$top/bin" >> "$GITHUB_ENV"
+
+      - name: Verify checksum and extract with native tools (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem downloaded | Format-Table Name, Length | Out-String | Tee-Object -FilePath ci-logs/downloaded-files.log
+          $sum = Get-ChildItem downloaded -Filter *.sha256
+          $archive = Get-ChildItem downloaded -Filter *.zip
+          $expected = ((Get-Content $sum.FullName -Raw).Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 $archive.FullName).Hash.ToLower()
+          "expected=$expected actual=$actual" | Tee-Object -FilePath ci-logs/native-checksum.log
+          if ($expected -ne $actual) { throw "checksum mismatch" }
+          $fresh = Join-Path $env:RUNNER_TEMP 'native-extract'
+          Expand-Archive -Path $archive.FullName -DestinationPath $fresh
+          $top = (Get-ChildItem $fresh -Directory).Name
+          Add-Content -Path $env:GITHUB_ENV -Value "BIN_DIR=$fresh\$top\bin"
+
+      - name: Smoke the natively extracted binary through PATH
+        run: $PACK smoke --bin-dir "$BIN_DIR" 2>&1 | tee ci-logs/native-extract-smoke.log
+
+      - name: Install the same download with the packager and smoke it
+        run: |
+          archive=$(find downloaded -maxdepth 1 -name 'javelin-development-*' ! -name '*.sha256' | head -1)
+          $PACK install --archive "$archive" --checksum "$archive.sha256" --dest "$RUNNER_TEMP/packager-install/javelin" 2>&1 | tee ci-logs/packager-install.log
+          $PACK smoke --bin-dir "$RUNNER_TEMP/packager-install/javelin/bin" 2>&1 | tee ci-logs/packager-install-smoke.log
+
+      - name: Retain logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: native-download-smoke-logs-${{ matrix.os }}-${{ github.run_attempt }}
+          path: ci-logs/
+          retention-days: 14
+          if-no-files-found: warn
