@@ -2,6 +2,7 @@ use std::{fs, path::Path, time::Duration};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
+use sha2::Digest;
 
 use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
 
@@ -177,6 +178,51 @@ impl Repository {
 
     pub fn read_blob(&self, id: ObjectId) -> Result<Vec<u8>> {
         read_object(&self.conn, id, ObjectKind::Blob)
+    }
+
+    /// Streams and verifies the stored blob's kind and hash with fixed working memory.
+    /// Missing objects return false; damaged or wrong-kind objects return errors.
+    /// Work is linear in stored bytes. This does not validate any content graph.
+    pub fn has_blob(&self, id: ObjectId) -> Result<bool> {
+        self.has_object(id, ObjectKind::Blob)
+    }
+
+    /// Verifies stored manifest kind and hash only, using fixed working memory.
+    /// Does not check canonical encoding, references or symlink targets. A true
+    /// result is object-byte availability, not permission or readiness to publish.
+    pub fn has_manifest(&self, id: ObjectId) -> Result<bool> {
+        self.has_object(id, ObjectKind::Manifest)
+    }
+
+    fn has_object(&self, id: ObjectId, expected_kind: ObjectKind) -> Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let found = match verify_object_streamed(&tx, id, expected_kind) {
+            Ok(()) => true,
+            Err(Error::MissingObject(missing)) if missing == id => false,
+            Err(e) => return Err(e),
+        };
+        tx.commit()?;
+        Ok(found)
+    }
+
+    /// Verifies blob kind and hash. Refuses over-limit bytes before allocating
+    /// the output; an oversized refusal does not certify content integrity.
+    pub fn read_blob_bounded(&self, id: ObjectId, max_bytes: usize) -> Result<Vec<u8>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let bytes = read_object_bounded(&tx, id, ObjectKind::Blob, max_bytes)?;
+        tx.commit()?;
+        Ok(bytes)
+    }
+
+    /// Verifies manifest kind, hash and its own canonical encoding, without
+    /// reading referenced blobs. The limit caps encoded bytes, not parser heap.
+    /// Full graph validation remains in read_manifest and publication.
+    pub fn manifest_bytes_bounded(&self, id: ObjectId, max_bytes: usize) -> Result<Vec<u8>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let bytes = read_object_bounded(&tx, id, ObjectKind::Manifest, max_bytes)?;
+        Manifest::decode(&bytes).map_err(|_| Error::CorruptObject(id))?;
+        tx.commit()?;
+        Ok(bytes)
     }
 
     pub fn put_manifest(&mut self, manifest: &Manifest) -> Result<ObjectId> {
@@ -432,6 +478,70 @@ pub(crate) fn read_object(
         .optional()?
         .ok_or(Error::MissingObject(id))?;
     let kind = ObjectKind::decode(kind)?;
+    if ObjectId::hash(kind, &bytes) != id {
+        return Err(Error::CorruptObject(id));
+    }
+    if kind != expected_kind {
+        return Err(Error::WrongObjectKind(id));
+    }
+    Ok(bytes)
+}
+
+fn object_blob(conn: &Connection, id: ObjectId) -> Result<(ObjectKind, rusqlite::blob::Blob<'_>)> {
+    let (rowid, kind): (i64, i64) = conn
+        .query_row(
+            "SELECT rowid,kind FROM objects WHERE id=?1",
+            [id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?
+        .ok_or(Error::MissingObject(id))?;
+    let kind = ObjectKind::decode(kind)?;
+    let blob = conn.blob_open(rusqlite::MAIN_DB, c"objects", c"bytes", rowid, true)?;
+    Ok((kind, blob))
+}
+
+fn verify_object_streamed(
+    conn: &Connection,
+    id: ObjectId,
+    expected_kind: ObjectKind,
+) -> Result<()> {
+    let (kind, blob) = object_blob(conn, id)?;
+    let mut hash = ObjectId::hasher(kind);
+    let mut buffer = [0; 64 * 1024];
+    let mut offset = 0;
+    while offset < blob.len() {
+        let len = buffer.len().min(blob.len() - offset);
+        blob.read_at_exact(&mut buffer[..len], offset)?;
+        hash.update(&buffer[..len]);
+        offset += len;
+    }
+    if ObjectId::from_bytes(hash.finalize().into()) != id {
+        return Err(Error::CorruptObject(id));
+    }
+    if kind != expected_kind {
+        return Err(Error::WrongObjectKind(id));
+    }
+    Ok(())
+}
+
+fn read_object_bounded(
+    conn: &Connection,
+    id: ObjectId,
+    expected_kind: ObjectKind,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    let (kind, blob) = object_blob(conn, id)?;
+    let size = blob.len();
+    if size > max_bytes {
+        return Err(Error::ObjectTooLarge {
+            id,
+            size,
+            limit: max_bytes,
+        });
+    }
+    let mut bytes = vec![0; size];
+    blob.read_at_exact(&mut bytes, 0)?;
     if ObjectId::hash(kind, &bytes) != id {
         return Err(Error::CorruptObject(id));
     }
