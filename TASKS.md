@@ -1192,3 +1192,50 @@ history/init/advance after it, and a passing full suite at the corrected SHA.
 The corrected suite passes 26 tests, one ignored child-process entry point.
 Earlier completion evidence is superseded by the hub acceptance corrections;
 the corrected source and limits are documented in `docs/native-repository.md`.
+
+## Workstream: native cross-platform CI
+
+Owns only `.github/workflows/native.yml`, `docs/cross-platform-verification.md`, and
+this progress section. The single draft PR targets `feat/native-repository-foundation`
+at scaffold baseline `7ec2e75`. It cannot land independently before its base.
+Done means committed formatting, Clippy, native tests, and release-build jobs
+actually run on macOS, Linux, and Windows hosted runners, with retained failure
+logs and linked evidence. Baseline success does not verify future native core,
+sparse filesystem backends, installation, or GA. After the hub confirms native
+core completion, rebase this same PR and repeat the three-OS implementation gate.
+
+- [x] Read worktree instructions, TASKS, and the current hub contract at `8db2a5b`.
+- [x] Create the planning commit and open and register exactly one draft PR.
+- [x] Confirm runner labels, action versions, and Rust commands in primary docs.
+- [x] Add a bounded three-OS workflow with narrow permissions and failure evidence.
+- [x] Check repository Actions availability and push the committed baseline gate.
+- [x] Inspect real hosted runner results and record exact scope and proof links.
+- [x] Report PR, results, dependencies, and blockers to the hub.
+- [x] After hub confirmation, rebase onto native core and verify all three OSes.
+- [x] Rebase onto hub-reviewed core `c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+- [x] Inspect actual core job results and downloaded artifacts on all three OSes.
+
+Draft PR: https://github.com/Dhruv2mars/javelin/pull/6, registered with T3 Code.
+Actions API reads confirm public repository, enabled Actions, and read-only token
+defaults. Local Rust `1.99.0` formatting, Clippy, scaffold test, and release build
+passed. Hosted scaffold setup is VERIFIED at `fca6f75` by successful Linux, macOS,
+and Windows jobs in https://github.com/Dhruv2mars/javelin/actions/runs/38427608862.
+All check steps and artifact uploads passed. Downloaded all three artifacts and
+confirmed all six logs, exact commit, and one passing scaffold test per runner.
+Evidence and artifact expiry are recorded in `docs/cross-platform-verification.md`.
+That historical scaffold run did not verify native core. Sparse backends, GA,
+and Javelin product CI remain NOT VERIFIED.
+Hub sent `native-core-complete c78ea7a5d3eb9555625391e2f7346859d70f4c2a`.
+Rebased onto that exact commit. The TASKS conflict was resolved by preserving the
+entire reviewed base and appending only this workstream section. Source, tests,
+Cargo files, and all other native-owned files match the reviewed core exactly.
+Actual compiled native suite is VERIFIED at tested PR head
+`bfd2a51d75430a419272549b0e209bda6badf9d1` on exact reviewed core
+`c78ea7a5d3eb9555625391e2f7346859d70f4c2a`, run
+https://github.com/Dhruv2mars/javelin/actions/runs/38462957668.
+All formatting, lint, tests, release and log-upload steps passed. Downloaded and
+inspected six logs per runner. Linux/macOS passed 26 tests with one ignored actor;
+Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
+so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
+there. Non-Unix directory sync, power-loss durability, performance and GA remain
+unverified. No source changes were made.
