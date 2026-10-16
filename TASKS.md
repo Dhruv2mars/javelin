@@ -1283,3 +1283,56 @@ Windows passed 24 with one ignored actor. Windows excludes two Unix-only tests,
 so symlink rejection and deleted-cwd explicit-path coverage remain NOT VERIFIED
 there. Non-Unix directory sync, power-loss durability, performance and GA remain
 unverified. No source changes were made.
+
+## Workstream: Linux Layer runtime binding
+
+Owns one draft PR targeting `feat/native-layer-checkpoints` at exact native state
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`. Done is the bounded outcome in
+`docs/linux-layer-runtime.md`: real tools edit mounted sparse OverlayFS Layer views,
+owned read-only freeze feeds complete native captures, checkpoints open as sparse
+clones, and restart/busy/cleanup behavior is proven in disposable hosted Linux CI.
+No autosave, Stack/Publish, macOS/Windows binding, Gate 2 or GA claim.
+
+- [x] Read instructions, latest hub contract, native Layer state and the read-only Linux proof.
+- [x] Compare three materialization/capture shapes and record caller types and recovery boundaries.
+- [x] Create planning commit `e25819c`, open and register the single draft PR [#10](https://github.com/Dhruv2mars/javelin/pull/10).
+- [x] Implement the bounded root mount helper with validated layout, tokens and owners.
+- [x] Implement the ordinary-user runtime: caches, views, frozen capture, discard, recovery.
+- [x] Add platform-independent capture/mapping/validation unit tests and local preflight.
+- [x] Add gated Linux mount/process tests and the hosted runtime workflow with raw evidence.
+- [x] Run an independent read-only review and fix its verified findings (see the doc).
+- [x] Inspect actual hosted results and artifacts; record exact executable SHA and verdicts.
+- [x] Report PR, source and proof completion to the hub (message `linux-layer-runtime-completion-93f9eaa`).
+
+Executable source `93f9eaa00421f3c5efbaac79449bc22699c464b1` is VERIFIED for the
+bounded Linux binding in hosted runs 38503434985 (attempt 2) and 38503753472.
+Each reported 4/4 gated tests, flow/recovery/probe VERIFIED and full cleanup.
+Attempt 1 of 38503434985 failed only the unchanged common probe's file-watch check,
+so watch reliability is INCONCLUSIVE (one flake in three runs). Native run
+38503434805 passed 63/63/50 tests on Linux/macOS/Windows. Local Darwin preflight
+passes 63 tests with one ignored actor, plus fmt, Clippy and release build. The
+release binaries contain no test-boundary hooks. Evidence and limits are in
+`docs/linux-layer-runtime.md`. Gate 2 and GA are not claimed. Follow-on work:
+autosave/stable capture, continuous editing during capture, re-binding stale views,
+cache collection, the production privilege model, and macOS/Windows bindings.
+
+### Hub hold of `93f9eaa` and follow-up review rounds
+
+The hub held acceptance on a frozen-forever recovery bug and other findings. Each
+item was first reproduced in a hosted run against unchanged production source,
+then fixed, then re-reviewed. Details are in `docs/linux-layer-runtime.md`.
+
+- [x] Reproduce the hub findings (run 38505477176) and fix them in `e2a8000`.
+- [x] Round 2: reproduce (38506377158) and fix foreign-replay rebinding and reused-ID freeze (`a279a84`).
+- [x] Round 3: reproduce (38506956046) and fix same-ID adoption and orphan freeze (`654970f`).
+- [x] Round 4: reproduce (38507609759) and fix transient abandonment of an own commit (`d61648e`).
+- [x] Round 5: reproduce (38508346755, 38508564838) and replace view re-verification with recorded candidates (`d802d9b`).
+- [x] Round 6: no source defects; make the transient test non-vacuous (`8137111`).
+- [x] Verify `8137111`: hosted runs 38509261390 and 38509461412 pass 16/16; native 38509261520 passes 65/65/50.
+- [x] Report the corrected source and evidence to the hub (message `linux-layer-runtime-hold-response-8137111`).
+
+Executable source `8137111cb00a227f0f225ef4debe7ca1bf891e98` is VERIFIED for the
+bounded Linux binding. File-watch reliability remains INCONCLUSIVE (2 failures in
+23 hosted probe executions). Stale-bound views can only be escaped by a native
+discard followed by `recover`; re-binding them is follow-on work. Gate 2 and GA
+are not claimed.

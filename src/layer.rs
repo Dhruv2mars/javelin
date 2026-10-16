@@ -167,6 +167,16 @@ impl LayerCheckpoint {
     }
 }
 
+/// A durable Layer operation row and its exact original outcome.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) struct LayerAttempt {
+    pub(crate) layer: LayerId,
+    pub(crate) discard: bool,
+    pub(crate) expected: u64,
+    pub(crate) checkpoint: CheckpointId,
+    pub(crate) outcome: LayerUpdate,
+}
+
 /// Status and diff share exact before/after entries, preserving type and mode changes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PathDiff {
@@ -185,6 +195,49 @@ struct EncodedCheckpoint {
 }
 
 impl Repository {
+    /// The store's random identity, used to bind host-side runtimes to this repository.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn repository_identity(&self) -> Result<ObjectId> {
+        identity_in(&self.conn)
+    }
+
+    /// The durable record of a Layer operation, if any. Used by host bindings
+    /// to decide whether an interrupted operation committed, and whether that
+    /// commit was theirs.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn layer_operation(&self, operation: &OperationId) -> Result<Option<LayerAttempt>> {
+        let tx = self.conn.unchecked_transaction()?;
+        check_layers(&tx)?;
+        let row = tx
+            .query_row(
+                "SELECT layer,discard,checkpoint,expected FROM layer_attempts WHERE id=?1",
+                [operation.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let found = match row {
+            None => None,
+            Some((layer, discard, checkpoint, expected)) => Some(LayerAttempt {
+                layer: LayerId::parse(&layer)
+                    .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))?,
+                discard: discard == 1,
+                expected: u64::try_from(expected)
+                    .map_err(|_| Error::CorruptRepository("invalid Layer attempt".into()))?,
+                checkpoint: CheckpointId(decode_id(&checkpoint)?),
+                outcome: attempt_outcome(&tx, operation)?,
+            }),
+        };
+        tx.commit()?;
+        Ok(found)
+    }
+
     pub fn layer_base(&self, version: VersionNumber) -> Result<LayerBase> {
         let tx = self.conn.unchecked_transaction()?;
         let world = history_in(&tx)?
