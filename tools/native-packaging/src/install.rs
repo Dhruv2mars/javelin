@@ -1,0 +1,412 @@
+//! Checksum-verified, owned-temp extraction into a fresh path.
+use std::{
+    collections::HashSet,
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use crate::{
+    Error, Result, bail, exe_name, is_hex,
+    package::{MANIFEST_FILE, Manifest},
+    read, sha256_file, sha256_hex,
+};
+
+const MAX_ENTRIES: usize = 10_000;
+const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// Decompressed tar stream cap, covering headers and PAX/GNU metadata as well as payloads.
+const MAX_TAR_STREAM: u64 = MAX_TOTAL_BYTES + 16 * 1024 * 1024;
+const MAX_TAR_METADATA: u64 = 64 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES: u64 = MAX_TAR_STREAM;
+
+pub struct Installed {
+    pub dest: PathBuf,
+    pub bin_dir: PathBuf,
+    pub manifest: Manifest,
+}
+
+struct Extracted {
+    path: String,
+    is_dir: bool,
+    executable: bool,
+    data: Vec<u8>,
+}
+
+/// Remove the owned temp directory on every exit path.
+struct Owned(PathBuf);
+impl Drop for Owned {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+pub fn install(archive: &Path, checksum_file: &Path, dest: &Path) -> Result<Installed> {
+    let mut bytes = Vec::new();
+    fs::File::open(archive)?
+        .take(MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
+        bail!("archive exceeds the {MAX_ARCHIVE_BYTES} byte compressed input cap");
+    }
+    let name = archive
+        .file_name()
+        .ok_or_else(|| Error("archive has no file name".into()))?
+        .to_string_lossy()
+        .into_owned();
+    verify_checksum(&bytes, &name, &String::from_utf8(read(checksum_file)?)?)?;
+
+    let dest = crate::util::absolute(dest)?;
+    if fs::symlink_metadata(&dest).is_ok() {
+        bail!(
+            "{} already exists; install only into a fresh path",
+            dest.display()
+        );
+    }
+    let parent = dest
+        .parent()
+        .ok_or_else(|| Error("destination has no parent directory".into()))?;
+    let entries = if name.ends_with(".tar.gz") {
+        read_tar_gz(&bytes)?
+    } else if name.ends_with(".zip") {
+        read_zip(&bytes)?
+    } else {
+        bail!("unsupported archive type {name:?}; expected .tar.gz or .zip");
+    };
+    let top = validate(&entries)?;
+    fs::create_dir_all(parent)?;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let temp = parent.join(format!(".javelin-install-{}-{nonce}", std::process::id()));
+    fs::create_dir(&temp)?;
+    let guard = Owned(temp.clone());
+    for entry in &entries {
+        let target = temp.join(&entry.path);
+        if entry.is_dir {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        fs::create_dir_all(target.parent().unwrap())?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)?;
+        std::io::Write::write_all(&mut file, &entry.data)?;
+        drop(file);
+        set_mode(&target, entry.executable)?;
+    }
+
+    let root = temp.join(&top);
+    let manifest: Manifest = serde_json::from_slice(&read(&root.join(MANIFEST_FILE))?)?;
+    if manifest.channel != "development" || !manifest.pre_ga {
+        bail!("package is not marked development / pre-GA");
+    }
+    let expected_bin = format!("bin/{}", exe_name("javelin"));
+    if manifest.binary.path != expected_bin {
+        bail!(
+            "manifest binary path {:?} is not {expected_bin:?}",
+            manifest.binary.path
+        );
+    }
+    let actual = sha256_file(&root.join(&manifest.binary.path))?;
+    if actual != manifest.binary.sha256 {
+        bail!(
+            "extracted binary hash {actual} does not match manifest {}",
+            manifest.binary.sha256
+        );
+    }
+    if !root.join("LICENSE").is_file() {
+        bail!("package has no LICENSE");
+    }
+    claim_and_rename(&root, &dest)?;
+    drop(guard);
+    Ok(Installed {
+        bin_dir: dest.join("bin"),
+        dest,
+        manifest,
+    })
+}
+
+fn verify_checksum(bytes: &[u8], name: &str, checksum_text: &str) -> Result<()> {
+    let mut parts = checksum_text.split_whitespace();
+    let (Some(expected), Some(listed), None) = (parts.next(), parts.next(), parts.next()) else {
+        bail!("checksum file must contain exactly '<sha256>  <file name>'");
+    };
+    if !is_hex(expected, 64) {
+        bail!("checksum is not 64 lowercase hex digits");
+    }
+    if listed.trim_start_matches('*') != name {
+        bail!("checksum file names {listed:?}, archive is {name:?}");
+    }
+    let actual = sha256_hex(bytes);
+    if actual != expected {
+        bail!("checksum mismatch for {name}: expected {expected}, got {actual}");
+    }
+    Ok(())
+}
+
+fn read_limited(reader: &mut impl Read, total: &mut u64) -> Result<Vec<u8>> {
+    let mut data = Vec::new();
+    reader
+        .take(MAX_TOTAL_BYTES - *total + 1)
+        .read_to_end(&mut data)?;
+    *total += data.len() as u64;
+    if *total > MAX_TOTAL_BYTES {
+        bail!("archive expands past {MAX_TOTAL_BYTES} bytes");
+    }
+    Ok(data)
+}
+
+fn read_tar_gz(bytes: &[u8]) -> Result<Vec<Extracted>> {
+    check_tar_headers_and_trailer(bytes)?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes).take(MAX_TAR_STREAM));
+    let (mut out, mut total) = (Vec::new(), 0);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if out.len() >= MAX_ENTRIES {
+            bail!("archive has more than {MAX_ENTRIES} entries");
+        }
+        let path = String::from_utf8(entry.path_bytes().to_vec())
+            .map_err(|_| Error("archive entry name is not UTF-8".into()))?;
+        let kind = entry.header().entry_type();
+        let mode = entry.header().mode().unwrap_or(0);
+        let is_dir = match kind {
+            tar::EntryType::Regular => false,
+            tar::EntryType::Directory => true,
+            other => bail!(
+                "entry {path:?} has unsupported type {other:?}; only files and directories are allowed"
+            ),
+        };
+        if is_dir && entry.header().size()? != 0 {
+            bail!("directory entry {path:?} carries a payload");
+        }
+        let data = if is_dir {
+            Vec::new()
+        } else {
+            read_limited(&mut entry, &mut total)?
+        };
+        out.push(Extracted {
+            path,
+            is_dir,
+            executable: mode & 0o111 != 0,
+            data,
+        });
+    }
+    // The cap truncates silently; if it was reached the archive was not fully read, and
+    // a cut on a header boundary would otherwise look like a clean end of archive.
+    if archive.into_inner().limit() == 0 {
+        bail!("archive expands past the {MAX_TAR_STREAM} byte decompressed stream cap");
+    }
+    Ok(out)
+}
+
+/// Inspect extension records before tar's normal iterator hides them. Draining the
+/// same bounded decoder validates CRC/ISIZE even when tar stops at its zero blocks.
+fn check_tar_headers_and_trailer(bytes: &[u8]) -> Result<()> {
+    let mut decoder = flate2::bufread::GzDecoder::new(bytes).take(MAX_TAR_STREAM);
+    let mut archive = tar::Archive::new(&mut decoder);
+    for (count, entry) in archive.entries()?.raw(true).enumerate() {
+        if count >= MAX_ENTRIES {
+            bail!("archive has more than {MAX_ENTRIES} raw entries");
+        }
+        let mut entry = entry?;
+        let kind = entry.header().entry_type();
+        if kind.is_gnu_sparse() {
+            bail!("unsupported sparse tar entry");
+        }
+        if kind.is_dir() && entry.header().size()? != 0 {
+            bail!("directory entry carries a payload");
+        }
+        if kind.is_pax_local_extensions() || kind.is_pax_global_extensions() {
+            if entry.header().size()? > MAX_TAR_METADATA {
+                bail!("tar extension exceeds the {MAX_TAR_METADATA} byte metadata cap");
+            }
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data)?;
+            for extension in tar::PaxExtensions::new(&data) {
+                let extension = extension?;
+                let key = extension.key_bytes();
+                if key.starts_with(b"GNU.sparse.")
+                    || key == b"SCHILY.realsize"
+                    || (key == b"SCHILY.filetype" && extension.value_bytes() == b"sparse")
+                {
+                    bail!("unsupported sparse tar extension");
+                }
+            }
+        }
+    }
+    let _ = archive.into_inner();
+    std::io::copy(&mut decoder, &mut std::io::sink())?;
+    if decoder.limit() == 0 {
+        bail!("archive expands past the {MAX_TAR_STREAM} byte decompressed stream cap");
+    }
+    if !decoder.into_inner().into_inner().is_empty() {
+        bail!("trailing data or additional gzip members are unsupported");
+    }
+    Ok(())
+}
+
+fn read_zip(bytes: &[u8]) -> Result<Vec<Extracted>> {
+    // rawzip iterates every central record without allocating a deduplicated map.
+    let raw = rawzip::ZipArchive::from_slice(bytes)?;
+    if raw.entries_hint() > MAX_ENTRIES as u64 {
+        bail!("archive has more than {MAX_ENTRIES} raw entries");
+    }
+    let mut names = HashSet::new();
+    let mut count = 0;
+    for entry in raw.entries() {
+        let entry = entry?;
+        count += 1;
+        if count > MAX_ENTRIES {
+            bail!("archive has more than {MAX_ENTRIES} raw entries");
+        }
+        if !names.insert(entry.file_path().as_bytes()) {
+            bail!("duplicate ZIP central-directory entry");
+        }
+    }
+    if count as u64 != raw.entries_hint() {
+        bail!("ZIP raw record count differs from its declared count");
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    if archive.len() != count || archive.central_directory_start() != raw.directory_offset() {
+        bail!("ZIP readers disagree on the central directory");
+    }
+    let (mut out, mut total) = (Vec::new(), 0);
+    if archive.len() > MAX_ENTRIES {
+        bail!("archive has more than {MAX_ENTRIES} entries");
+    }
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index)?;
+        let path = file.name()?.to_string();
+        let mode = file.unix_mode().unwrap_or(0o644);
+        let kind = mode & 0o170000;
+        if kind == 0o120000 {
+            bail!("entry {path:?} is a symlink; only files and directories are allowed");
+        }
+        if !matches!(kind, 0 | 0o100000 | 0o040000) {
+            bail!("entry {path:?} has unsupported type; only files and directories are allowed");
+        }
+        let is_dir = file.is_dir();
+        if (kind == 0o040000 && !is_dir) || (kind == 0o100000 && is_dir) {
+            bail!("entry {path:?} has inconsistent directory marking");
+        }
+        if is_dir && file.size() != 0 {
+            bail!("directory entry {path:?} carries a payload");
+        }
+        let data = if is_dir {
+            // Validate even an empty directory's compressed stream and CRC.
+            let data = read_limited(&mut file, &mut total)?;
+            if !data.is_empty() {
+                bail!("directory entry {path:?} carries a payload");
+            }
+            data
+        } else {
+            read_limited(&mut file, &mut total)?
+        };
+        out.push(Extracted {
+            path,
+            is_dir,
+            executable: mode & 0o111 != 0,
+            data,
+        });
+    }
+    Ok(out)
+}
+
+const RESERVED: &[&str] = &["con", "prn", "aux", "nul"];
+
+fn valid_component(c: &str) -> bool {
+    let stem = c.split('.').next().unwrap_or("").to_lowercase();
+    let reserved = RESERVED.contains(&stem.as_str())
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    !c.is_empty()
+        && c != "."
+        && c != ".."
+        && c.len() <= 255
+        && !reserved
+        && !c.ends_with('.')
+        && !c.ends_with(' ')
+        && !c.chars().any(|ch| {
+            ch.is_control() || matches!(ch, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
+}
+
+/// Check names, uniqueness, and shape; returns the single top-level directory.
+fn validate(entries: &[Extracted]) -> Result<String> {
+    if entries.is_empty() {
+        bail!("archive is empty");
+    }
+    let mut top: Option<String> = None;
+    let mut seen = HashSet::new();
+    let mut files = HashSet::new();
+    let mut dirs = HashSet::new();
+    for entry in entries {
+        let trimmed = entry.path.strip_suffix('/').unwrap_or(&entry.path);
+        let parts: Vec<&str> = trimmed.split('/').collect();
+        if let Some(bad) = parts.iter().find(|c| !valid_component(c)) {
+            bail!("entry {:?} has unsafe component {bad:?}", entry.path);
+        }
+        if entry.is_dir != entry.path.ends_with('/') {
+            bail!("entry {:?} has inconsistent directory marking", entry.path);
+        }
+        match &top {
+            None => top = Some(parts[0].to_string()),
+            Some(t) if t != parts[0] => {
+                bail!(
+                    "entry {:?} is outside the single top-level directory {t:?}",
+                    entry.path
+                )
+            }
+            _ => {}
+        }
+        if !seen.insert(trimmed.to_lowercase()) {
+            bail!("duplicate entry {:?}", entry.path);
+        }
+        for end in 1..parts.len() {
+            dirs.insert(parts[..end].join("/").to_lowercase());
+        }
+        if entry.is_dir {
+            dirs.insert(trimmed.to_lowercase());
+        } else {
+            files.insert(trimmed.to_lowercase());
+        }
+    }
+    if let Some(conflict) = files.intersection(&dirs).next() {
+        bail!("{conflict:?} is both a file and a directory");
+    }
+    Ok(top.unwrap())
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, executable: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(if executable { 0o755 } else { 0o644 }),
+    )?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_mode(_: &Path, _: bool) -> Result<()> {
+    Ok(())
+}
+
+/// Move the verified tree into `dest` without ever replacing something that was not ours.
+/// Unix: an exclusive `create_dir` claims the path atomically, then the rename replaces
+/// only that empty claim. Elsewhere rename cannot replace a directory, so it fails closed.
+fn claim_and_rename(from: &Path, dest: &Path) -> Result<()> {
+    if cfg!(unix) {
+        fs::create_dir(dest).map_err(|e| Error(format!("cannot claim {}: {e}", dest.display())))?;
+        if let Err(error) = fs::rename(from, dest) {
+            let _ = fs::remove_dir(dest);
+            return Err(error.into());
+        }
+    } else {
+        fs::rename(from, dest)?;
+    }
+    Ok(())
+}

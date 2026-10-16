@@ -129,6 +129,11 @@ pub enum LayerState {
     Active {
         head: LayerHead,
     },
+    Published {
+        head: LayerHead,
+        operation: OperationId,
+        version: crate::WorldVersion,
+    },
     Discarded {
         layer: LayerId,
         revision: u64,
@@ -207,7 +212,7 @@ impl Repository {
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn layer_operation(&self, operation: &OperationId) -> Result<Option<LayerAttempt>> {
         let tx = self.conn.unchecked_transaction()?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         let row = tx
             .query_row(
                 "SELECT layer,discard,checkpoint,expected FROM layer_attempts WHERE id=?1",
@@ -240,7 +245,7 @@ impl Repository {
 
     pub fn layer_base(&self, version: VersionNumber) -> Result<LayerBase> {
         let tx = self.conn.unchecked_transaction()?;
-        let world = history_in(&tx)?
+        let world = crate::repository::validate_state_in(&tx)?
             .into_iter()
             .find(|v| v.number == version)
             .ok_or(Error::MissingVersion(version))?;
@@ -258,7 +263,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         let checkpoint = prepare_checkpoint(&tx, base, &SparseChanges::new([])?)?;
         let head = create_in(&tx, layer, checkpoint)?;
         tx.commit()?;
@@ -270,7 +275,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         checkpoint_in(&tx, checkpoint.0)?;
         let head = create_in(&tx, layer, checkpoint)?;
         tx.commit()?;
@@ -279,8 +284,9 @@ impl Repository {
 
     pub fn layer_state(&self, layer: &LayerId) -> Result<LayerState> {
         let tx = self.conn.unchecked_transaction()?;
-        check_layers(&tx)?;
-        let state = latest_in(&tx, layer)?.state(identity_in(&tx)?);
+        crate::repository::validate_state_in(&tx)?;
+        let state = crate::publish::published_state_in(&tx, layer)?
+            .unwrap_or(latest_in(&tx, layer)?.state(identity_in(&tx)?));
         tx.commit()?;
         Ok(state)
     }
@@ -292,15 +298,18 @@ impl Repository {
         Ok(frozen)
     }
 
-    /// Enumerates retained immutable heads, including history before terminal discard.
+    /// Enumerates immutable head events, followed by terminal publication when present.
     pub fn layer_history(&self, layer: &LayerId) -> Result<Vec<LayerState>> {
         let tx = self.conn.unchecked_transaction()?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         let latest = latest_in(&tx, layer)?;
         let repository = identity_in(&tx)?;
-        let history = (0..=latest.revision)
+        let mut history = (0..=latest.revision)
             .map(|revision| Ok(event_in(&tx, layer, revision)?.state(repository)))
             .collect::<Result<Vec<_>>>()?;
+        if let Some(published) = crate::publish::published_state_in(&tx, layer)? {
+            history.push(published);
+        }
         tx.commit()?;
         Ok(history)
     }
@@ -316,8 +325,9 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         verify_head(&tx, expected)?;
+        crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let base = checkpoint_in(&tx, expected.checkpoint.0)?.base;
         let checkpoint = prepare_checkpoint(&tx, &base, changes)?;
         let outcome = update_in(&tx, operation, expected, checkpoint, false)?;
@@ -338,8 +348,9 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        check_layers(&tx)?;
+        crate::repository::validate_state_in(&tx)?;
         verify_head(&tx, expected)?;
+        crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let outcome = update_in(&tx, operation, expected, expected.checkpoint, true)?;
         tx.commit()?;
         Ok(outcome)
@@ -572,7 +583,7 @@ fn latest_in(conn: &Connection, layer: &LayerId) -> Result<Event> {
     )
 }
 
-fn verify_head(conn: &Connection, head: &LayerHead) -> Result<()> {
+pub(crate) fn verify_head(conn: &Connection, head: &LayerHead) -> Result<()> {
     if identity_in(conn)? != head.repository {
         return Err(Error::InvalidInput("foreign Layer head".into()));
     }
@@ -779,4 +790,28 @@ pub(crate) fn check_layers(conn: &Connection) -> Result<usize> {
         attempt_outcome(conn, &op)?;
     }
     Ok(layers.len())
+}
+
+/// Raw historical accessors. These never project today's publication status.
+pub(crate) fn event_state_in(
+    conn: &Connection,
+    layer: &LayerId,
+    revision: u64,
+) -> Result<LayerState> {
+    let revision = i64::try_from(revision)
+        .map_err(|_| Error::CorruptRepository("invalid Layer event revision".into()))?;
+    Ok(event_in(conn, layer, revision)?.state(identity_in(conn)?))
+}
+
+pub(crate) fn head_in(conn: &Connection, layer: &LayerId, revision: u64) -> Result<LayerHead> {
+    match event_state_in(conn, layer, revision)? {
+        LayerState::Active { head } => Ok(head),
+        _ => Err(Error::CorruptRepository(
+            "expected an Active Layer event".into(),
+        )),
+    }
+}
+
+pub(crate) fn latest_event_state_in(conn: &Connection, layer: &LayerId) -> Result<LayerState> {
+    Ok(latest_in(conn, layer)?.state(identity_in(conn)?))
 }

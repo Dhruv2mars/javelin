@@ -1,12 +1,15 @@
-use std::fs;
+use std::fs::{self, FileTimes};
 use std::io::{BufRead, BufReader};
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use macos_sparse_backend::{CRASH_AT_ENV, Overlay, clone_upper};
-use nfsserve::nfs::{fileid3, nfsstat3, sattr3};
+use nfsserve::nfs::{
+    fileid3, nfsstat3, nfstime3, sattr3, set_atime, set_mode3, set_mtime, set_size3,
+};
 use nfsserve::vfs::NFSFileSystem;
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -522,6 +525,270 @@ async fn getattr_reports_actual_mode_bits() {
     };
     assert_eq!(a.setattr(fid, mode).await.unwrap().mode, 0o444);
     assert_eq!(a.getattr(fid).await.unwrap().mode, 0o444);
+}
+
+#[tokio::test]
+async fn readonly_create_applies_size_and_times_before_restricting_mode() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let time = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let (_, attr) = a
+        .create(
+            a.root_dir(),
+            &b"readonly".as_slice().into(),
+            sattr3 {
+                mode: set_mode3::mode(0o444),
+                size: set_size3::size(0),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(time),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(attr.mode, 0o444);
+    assert_eq!(attr.size, 0);
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (time.seconds, time.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn owner_can_change_times_on_mode_zero_file() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let (fid, _) = a
+        .create(
+            a.root_dir(),
+            &b"no-access".as_slice().into(),
+            sattr3 {
+                mode: set_mode3::mode(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let atime = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let mtime = nfstime3 {
+        seconds: 234567890,
+        nseconds: 234567890,
+    };
+    let result = a
+        .setattr(
+            fid,
+            sattr3 {
+                atime: set_atime::SET_TO_CLIENT_TIME(atime),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(mtime),
+                ..Default::default()
+            },
+        )
+        .await;
+    fs::set_permissions(
+        fx.upper("a").join("tree/no-access"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let attr = result.unwrap();
+    assert_eq!(attr.mode, 0);
+    assert_eq!(
+        (attr.atime.seconds, attr.atime.nseconds),
+        (atime.seconds, atime.nseconds)
+    );
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (mtime.seconds, mtime.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn mode_only_copy_up_preserves_mtime() {
+    let fx = Fixture::new();
+    let path = fx.base().join("README.txt");
+    fs::File::open(&path)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::new(123456789, 123456789)))
+        .unwrap();
+    let before = fs::metadata(&path).unwrap().modified().unwrap();
+    let a = fx.open("a");
+    let fid = id(&a, "README.txt").await.unwrap();
+    a.setattr(
+        fid,
+        sattr3 {
+            mode: set_mode3::mode(0o444),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs::metadata(fx.upper("a").join("tree/README.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        before
+    );
+    assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), before);
+}
+
+#[tokio::test]
+async fn clone_preserves_private_entry_times() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    a.mkdir(a.root_dir(), &b"private".as_slice().into())
+        .await
+        .unwrap();
+    write_new(&a, "private", "file", b"private bytes").await;
+    drop(a);
+    let tree = fx.upper("a").join("tree");
+    symlink("file", tree.join("private/link")).unwrap();
+    let paths = ["private/file", "private/link", "private", ""];
+    let time = UNIX_EPOCH + Duration::new(123456789, 123456789);
+    for p in paths {
+        filetime::set_symlink_file_times(tree.join(p), time.into(), time.into()).unwrap();
+    }
+    clone_upper(&fx.upper("a"), &fx.upper("c")).unwrap();
+    for p in paths {
+        let meta = fs::symlink_metadata(fx.upper("c").join("tree").join(p)).unwrap();
+        assert_eq!(meta.modified().unwrap(), time, "mtime: {p}");
+        assert_eq!(meta.accessed().unwrap(), time, "atime: {p}");
+    }
+}
+
+#[tokio::test]
+async fn directory_and_symlink_copy_up_preserve_source_times() {
+    let fx = Fixture::new();
+    let paths = ["dir/nested.txt", "dir", "inside-link"];
+    let time = UNIX_EPOCH + Duration::new(123456789, 123456789);
+    for p in paths {
+        filetime::set_symlink_file_times(fx.base().join(p), time.into(), time.into()).unwrap();
+    }
+    let target_time = fs::metadata(fx.base().join("README.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    for (from, to) in [("dir", "moved"), ("inside-link", "moved-link")] {
+        a.rename(root, &from.as_bytes().into(), root, &to.as_bytes().into())
+            .await
+            .unwrap();
+    }
+    for p in ["moved/nested.txt", "moved", "moved-link"] {
+        let meta = fs::symlink_metadata(fx.upper("a").join("tree").join(p)).unwrap();
+        assert_eq!(meta.modified().unwrap(), time, "mtime: {p}");
+        assert_eq!(meta.accessed().unwrap(), time, "atime: {p}");
+    }
+    assert_eq!(
+        fs::metadata(fx.base().join("README.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        target_time
+    );
+}
+
+#[test]
+fn incomplete_clone_stays_unpublished_and_rollback_keeps_competing_layer() {
+    let fx = Fixture::new();
+    drop(fx.open("a"));
+    let fifo = fx.upper("a").join("tree/blocked");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let bin = env!("CARGO_BIN_EXE_macos-sparse-backend");
+    let mut clone = Command::new(bin)
+        .args(["clone", "--from"])
+        .arg(fx.upper("a"))
+        .arg("--to")
+        .arg(fx.upper("c"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut copying = false;
+    while Instant::now() < deadline && clone.try_wait().unwrap().is_none() {
+        copying = fs::read_dir(&fx.root).unwrap().any(|e| {
+            let p = e.unwrap().path();
+            p != fx.base() && p != fx.upper("a") && p.join("tree").is_dir()
+        });
+        if copying {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let exposed = fx.upper("c").exists();
+    let mut server = Command::new(bin)
+        .args(["serve", "--base"])
+        .arg(fx.base())
+        .arg("--upper")
+        .arg(fx.upper("c"))
+        .args(["--port", "0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(server.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let ready = line.starts_with("listening 127.0.0.1:");
+    let sentinel = fx.upper("c").join("tree/competitor");
+    if ready {
+        fs::write(&sentinel, b"must survive clone rollback").unwrap();
+    }
+    // Opening the FIFO writer releases the clone's blocked reader. fs::copy then
+    // rejects the non-regular source, so this also exercises failed-clone cleanup.
+    let release = Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            r#"import os, sys, time
+for _ in range(200):
+    try:
+        fd = os.open(sys.argv[1], os.O_WRONLY | os.O_NONBLOCK)
+        os.close(fd)
+        break
+    except OSError:
+        time.sleep(.01)
+else:
+    sys.exit(1)
+"#,
+        ])
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    if !release.success() {
+        let _ = clone.kill();
+    }
+    let status = clone.wait().unwrap();
+    let _ = server.kill();
+    server.wait().unwrap();
+    assert!(copying, "clone must reach the copy phase");
+    assert!(
+        !exposed,
+        "incomplete clone was published before copying finished"
+    );
+    assert!(
+        ready,
+        "a competing new Layer should start while the clone is staged"
+    );
+    assert!(
+        release.success(),
+        "clone must be blocked on its source FIFO"
+    );
+    assert!(!status.success());
+    assert_eq!(fs::read(sentinel).unwrap(), b"must survive clone rollback");
 }
 
 #[tokio::test]

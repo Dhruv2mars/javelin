@@ -1,0 +1,21 @@
+{
+  "sourceCommit": "bce352ec4e5f78eb98c71facba68b872d3e11118",
+  "command": "rtk proxy bun tools/workspace-probe/verify.mjs",
+  "exitCode": 0,
+  "evidenceDirectory": "/var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-probe-evidence-6sxr25",
+  "probeVerdict": "VERIFIED",
+  "sparseBackendVerdict": "INCONCLUSIVE",
+  "stdout": [
+    "directory: exit 0, behavior VERIFIED, sparse backend INCONCLUSIVE",
+    "clonefile: exit 0, behavior VERIFIED, sparse backend INCONCLUSIVE",
+    "hardlink-negative: exit 1, behavior NOT VERIFIED, sparse backend INCONCLUSIVE",
+    "wall-budget-negative: exit 124, behavior INCONCLUSIVE, sparse backend INCONCLUSIVE",
+    "external-command-timeout-negative: exit 124, behavior INCONCLUSIVE, sparse backend INCONCLUSIVE",
+    "wall expiry stops the external tool and its child process",
+    "rejected report destinations leave caller bytes intact, including symlink aliases, hardlinks and FIFOs",
+    "caller-paths: exit 1, behavior INCONCLUSIVE, sparse backend INCONCLUSIVE",
+    "overlapping-paths-negative: exit 2, behavior INCONCLUSIVE, sparse backend INCONCLUSIVE",
+    "VERIFIED probe controls. Evidence: /var/folders/7g/c47xgk2552jdp_3frx78bkq40000gn/T/javelin-probe-evidence-6sxr25"
+  ],
+  "provenance": "Parent-observed verifier output; individual reports contain fixture hashes and executed command results."
+}

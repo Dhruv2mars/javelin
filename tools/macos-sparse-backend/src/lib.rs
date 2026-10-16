@@ -7,7 +7,7 @@
 //! The base is never opened for writing.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{self, File, FileTimes, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use filetime::FileTime;
 use nfsserve::fs_util::metadata_to_fattr3;
 use nfsserve::nfs::{
     fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, sattr3, set_atime, set_mode3,
@@ -25,6 +26,7 @@ use nfsserve::nfs::{
 use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
 const ROOT: fileid3 = 1;
+static NEXT_CLONE: AtomicU64 = AtomicU64::new(0);
 
 /// Test-only fault injection: abort the process at a named point. `stage`
 /// aborts after a copy-up is staged but before it is published; `rename`
@@ -289,6 +291,7 @@ impl Overlay {
             fs::create_dir(&dst).map_err(io_err)?;
             fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
                 .map_err(io_err)?;
+            preserve_times(&dst, &meta).map_err(io_err)?;
             sync_dir(dst.parent().unwrap()).map_err(io_err)?;
             return Ok(dst);
         }
@@ -298,6 +301,7 @@ impl Overlay {
         ));
         if meta.file_type().is_symlink() {
             symlink(fs::read_link(&src).map_err(io_err)?, &stage).map_err(io_err)?;
+            preserve_times(&stage, &meta).map_err(io_err)?;
         } else {
             let mut from = File::open(&src).map_err(io_err)?;
             let mut to = OpenOptions::new()
@@ -308,6 +312,7 @@ impl Overlay {
             io::copy(&mut from, &mut to).map_err(io_err)?;
             to.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o7777))
                 .map_err(io_err)?;
+            preserve_times(&stage, &meta).map_err(io_err)?;
             to.sync_all().map_err(io_err)?;
         }
         crash_at("stage");
@@ -318,11 +323,15 @@ impl Overlay {
 
     /// Copies a whole visible subtree into the upper tree.
     fn copy_up_tree(&self, st: &State, rel: &Path) -> Result<(), nfsstat3> {
+        let meta =
+            fs::symlink_metadata(self.locate(st, rel).ok_or(nfsstat3::NFS3ERR_NOENT)?.path())
+                .map_err(io_err)?;
         let up = self.copy_up(st, rel)?;
         if fs::symlink_metadata(&up).map_err(io_err)?.is_dir() {
             for child in self.children(st, rel)?.into_keys() {
                 self.copy_up_tree(st, &rel.join(child))?;
             }
+            preserve_times(&up, &meta).map_err(io_err)?;
         }
         Ok(())
     }
@@ -381,42 +390,52 @@ fn to_time(t: nfstime3) -> SystemTime {
 /// Applies NFS mode, size and time changes to an upper entry. Ownership changes
 /// are ignored because every Layer entry belongs to the serving user.
 fn apply_sattr(path: &Path, a: &sattr3) -> io::Result<()> {
-    if let set_mode3::mode(m) = a.mode {
-        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
-    }
     if let set_size3::size(n) = a.size {
         let f = OpenOptions::new().write(true).open(path)?;
         f.set_len(n)?;
         f.sync_all()?;
     }
-    let mut times = FileTimes::new();
+    let meta = fs::symlink_metadata(path)?;
+    let mut atime = FileTime::from_last_access_time(&meta);
+    let mut mtime = FileTime::from_last_modification_time(&meta);
     let mut touched = false;
     match a.atime {
         set_atime::SET_TO_CLIENT_TIME(t) => {
-            times = times.set_accessed(to_time(t));
+            atime = FileTime::from_system_time(to_time(t));
             touched = true
         }
         set_atime::SET_TO_SERVER_TIME => {
-            times = times.set_accessed(SystemTime::now());
+            atime = FileTime::now();
             touched = true
         }
         set_atime::DONT_CHANGE => {}
     }
     match a.mtime {
         set_mtime::SET_TO_CLIENT_TIME(t) => {
-            times = times.set_modified(to_time(t));
+            mtime = FileTime::from_system_time(to_time(t));
             touched = true
         }
         set_mtime::SET_TO_SERVER_TIME => {
-            times = times.set_modified(SystemTime::now());
+            mtime = FileTime::now();
             touched = true
         }
         set_mtime::DONT_CHANGE => {}
     }
     if touched {
-        File::open(path)?.set_times(times)?;
+        filetime::set_symlink_file_times(path, atime, mtime)?;
+    }
+    if let set_mode3::mode(m) = a.mode {
+        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
     }
     Ok(())
+}
+
+fn preserve_times(path: &Path, meta: &fs::Metadata) -> io::Result<()> {
+    filetime::set_symlink_file_times(
+        path,
+        FileTime::from_last_access_time(meta),
+        FileTime::from_last_modification_time(meta),
+    )
 }
 
 fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -451,22 +470,44 @@ pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
             "clone destination must not nest with its source",
         ));
     }
-    fs::create_dir(&to)?;
-    let copied = (|| {
-        copy_tree(&from.join("tree"), &to.join("tree"))?;
-        if from.join("whiteouts").exists() {
-            fs::copy(from.join("whiteouts"), to.join("whiteouts"))?;
-            File::open(to.join("whiteouts"))?.sync_all()?;
+    if to.symlink_metadata().is_ok() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
+    let stage = loop {
+        let path = parent.join(format!(
+            ".javelin-clone-{}-{}",
+            std::process::id(),
+            NEXT_CLONE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => break path,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
-        File::open(&to)?.sync_all()?;
+    };
+    let mut held = None;
+    let mut published = false;
+    let copied = (|| {
+        let lock = File::create(stage.join("lock"))?;
+        lock.try_lock().map_err(io::Error::from)?;
+        held = Some(lock);
+        copy_tree(&from.join("tree"), &stage.join("tree"))?;
+        if from.join("whiteouts").exists() {
+            fs::copy(from.join("whiteouts"), stage.join("whiteouts"))?;
+            File::open(stage.join("whiteouts"))?.sync_all()?;
+        }
+        File::open(&stage)?.sync_all()?;
+        fs::rename(&stage, &to)?;
+        published = true;
         File::open(&parent)?.sync_all()
     })();
     if let Err(e) = copied {
-        return Err(match force_remove(&to) {
+        return Err(match force_remove(if published { &to } else { &stage }) {
             Ok(()) => e,
             Err(c) => io::Error::other(format!("{e}; partial clone not removed: {c}")),
         });
     }
+    drop(held);
     Ok(())
 }
 
@@ -489,17 +530,21 @@ fn force_remove(path: &Path) -> io::Result<()> {
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
-        symlink(fs::read_link(from)?, to)
+        symlink(fs::read_link(from)?, to)?;
+        preserve_times(to, &meta)
     } else if meta.is_dir() {
         fs::create_dir(to)?;
         for e in fs::read_dir(from)? {
             let e = e?;
             copy_tree(&e.path(), &to.join(e.file_name()))?;
         }
+        let dir = File::open(to)?;
+        preserve_times(to, &meta)?;
         fs::set_permissions(to, meta.permissions())?;
-        File::open(to)?.sync_all()
+        dir.sync_all()
     } else {
         fs::copy(from, to)?;
+        preserve_times(to, &meta)?;
         File::open(to)?.sync_all()
     }
 }

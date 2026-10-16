@@ -1,11 +1,12 @@
 //! Native immutable repository storage and ordered World publication metadata.
 //! Sparse Layer state is available. Linux binds it to ordinary paths through sparse
-//! OverlayFS views; autosave, other platforms and full Publish are later work.
+//! OverlayFS views; autosave, other platforms and mounted Publish lifecycle are later work.
 
 mod domain;
 mod layer;
 #[cfg(unix)]
 mod linux_layer;
+mod publish;
 mod repository;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
@@ -17,6 +18,7 @@ pub use layer::{
 pub use linux_layer::{
     CaptureOutcome, LayerMountHelper, LinuxLayerRuntime, RecoveryReport, ViewStatus,
 };
+pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -45,6 +47,13 @@ pub enum Error {
     CorruptRepository(String),
     #[error("unsupported repository format {0}")]
     UnsupportedFormat(i64),
+    #[error("Layer {layer:?} was published by operation {operation}")]
+    LayerPublished {
+        layer: LayerId,
+        operation: OperationId,
+    },
+    #[error("Agent publication requires a context Blob or explicit missing-trace override")]
+    MissingAgentTrace,
     #[error("operation ID {0} was already used with different input")]
     OperationIdReused(OperationId),
     #[error(
@@ -71,6 +80,8 @@ impl Error {
             Self::MissingVersion(_) => "missing_version",
             Self::CorruptRepository(_) => "corrupt_repository",
             Self::UnsupportedFormat(_) => "unsupported_format",
+            Self::LayerPublished { .. } => "layer_published",
+            Self::MissingAgentTrace => "missing_agent_trace",
             Self::OperationIdReused(_) => "operation_id_reused",
             Self::Storage(_) => "storage_error",
             Self::Io(_) => "io_error",
