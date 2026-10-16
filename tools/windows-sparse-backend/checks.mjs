@@ -71,7 +71,7 @@ async function protection(target, file, container) {
   const before = await fs.readFile(file);
   const attrib = run(['attrib.exe', '-R', file], target, true);
   const after = run(['attrib.exe', file], target, true);
-  const identity = run(['whoami.exe', '/user', '/fo', 'csv', '/nh'], target);
+  const identity = run([join(process.env.SystemRoot, 'System32', 'whoami.exe'), '/user', '/fo', 'csv', '/nh'], target);
   const sid = identity.stdout.match(/S-1-5-[0-9-]+/)?.[0];
   assert.ok(sid, 'actual token SID required');
   const grant = run(['icacls.exe', file, '/grant', `*${sid}:F`], target, true);

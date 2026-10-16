@@ -86,8 +86,10 @@ struct Handle {
     Handle& operator=(const Handle&) = delete;
 };
 static Handle openObject(const fs::path& path, DWORD access = FILE_READ_ATTRIBUTES | READ_CONTROL) {
-    return Handle(CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    HANDLE h = CreateFileW(path.c_str(), access, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) std::fprintf(stderr, "open-object path=%s error=%lu\n", utf8(path.wstring()).c_str(), GetLastError());
+    return Handle(h);
 }
 static FILE_ATTRIBUTE_TAG_INFO attributes(HANDLE h) {
     FILE_ATTRIBUTE_TAG_INFO t{};
@@ -446,7 +448,8 @@ static void expose() {
 // Hosted administrator fixture operation. Inspect reparses themselves, never their targets.
 static void rootAccess(const fs::path& root, const std::wstring& sid, bool seal) {
     ownedRoot(root); expose();
-    std::wstring sddl = L"O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;" + std::wstring(seal ? L"FRFX" : L"FA") + L";;;" + sid + L")";
+    const std::wstring inherit = seal ? L"" : L"OICI";
+    std::wstring sddl = L"O:BAD:P(A;" + inherit + L";FA;;;BA)(A;" + inherit + L";FA;;;SY)(A;" + inherit + L";" + std::wstring(seal ? L"FRFX" : L"FA") + L";;;" + sid + L")";
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) throw std::runtime_error("fixture access descriptor");
     PSID owner = nullptr; BOOL defaulted = FALSE, present = FALSE; PACL acl = nullptr;

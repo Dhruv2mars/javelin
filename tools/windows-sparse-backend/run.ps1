@@ -229,6 +229,9 @@ try {
         foreach ($name in $rootNames) {
             $root = Join-Path $owned $name
             if (Test-Path -LiteralPath $root) {
+                [void](Invoke-Bounded "cleanup-owner-$name" (Join-Path $system 'icacls.exe') @($root, '/setowner', '*S-1-5-32-544', '/T', '/C', '/L'))
+                [void](Invoke-Bounded "cleanup-acl-$name" (Join-Path $system 'icacls.exe') @($root, '/grant', '*S-1-5-32-544:(OI)(CI)F', '/T', '/C', '/L'))
+                [void](Invoke-Bounded "cleanup-attributes-$name" (Join-Path $system 'attrib.exe') @('-R', (Join-Path $root '*'), '/S', '/D', '/L'))
                 $unregister = & (Join-Path $owned 'sparse.exe') unregister $root
                 & (Join-Path $system 'cmd.exe') /d /c "rmdir /s /q `"$root`""
                 $cleanup.roots[$name] = @{ unregister = "$unregister"; removed = -not (Test-Path -LiteralPath $root) }
