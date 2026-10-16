@@ -1,10 +1,10 @@
 //! Reference sender: negotiates, transfers only what the receiver lacks (blobs
 //! before the manifest), then publishes with a caller-chosen operation ID.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 
-use javelin::{ObjectId, OperationId, Repository, VersionNumber};
+use javelin::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, VersionNumber};
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
@@ -31,7 +31,17 @@ pub fn push(
         _ => return Err(unexpected()),
     }
 
-    let manifest = source.read_manifest(manifest_id)?;
+    // The native capped read verifies canonical bytes, not the referenced graph.
+    // Reconstruct through public domain parsers; publication remains authoritative.
+    let bytes = source.manifest_bytes_bounded(manifest_id, MAX_FRAME)?;
+    let entries: BTreeMap<String, FileEntry> = serde_json::from_slice(&bytes)
+        .map_err(|e| ProtocolError::new("corrupt_object", e.to_string()))?;
+    let manifest = Manifest::new(
+        entries
+            .into_iter()
+            .map(|(path, entry)| Ok((RepoPath::parse(&path)?, entry)))
+            .collect::<javelin::Result<Vec<_>>>()?,
+    )?;
     let mut offered: Vec<(Kind, ObjectId)> = vec![(Kind::Manifest, manifest_id)];
     let blobs: BTreeSet<ObjectId> = manifest.entries().values().map(|e| e.content()).collect();
     offered.extend(blobs.into_iter().map(|id| (Kind::Blob, id)));
@@ -57,13 +67,7 @@ pub fn push(
         if kind != Kind::Blob {
             continue;
         }
-        let bytes = source.read_blob(id)?;
-        if bytes.len() > MAX_BLOB {
-            return Err(ProtocolError::new(
-                "limit_exceeded",
-                format!("blob {id} exceeds the version 1 size limit"),
-            ));
-        }
+        let bytes = source.read_blob_bounded(id, MAX_BLOB)?;
         let cost = 36 + bytes.len();
         if !batch.is_empty() && (batch.len() == MAX_BLOBS || size + cost > MAX_FRAME - 5) {
             send_batch(&mut call, Message::Blobs(std::mem::take(&mut batch)))?;

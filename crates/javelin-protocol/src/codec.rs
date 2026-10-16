@@ -409,10 +409,8 @@ impl<'a> Reader<'a> {
         let value = u64::from_be_bytes(self.take(8)?.try_into().unwrap());
         Ok(VersionNumber::new(value)?)
     }
-    /// Raw IDs are parsed through the public hex parser; no private constructor exists.
     fn id(&mut self) -> Result<ObjectId, ProtocolError> {
-        let hex: String = self.take(32)?.iter().map(|b| format!("{b:02x}")).collect();
-        Ok(ObjectId::parse(&hex)?)
+        Ok(ObjectId::from_bytes(self.take(32)?.try_into().unwrap()))
     }
     /// Checks a count against its fixed limit. Collections grow only as elements are
     /// actually decoded, so memory stays proportional to the received frame.
@@ -477,8 +475,7 @@ fn put_short(out: &mut Vec<u8>, text: &str) {
 }
 
 fn put_id(out: &mut Vec<u8>, id: &ObjectId) {
-    let hex = id.to_string();
-    out.extend((0..32).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()));
+    out.extend_from_slice(id.as_bytes());
 }
 
 fn truncate_utf8(text: &str, max: usize) -> &str {

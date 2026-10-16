@@ -1,5 +1,5 @@
 //! Reference receiver. Objects are stored only through the public native API and
-//! accepted only when the returned ID equals the claimed ID. World references are
+//! accepted only when their pre-store ID equals the claimed ID. World references are
 //! written only by `compare_and_advance`, which revalidates the whole graph.
 
 use std::collections::BTreeSet;
@@ -59,32 +59,29 @@ fn negotiate(message: Message) -> Result<Message, ProtocolError> {
 fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolError> {
     match message {
         Message::Want(items) => {
-            // Each probe reads a whole stored object, so repeats would amplify work.
+            // Streamed probes still hash stored bytes, so repeats amplify work.
             if items.iter().collect::<BTreeSet<_>>().len() != items.len() {
                 return Err(ProtocolError::new("malformed", "duplicate Want item"));
             }
             let mut missing = Vec::new();
             for (kind, id) in items {
                 let found = match kind {
-                    Kind::Blob => repo.read_blob(id).map(drop),
-                    Kind::Manifest => repo.manifest_bytes(id).map(drop),
-                };
-                match found {
-                    Ok(()) => {}
-                    Err(javelin::Error::MissingObject(missing_id)) if missing_id == id => {
-                        missing.push((kind, id))
-                    }
-                    Err(e) => return Err(e.into()),
+                    Kind::Blob => repo.has_blob(id),
+                    Kind::Manifest => repo.has_manifest(id),
+                }?;
+                if !found {
+                    missing.push((kind, id));
                 }
             }
             Ok(Message::Missing(missing))
         }
         Message::Blobs(blobs) => {
             for (claimed, bytes) in &blobs {
-                let stored = repo.put_blob(bytes)?;
-                if stored != *claimed {
-                    return Err(mismatch(*claimed, stored));
+                let actual = javelin::ObjectId::for_blob(bytes);
+                if actual != *claimed {
+                    return Err(mismatch(*claimed, actual));
                 }
+                repo.put_blob(bytes)?;
             }
             Ok(Message::Stored {
                 count: blobs.len() as u32,
@@ -92,11 +89,12 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
         }
         Message::Manifests(manifests) => {
             for (claimed, manifest) in &manifests {
-                // put_manifest refuses missing or wrong-kind blob references.
-                let stored = repo.put_manifest(manifest)?;
-                if stored != *claimed {
-                    return Err(mismatch(*claimed, stored));
+                let actual = javelin::ObjectId::for_manifest(manifest);
+                if actual != *claimed {
+                    return Err(mismatch(*claimed, actual));
                 }
+                // put_manifest still validates the complete referenced content.
+                repo.put_manifest(manifest)?;
             }
             Ok(Message::Stored {
                 count: manifests.len() as u32,

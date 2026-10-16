@@ -1,9 +1,12 @@
 # Repository protocol message codec
 
-Status: bounded initial protocol direction. Hosted receiver exposure is BLOCKED
-by HIGH stored-object allocation amplification. Not hosting acceptance.
-Source base: accepted native Layer state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`,
-an unmerged dependency. This unit cannot claim independent acceptance.
+Status: bounded codec and reference sender/receiver. Not hosting acceptance.
+Current native dependency is hub-accepted exact
+`3a54021b15ac5002c21f492b6bed07740c682421` from unmerged PR #18. PR #15 targets
+`feat/bounded-native-object-access`. Its remote `5d3b59d` adds native documentation
+only. This unit cannot claim independent acceptance. Original planning source was
+accepted Layer state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; historical evidence
+below retains its original source labels.
 
 ## Bounded outcome
 
@@ -44,8 +47,9 @@ bodies with base64 blobs, serde, bounded visitors and a nesting pre-scan. Candid
 blob bytes. Self-scores were A 22/25 and B 18/25; A scored debuggability higher.
 
 The parent selected B. Every limit is a direct integer compare before a field is
-copied, without serde visitor or nesting-scanner machinery. It needs no dependency
-beyond `javelin`. Blob payloads travel raw, which fits the contract's "compact
+copied, without serde visitor or nesting-scanner machinery. The binary codec needs
+only `javelin`. The sender uses `serde_json` to reconstruct the native canonical
+manifest after a capped native read. Blob payloads travel raw, which fits the contract's "compact
 binary messages where useful". Corrections taken from A: Want names object kind,
 the outcome is a separate DTO, limits are smaller, and errors close the session.
 Error codes are strings so new native `Error` variants pass through unchanged.
@@ -62,7 +66,7 @@ the format.
 
 A frame is a `u32` big-endian body length (1..=16 MiB), then the body. The first
 body byte is the tag. Integers are big-endian. IDs are 32 raw bytes, parsed through
-public `ObjectId::parse`. Clean EOF at a frame boundary ends a session. EOF anywhere
+public `ObjectId::from_bytes`; encoding uses `as_bytes()`. Clean EOF at a frame boundary ends a session. EOF anywhere
 else is `truncated`. A body that ends inside a field or has trailing bytes is `malformed`.
 
 | Tag | Message | Body after tag |
@@ -114,33 +118,41 @@ oversized inner blob allocates the 16 MiB frame buffer before refusing the blob.
 The outer-frame allocation stays within the wire budget. Blobs above 8 MiB cannot
 transfer in version 1; streaming or chunking needs a new version.
 
-These limits bound protocol buffers only. Native reads of objects that are already
-stored are not bounded. Want probes read whole objects. A sender reads each source
-blob before checking its size. A receiver repository that holds a large blob can
-therefore be made to allocate that blob's size by a small Want. A manifest probe holds
-roughly twice the manifest's bytes, the decoded manifest, and the largest blob it
-references. The receiver refuses duplicate Want items, so one frame cannot probe the
-same object repeatedly. Repeated frames and many distinct objects still cost a full
-read each. This is retained API gap 3; the public API has no bounded read or existence check.
+Want uses `has_blob` and `has_manifest`, which stream kind and byte-hash
+verification with fixed Rust working memory. Manifest availability does not decode
+canonical bytes or inspect references. The sender uses `read_blob_bounded` with an
+8 MiB cap and `manifest_bytes_bounded` with a 16 MiB encoded-byte cap. The latter
+checks its own canonical representation without reading graph payloads. It does
+not return a typed manifest, so the sender reads `BTreeMap<String, FileEntry>` from
+those already-validated bytes and reconstructs through public `RepoPath::parse` and
+`Manifest::new`. No private hashing or decoder implementation is copied, and no
+legacy full-read fallback remains.
 
-Fresh hub Codex audit r2 reproduced a 55-byte Hello-plus-Want session causing a
-33,554,432-byte largest Rust allocation for a stored 32 MiB blob. A 55-byte session
-probing a manifest with eight references to that blob caused 268,446,277 bytes of
-cumulative Rust allocation. These are allocation measurements, not peak RSS, and
-exclude SQLite C allocations. Neither request advanced World. Hosted receiver
-exposure remains blocked until the accepted native API is integrated and verified.
+An encoded-byte cap is not a parser heap, RSS or CPU limit. Native canonical parsing
+and public reconstruction allocate maps, paths and entries. Want still hashes all
+stored bytes, with work linear in size, and repeated requests repeat that work.
+SQLite uses a separate C allocator that the Rust counters do not measure.
+
+Historical hub Codex audit r2 on `02c7427` reproduced a 55-byte Hello-plus-Want
+session causing a 33,554,432-byte largest Rust allocation for a stored 32 MiB blob.
+The eight-reference manifest case caused 268,446,277 cumulative Rust allocation
+bytes, not peak RSS, excluding SQLite C allocations. The migrated regression keeps
+both cases, plus legacy native-read positive controls. Fresh measurements and
+source identity are recorded below; historical measurements are not migration proof.
 
 ## Receiver rules
 
-- Want must not repeat an item. Each item is probed with the typed public readers. Only `missing_object` for that exact ID
-  counts as missing. A wrong-kind or corrupt object refuses the session.
-- Blobs are stored with `put_blob`. The returned ID must equal the claim, otherwise
-  `id_mismatch`. Failed batches do not publish but can retain a valid prefix and
-  mismatched bytes under their actual ID. Later valid requests may reference these
-  immutable objects. There is no batch rollback or retention cleanup.
-- Manifests are rebuilt with `RepoPath::parse`, `FileEntry` and `Manifest::new`, then
-  stored with `put_manifest`. That call refuses missing and wrong-kind blob references,
-  so blobs must arrive first. The returned ID must equal the claim.
+- Want must not repeat an item. Typed availability returns false for a missing
+  object. Wrong-kind or byte-hash corruption refuses the session. A present manifest
+  is not a certificate of canonical encoding, graph validity or readiness to publish.
+- Blob IDs are computed with `ObjectId::for_blob` before `put_blob`. A mismatch
+  refuses with `id_mismatch` before the mismatched bytes are stored.
+- Manifests are rebuilt with `RepoPath::parse`, `FileEntry` and `Manifest::new`.
+  `ObjectId::for_manifest` must equal the claim before `put_manifest`, which still
+  validates all referenced content, including missing/wrong-kind/corrupt blobs.
+- A refused batch does not publish. Its valid prefix may remain as immutable
+  objects, and later valid requests may reference them. There is no batch rollback
+  or retention cleanup. Pre-store checks prevent storing the mismatched item.
 - `expected` is the World head the caller compares against at publication. It is not
   necessarily a Layer's or revision's original base. Composing nonintersecting work
   onto a newer head, and binding Layers, revisions, authorization or provenance to a
@@ -158,7 +170,7 @@ exposure remains blocked until the accepted native API is integrated and verifie
   changed expected version or manifest returns `operation_id_reused`. A Publish whose
   reply is lost is retried with identical input in a new session.
 
-## Evidence
+## Historical evidence before native access migration
 
 Local, macOS arm64, Rust 1.99.0, `cargo test --locked --all-targets` in
 `crates/javelin-protocol`: 21 tests passed, with formatting and Clippy `-D warnings` clean.
@@ -222,44 +234,59 @@ all three log artifacts, which expire 2026-10-28. Each records the exact commit,
 passing tests, formatting, Clippy and a successful release build. Each job log shows
 `probe exit without shim=0 with shim=97`, and the test step confirms the shim never ran.
 
-## API gaps for the hub
+## Native object access migration
 
-These gaps were worked around through the public API only. Nothing private was copied.
+The hub accepted PR #18 source `3a54021` after independent r3 and source/artifact
+inspection, recorded in hub `1791618`. Rebase onto that exact source completed at
+`d1fb504`. Native/root source, lockfiles and workflows are unchanged by this PR.
+Only the protocol crate, its doc/workflow and its appended TASKS section are owned.
 
-1. No public content-ID function on this dependency. The receiver must store bytes
-   before learning their ID. A failed request does not publish and can leave
-   unreferenced immutable objects, including a valid batch prefix and mismatched
-   bytes under their actual ID. Later legitimate requests may reference and publish
-   them. Nothing collects them. A public
-   `ObjectId::for_blob(&[u8])` and `ObjectId::for_manifest(&Manifest)` would allow
-   comparison before storing.
-2. No raw byte conversion for `ObjectId`. The codec converts through lowercase hex.
-   `ObjectId::from_bytes([u8; 32])` and `as_bytes()` would remove that detour.
-3. No public existence check or bounded read. Want reads whole objects, and
-   `manifest_bytes` also reads every referenced blob to revalidate the graph. Review
-   r1 reproduced a 55-byte session that caused a 32 MiB allocation for a stored blob.
-   A typed `has_blob`/`has_manifest`, or a size-bounded read, is needed to close this.
-4. Native `VersionNumber`, `RepoPath`, `OperationId`, `WorldVersion` and
-   `AdvanceOutcome` are serialize-only, as intended. This crate keeps its own
-   validated DTO.
+This closes the three old API workarounds at the protocol callers:
 
-Core PR #18 implements the requested object access additions. This protocol has
-not migrated to them. Migration waits for the hub's accepted native-object-access
-exact SHA; implementation in another branch is not acceptance. Pre-store ID checks
-will prevent storing mismatched items, while hosting quotas and retention remain
-future work. Fresh independent review and three-OS exact-head checks are required
-after migration. The earlier `02c7427` evidence does not verify these corrections
-or a future migration.
+1. Public `ObjectId::for_blob` and `for_manifest` check claims before storage.
+2. `ObjectId::from_bytes` and `as_bytes` replace lowercase-hex conversion.
+3. Typed streamed availability replaces Want payload reads; capped native sender
+   reads replace the unbounded blob read and full-graph manifest read.
 
-Correction fixtures at `c133fab941fec7dc2eecfb81b05e1b1e0db44db4` passed locally on
-macOS arm64 with Rust 1.99.0: `cargo fmt --all -- --check`,
-`cargo clippy --locked --all-targets -- -D warnings`, and
-`cargo test --locked --all-targets`, with 21 tests passing. Only
-`tests/alloc.rs` and `tests/receiver.rs` changed in that commit. They reproduce
-retention and later native publication, the legal 16 MiB frame allocation, and
-UTF-8 Error-code round trips. Runtime and wire bytes are unchanged from `02c7427`.
-These corrections have not had fresh independent review or three-OS exact-head
-verification. The 24-mutant result above is historical, not rerun for this pass.
+Native `VersionNumber`, `RepoPath`, `OperationId`, `WorldVersion` and
+`AdvanceOutcome` remain serialize-only. The protocol retains explicit validated
+wire DTOs. The sender's native canonical input uses the already public `FileEntry`
+parser, not deserialization of those serialize-only types.
+
+Historical correction fixtures at `c133fab941fec7dc2eecfb81b05e1b1e0db44db4` passed
+21 local tests with fmt and Clippy on macOS arm64, Rust 1.99.0. That source proved
+retention of mismatched actual bytes under the old API. The migrated fixture now
+requires those bytes to be absent, retains the valid-prefix/later-publication
+proof, and keeps the legal 16 MiB frame and UTF-8 Error-code behavior. Neither the
+old 21 tests nor old 24 compiling mutants count as new proof.
+
+Fresh `tests/object_access.rs` measures the real `serve` and `push` callers with
+thread-local Rust allocation totals and largest requests, including zeroed and
+reallocation requests. It excludes SQLite C allocation and does not measure RSS.
+Legacy native blob and graph reads are positive controls. A 55-byte Want probes a
+32 MiB blob and an eight-entry manifest pointing at it; sender fixtures refuse an
+over-cap blob and manifest. Fault-injection tests disable only scratch-store
+immutability triggers, then require kind/hash refusal and prove that manifest byte
+availability cannot bypass final full-graph Manifests or Publish checks.
+
+Updated mutations include restoring legacy Want and sender reads, moving storage
+before ID comparison, and the original framing/reply guards. Each mutant must
+compile and produce an actual failed test result; a build failure or process crash
+does not count. The Oct 16 workflow uses relevant local checks and a regular PR.
+It does not require another independent review or artifact-audit round. Historical hosted
+results above do not establish the behavior of this migration.
+
+Local migration checks on 2026-10-16, macOS arm64 and Rust 1.99.0: formatting,
+Clippy with warnings denied, and all 25 component tests pass. Two release process
+tests pass with the failing Git shim: control exits without=0, with=97, and no Git
+marker during product execution. Both 55-byte Want fixtures measure 739 cumulative
+Rust allocation bytes and a 288-byte largest request, with the large-read controls
+passing. These counters exclude SQLite C memory and are not RSS measurements.
+
+Seven relevant compiling mutations are detected by failed assertions:
+`bun scripts/mutate.ts 'Want ' 'sender ' 'pre-store' 'encode blob'`.
+The paused full mutation run was incomplete. This result does not claim a new
+30-case run or reuse the historical 24-mutant result as migration proof.
 
 ## Known limits
 
@@ -267,13 +294,23 @@ Every limit below is retained explicitly; none is claimed as solved.
 
 - Every object must fit in one frame. Batches may hold many objects up to the frame
   and count limits. There is no streaming, resumable transfer or large-file support.
-- Want probe memory and work are bounded only by stored object sizes and the number
-  of distinct objects requested (API gap 3). Rate limiting is transport work.
+- Want uses fixed Rust streaming memory per probe but hashes stored bytes in full.
+  Repeated frames, distinct objects and sessions can amplify CPU and I/O work.
+- Manifests still uses native `put_manifest` full-graph validation. A small manifest
+  can reference large existing blobs and cause payload reads and allocations.
+  Publish still validates the graph and complete World/attempt history, including
+  on retries. These CPU/memory amplification paths remain unresolved for hosting.
+- Capped reads limit encoded bytes only. Manifest parser/reconstruction heap,
+  SQLite C memory and total process RSS are not bounded by that cap.
+- A legal 16 MiB outer frame reserves its buffer before inner-field refusal.
 - Whole-manifest transfer only. There is no delta or history negotiation, and no
   multi-version fetch or clone.
 - No transport security, authentication, authorization, rate limiting or quotas.
   Receiver CPU and storage abuse within limits is unbounded across sessions.
-- Unreferenced objects from refused sessions are retained.
+- Valid-prefix unreferenced objects from refused sessions are retained. Quotas,
+  retention and cleanup remain future work.
+- Operation IDs share a repository namespace. Principal binding, permissions and
+  operation-principal namespaces are not defined by this codec.
 - Version 1 is not yet frozen for external compatibility. Interoperability beyond this
   crate's own sender and receiver is untested.
 - Hosting, provider coordination, notifications, Publish Requests, permissions and

@@ -11,7 +11,7 @@ pub use receiver::serve;
 pub use sender::push;
 
 /// Fixed version 1 limits. The codec enforces them before allocating protocol
-/// buffers. Native reads of already stored objects are not bounded by them.
+/// buffers. Capped native reads bound encoded bytes, not parser heap or graph work.
 pub mod limits {
     pub const MAX_FRAME: usize = 16 << 20;
     pub const MAX_BLOB: usize = 8 << 20;

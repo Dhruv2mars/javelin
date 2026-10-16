@@ -8,10 +8,7 @@ use javelin_protocol::{Kind, Message, Outcome, codec::encode, limits::*};
 use support::*;
 
 fn raw(id: ObjectId) -> Vec<u8> {
-    let hex = id.to_string();
-    (0..32)
-        .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
-        .collect()
+    id.as_bytes().to_vec()
 }
 
 fn msg(message: &Message) -> Vec<u8> {
@@ -145,13 +142,13 @@ fn refuses_blob_with_valid_hash_of_other_content() {
         dest.read_blob(blobs[0].0),
         Err(javelin::Error::MissingObject(_))
     ));
-    // The old API stores before checking the ID and does not roll back the prefix.
+    // Valid prefix storage is retained, but mismatched bytes are never stored.
     assert_eq!(dest.read_blob(blobs[2].0).unwrap(), blobs[2].1);
-    assert_eq!(dest.read_blob(blobs[1].0).unwrap(), blobs[1].1);
+    assert!(!dest.has_blob(blobs[1].0).unwrap());
     let retained = Manifest::new([(
         RepoPath::parse("retained").unwrap(),
         FileEntry::Regular {
-            content: blobs[1].0,
+            content: blobs[2].0,
             executable: false,
         },
     )])
@@ -190,11 +187,13 @@ fn refuses_manifest_with_mismatched_claim_without_publishing() {
         },
     )])
     .unwrap();
+    let actual = ObjectId::for_manifest(&smaller);
     let (_d, mut dest) = repo();
     let mut input = hello();
     input.extend(msg(&Message::Blobs(blobs.clone())));
     input.extend(msg(&Message::Manifests(vec![(id, smaller)])));
     refused(&mut dest, &input, "id_mismatch");
+    assert!(!dest.has_manifest(actual).unwrap());
     let _ = manifest;
     let mut input = hello();
     input.extend(publish("op-1", 0, id));
@@ -224,10 +223,13 @@ fn refuses_wrong_kind_references() {
         },
     )])
     .unwrap();
-    let nested_id = source.put_manifest(&nested);
-    assert!(nested_id.is_err(), "native API also refuses this graph");
+    assert!(
+        source.put_manifest(&nested).is_err(),
+        "native API also refuses this graph"
+    );
+    let nested_id = ObjectId::for_manifest(&nested);
     let mut input = hello();
-    input.extend(msg(&Message::Manifests(vec![(id, nested)])));
+    input.extend(msg(&Message::Manifests(vec![(nested_id, nested)])));
     refused(&mut dest, &input, "wrong_object_kind");
 }
 
@@ -440,7 +442,7 @@ fn messages_round_trip() {
 fn encoder_refuses_messages_the_receiver_would_refuse() {
     let id = ObjectId::parse(&"ab".repeat(32)).unwrap();
     let big = Message::Blobs(vec![(id, vec![0; MAX_BLOB + 1])]);
-    assert_eq!(encode(&big).unwrap_err().code, "limit_exceeded");
+    assert_eq!(encode(&big).map(|_| ()).unwrap_err().code, "limit_exceeded");
     let deep = vec!["d"; MAX_DEPTH + 1].join("/");
     let manifest = Manifest::new([(
         RepoPath::parse(&deep).unwrap(),
@@ -451,9 +453,15 @@ fn encoder_refuses_messages_the_receiver_would_refuse() {
     )])
     .unwrap();
     let message = Message::Manifests(vec![(id, manifest)]);
-    assert_eq!(encode(&message).unwrap_err().code, "limit_exceeded");
+    assert_eq!(
+        encode(&message).map(|_| ()).unwrap_err().code,
+        "limit_exceeded"
+    );
     let many = Message::Want(vec![(Kind::Blob, id); MAX_WANT + 1]);
-    assert_eq!(encode(&many).unwrap_err().code, "limit_exceeded");
+    assert_eq!(
+        encode(&many).map(|_| ()).unwrap_err().code,
+        "limit_exceeded"
+    );
 }
 
 #[test]

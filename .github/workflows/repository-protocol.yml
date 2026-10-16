@@ -50,7 +50,7 @@ jobs:
             printf 'commit=%s\nrunner=%s\narchitecture=%s\nimage=%s\nimage_version=%s\n' "$CHECKED_OUT_COMMIT" "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" "$ImageVersion"
             rustc --version --verbose
             cargo --version
-            find src tests Cargo.toml Cargo.lock ../../src ../../Cargo.toml ../../Cargo.lock -type f | LC_ALL=C sort | xargs sha256sum 2>/dev/null || find src tests Cargo.toml Cargo.lock ../../src ../../Cargo.toml ../../Cargo.lock -type f | LC_ALL=C sort | xargs shasum -a 256
+            find src tests scripts Cargo.toml Cargo.lock ../../src ../../Cargo.toml ../../Cargo.lock ../../.github/workflows/repository-protocol.yml -type f | LC_ALL=C sort | xargs sha256sum 2>/dev/null || find src tests scripts Cargo.toml Cargo.lock ../../src ../../Cargo.toml ../../Cargo.lock ../../.github/workflows/repository-protocol.yml -type f | LC_ALL=C sort | xargs shasum -a 256
           } 2>&1 | tee ci-logs/environment.log
 
       - name: Check formatting
@@ -79,9 +79,11 @@ jobs:
           PATH="$shim:$PATH" "$probe/git_probe$EXE_SUFFIX"; with=$?
           set -e
           echo "probe exit without shim=$without with shim=$with"
+          printf 'probe_exit_without=%s probe_exit_with=%s\n' "$without" "$with" | tee ci-logs/git-control.log
           test "$without" -ne 97
           test "$with" -eq 97
           test -e "$shim/invoked"
+          echo 'positive_marker_present=true' >> ci-logs/git-control.log
           rm "$shim/invoked"
           echo "shim=$shim" >> "$GITHUB_ENV"
         env:
@@ -91,9 +93,16 @@ jobs:
         run: |
           PATH="$shim:$PATH" cargo test --locked --all-targets -- --nocapture 2>&1 | tee ci-logs/test.log
           test ! -e "$shim/invoked"
+          echo 'product_tests_git_marker_absent=true' | tee -a ci-logs/git-control.log
 
       - name: Build release binary
         run: cargo build --locked --release 2>&1 | tee ci-logs/release-build.log
+
+      - name: Exercise release sender and receiver with the git shim
+        run: |
+          PATH="$shim:$PATH" cargo test --locked --release --test process -- --nocapture 2>&1 | tee ci-logs/release-process.log
+          test ! -e "$shim/invoked"
+          echo 'release_process_git_marker_absent=true' | tee -a ci-logs/git-control.log
 
       - name: Retain check logs
         if: ${{ !cancelled() }}

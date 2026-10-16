@@ -262,7 +262,7 @@ cache collection, the production privilege model, and macOS/Windows bindings.
 
 Owner: separate T3 implementation thread commissioned by hub
 `e659350e-23d8-4473-98e8-d3609b784340`. Branch `feat/repository-protocol`, draft PR
-against `feat/native-layer-checkpoints`. Planning source is exact accepted Layer state
+originally against `feat/native-layer-checkpoints`. Planning source is exact accepted Layer state
 `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; that base is an unmerged accepted
 dependency, so this PR cannot claim independent acceptance. Owned paths only:
 `crates/javelin-protocol/**`, `docs/repository-protocol.md`,
@@ -283,7 +283,7 @@ checkpoint, trace or collaboration format is claimed.
 - [x] Prove separate-process transfer, lost reply and retry between two repositories.
 - [x] Record API gaps for the hub instead of copying private native internals.
 - [x] Obtain independent review and hosted three-platform evidence.
-- [ ] Hub: public bounded read or existence check, content-ID and raw ObjectId byte APIs (gaps 1-3).
+- [x] Hub: public bounded read or existence check, content-ID and raw ObjectId byte APIs accepted at `3a54021` (gaps 1-3).
 
 Draft PR: https://github.com/Dhruv2mars/javelin/pull/15, linked in T3 Code.
 Binary candidate B was selected over JSON candidate A; the rationale and fixture sizes
@@ -296,7 +296,7 @@ Final tested source `02c7427ef18bedf933ab4a75bc8d7d46cd9dce3b` passed hosted run
 38508849025 on Linux, macOS and Windows: 21 tests per OS, release build, and a PATH
 git-shim control of without=0 and with=97. Head `29457a8` added documentation only.
 
-### Fresh hub Codex r2 corrections and dependency wait
+### Historical hub Codex r2 corrections and dependency wait
 
 Done for this correction pass means the documentation matches the audit's actual
 allocation and storage evidence, corrected refusal fixtures pass locally, only
@@ -310,15 +310,17 @@ the HIGH Want allocation gap or provide fresh hosted acceptance.
 - [x] Keep Publish as foundation CAS against current World; record that Layer binding requires newly negotiated semantics, since v1 rejects trailing bytes.
 - [x] Verify corrected fixtures, formatting and Clippy locally and record the result.
 - [x] Commit corrected fixtures and notify the hub of local evidence, retaining PR #15.
-- [ ] Wait for the hub's accepted native-object-access exact SHA before any dependent rebase or migration. PR #18 implementation alone is not acceptance.
-- [ ] After acceptance, migrate typed availability, cap-before-allocation reads, pre-store content-ID checks and ObjectId bytes within the same PR/owned paths.
-- [ ] After migration, obtain fresh independent review and three-OS exact-head source proofs. Historical `02c7427` proofs do not cover new changes.
+- [x] Wait for the hub's accepted native-object-access exact SHA before any dependent rebase or migration. PR #18 implementation alone is not acceptance.
+- [x] After acceptance, migrate typed availability, cap-before-allocation reads, pre-store content-ID checks and ObjectId bytes within the same PR/owned paths.
+The earlier requirement for another review and three-OS artifact-audit round was
+superseded by the Oct 16 user workflow. Historical `02c7427` proofs do not cover new changes.
 
 The audit's 55-byte Want for a 32-MiB blob causes a largest Rust allocation of
 33,554,432 bytes. Its eight-reference manifest fixture causes 268,446,277 bytes of
 cumulative Rust allocation, not peak RSS, excluding SQLite C allocations. Hosted
-receiver exposure remains BLOCKED HIGH. Quotas and retention remain future work.
-This pass changes documentation and test fixtures only, with no runtime codec or
+receiver exposure at that pre-migration source remained BLOCKED HIGH.
+Quotas and retention remain future work.
+That pass changed documentation and test fixtures only, with no runtime codec or
 native source changes, no new PR, no watcher and no scheduler.
 
 VERIFIED locally: correction fixtures `c133fab941fec7dc2eecfb81b05e1b1e0db44db4`,
@@ -327,3 +329,28 @@ Rust 1.99.0 on macOS arm64, `cargo fmt --all -- --check`,
 `cargo test --locked --all-targets` pass, 21 tests. NOT VERIFIED for these new
 fixtures: fresh independent review and three-OS exact-head source proofs.
 The 24 compiling-mutant proof is historical and was not rerun this pass.
+
+### Accepted native object access migration
+
+The hub accepted PR #18 source `3a54021b15ac5002c21f492b6bed07740c682421`,
+recorded in hub `1791618`. Rebase completed at `d1fb504`; root files match exact
+accepted source. The same PR #15 will target `feat/bounded-native-object-access`.
+Remote `5d3b59d` adds native documentation only and is not the tested native source.
+Historical evidence above retains its original SHA labels and does not verify this
+migration. The original bounded codec/process outcome still applies.
+The Oct 16 user instruction supersedes the earlier review/audit cycle. Done for
+this wave means public native-access migration, relevant behavioral checks,
+a ready regular PR #15, and a brief result to the hub. No additional process rebase,
+review round, artifact audit or evidence-only finishing commit is required.
+
+- [x] Rebase onto accepted exact `3a54021`, preserving accepted TASKS prefix and only owned paths in the diff.
+- [x] Replace Want probes, capped sender reads, pre-store hash checks and ObjectId byte conversions with accepted public APIs; remove old workarounds.
+- [x] Check 55-byte Want allocation controls, kind/corruption/oversize/pre-store refusals and retained-prefix behavior.
+- [x] Run formatting, Clippy, 25 component tests, two release process tests with Git-shim controls and seven focused migration mutations.
+- [x] Prepare the checked migration for regular PR #15; the hub owns integration and merging.
+
+Retained limits include Manifests/Publish full graph and history CPU/memory work,
+parser heap beyond the encoded-byte cap, SQLite C allocations and RSS, repeated
+hashing work, quotas/retention, operation principal namespaces, and the 16-MiB outer
+frame reservation. There is no HTTP, authentication, provider or GA claim. Whole-Layer
+Publish is not this dependency and v1 Publish does not gain Layer fields.
