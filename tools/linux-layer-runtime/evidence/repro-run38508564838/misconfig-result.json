@@ -1,0 +1,13 @@
+{
+  "bound": 0,
+  "firstRecovery": "Err(InvalidInput(\"javelin-linux-layer-helper: runtime layout entry state is not as created\"))",
+  "frozen": false,
+  "pending": null,
+  "secondRecovery": {
+    "failures": [],
+    "pending_resolved": 0,
+    "stages_aborted": 0,
+    "views_removed": 0,
+    "views_thawed": 1
+  }
+}

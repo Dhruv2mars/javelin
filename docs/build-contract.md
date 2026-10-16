@@ -25,7 +25,8 @@ is the starting point. Reuse earlier work only after verifying it against this c
 - Layers share immutable content and store sparse changes. Full repository copies
   are not the production Layer model.
 - A Layer exposes ordinary filesystem paths usable by external tools.
-- One parent agent owns its Layer. The parent chooses when a child needs isolation.
+- One parent agent owns its Layer, and its subagents can share it. The parent chooses
+  when a child needs isolation.
   Human-only work also happens in a Layer. Human edits in an existing Layer belong
   to that Layer's work.
 - A Layer clone starts a separate isolated Layer from an immutable snapshot.
@@ -38,6 +39,11 @@ is the starting point. Reuse earlier work only after verifying it against this c
   require rechecking before acceptance.
 - Publish accepts the whole Layer as the next World version. Partial acceptance
   requires preparing another Layer.
+- A published Layer becomes read-only. Further work starts by creating or cloning
+  another Layer from the current World. Javelin retains the Layer identity, final
+  checkpoint reference, supplied agent context, Stack ancestry, and publication
+  relationship. The workspace, overlay, and derived caches may be discarded when
+  convenient. A published Layer remains inspectable through its immutable records.
 - Publish validates VCS correctness and permissions. Tests, builds, reviews, and
   security checks are optional repository policy, not mandatory default Publish behavior.
 - Final World advancement is ordered, atomic, durable, and idempotent. Preparation
@@ -128,20 +134,48 @@ the local and hosted development workflows.
 
 1. Prove native immutable objects, initialization, World ordering, restart behavior,
    and rejection of invalid or missing objects with a runnable verification suite.
-2. Prove Layer filesystem behavior through normal file operations and existing tools.
-   Record unsupported capabilities and required host setup as unconfirmed work.
+2. Prove a sparse Layer backend that shares immutable base content through normal
+   filesystem paths. Read, write, atomic-save rename, delete, traversal, symlinks,
+   file watching, a compiler or test run, cross-Layer isolation, and interrupted
+   operation recovery must pass. Full-copy directories and clonefile controls can
+   validate the probe but cannot pass this gate. A backend recommendation remains
+   unconfirmed until the sparse backend passes. Unsupported capabilities and required
+   host setup remain open work, not a successful gate.
 3. Complete a real local project with externally managed parallel agents. Exercise
-   checkpoints, Stack, conflicts, Publish, discard, history, restore, and supplied traces.
+   checkpoints, Layer clone, Stack, conflicts, Publish, discard, history, restore,
+   ignore discovery and supplied traces. Pass through a rerunnable acceptance
+   script with explicit expected outcomes from this contract, including unchanged
+   source snapshots after clone, compatible advances without forced refresh,
+   explicit intersection conflicts, and the missing-agent-trace warning and override.
 4. Complete a hosted public and private repository workflow through CLI and browser.
    Exercise direct Publish, exact review approvals, revisions, upstream contributions,
-   forks, permissions, retries, and outages.
-5. Verify installation, upgrade, recovery, and complete workflows on macOS, Linux,
-   and Windows before claiming support for those platforms.
+   forks, permissions, retries, and outages. A rerunnable acceptance script must
+   assert exact revision authorization, immutable prior revisions, one durable
+   outcome after a lost reply, inherited fork data without inherited credentials,
+   no access to restricted traces, and the distinct control-plane/provider outage
+   outcomes in this contract.
+5. Initial GA requires macOS, Linux, and Windows support. Verify installation,
+   upgrade, recovery, and complete workflows on each. Record supported architectures
+   in the release manifest. A platform that has not passed remains a GA blocker.
+   The user explicitly confirmed all three for initial GA in this hub on
+   2026-10-14. This supersedes the earlier Q61 macOS-first release direction.
 6. Measure hot-repository and many-repository workloads. Record fixtures, machines,
-   backend, limits, errors, and cost assumptions. Set numerical release requirements
-   from measured behavior. Do not equate simulated API throughput with filesystem throughput.
+   backend, limits, errors, and cost assumptions. Baselines inform engineering;
+   they do not pass this gate. Before a release acceptance run, commit its workload
+   shape, repository/file/history sizes, concurrent Layer/client counts, duration,
+   numeric latency/throughput/resource/error limits and cost budget. A missing
+   threshold or exceeded limit fails acceptance. Changes to criteria require a
+   recorded rationale and a new run; do not relax them retroactively to pass the
+   same result. Numerical criteria remain open engineering work. Measure mounted
+   filesystem paths separately from API throughput.
 7. Verify public release artifacts and documentation as a new developer. Publish
    reproducible evidence, known limits, and supported versions before declaring GA.
+
+The complete local and hosted acceptance scripts must run with a failing `git`
+stand-in on PATH whose positive control proves it detects invocation. Check the
+resulting marker is absent during product workflows and inspect runtime/storage
+dependencies for Git invocation or interpretation. Developer checkout and build
+metadata collection remain outside those product executions.
 
 ## Work ownership
 
@@ -154,10 +188,34 @@ Workers report evidence and a VERIFIED, NOT VERIFIED, or INCONCLUSIVE result.
 The hub inspects the actual artifact before checking an item. No PR is merged
 without explicit user instruction.
 
+The user's 2026-10-16 workflow update supersedes earlier draft-first and repeated
+review requirements. Each owner implements its task, runs relevant checks, opens
+and links one regular PR when ready, reports the result briefly and finishes.
+Do not create planning drafts or routine separate architect, audit, acceptance or
+handoff rounds. Keep the solution and coordination simple. Existing verification
+records are historical evidence; they do not prescribe that process for new work.
+Maintain T3 thread ownership and settle completed threads. Product correctness and
+release verification still require actual working behavior.
+
 ## Decision sources
 
 - Final design and consistency review: `codex://threads/01a12eae-a899-7ad3-9462-5f95a64e76cc`.
 - Earlier product and hosting grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
-- Explicit fork-history answer: `t3-thread://v1/6bbb5b4b-899f-4bc7-b999-a78669bcc177`.
+- Explicit fork-history answer, "Inherit history through the selected version":
+  `t3-thread://v1/6bbb5b4b-899f-4bc7-b999-a78669bcc177` and
+  `codex://threads/01a12ebd-0de7-7113-b9ba-b99a0771ce30`.
+- Read-only published Layers and retained provenance: earlier grilling Q82 and Q121,
+  each answered "agreed" by the user. Local transcript
+  `~/.codex/sessions/2026/09/09/rollout-2026-09-09T12-30-06-01a084f7-7b5f-79d1-b381-d686c430a7f9.jsonl`,
+  verified by the hub on 2026-10-14.
 - Marathon authorization, replacement of earlier code, and one-PR-per-thread rule:
   `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`, user messages on 2026-10-13.
+  Local backing transcript: `codex://threads/01a135d7-d344-72c2-b0c3-331850d6b2ec`.
+- Build direction confirmation of record: the user's opening messages in that
+  hub direct the implementation to follow the final design and authorize the OSS
+  GA marathon. They do not alter the prior thread's formal confirmation metadata.
+- Initial GA platform scope: in this hub on 2026-10-14 the user answered
+  "All three platforms for initial GA" to the release-scope question. The earlier
+  Q61 answer was "first os is macos only" with portable architecture; presenting
+  all three as an already accepted gate before this answer was a hub attribution
+  error. The new explicit answer settles that scope.
