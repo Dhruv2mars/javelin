@@ -5,16 +5,19 @@ const assert=(ok,message)=>{if(!ok) throw Error(message);};
 export async function verifyProfiles(dir) {
   const bytes=await readEvidenceDirectory(dir);
   const result=JSON.parse(bytes.get("profile.json"));
-  assert(!result.failure && result.elapsed_ms<=600000,"INCONCLUSIVE incomplete profiling run");
-  assert(result.metadata?.profile==="release" && result.metadata?.opt_level==="3" &&
-    !result.metadata.debug_assertions,"ordinary optimized profile executable required");
-  assert(/^[a-f0-9]{40}$/.test(result.source_label) && /^[a-f0-9]{64}$/.test(result.binary_sha256),"profile identity");
-  const context={pools:new Map(),checkpoints:new Set(),empty:undefined};
-  const loops=[],reports=[];
   const parse=name=>{
     assert(bytes.has(name),"missing profile file "+name);
     return bytes.get(name).toString().trim().split("\n").map(s=>JSON.parse(s));
   };
+  const metadata=parse("metadata.stdout");
+  assert(metadata.length===1 && metadata[0].type==="metadata" &&
+    isDeepStrictEqual(result.metadata,metadata[0]),"saved build metadata differs from raw metadata");
+  assert(!result.failure && result.elapsed_ms<=600000,"INCONCLUSIVE incomplete profiling run");
+  assert(result.metadata?.profile==="release" && result.metadata?.opt_level==="3" &&
+    result.metadata.debug_assertions===false,"ordinary optimized profile executable required");
+  assert(/^[a-f0-9]{40}$/.test(result.source_label) && /^[a-f0-9]{64}$/.test(result.binary_sha256),"profile identity");
+  const context={pools:new Map(),checkpoints:new Set(),empty:undefined};
+  const loops=[],reports=[];
   let index=0;
   for(const action of ["head","stale"]) {
     let control=null;

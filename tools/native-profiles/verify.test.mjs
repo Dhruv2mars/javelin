@@ -4,67 +4,20 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyze, verifyDirectory } from './verify.mjs';
+import { fakeID, fixture, history, check, timing, prepared, at } from './test-fixtures.mjs';
 
 const CASES = ['base', 'depth4', 'depth64', 'entries8', 'entries128', 'distinct-blobs', 'distinct-manifests'];
 const ACTIONS = ['head', 'accepted', 'stale', 'clone'];
 const hash = value => createHash('sha256').update(value).digest('hex');
-const fakeID = label => hash(`SYNTHETIC TEST ONLY ${label}`);
-const empty = fakeID('empty');
-const pools = new Map();
 const directories = [];
 afterAll(async () => { await Promise.all(directories.map(dir => rm(dir, { recursive: true, force: true }))); });
 
-// These IDs are arbitrary labels, not native hashes. This builder tests recorded
-// consistency only; it supplies no accepted native or performance evidence.
-function fixture(name, id) {
-  const entries = name === 'entries8' ? 8 : name === 'entries128' ? 128 : 32;
-  if (!pools.has(entries)) {
-    const blobs = Array.from({ length: entries }, (_, i) => ({ id: fakeID(`blob-${entries}-${i}`),
-      length: 262144 / entries, sha256: fakeID(`payload-${entries}-${i}`) }));
-    const manifests = Array.from({ length: 128 }, (_, index) => {
-      const shared = index < 64;
-      const variant = index % 64;
-      const canonical = Object.fromEntries(blobs.map((blob, i) => [`f${String(i).padStart(3, '0')}`,
-        { kind: 'regular', content: blobs[shared ? 0 : i].id, executable: i < 6 && (variant & (1 << i)) !== 0 }]));
-      return { id: fakeID(`manifest-${entries}-${index}`), shared, variant, canonical,
-        length: Buffer.byteLength(JSON.stringify(canonical)) };
-    });
-    pools.set(entries, { blobs, manifests });
-  }
-  const { blobs, manifests } = pools.get(entries);
-  const f = { case: name, depth: name === 'depth4' ? 4 : name === 'depth64' ? 64 : 16, entries,
-    shared: name !== 'distinct-blobs', distinct_manifests: name === 'distinct-manifests',
-    pool: blobs.map(b => b.id), shared_manifests: manifests.slice(0, 64).map(m => m.id),
-    distinct_blob_manifests: manifests.slice(64).map(m => m.id), source_checkpoint: fakeID(id) };
-  return { type: 'fixture', fixture: f, blobs, manifests, history: history(f), check: check(f),
-    payload_bytes: 262144, verified_blob_reads: entries, verified_manifest_reads: 128 };
-}
-function at(f, n) {
-  return (f.shared ? f.shared_manifests : f.distinct_blob_manifests)[f.distinct_manifests ? n % f.depth : 0];
-}
-function history(f) {
-  return [{ number: 0, manifest: empty, operation: null }, ...Array.from({ length: f.depth }, (_, i) =>
-    ({ number: i + 1, manifest: at(f, i + 1), operation: `seed-${i + 1}` }))];
-}
-function check(f, versions = f.depth + 1, attempts = f.depth, layers = 1) {
-  return { versions, objects: f.entries + 130, attempts, layers };
-}
-function timing(phase, wall_ns = 100, cpu_ns = 10) {
-  return { type: 'timing', phase, wall_ns, cpu_ns, peak_rss_bytes: 1024, error: null };
-}
 function accepted(f, operation) {
   return { outcome: 'accepted', version: { number: f.depth + 1, manifest: at(f, f.depth), operation } };
 }
 function call(phase, f, action, worker, outcome) {
   return { type: 'call', phase, operation: `${action}-${worker}`, expected: action === 'stale' ? f.depth - 1 : f.depth,
     manifest: at(f, f.depth), attempt: 0, wall_ns: 100, cpu_ns: 10, peak_rss_bytes: 1024, result: { ok: outcome } };
-}
-function prepared(event) {
-  const f = event.fixture;
-  return [timing('init'), ...f.pool.map(() => timing('put_blob')),
-    ...Array.from({ length: 128 }, () => timing('put_manifest')),
-    ...Array.from({ length: f.depth }, () => timing('seed_advance')),
-    timing('layer_base'), timing('create_layer'), event];
 }
 function measured(f, action, worker = '0') {
   const events = [timing('open'), timing('head_discovery'), timing('put_blob_negative_control')];

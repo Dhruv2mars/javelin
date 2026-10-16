@@ -13,7 +13,7 @@ const commands=[
   ["clippy",["cargo","clippy","--manifest-path",manifest,"--locked","--all-targets","--","-D","warnings"]],
   ["tests",["cargo","test","--manifest-path",manifest,"--locked"]],
   ["tests-release",["cargo","test","--manifest-path",manifest,"--locked","--release"]],
-  ["verifier-tests",["bun","test",join(here,"verify.test.mjs"),join(here,"run.test.mjs")]],
+  ["verifier-tests",["bun","test",join(here,"verify.test.mjs"),join(here,"run.test.mjs"),join(here,"verify-profile.test.mjs")]],
   ["release",["cargo","build","--manifest-path",manifest,"--locked","--release"]],
   ["controls",["bun",join(here,"run.mjs"),"run",join(out,"controls"),process.env.NP_SOURCE]],
   ["verify",["bun",join(here,"verify.mjs"),join(out,"controls")]],
