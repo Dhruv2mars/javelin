@@ -222,9 +222,9 @@ Source inspection for process calls, sleeps and Git references found only launch
 of the native CLI/current test executable in tests. Runtime and tests are
 Git-independent. These API/process checks do not verify ordinary-path binding.
 
-The original source's compiled native scope is VERIFIED locally and through the
-three-OS checks below. Hub dependency acceptance is pending the corrected
-evidence repair described below. Filesystem paths, backend capture reconciliation,
+Exact source `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1` is hub-accepted as
+native Layer state after the evidence repair below, local checks and the
+corrected three-OS run. Acceptance covers native state only. Filesystem paths, backend capture reconciliation,
 stable-change detection, automatic capture and interrupted materialization must
 be integrated and verified in a follow-on unit. Windows symlink materialization,
 platform naming limits, non-Unix parent-directory sync, hardware power loss,
@@ -235,7 +235,7 @@ follows from this PR.
 
 The hub reviewed `bd16d52` and all 18 artifact logs/full job log. Its independent
 Claude Opus 5.5 review reported no material code defect, but dependency acceptance
-remains pending an evidence repair in this same PR. The original malformed-object
+required an evidence repair in this same PR. The original malformed-object
 test used `serde_json::json!`, which sorted outer fields alphabetically. Redundant
 unchanged entries and nonexistent tombstones therefore had both a noncanonical
 delta and noncanonical bytes. Removing either canonicality comparison separately
@@ -291,8 +291,8 @@ denied, release build, whitespace check and the extracted caller compiled agains
 the production release library pass. Release CLI integrity again reports two
 Layers, four objects, one World and zero World attempts. The release binary has
 no test-boundary string. Runtime/tests still contain no Git invocation or parsing.
-Corrected-source hosted checks are pending; the original hosted run is not claimed
-as verification of these repaired tests or the prefix-tombstone clarification.
+The original hosted run is not claimed as verification of these repaired tests
+or the prefix-tombstone clarification; corrected run 38468818530 below covers them.
 
 The hub resolved these semantics within the authorized scope:
 
@@ -317,7 +317,45 @@ this store is rejected as `corrupt_repository` when its graph is read. An unknow
 checkpoint ID without local bytes is indistinguishable from another missing local
 object. None can silently adopt another repository's base.
 
-## Hosted verification at the exact source
+## Hub acceptance of the corrected source
+
+The hub accepted `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1` as native Layer state.
+Its independent parent-side run passed the 52-test suite, the release-library
+caller and the targeted release test-name-prefix run. A second fresh Claude Opus
+5.5 review (R2) confirmed the medium canonicality-guard evidence gap is closed and
+found no material new bug. The hub inspected all 18 artifact logs plus the
+complete job log of the corrected run. The accepted PR6 base remains
+`0c8582ddcb175d7bd4d2752e73f795651f810a6f`. The next Linux binding unit starts
+from this exact commit. Docs-only handoff commits after it change no source,
+tests, schema, Cargo files, CLI, workflow or probes.
+
+[Native run 38468818530](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530)
+compiled exact commit `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1` with Rust
+1.99.0. All three native jobs succeeded on the same runner images listed below.
+
+- [Linux job 115542288749](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530/job/115542288749)
+  ran on Ubuntu 24.04 x86_64, image `20261004.327.1`, and passed 52 tests.
+- [macOS job 115542289331](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530/job/115542289331)
+  ran on macOS 15 arm64, image `20260907.0337.1`, and passed 52 tests.
+- [Windows job 115542289153](https://github.com/Dhruv2mars/javelin/actions/runs/38468818530/job/115542289153)
+  ran on Windows 2025 x86_64, image `20260925.250.1`, and passed 50 tests.
+
+Each runner ignored only the process actor entry point and passed all 14 process
+checks and all 18 Layer checks. Formatting logs are empty, Clippy ends in a
+successful dev build, and the release build succeeds. Windows again omits the
+two Unix-only inherited tests; equivalent Windows behavior is not proven.
+Artifacts `native-logs-ubuntu-24.04-1` / `11850772498`,
+`native-logs-macos-15-1` / `11850931356` and
+`native-logs-windows-2025-1` / `11850917029` are unexpired until 2026-10-27
+between 21:14:16 and 21:17:45 UTC. Hub raw proof is at the temporary directory
+`/tmp/javelin-hub-layer-ci-38468818530`.
+
+Known limits after acceptance: ordinary-path binding, capture reconciliation,
+autosave, Windows symlink materialization, platform naming limits, non-Unix
+directory sync, power loss, performance, full Layer Publish, Gate2 and GA remain
+unverified. Foreign-reference error classification stays a nonblocking limitation.
+
+## Original hosted verification at `bd16d52`
 
 [Native run 38465628999](https://github.com/Dhruv2mars/javelin/actions/runs/38465628999)
 compiled exact commit `bd16d5224fa6dfce01509ebf6c28fb8b92dde1a3` with Rust

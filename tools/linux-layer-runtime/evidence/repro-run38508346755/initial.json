@@ -1,0 +1,33 @@
+{
+ "sourceSHA": "547a5d9902ef5e19f53ff8a4fd1b6c938e395bd1",
+ "probeDependencySHA": "19224ef946f741ae8bcc292261fba8eed8d2e763",
+ "sources": {
+  ".github/workflows/linux-layer-runtime.yml": "43813010cb6f887b84f98d0ef9c4ec8e38626a8a23f97104ec7ca784a7f5af2b",
+  "Cargo.lock": "3efc20bcb702d58a83a7e8b122c2949a960b9fa878b51124aafdddb6c173435c",
+  "Cargo.toml": "fca6adfb2756f93f92cb758304d5e048dc213cdaacd31e6368d651cb3621df90",
+  "src/bin/javelin-linux-layer-helper.rs": "04bcb28023b4bfb3258e7bd58db8d60bff53586b7f6765f437b862583e3b65c8",
+  "src/domain.rs": "6c35f3318792f0186bc506ca7981a1478c746a706537ca30dd1e1a4aa6f372fc",
+  "src/layer.rs": "52306e08d427f96dd9d47fb0a4a161d4996ce69a1167ab22e5a8895158048f6b",
+  "src/lib.rs": "c206b496aa3869967b192cbbb35cb35fa1c7938dbf454466b15f86f435830717",
+  "src/linux_layer.rs": "0af445aad633fe7dccd4a9d2921549bc12605efcf754b328525d9e7857bb2081",
+  "src/main.rs": "93adae4a87d01dac09fc91236f61cc45107b66f07e8d89aace2b28a14d2d948b",
+  "src/repository.rs": "41cbff7552cfe0c1ff9f74b79faeba2060f667a1d44817745090960346fb25fc",
+  "tests/support/linux_layer_mounts.rs": "b832e023c8407e3d8dbe2617b6227acbac0bd04f64d925df64a1230e6702b955",
+  "tools/linux-layer-runtime/inventory.py": "d998d8c49be76e07e73cdcdb5b1cca227afa6e555d5978b00a6599e5f3081cc7",
+  "tools/linux-layer-runtime/run.sh": "fd9872c56d4c74aee3c284e6e034d61d19d59513e0e87bc6af0b45ed1e33cd2b",
+  "tools/linux-layer-runtime/summary.py": "f83fca439dd7346145af1db21a5051b04ea0beb3b93b9190ee49548b608cc80e"
+ },
+ "probeSources": {
+  "probe.mjs": "617f009e1686dddfd5bacd4de007731d71e309d5a4075365235124ae7dfa0b49",
+  "atomic-writer.mjs": "14d6eb4e35bc8aef0914c1e79004c6c6b41a53dc774127007603b42a1b77ec22"
+ },
+ "installedHelperSHA256": "08edd4663aec1ba94c332c910643c4ed7e35fbeaff6513f81e4a62d70c4b15bb",
+ "kernel": "6.17.0-1022-azure",
+ "machine": "x86_64",
+ "uid": 1001,
+ "runnerImage": "20261004.327.1",
+ "runId": "38508346755",
+ "runAttempt": "1",
+ "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+ "bun": "1.3.13"
+}
