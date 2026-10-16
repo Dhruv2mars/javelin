@@ -506,10 +506,18 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - [x] Implement Bun supervisor, isolated Python wire/ordinary-path worker and C API probe using unchanged inherited CLI.
 - [x] Offline audit negative controls reject changed bytes, missing logs/phases, duplicates, unfinished phases, wrong external identity and resealed false success/cleanup/alias results.
 - [ ] Execute hosted attempt, retain failures, audit exact-source artifacts and cleanup.
-- [ ] Obtain independent read-only Codex source/evidence review and resolve proof gaps.
+- [x] Oct 16 user supersedes mandatory final review rounds; reuse completed design report and proportional checks.
 - [ ] Report tested SHA, doc head, limits, findings and next smallest recommendation to hub.
 
 - First workflow source `32d7da8`, run `38716043185`, failed validation before any
   runner/job existed. `actionlint` reproduced disallowed job-level `runner.temp`.
   Retained run metadata under validation `attempts/`; moved it to step env.
   This is INCONCLUSIVE setup evidence, with no mounted result or cleanup claim.
+
+- Oct 16 resume: inspected raw run `38716401553` at `bc0bb7a`. Same-mount stale
+  handles, case/NFC-NFD whiteout bypass, BAD_COOKIE and actual second-UID secret
+  access are backend failures. Fsynced remount recovery and bounded watch APIs
+  worked. All three small tiers completed; 50k remains INCONCLUSIVE.
+- Fix archive omission of hidden workflow source and replace unavailable Python
+  xattr binding with the ordinary macOS tool. Prior artifact stays untouched.
+  New source requires a fresh bounded hosted run before readiness.

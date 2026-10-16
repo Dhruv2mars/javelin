@@ -344,8 +344,11 @@ def capabilities(root):
     p = root / "capability"
     p.write_text("capability\n")
     hard = observe(lambda: os.link(p, root / "hard-link"))
-    xattr = observe(lambda: os.setxattr(p, b"user.javelin", b"attribute"))
-    read = observe(lambda: os.getxattr(p, b"user.javelin").decode())
+    # Python on macOS does not expose os.setxattr. Use the ordinary native tool.
+    written = tool(["/usr/bin/xattr", "-w", "com.javelin.suitability", "attribute", str(p)])
+    fetched = tool(["/usr/bin/xattr", "-p", "com.javelin.suitability", str(p)])
+    xattr = {"ok": written["exit"] == 0, "command": written}
+    read = {"ok": fetched["exit"] == 0 and fetched["stdout"].strip() == "attribute", "command": fetched}
     tool(["/bin/ls", "-la@", str(root)])
     emit({"capabilities": {"hardLink": hard, "setxattr": xattr, "getxattr": read,
                            "appleDouble": [p.name for p in root.iterdir() if p.name.startswith("._")]}})

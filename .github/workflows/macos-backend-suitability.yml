@@ -57,4 +57,5 @@ jobs:
           name: macos-suitability-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/suitability-evidence
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
