@@ -1,0 +1,6 @@
+{
+  "boundAfterReplay": 2,
+  "headHasX": false,
+  "nextCapture": "Ok(CaptureOutcome { update: Applied { state: Active { head: LayerHead { repository: ObjectId([171, 156, 51, 206, 13, 148, 250, 223, 245, 154, 165, 249, 91, 167, 178, 47, 66, 94, 235, 159, 201, 148, 121, 171, 44, 54, 19, 11, 226, 3, 0, 21]), layer: LayerId(\"A\"), revision: 3, checkpoint: CheckpointId(ObjectId([100, 126, 179, 207, 95, 140, 165, 25, 224, 128, 82, 53, 56, 125, 174, 60, 130, 216, 253, 228, 42, 56, 13, 85, 52, 22, 85, 141, 20, 186, 214, 222])) } } }, changed_paths: 2, unrepresented_directories: [], replayed: false })",
+  "replay": "Ok(CaptureOutcome { update: Applied { state: Active { head: LayerHead { repository: ObjectId([171, 156, 51, 206, 13, 148, 250, 223, 245, 154, 165, 249, 91, 167, 178, 47, 66, 94, 235, 159, 201, 148, 121, 171, 44, 54, 19, 11, 226, 3, 0, 21]), layer: LayerId(\"A\"), revision: 2, checkpoint: CheckpointId(ObjectId([66, 201, 135, 161, 37, 53, 1, 16, 155, 57, 222, 136, 84, 245, 118, 82, 145, 195, 66, 30, 139, 49, 17, 14, 122, 252, 23, 210, 4, 47, 219, 158])) } } }, changed_paths: 1, unrepresented_directories: [], replayed: true })"
+}

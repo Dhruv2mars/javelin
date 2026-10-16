@@ -1,14 +1,21 @@
 //! Native immutable repository storage and ordered World publication metadata.
-//! Sparse Layer state is available; filesystem capture and full Publish are later work.
+//! Sparse Layer state is available. Linux binds it to ordinary paths through sparse
+//! OverlayFS views; autosave, other platforms and full Publish are later work.
 
 mod domain;
 mod layer;
+#[cfg(unix)]
+mod linux_layer;
 mod repository;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
 pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate,
     PathDiff, SparseChanges,
+};
+#[cfg(unix)]
+pub use linux_layer::{
+    CaptureOutcome, LayerMountHelper, LinuxLayerRuntime, RecoveryReport, ViewStatus,
 };
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 
@@ -26,6 +33,12 @@ pub enum Error {
     CorruptObject(ObjectId),
     #[error("object {0} has the wrong kind")]
     WrongObjectKind(ObjectId),
+    #[error("object {id} has {size} bytes, exceeding read limit {limit}")]
+    ObjectTooLarge {
+        id: ObjectId,
+        size: usize,
+        limit: usize,
+    },
     #[error("World version {0} does not exist")]
     MissingVersion(VersionNumber),
     #[error("corrupt repository: {0}")]
@@ -40,6 +53,10 @@ pub enum Error {
     Storage(#[from] rusqlite::Error),
     #[error("filesystem error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("busy: {0}; nothing changed, retry after writers close")]
+    Busy(String),
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 impl Error {
@@ -50,12 +67,15 @@ impl Error {
             Self::MissingObject(_) => "missing_object",
             Self::CorruptObject(_) => "corrupt_object",
             Self::WrongObjectKind(_) => "wrong_object_kind",
+            Self::ObjectTooLarge { .. } => "object_too_large",
             Self::MissingVersion(_) => "missing_version",
             Self::CorruptRepository(_) => "corrupt_repository",
             Self::UnsupportedFormat(_) => "unsupported_format",
             Self::OperationIdReused(_) => "operation_id_reused",
             Self::Storage(_) => "storage_error",
             Self::Io(_) => "io_error",
+            Self::Busy(_) => "busy",
+            Self::Unsupported(_) => "unsupported",
         }
     }
 }

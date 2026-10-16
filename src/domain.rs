@@ -9,6 +9,25 @@ use crate::{Error, Result};
 pub struct ObjectId([u8; 32]);
 
 impl ObjectId {
+    /// Computes the canonical kind-tagged blob ID without storing content.
+    pub fn for_blob(bytes: &[u8]) -> Self {
+        Self::hash(ObjectKind::Blob, bytes)
+    }
+
+    /// Hashes canonical manifest bytes without storing or validating references.
+    pub fn for_manifest(manifest: &Manifest) -> Self {
+        Self::hash(ObjectKind::Manifest, &manifest.canonical_bytes())
+    }
+
+    /// Constructs a digest. This does not prove an object exists or is valid.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     pub fn parse(value: &str) -> Result<Self> {
         if value.len() != 64
             || !value
@@ -28,11 +47,16 @@ impl ObjectId {
     }
 
     pub(crate) fn hash(kind: ObjectKind, bytes: &[u8]) -> Self {
+        let mut hash = Self::hasher(kind);
+        hash.update(bytes);
+        Self(hash.finalize().into())
+    }
+
+    pub(crate) fn hasher(kind: ObjectKind) -> Sha256 {
         let mut hash = Sha256::new();
         hash.update(b"javelin-object-v1\0");
         hash.update([kind as u8]);
-        hash.update(bytes);
-        Self(hash.finalize().into())
+        hash
     }
 }
 

@@ -1,0 +1,9 @@
+{
+  "frozenAfterRecover": true,
+  "recovery": {
+    "failures": [],
+    "pending_resolved": 0,
+    "stages_aborted": 0,
+    "views_removed": 0
+  }
+}
