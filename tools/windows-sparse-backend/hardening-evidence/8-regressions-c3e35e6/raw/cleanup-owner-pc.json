@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-owner-pc",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc",
+    "/setowner",
+    "*S-1-5-32-544",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 2188,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pc\\dir\\nested.txt\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

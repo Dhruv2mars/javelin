@@ -1,0 +1,9 @@
+registered root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive rootPlaceholders=12
+started root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive entries=19
+transfer-placeholders key=cold path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\cold count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=cold\sub path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\cold\sub count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=dir path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\dir count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=dir2 path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\dir2 count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=dir3 path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\dir3 count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=dir3\deep path=\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive\dir3\deep count=1 status=00000000 hr=00000000 processed=1
+stopped root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\hactive

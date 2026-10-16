@@ -1,0 +1,6 @@
+registered root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\htamper rootPlaceholders=12
+started root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\htamper entries=19
+fetch-data key=README.txt source=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\staging\late-tamper\blobs\b4d0387c1217c7a8e27d85223e5a6bc2f7ac674a866933b84b72602b7baa3963 flags=0 required=0+24
+fetch-data-error immutable source size changed
+transfer-data key=README.txt bytes=24 hr=00000000
+stopped root=D:\a\_temp\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\htamper

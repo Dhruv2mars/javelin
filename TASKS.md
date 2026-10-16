@@ -219,7 +219,7 @@ and this appended checklist. Existing evidence stays immutable.
   NOT ESTABLISHED: creation failed `8007018b`, subsequent paths were missing.
   Actual nonadmin SID, cleanup, unchanged base/snapshot and prior bounded phases
   inspected. Preserve all raw records; SDK/fixture preconditions remain next.
-- [ ] Implement minimal fixes and focused adversarial regressions.
+- [x] Implement minimal fixes and focused adversarial regressions.
   Oct16 resumed flow: implementation and proportional hosted checks in this same
   PR; no new mandatory review or evidence-only finishing commit. Retained
   `38716055510` proves failed-read empty-blob acceptance on unchanged source;
@@ -227,6 +227,7 @@ and this appended checklist. Existing evidence stays immutable.
   traversal, validated manifests/digests, protected binding and quiescent capture
   refusal are implemented; focused Windows checks pending.
 - [ ] Verify ordinary nonadmin SID, prerequisites, limits, killed children and cleanup.
-- [ ] Inspect exact-source raw evidence and independent post-fix adversarial review.
+- [ ] Complete the focused exact-source hosted Windows checks. The user's Oct16
+  flow supersedes the earlier mandatory independent-review round.
 - [ ] Run fresh-head offline verifier and tamper checks; report scope and limits to hub.
 

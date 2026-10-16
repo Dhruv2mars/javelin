@@ -61,7 +61,7 @@ support refusing open writers and holding files stable during reads. Directory
 handles alone do not freeze a namespace. The hosted fixture must separately
 establish writer/provider termination before supported capture.
 
-## Current status
+## Historical control status
 
 Run `38570489714` at `bd42718` stopped at helper compilation, exit 2 with SDK
 `CompletionStatus` type errors because `NTSTATUS` was undeclared. No ordinary
@@ -133,7 +133,7 @@ as a reproduction only when the existing moved partial file has the intended
 failed zero/short read and capture accepts that prefix; command success alone
 cannot establish it.
 
-## Implemented hardening, hosted verification pending
+## Implemented hardening
 
 The retained failed run `38716055510` at `0d63827` establishes the zero-read
 defect. The real renamed partial file had logical length 4096. Win32 read opened
@@ -178,3 +178,7 @@ refusal and retry, limits, malformed manifests, missing/tampered/truncated blobs
 and mutation before hydration. Existing ordinary operations, seven Cloud Files
 rename cases, clone isolation and restart checks still run. Verify a downloaded
 artifact against current source with `bun tools/windows-sparse-backend/verify-hardening.mjs <attempt-directory>`.
+
+The latest hosted check on this PR records the current regression result.
+Historical control failures above remain failed attempts. The shared POSIX probe
+is still expected to fail its separate portability checks; it cannot pass Gate 2.

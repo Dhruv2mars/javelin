@@ -152,8 +152,13 @@ try {
         Wait-File $ready
         HAssert (-not $writer.HasExited) 'actual writer holds handle during capture attempt'
         $refused = $false
-        try { [void](HCapture 'hwriter' 'writer-active') } catch { $refused = $true }
+        try {
+            $r = HCapture 'hwriter' 'writer-active'
+            $refused = $r.exitCode -ne 0 -and $r.stderr -match 'error=32'
+        } catch { $refused = $true }
         HAssert $refused 'open writer prevents quiescent capture'
+        HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned 'staging/fixed-writer-active'))) 'open writer selected no snapshot'
+        HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned 'staging/fixed-writer-active.pending'))) 'open writer left no staging'
     } finally {
         if (-not $writer.HasExited) { $writer.Kill(); [void]$writer.WaitForExit(5000) }
         Admin-Control 'unseal' 'hwriter'
