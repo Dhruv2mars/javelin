@@ -1,8 +1,10 @@
 # Parallel build plan
 
-The hub keeps independent ready units running in app-bound worktrees. Every
-implementation thread owns one draft PR. Launch is coordination evidence, not
-acceptance of a feature. Never merge without explicit user instruction.
+This records the earlier parallel launch plan. The current user pause and
+working rules in `TASKS.md` take precedence. Each implementation thread owns one
+regular PR, opened after implementation and relevant checks. Separate architect,
+audit and handoff cycles are not required. Never merge without explicit user
+instruction.
 
 ## Grounding and alternatives
 

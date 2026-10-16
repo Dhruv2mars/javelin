@@ -3,6 +3,63 @@
 This file is the central hub's master checklist. A checked item requires evidence.
 Implementation threads own one PR each and keep their own checklist in their worktree.
 
+## Current working rules, updated 2026-10-16
+
+These rules supersede the older draft-first and multi-round review instructions
+in the historical workstream sections below.
+
+- Implement in one owning thread and isolated worktree, run relevant checks,
+  open and link a regular PR when ready, report briefly, then finish.
+- No draft or planning PR requirement, routine extensive review/audit rounds,
+  evidence-only finishing commits or formal handoffs.
+- Keep implementation and coordination simple. Use parallel help only where it
+  materially advances the task. Do not add abstractions or process without need.
+- Keep T3 organized, reuse existing owners, and settle completed threads.
+- Keep meaningful behavior checks and honest limits. Never merge without the
+  user's explicit instruction.
+- The user resumed development on 2026-10-16 and explicitly authorized merging
+  ready PRs so progress is visible in the repository. The hub integrates changes
+  in dependency order; owners finish their existing tasks with relevant checks.
+
+## Resumed development and integration on 2026-10-16
+
+Done for this integration pass means completed changes are merged in dependency
+order, unfinished owners are active in their existing worktrees, and the default
+branch contains checked working components. This does not establish GA.
+
+- [x] Resume the six existing unfinished owners without duplicate threads.
+- [ ] Merge the build plan and completed native dependency chain.
+- [ ] Integrate other finished components with relevant checks.
+- [ ] Complete whole-Layer Publish, then connect the local developer workflow.
+
+## Historical user pause for recalibration on 2026-10-15
+
+The user explicitly requested stopping all work to review progress and the
+development plan. This pause supersedes the continuation instructions and the
+historical next actions below. Do not resume development, reviews, automatic
+continuation or PR watchers without an explicit user instruction to resume.
+
+Done for this pause means the scheduler is disabled, PR watchers are released,
+workers and child reviews have stopped after necessary cleanup, and existing
+code, evidence and draft PRs remain intact.
+
+- [x] Disable the existing continuation schedule without deleting it.
+- [x] Release all active implementation PR watchers and confirm the hub watcher is off.
+- [x] Interrupt live implementation and review turns; notify the six unfinished
+  owners to perform cleanup only and cancel their own resumable child tasks.
+- [x] Confirm cleanup turns have ended and the remaining cloud run is stopped.
+  All six unfinished owners acknowledged the pause with no active or pending
+  turns. The project active-thread query contains only this hub, and GitHub
+  reports no in-progress run after cancellation of `38739503224`.
+- [x] Recalibrate with the user. The 2026-10-16 instructions simplify the PR flow
+  and explicitly resume work with ready PR merges.
+
+Verified components remain accepted only within their recorded scope. Twenty-one
+marathon PRs, #3 through #23, are open drafts and unmerged at this pause.
+The current product still lacks a complete local developer workflow and hosted
+collaboration. Proposed next steps are discussion material, not authorization to
+start more work.
+
 ## Definition of done
 
 Javelin reaches GA when a developer can install a released build, create a project,
@@ -73,7 +130,7 @@ workflow may invoke or interpret Git.
 - [ ] Verify installation and upgrades from clean machines on supported platforms.
 - [ ] Publish tutorials, command reference, hosting setup, and recovery documentation.
 - [ ] Add contribution guidance, support policy, security reporting, and license checks.
-- [ ] Complete independent security and correctness review, fixing material findings.
+- [ ] Verify security and correctness with appropriate checks and fix material defects.
 - [ ] Set measured release limits and performance requirements before claiming scale.
 - [ ] Commit fixed workload shapes and numeric pass/fail thresholds before the
   release acceptance measurements. Baselines alone cannot pass Gate 6.

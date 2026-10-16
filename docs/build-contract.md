@@ -188,6 +188,15 @@ Workers report evidence and a VERIFIED, NOT VERIFIED, or INCONCLUSIVE result.
 The hub inspects the actual artifact before checking an item. No PR is merged
 without explicit user instruction.
 
+The user's 2026-10-16 workflow update supersedes earlier draft-first and repeated
+review requirements. Each owner implements its task, runs relevant checks, opens
+and links one regular PR when ready, reports the result briefly and finishes.
+Do not create planning drafts or routine separate architect, audit, acceptance or
+handoff rounds. Keep the solution and coordination simple. Existing verification
+records are historical evidence; they do not prescribe that process for new work.
+Maintain T3 thread ownership and settle completed threads. Product correctness and
+release verification still require actual working behavior.
+
 ## Decision sources
 
 - Final design and consistency review: `codex://threads/01a12eae-a899-7ad3-9462-5f95a64e76cc`.
