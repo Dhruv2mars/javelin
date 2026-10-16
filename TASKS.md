@@ -1148,3 +1148,47 @@ earlier artifacts and are excluded from this build's evidence and releases.
 - Earlier grilling: `codex://threads/01a084f7-7b5f-79d1-b381-d686c430a7f9`.
 - Hub: `t3-thread://v1/e659350e-23d8-4473-98e8-d3609b784340`.
 - Build authorization and thread rules: the user's messages in this hub on 2026-10-13.
+
+## Workstream: native repository foundation
+
+Owns one draft PR based on `chore/ga-build-plan`. Done means a fresh non-Git
+project initializes an immutable World; exact object and manifest reads reject
+missing/corrupt data; ordered history and compare-and-advance survive process
+restart, concurrent winners/losers, retries, and interrupted publication. CLI
+init/history/integrity checks must produce useful ordinary and JSON output.
+This work does not claim Layers, filesystem backends, or complete Layer Publish.
+
+- [x] Read local instructions and accepted build contract.
+- [x] Open and immediately register the single draft PR: [#4](https://github.com/Dhruv2mars/javelin/pull/4).
+- [x] Compare two storage/type sketches with read-only design subagents and cross-judge.
+- [x] Capture smallest runnable scaffold baseline, commit `7ec2e75`.
+- [x] Record chosen storage design and reconciliation in `docs/native-repository.md`.
+- [x] Implement typed immutable objects, manifests, and repository initialization.
+- [x] Implement ordered history and atomic idempotent compare-and-advance.
+- [x] Implement minimal CLI init, history, and integrity inspection.
+- [x] Prove exact binary data, path boundaries, missing/corrupt objects on macOS.
+- [x] Prove process restart, contention, retries, and failure boundaries on macOS.
+- [x] Independently inspect behavior and reconcile documentation.
+- [x] Report commands, results, limitations, and VERIFIED status to hub, message `native-foundation-final-evidence-v1`.
+
+Evidence is recorded in `docs/native-repository.md`. These checks apply only to
+this bounded foundation on Darwin arm64. Global GA items above remain unchanged.
+Linux/Windows behavior, hardware power-loss durability, Layer adoption, and the
+complete Layer Publish workflow remain unconfirmed follow-on work. PR #4 stays
+draft and unmerged, depending on the hub planning branch.
+
+## Hub acceptance corrections
+
+The hub found missing-tail metadata validation after the initial report. Done for
+this correction requires regression failures before the fix, corruption errors from
+history/init/advance after it, and a passing full suite at the corrected SHA.
+
+- [x] Reject missing tail Worlds with retained accepted or stale operation anchors.
+- [x] Resolve explicit CLI directories without evaluating a deleted current directory.
+- [x] Preserve incidental files on valid-store init and classify empty interrupted init.
+- [x] Document undetectable consistent truncation and integrity inspection schema scope.
+- [x] Run final checks and report exact corrected SHA within PR #4, message `native-acceptance-corrections-final-v1`.
+
+The corrected suite passes 26 tests, one ignored child-process entry point.
+Earlier completion evidence is superseded by the hub acceptance corrections;
+the corrected source and limits are documented in `docs/native-repository.md`.
