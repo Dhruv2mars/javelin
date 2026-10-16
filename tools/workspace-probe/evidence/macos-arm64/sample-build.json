@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "observedAt": "2026-10-13",
+  "sourceURL": "https://docs-assets.developer.apple.com/published/0b4283600908/BuildingAPassthroughFileSystem.zip",
+  "archiveSHA256": "81c63039eea41ec539bbe3b7486efa426bce295b8a2c6099104fdf3b7925ed46",
+  "env": {
+    "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
+  },
+  "argv": [
+    "xcodebuild",
+    "-project",
+    "/tmp/javelin-official-passthrough/Passthrough.xcodeproj",
+    "-scheme",
+    "Passthrough",
+    "-configuration",
+    "Debug",
+    "-derivedDataPath",
+    "/tmp/javelin-passthrough-build",
+    "-jobs",
+    "1",
+    "build"
+  ],
+  "exitCode": 69,
+  "output": "You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license.\n",
+  "provenance": "Parent exec_command output captured from the build attempt; no sample code or binaries committed.",
+  "extensionDeploymentVerdict": "INCONCLUSIVE",
+  "mountedLayerVerdict": "INCONCLUSIVE"
+}
