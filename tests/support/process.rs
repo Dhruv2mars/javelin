@@ -109,6 +109,40 @@ fn actor() {
     } else if mode == "check" {
         let repo = Repository::open(&root).unwrap();
         json!({"integrity": repo.check().unwrap(), "history": repo.history().unwrap()})
+    } else if let Some(layer) = mode.strip_prefix("publish:") {
+        let mut repo = Repository::open(&root).unwrap();
+        let layer = crate::LayerId::parse(layer).unwrap();
+        let revision = std::env::var("JAVELIN_TEST_EXPECTED")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let head = crate::layer::head_in(&repo.conn, &layer, revision).unwrap();
+        assert_eq!(
+            head.checkpoint().object().to_string(),
+            std::env::var("JAVELIN_TEST_MANIFEST").unwrap()
+        );
+        let operation =
+            OperationId::parse(&std::env::var("JAVELIN_TEST_OPERATION").unwrap()).unwrap();
+        match repo.publish_layer(
+            &operation,
+            &head,
+            &crate::PublishAttribution::Human,
+            |_, _| {
+                test_boundary("publish_guard");
+                Ok(())
+            },
+        ) {
+            Ok(receipt) => json!(receipt),
+            Err(error) => json!({"error":error.code()}),
+        }
+    } else if let Some(layer) = mode.strip_prefix("publication_read:") {
+        let repo = Repository::open(&root).unwrap();
+        let layer = crate::LayerId::parse(layer).unwrap();
+        let operation =
+            OperationId::parse(&std::env::var("JAVELIN_TEST_OPERATION").unwrap()).unwrap();
+        json!({"receipt":repo.publication(&operation).unwrap(),
+            "state":repo.layer_state(&layer).unwrap(), "integrity":repo.check().unwrap(),
+            "history":repo.history().unwrap()})
     } else if mode == "layer_capture" || mode == "layer_isolated" || mode == "layer_discard" {
         use crate::{LayerId, LayerState, SparseChanges};
         let mut repo = Repository::open(&root).unwrap();
@@ -709,5 +743,302 @@ fn layer_lost_and_received_ack_survive_process_exit_and_later_heads() {
         assert_eq!(read["entries"]["binary"]["content"], content.to_string());
         assert_eq!(read["changes"], 1);
         assert_eq!(read["integrity"]["versions"], 1);
+    }
+}
+
+fn publish_fixture(overlap: bool, count: usize) -> (TempDir, Vec<crate::LayerHead>) {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+    let mut heads = Vec::new();
+    for i in 0..count {
+        let layer = crate::LayerId::parse(&format!("publisher-{i}")).unwrap();
+        let initial = repo.create_layer(&layer, &base).unwrap();
+        let content = repo.put_blob(&[i as u8, 255]).unwrap();
+        let path = if overlap {
+            "binary".into()
+        } else {
+            format!("file-{i}")
+        };
+        let delta = crate::SparseChanges::new([(
+            RepoPath::parse(&path).unwrap(),
+            Some(FileEntry::Regular {
+                content,
+                executable: false,
+            }),
+        )])
+        .unwrap();
+        match repo
+            .capture_layer(
+                &OperationId::parse(&format!("capture-{i}")).unwrap(),
+                &initial,
+                &delta,
+            )
+            .unwrap()
+        {
+            crate::LayerUpdate::Applied {
+                state: crate::LayerState::Active { head },
+            } => heads.push(head),
+            other => panic!("fixture capture failed: {other:?}"),
+        }
+    }
+    (root, heads)
+}
+
+fn publisher(root: &Path, head: &crate::LayerHead, operation: &str, boundary: &str) -> Actor {
+    Actor::spawn(
+        root,
+        &format!("publish:{}", head.layer().as_str()),
+        operation,
+        Some(head.checkpoint().object()),
+        head.revision(),
+        boundary,
+    )
+}
+
+#[test]
+fn whole_publish_disjoint_processes_all_compose_contiguously_and_overlap_has_one_winner() {
+    for overlap in [false, true] {
+        let (root, heads) = publish_fixture(overlap, 4);
+        let mut actors: Vec<_> = heads
+            .iter()
+            .enumerate()
+            .map(|(i, head)| publisher(root.path(), head, &format!("publish-{i}"), ""))
+            .collect();
+        for actor in &mut actors {
+            actor.release();
+        }
+        let results: Vec<_> = actors.iter_mut().map(Actor::result).collect();
+        assert!(
+            results.iter().all(|r| r.get("error").is_none()),
+            "{results:?}"
+        );
+        let winners = results
+            .iter()
+            .filter(|r| r["outcome"]["outcome"] == "published")
+            .count();
+        assert_eq!(winners, if overlap { 1 } else { 4 });
+        assert_eq!(
+            results
+                .iter()
+                .filter(|r| r["outcome"]["outcome"] == "conflict")
+                .count(),
+            if overlap { 3 } else { 0 }
+        );
+        let mut repo = Repository::open(root.path()).unwrap();
+        let history = repo.history().unwrap();
+        assert_eq!(
+            history.iter().map(|w| w.number.get()).collect::<Vec<_>>(),
+            (0..=winners as u64).collect::<Vec<_>>()
+        );
+        let final_manifest = repo
+            .read_manifest(history.last().unwrap().manifest)
+            .unwrap();
+        assert_eq!(final_manifest.entries().len(), winners);
+        if !overlap {
+            for (i, head) in heads.iter().enumerate() {
+                assert_eq!(
+                    final_manifest
+                        .entries()
+                        .get(&RepoPath::parse(&format!("file-{i}")).unwrap()),
+                    repo.read_checkpoint(head.checkpoint())
+                        .unwrap()
+                        .manifest()
+                        .entries()
+                        .get(&RepoPath::parse(&format!("file-{i}")).unwrap())
+                );
+            }
+        }
+        let later = candidate(&mut repo, b"later World");
+        repo.compare_and_advance(
+            &OperationId::parse("later").unwrap(),
+            history.last().unwrap().number,
+            later,
+        )
+        .unwrap();
+        drop(repo);
+        for (i, head) in heads.iter().enumerate() {
+            let mut retry = publisher(root.path(), head, &format!("publish-{i}"), "");
+            retry.release();
+            assert_eq!(retry.result(), results[i]);
+        }
+        Repository::open(root.path()).unwrap().check().unwrap();
+    }
+}
+
+#[test]
+fn whole_publish_same_operation_process_retries_commit_one_receipt() {
+    let (root, heads) = publish_fixture(false, 1);
+    let mut actors: Vec<_> = (0..4)
+        .map(|_| publisher(root.path(), &heads[0], "same", ""))
+        .collect();
+    for actor in &mut actors {
+        actor.release();
+    }
+    let results: Vec<_> = actors.iter_mut().map(Actor::result).collect();
+    assert!(
+        results
+            .iter()
+            .all(|r| r == &results[0] && r["outcome"]["outcome"] == "published")
+    );
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.check().unwrap().versions, 2);
+    assert_eq!(
+        repo.conn
+            .query_row("SELECT count(*) FROM publications", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn whole_publish_kill_before_commit_readers_see_no_partial_references() {
+    let (root, heads) = publish_fixture(false, 1);
+    let head = &heads[0];
+    let before = Repository::open(root.path())
+        .unwrap()
+        .check()
+        .unwrap()
+        .objects;
+    let mut writer = publisher(root.path(), head, "interrupted", "publish_before_commit");
+    writer.release();
+    writer.marker("BOUNDARY publish_before_commit");
+    let mut reader = Actor::spawn(
+        root.path(),
+        "publication_read:publisher-0",
+        "interrupted",
+        None,
+        0,
+        "",
+    );
+    reader.release();
+    let read = reader.result();
+    assert!(read["receipt"].is_null());
+    assert_eq!(read["state"]["state"], "active");
+    assert_eq!(read["integrity"]["versions"], 1);
+    assert_eq!(read["integrity"]["objects"], before);
+    writer.kill();
+    let repo = Repository::open(root.path()).unwrap();
+    assert!(
+        repo.publication(&OperationId::parse("interrupted").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(repo.check().unwrap().objects, before);
+    drop(repo);
+    let mut retry = publisher(root.path(), head, "interrupted", "");
+    retry.release();
+    assert_eq!(retry.result()["outcome"]["outcome"], "published");
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.check().unwrap().versions, 2);
+    assert!(matches!(
+        repo.layer_state(head.layer()).unwrap(),
+        crate::LayerState::Published { .. }
+    ));
+}
+
+#[test]
+fn whole_publish_lost_and_received_ack_survive_kill_and_later_world() {
+    for boundary in ["publish_after_commit", "after_ack"] {
+        let (root, heads) = publish_fixture(false, 1);
+        let head = &heads[0];
+        let mut writer = publisher(root.path(), head, "durable", boundary);
+        writer.release();
+        let ack = if boundary == "after_ack" {
+            Some(serde_json::from_str::<Value>(&writer.marker("RESULT ")).unwrap())
+        } else {
+            None
+        };
+        writer.marker(&format!("BOUNDARY {boundary}"));
+        writer.kill();
+        let mut reader = Actor::spawn(
+            root.path(),
+            "publication_read:publisher-0",
+            "durable",
+            None,
+            0,
+            "",
+        );
+        reader.release();
+        let read = reader.result();
+        assert_eq!(read["receipt"]["outcome"]["outcome"], "published");
+        assert_eq!(read["state"]["state"], "published");
+        assert_eq!(read["integrity"]["versions"], 2);
+        assert_eq!(read["state"]["head"], read["receipt"]["expected"]);
+        assert_eq!(read["history"][1], read["receipt"]["outcome"]["version"]);
+        let mut repo = Repository::open(root.path()).unwrap();
+        let later = candidate(&mut repo, b"later");
+        repo.compare_and_advance(
+            &OperationId::parse("later").unwrap(),
+            VersionNumber::new(1).unwrap(),
+            later,
+        )
+        .unwrap();
+        drop(repo);
+        let mut retry = publisher(root.path(), head, "durable", "");
+        retry.release();
+        let receipt = retry.result();
+        assert_eq!(receipt, read["receipt"]);
+        if let Some(ack) = ack {
+            assert_eq!(receipt, ack);
+        }
+        Repository::open(root.path()).unwrap().check().unwrap();
+    }
+}
+
+#[test]
+fn whole_publish_and_raw_same_operation_process_race_bind_exactly_one_api() {
+    let (root, heads) = publish_fixture(false, 1);
+    let head = &heads[0];
+    let mut repo = Repository::open(root.path()).unwrap();
+    let raw = candidate(&mut repo, b"raw");
+    drop(repo);
+    let mut publish = publisher(root.path(), head, "collision", "");
+    let mut advance = Actor::spawn(root.path(), "advance", "collision", Some(raw), 0, "");
+    publish.release();
+    advance.release();
+    let results = [publish.result(), advance.result()];
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| r["error"] == "operation_id_reused")
+            .count(),
+        1
+    );
+    assert_eq!(
+        Repository::open(root.path())
+            .unwrap()
+            .check()
+            .unwrap()
+            .versions,
+        2
+    );
+}
+
+#[test]
+fn whole_publish_serializes_capture_and_discard_without_mutating_terminal_layer() {
+    for mode in ["layer_capture", "layer_discard"] {
+        let root = TempDir::new().unwrap();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+        let head = repo
+            .create_layer(&crate::LayerId::parse("shared").unwrap(), &base)
+            .unwrap();
+        let content = repo.put_blob(b"capture").unwrap();
+        drop(repo);
+        let mut publish = publisher(root.path(), &head, "publish", "");
+        let mut update = Actor::spawn(root.path(), mode, "update", Some(content), 0, "");
+        publish.release();
+        update.release();
+        let published = publish.result();
+        let updated = update.result();
+        if published["outcome"]["outcome"] == "published" {
+            assert_eq!(updated["error"], "layer_published");
+        } else {
+            assert_eq!(published["outcome"]["outcome"], "layer_stale");
+            assert_eq!(updated["outcome"], "applied");
+        }
+        Repository::open(root.path()).unwrap().check().unwrap();
     }
 }

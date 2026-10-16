@@ -143,6 +143,18 @@ fn describe(state: &LayerState) -> String {
             head.revision(),
             head.checkpoint().object()
         ),
+        LayerState::Published {
+            head,
+            operation,
+            version,
+        } => format!(
+            "Layer {} published as World {} operation {} revision {} checkpoint {}",
+            head.layer().as_str(),
+            version.number,
+            operation,
+            head.revision(),
+            head.checkpoint().object()
+        ),
         LayerState::Discarded {
             layer,
             revision,

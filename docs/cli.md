@@ -48,6 +48,12 @@ uses `A`, `M`, and `D` with JSON-quoted paths. JSON includes exact before and
 after entries, including file mode, kind, and content object IDs. It is a path
 diff, not a textual patch.
 
+Format 3 repositories can also contain published Layers. `state` reports the
+published World, operation ID, and final head. `history` retains the active
+revisions followed by the terminal publication record. Diff and clone continue
+to use the final immutable checkpoint. New native discard operations on a
+published Layer return `layer_published`. Further edits require a new Layer.
+
 `layer clone` starts a separate Layer from the specified immutable checkpoint.
 Later edits to either Layer cannot change that source checkpoint. Creating or
 cloning again with the same ID and snapshot returns the original revision 0,
@@ -165,4 +171,5 @@ output has `ok: false` and the native `stale` outcome. Partial recovery has
 
 The existing `init`, `history`, and `check` syntax and JSON fields are unchanged.
 No command invokes or interprets Git. Publish has no command or stub in this
-version; connecting the CLI after native Publish lands is the next integration.
+version; connecting Publish through the safe Linux runtime lifecycle is the next
+integration.

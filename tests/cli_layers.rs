@@ -350,6 +350,129 @@ fn binary_repo_option_works_outside_the_project() {
     );
 }
 
+#[test]
+fn binary_inspects_and_clones_a_published_layer_in_format_three() {
+    let root = TempDir::new().unwrap();
+    ok(root.path(), &["init"]);
+    ok(
+        root.path(),
+        &["layer", "create", "published", "--world", "0"],
+    );
+    let mut repo = Repository::open(root.path()).unwrap();
+    let content = repo.put_blob(b"published content").unwrap();
+    capture_fixture(
+        &mut repo,
+        "published",
+        vec![(
+            path("kept.txt"),
+            Some(FileEntry::Regular {
+                content,
+                executable: false,
+            }),
+        )],
+        "capture-before-publish",
+    );
+    let before = ok(root.path(), &["layer", "diff", "published"]);
+    let LayerState::Active { head } = repo
+        .layer_state(&LayerId::parse("published").unwrap())
+        .unwrap()
+    else {
+        panic!("expected active Layer");
+    };
+    // Seed a native publication without a mounted view. The CLI exposes no Publish command.
+    repo.publish_layer(
+        &operation("fixture-publish"),
+        &head,
+        &javelin::PublishAttribution::Human,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    let state = repo.layer_state(head.layer()).unwrap();
+    let inspected = ok(root.path(), &["layer", "state", "published"]);
+    assert_eq!(inspected["state"], serde_json::to_value(&state).unwrap());
+    assert_eq!(inspected["state"]["state"], "published");
+    assert_eq!(inspected["state"]["version"]["number"], 1);
+    assert_eq!(inspected["state"]["operation"], "fixture-publish");
+    let plain = invoke(root.path(), &["layer", "state", "published"]);
+    assert!(plain.status.success());
+    assert_eq!(
+        String::from_utf8(plain.stdout).unwrap(),
+        format!(
+            "Layer published published as World 1 operation fixture-publish revision 1 checkpoint {}\n",
+            head.checkpoint().object()
+        )
+    );
+    let history = ok(root.path(), &["layer", "history", "published"]);
+    assert_eq!(history["history"].as_array().unwrap().len(), 3);
+    assert_eq!(history["history"][2], inspected["state"]);
+    let history_plain = invoke(root.path(), &["layer", "history", "published"]);
+    assert!(history_plain.status.success());
+    assert!(
+        String::from_utf8(history_plain.stdout)
+            .unwrap()
+            .contains("published as World 1")
+    );
+    assert_eq!(ok(root.path(), &["layer", "diff", "published"]), before);
+    assert_eq!(
+        ok(
+            root.path(),
+            &["layer", "diff", "published", "--revision", "1"]
+        ),
+        before
+    );
+    let checkpoint = head.checkpoint().object().to_string();
+    let cloned = ok(
+        root.path(),
+        &[
+            "layer",
+            "clone",
+            "copy-published",
+            "--checkpoint",
+            &checkpoint,
+        ],
+    );
+    assert_eq!(cloned["state"]["state"], "active");
+    assert_eq!(cloned["state"]["head"]["checkpoint"], checkpoint);
+    assert_eq!(
+        ok(root.path(), &["layer", "diff", "copy-published"])["changes"],
+        before["changes"]
+    );
+    let created = ok(root.path(), &["layer", "create", "next-world"]);
+    let next =
+        javelin::CheckpointId::parse(created["state"]["head"]["checkpoint"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(
+        repo.read_checkpoint(next).unwrap().base().version().get(),
+        1
+    );
+    let refused = value(
+        invoke(
+            root.path(),
+            &[
+                "layer",
+                "discard",
+                "published",
+                "--revision",
+                "1",
+                "--operation",
+                "discard-published",
+                "--json",
+            ],
+        ),
+        1,
+    );
+    assert_eq!(refused["error"]["code"], "layer_published");
+    assert_eq!(ok(root.path(), &["layer", "state", "published"]), inspected);
+    assert_eq!(
+        ok(root.path(), &["history"])["versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    ok(root.path(), &["check"]);
+}
+
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn binary_workspace_commands_return_unsupported_without_touching_paths() {
