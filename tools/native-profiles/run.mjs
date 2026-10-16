@@ -19,7 +19,15 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 export async function diskBytes(dir) {
   let sum=0;
   for (const e of await readdir(dir,{withFileTypes:true})) {
-    const path=join(dir,e.name), stat=await lstat(path);
+    const path=join(dir,e.name);
+    let stat;
+    try { stat=await lstat(path); }
+    catch(error) {
+      // SQLite unlinks rollback journals after commit while monitoring runs.
+      if(error.code==="ENOENT" && e.isFile() && e.name==="repository.sqlite3-journal" &&
+        dir.endsWith("/.javelin")) continue;
+      throw error;
+    }
     if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) throw Error("nonregular evidence path");
     sum+=stat.isDirectory()?await diskBytes(path):stat.size;
   }

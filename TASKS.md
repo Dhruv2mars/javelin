@@ -290,6 +290,7 @@ is INCONCLUSIVE wherever profiling is unavailable. GA requires all three OSes.
 - [x] Re-read integrity guarantees and retain exact outcome/history checks.
 - [ ] Capture local optimized control and available CPU/heap profiling with overhead labels.
 - [x] Apply Oct16 flow: no mandatory new architect/review/audit rounds; finish implementation and relevant proportional checks.
-- [ ] Verify fmt, Clippy, tests and real CLI at named source.
+- [x] Verify fmt, warnings-denied Clippy, 4 release Rust tests and 26 verifier tests at be39689; real matrix exposed a monitor race.
+- [x] Retain incomplete Mac be39689 run. Fix only disappearing SQLite journal monitoring and add concurrent-journal/timeout regressions.
 - [ ] Run exact-source owned Ubuntu workflow, watch once, retain and verify artifacts.
 - [ ] Release watcher and report bounded conclusions and next experiment to hub.
