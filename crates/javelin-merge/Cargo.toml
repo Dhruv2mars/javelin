@@ -1,0 +1,15 @@
+[package]
+name = "javelin-merge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone until the hub integrates accepted components into the root workspace.
+[workspace]
+
+[dependencies]
+javelin = { path = "../.." }
+similar = { version = "3.2.0", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.27.0"
