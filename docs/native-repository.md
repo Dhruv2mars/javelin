@@ -233,3 +233,15 @@ the hub's separate cross-platform CI PR will run the same source tests on actual
 runners. Non-Unix parent-directory sync is still unimplemented. Filesystem backend
 and normal Layer editor/compiler behavior were not tested in this workstream.
 No throughput, scale, network-filesystem, or GA platform support claim is made.
+
+
+## Whole-Layer publication format
+
+Format 3 adds immutable publication records and receipt Blobs for the native
+whole-Layer API. Unshipped format 2 is rejected without migration or rewriting.
+Object kinds, hashes and canonical manifest/checkpoint encoding are unchanged.
+The original tables and immutability constraints remain protected. Full-state
+correctness boundaries now also validate Layer/publication bindings, so public
+history rejects damaged Layer metadata rather than returning a World-only view.
+See [native whole-Layer Publish](layer-publish.md) for the API, retry behavior,
+logical Published state and the excluded mounted-view lifecycle.
