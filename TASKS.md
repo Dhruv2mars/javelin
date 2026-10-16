@@ -125,3 +125,13 @@ is owned here. Privileged mounts are restricted to the ephemeral Linux CI job.
 - [x] Resolve base TASKS conflict by preserving PR #5's completed handoff and this appended workstream. Import base repairs unchanged.
 - [x] Establish real hosted run after conflict repair. The `bf9fbc4` notification referred only to a skipped Macroscope check; real OverlayFS run `38430385798` passed at `89d76df`.
 - [x] Audit retained artifact against source hashes and raw storage/recovery records with `rtk proxy bun tools/overlayfs-proof/verify-evidence.mjs`; all 19 downloaded artifact files match the committed copies. Final evidence reported to hub.
+
+### Current PR CI repair
+
+Done means the current PR head passes the hosted Linux proof and PR #7 is regular.
+The previous `89d76df` proof remains historical. Keep the existing PR #5 base
+until its integration merges; no core/probe changes or merges belong here.
+
+- [x] Inspect failed run `38461947427` at `19224ef`: missing watch notification; other behavior checks and cleanup passed. Pin stable Bun 1.4.3, which includes the upstream Linux watcher rewrite, without changing the common probe or assertions.
+- [ ] Pass the unchanged mounted-path probe and sparse backend checks on the repaired head.
+- [ ] Mark existing PR #7 ready and send brief CI result/base coordination to hub.
