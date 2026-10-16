@@ -2390,3 +2390,93 @@ fn terminal_publication_resolves_pending_capture_and_discard() {
         &json!({"verdict": "VERIFIED", "cases": cases}),
     );
 }
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn published_observation_preserves_explicitly_unmounted_views() {
+    let env = env();
+    let mut s = setup(&env, "publication-unmounted");
+    fs::write(s.view.join("private.txt"), b"published private upper\n").unwrap();
+    s.rt.capture(&mut s.repo, &s.layer, &op("unmounted-capture"))
+        .unwrap();
+    s.rt.publish(
+        &mut s.repo,
+        &s.layer,
+        &op("unmounted-publish"),
+        &PublishAttribution::Human,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    let bytes = tree(&s.view);
+    let mut cases = Vec::new();
+    for observer in ["status", "open", "recover"] {
+        publication_settled(&s.rt, &s.repo, &s.layer);
+        s.rt.unmount(&s.layer).unwrap();
+        assert_eq!(mount_state(&s.view).unwrap(), None);
+        match observer {
+            "status" => {
+                let status = s.rt.status(&s.repo, &s.layer).unwrap();
+                assert!(
+                    !status.mounted && !status.frozen && status.pending.is_none(),
+                    "status recreated an explicitly unmounted Published view"
+                );
+                assert!(matches!(status.current, LayerState::Published { .. }));
+            }
+            "open" => {
+                s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            }
+            "recover" => {
+                let report = s.rt.recover(&mut s.repo).unwrap();
+                assert!(report.failures.is_empty());
+                assert_eq!(
+                    report.views_published, 0,
+                    "unmounted view counted as frozen"
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            mount_state(&s.view).unwrap(),
+            None,
+            "{observer} recreated an explicitly unmounted Published view"
+        );
+        let status = s.rt.status(&s.repo, &s.layer).unwrap();
+        assert!(!status.mounted && !status.frozen && status.pending.is_none());
+        assert_eq!(s.rt.mount(&mut s.repo, &s.layer).unwrap(), s.view);
+        assert_eq!(tree(&s.view), bytes, "explicit remount lost private bytes");
+        publication_read_only(&s.view);
+
+        // Observation must still freeze a mount made writable through the helper.
+        assert!(
+            direct(
+                &env,
+                &["thaw", s.root.to_str().unwrap(), "view", &slot(&s.layer)]
+            )
+            .status
+            .success()
+        );
+        assert_eq!(mount_state(&s.view).unwrap(), Some(false));
+        match observer {
+            "status" => {
+                assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+            }
+            "open" => {
+                s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            }
+            "recover" => {
+                assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(mount_state(&s.view).unwrap(), Some(true));
+        publication_read_only(&s.view);
+        cases.push(json!({"observer": observer, "absentMountPreserved": true,
+            "existingMountFrozen": true}));
+    }
+    s.rt.unmount(&s.layer).unwrap();
+    save(
+        &env,
+        "publication-unmounted",
+        &json!({"verdict": "VERIFIED", "cases": cases}),
+    );
+}
