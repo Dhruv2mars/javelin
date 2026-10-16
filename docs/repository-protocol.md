@@ -1,10 +1,9 @@
 # Repository protocol message codec
 
 Status: bounded codec and reference sender/receiver. Not hosting acceptance.
-Current native dependency is hub-accepted exact
-`3a54021b15ac5002c21f492b6bed07740c682421` from unmerged PR #18. PR #15 targets
-`feat/bounded-native-object-access`. Its remote `5d3b59d` adds native documentation
-only. This unit cannot claim independent acceptance. Original planning source was
+Native dependency is hub-accepted exact
+`3a54021b15ac5002c21f492b6bed07740c682421` from PR #18, now merged into main.
+PR #15 targets main. Original planning source was
 accepted Layer state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`; historical evidence
 below retains its original source labels.
 
