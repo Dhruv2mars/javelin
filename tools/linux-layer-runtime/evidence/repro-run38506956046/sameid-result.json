@@ -1,0 +1,11 @@
+{
+  "boundRevision": 1,
+  "frozen": false,
+  "pending": null,
+  "recovery": {
+    "failures": [],
+    "pending_resolved": 1,
+    "stages_aborted": 0,
+    "views_removed": 0
+  }
+}
