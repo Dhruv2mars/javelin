@@ -30,6 +30,12 @@ function HRefused([string]$Name, [string]$Label, [string]$Reason) {
     HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned "staging/fixed-$Label"))) "$Label selected no snapshot"
     HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned "staging/fixed-$Label.pending"))) "$Label left no staging"
 }
+function HWriterRefusal([scriptblock]$Capture, [string]$LockedPath) {
+    $r = & $Capture
+    $sharingError = '(?m)^' + [regex]::Escape("open-object path=$LockedPath error=32") + '\r?$'
+    HAssert ($r.exitCode -eq 2 -and $r.stderr -match $sharingError -and
+        $r.stderr -match 'WINDOWS_JOB .*timedOut=0 exit=2 activeAfterTermination=0') 'open writer prevents quiescent capture'
+}
 try {
     foreach ($case in @(@('zero', 4096, 0), @('resident', 16384, 4096))) {
         $name = "hpartial-$($case[0])"; $root = Join-Path $Owned $name
@@ -151,12 +157,28 @@ try {
     try {
         Wait-File $ready
         HAssert (-not $writer.HasExited) 'actual writer holds handle during capture attempt'
-        $refused = $false
-        try {
-            $r = HCapture 'hwriter' 'writer-active'
-            $refused = $r.exitCode -ne 0 -and $r.stderr -match 'error=32'
-        } catch { $refused = $true }
-        HAssert $refused 'open writer prevents quiescent capture'
+        $lockedPath = Join-Path $root 'active.txt'
+        foreach ($failure in @('setup negative control', 'administrator negative control', 'timeout negative control')) {
+            $propagated = $false
+            try { HWriterRefusal { throw $failure } $lockedPath }
+            catch {
+                if ($_.Exception.Message -ne $failure) { throw }
+                $propagated = $true
+            }
+            HAssert $propagated "$failure propagates instead of passing writer refusal"
+        }
+        foreach ($invalid in @(
+            @{ exitCode = 124; stderr = "open-object path=$lockedPath error=32`nWINDOWS_JOB parent=1 timedOut=1 exit=124 activeAfterTermination=0" },
+            @{ exitCode = 2; stderr = "open-object path=$lockedPath error=5`nWINDOWS_JOB parent=1 timedOut=0 exit=2 activeAfterTermination=0" })) {
+            $rejected = $false
+            try { HWriterRefusal { $invalid } $lockedPath }
+            catch {
+                if ($_.Exception.Message -ne 'open writer prevents quiescent capture') { throw }
+                $rejected = $true
+            }
+            HAssert $rejected 'timeout or unrelated error result cannot pass writer refusal'
+        }
+        HWriterRefusal { HCapture 'hwriter' 'writer-active' } $lockedPath
         HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned 'staging/fixed-writer-active'))) 'open writer selected no snapshot'
         HAssert (-not (Test-Path -LiteralPath (Join-Path $Owned 'staging/fixed-writer-active.pending'))) 'open writer left no staging'
     } finally {
