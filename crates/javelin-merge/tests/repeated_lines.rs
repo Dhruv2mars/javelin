@@ -367,4 +367,107 @@ fn small_edits_drawn_from_the_base_alphabet_match_an_independent_oracle() {
         clean > 3000,
         "the generator must exercise clean merges: {clean}"
     );
+    println!("small edits: cases=20000 clean={clean} oracle=every-pair no-skips");
+}
+
+#[test]
+fn moved_blocks_and_multiple_optimal_matchings_match_every_pair() {
+    let mut rng = Lcg(0x626f_756e_6465_6401);
+    let alphabet: [&'static [u8]; 6] = [b"a", b"", b"}", b"U", b"V", b"x"];
+    let (mut clean, mut ambiguous) = (0, 0);
+    for _ in 0..30_000 {
+        let n = 2 + rng.below(6);
+        let base: Vec<_> = (0..n).map(|_| alphabet[rng.below(5)]).collect();
+        let side = |rng: &mut Lcg| {
+            let mut side = base.clone();
+            // Swap, rotate, or move a block, then insert/delete/replace one line.
+            match rng.below(3) {
+                0 => side.swap(rng.below(n), rng.below(n)),
+                1 => side.rotate_left(rng.below(n)),
+                _ => {
+                    let at = rng.below(n);
+                    let end = at + 1 + rng.below(n - at);
+                    let moved: Vec<_> = side.drain(at..end).collect();
+                    let to = rng.below(side.len() + 1);
+                    side.splice(to..to, moved);
+                }
+            }
+            match rng.below(3) {
+                0 => {
+                    side[rng.below(n)] = alphabet[rng.below(6)];
+                }
+                1 => side.insert(rng.below(n + 1), alphabet[rng.below(6)]),
+                _ => {
+                    side.remove(rng.below(n));
+                }
+            }
+            side
+        };
+        let (ours, theirs) = (side(&mut rng), side(&mut rng));
+        let (mine, other) = (
+            minimal_scripts(&base, &ours),
+            minimal_scripts(&base, &theirs),
+        );
+        ambiguous += usize::from(mine.len() > 1 || other.len() > 1);
+        let outcome = merge_text(&join(&base), &join(&ours), &join(&theirs));
+        let Some(bytes) = merged_text(&outcome) else {
+            continue;
+        };
+        clean += 1;
+        for m in &mine {
+            for o in &other {
+                assert!(
+                    independent(m, o),
+                    "base={base:?} ours={ours:?} theirs={theirs:?}"
+                );
+                assert_eq!(join(&apply_scripts(&base, &[m, o])), bytes);
+            }
+        }
+    }
+    assert!(clean > 1000, "clean={clean}");
+    assert!(ambiguous > 10_000, "ambiguous={ambiguous}");
+    println!("moves: cases=30000 clean={clean} ambiguous={ambiguous} oracle=every-pair no-skips");
+}
+
+#[test]
+fn ordinary_distant_rust_config_and_markdown_edits_combine() {
+    for (base, old_ours, new_ours, old_theirs, new_theirs) in [
+        (
+            "fn greet() {\n    println!(\"hello\");\n}\n\nfn count() -> usize {\n    4\n}\n",
+            "hello",
+            "welcome",
+            "    4",
+            "    5",
+        ),
+        (
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n\n[profile.release]\nlto = false\n",
+            "0.1.0",
+            "0.2.0",
+            "lto = false",
+            "lto = true",
+        ),
+        (
+            "# Guide\n\nRun the example.\n\n## Configuration\n\nUse defaults.\n\n## Recovery\n\nRetry once.\n",
+            "Run the example.",
+            "Run both examples.",
+            "Retry once.",
+            "Retry twice.",
+        ),
+    ] {
+        let ours = base.replace(old_ours, new_ours);
+        let theirs = base.replace(old_theirs, new_theirs);
+        let expected = ours.replace(old_theirs, new_theirs);
+        let outcome = merge_text(base.as_bytes(), ours.as_bytes(), theirs.as_bytes());
+        assert!(outcome.is_clean(), "{outcome:?}");
+        assert_eq!(merged_text(&outcome).unwrap(), expected.as_bytes());
+        let b: Vec<_> = base.lines().map(str::as_bytes).collect();
+        let o: Vec<_> = ours.lines().map(str::as_bytes).collect();
+        let t: Vec<_> = theirs.lines().map(str::as_bytes).collect();
+        for m in minimal_scripts(&b, &o) {
+            for other in minimal_scripts(&b, &t) {
+                assert!(independent(&m, &other));
+                assert_eq!(join(&apply_scripts(&b, &[&m, &other])), expected.as_bytes());
+            }
+        }
+    }
 }
