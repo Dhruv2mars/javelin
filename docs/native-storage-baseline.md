@@ -10,12 +10,14 @@ what it shows, and what it does not show. It sets no requirement.
 - Contract: `docs/build-contract.md` Gate 6 (record fixtures, machines, backend,
   limits, errors, cost assumptions; set requirements from measured behavior; do not
   equate API throughput with filesystem throughput).
-- **Measured source: `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`**, the hub-accepted
-  but unmerged PR #8 native Layer state. This PR (#16) is a draft stacked on
-  `feat/native-layer-checkpoints` and is *not* independently accepted. It edits no
-  native source: `git diff e56fc86..HEAD -- src Cargo.toml Cargo.lock tests` is empty,
-  and each run records `javelin_source_sha256 = 590fc27e71a5…` over `src/**` plus the
-  root `Cargo.toml`. PR #10 may change native source; rerun after any change.
+- The retained measurements use native source
+  `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`, with
+  `javelin_source_sha256 = 590fc27e71a59c0018e36a3185b57d12dbc73e28959265b218147d72ef8453e6`
+  over `src/**` plus the root `Cargo.toml`. Each original run retains its source
+  label and hash. PR #16 now targets `main`; main integration changed native code
+  and root Cargo files. A fresh build at the current head embeds the integrated
+  source hash. The retained numbers do not measure that current source; rerun the
+  workload before comparing its performance.
 - Cost assumptions: none are claimed. Hosting, provider and free-tier costs are
   unmeasured.
 
@@ -41,6 +43,9 @@ refused unless `--allow-debug-build`, and `verify` fails debug evidence the same
 
 Own `Cargo.lock`, empty `[workspace]`, path dependency `../..`. `build.rs` embeds
 SHA-256 of the measured sources and the tool, the target, and the compiling `rustc`.
+New host records match the mountpoint reported by `df` to the mount table, decoding
+its escaped paths. Older records used device-only matching and may name another
+mount when one device has multiple mounts. Those recorded values are unchanged.
 The tool never invokes Git (a regression test puts a failing `git` shim on `PATH`);
 `--source-commit` is caller-supplied and unverified. Fixtures take ObjectIds only from
 `put_blob`/`put_manifest`; no core hashing or manifest decoding is copied.
@@ -73,7 +78,9 @@ The tool never invokes Git (a regression test puts a failing `git` shim on `PATH
 
 ### What `verify` checks (from raw files alone)
 
-Summary equals recomputation from raw samples; provenance and release build;
+Summary equals recomputation from raw samples; both ingest passes contain every
+configured file index and matching successful inputs/object IDs; history contains
+exactly the configured number of advances; provenance and release build;
 clean scenario exits; no errors outside contention; contention errors only
 BUSY/LOCKED by SQLite code; contiguous attempt numbers, identical input per attempt,
 retries only after each action's uncertain error and successful reopen in the same
@@ -84,7 +91,9 @@ every acknowledged accept and no unexplained entry; stale `actual` greater than
 `expected`, bounded by the final head and consistent with real-time order; first
 attempts used the head just read; `check()` versions/attempts/objects match the
 records; replaying every operation ID returns the identical outcome and leaves
-repository files byte-identical; same ID with a different manifest is rejected;
+repository files byte-identical, with any digest directory/entry/file read error
+terminating the scenario rather than supplying empty bytes; same ID with a different
+manifest is rejected;
 acknowledged blobs read back byte-equal by identity; workers completed all operations;
 no budget truncation; no mismatch samples; clone heads start at the source checkpoint
 and the layer count matches; failed disk traversal terminates the scenario with
