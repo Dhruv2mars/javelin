@@ -34,3 +34,8 @@ until its integration merges; no core/probe changes or merges belong here.
 
 - [x] Merge current origin/main after PR #5 merged; preserve imported code unchanged and keep root TASKS.md byte-identical to main.
 - [x] Validate imported lockfile/build with `rtk cargo check --locked --all-targets`; owned workflow passes actionlint and diff checks. OverlayFS executable sources, common probe and Bun 1.4.3 workflow are unchanged from the passing `b0d7e22` proof.
+
+## Evidence phase regression
+
+- [x] Reproduce discussion 4292241947 with a duplicate `initial` replacing `before-remount` and its evidence file removed; the old verifier incorrectly accepts it.
+- [x] Require the exact eight phase IDs, which also rejects duplicates. The focused tamper test fails before the fix and passes after it; retained evidence still passes. No backend, common probe, mounted proof or root checklist change.
