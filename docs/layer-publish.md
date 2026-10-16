@@ -1,145 +1,158 @@
-# Bounded native whole-Layer Publish
+# Native whole-Layer Publish
 
-Status: design sketch only. Implementation and proof are pending.
-Parent: hub-accepted PR18 source `3a54021b15ac5002c21f492b6bed07740c682421`.
-Owner: draft PR23, branch `feat/whole-layer-publish`. This unit does not independently
-accept its parent. PR18 is evidence-only; protocol PR15 is separate.
-
-## Outcome and boundary
-
-One call publishes the complete exact latest Active captured checkpoint. It never
-reads live edits. One SQLite IMMEDIATE transaction validates the full existing
-World/Layer graph, checks exact input, computes intersections and composition,
-runs the guard, and commits the composed manifest, ordered World advancement,
-publication receipt and logical terminal state together. No mandatory tests,
-reviews, semantic merge, refresh, Stack or policy engine are added.
-
-World changed paths are the end-to-end difference between the immutable Layer
-base manifest and the locked World head manifest. A net revert A to B to A leaves
-that path unchanged. An exact or ancestor/descendant intersection conflicts even
-if World and Layer independently reach identical new bytes. Composition applies
-the complete canonical Layer delta to the locked head, retaining both independent
-changes and preserving the original immutable Layer base.
-
-## Two simple shapes
-
-A. One call with a small append-only `publications` table. A successful publication
-is the terminal record for its Layer; `layer_state` exposes a distinct Published
-variant, while original capture event rows and exact capture retry receipts stay
-unchanged. `layer_history` retains the original events and appends the publication
-state. The table binds the input, original against-World, observed Layer event,
-outcome and immutable canonical receipt Blob. Successful rows share their
-operation with the existing accepted World attempt/version. Failed durable rows
-have no World attempt. Full validation recomputes composition or conflict paths
-against that original World and verifies every receipt reference and byte.
-
-B. One call with a new published discriminator in `layer_heads`, a new Layer event
-operation shape and a publication table. This unifies terminal events, but it
-changes the capture/discard schema and accepted-attempt validation. It requires
-special handling so old capture retries still return their original Active state.
-
-Select A provisionally because it preserves existing capture schema and retry
-semantics. Both shapes keep one transaction and one store. Prepare/seal and an
-external receipt store are already rejected by the hub for World churn/livelock
-and TOCTOU/two-store crash boundaries. This review is not reopening that choice.
-
-## Caller and types
-
-Proposed usage, not executable code yet:
+`Repository::publish_layer` accepts one complete, exact, latest Active captured
+checkpoint. It reads immutable native records, never uncaptured working files.
+The caller supplies the operation ID, repository-issued `LayerHead`, declared
+attribution and a guard. Partial selection requires preparing another Layer.
 
 ```rust
-let receipt = repo.publish_layer(&operation, &captured_head,
-    &PublishAttribution::Human, |locked_world, composed_manifest| {
-        // Optional host checks current permissions/policy here in future.
-        Ok(())
-    })?;
+use javelin::{PublishAttribution, PublishOutcome};
+
+let receipt = repo.publish_layer(
+    &operation,
+    &captured_head,
+    &PublishAttribution::Human,
+    |locked_world, composed_manifest| Ok(()),
+)?;
+if let PublishOutcome::Published { version } = &receipt.outcome {
+    // version is the next immutable World, with the whole captured Layer delta.
+}
 let recovered = repo.publication(&operation)?;
 ```
 
-Proposed public signatures and types:
+## Composition and conflicts
 
-```rust
-pub enum PublishAttribution {
-    Human,
-    Agent { context: Option<ObjectId>, allow_missing_trace: bool },
-}
-pub enum PublishWarning { MissingAgentTrace }
-pub struct PublicationReceipt {
-    pub operation: OperationId,
-    pub expected: LayerHead,
-    pub attribution: PublishAttribution,
-    pub against: WorldVersion,
-    pub warnings: Vec<PublishWarning>,
-    pub outcome: PublishOutcome,
-}
-pub enum PublishOutcome {
-    Published { version: WorldVersion },
-    Conflict { paths: Vec<RepoPath> },
-    LayerStale { actual: LayerState },
-}
-// Add distinct LayerState::Published { head, operation, version }.
-pub fn publish_layer<F>(&mut self, operation: &OperationId,
-    expected: &LayerHead, attribution: &PublishAttribution, guard: F)
-    -> Result<PublicationReceipt>
-where F: FnOnce(&WorldVersion, &Manifest) -> Result<()>;
-pub fn publication(&self, operation: &OperationId)
-    -> Result<Option<PublicationReceipt>>;
-```
+One SQLite IMMEDIATE transaction validates the existing World/Layer/publication
+records, observes the current World, and computes its end-to-end difference from
+the immutable Layer base. It applies the complete canonical Layer delta to the
+locked current World. Independent World changes survive; the Layer base stays
+unchanged. An empty delta can also publish one next World version.
 
-The guard runs on a publishable candidate under the same write lock before any
-new objects or rows. Errors refuse without binding the operation. No guard is
-needed to replay the original durable receipt. Missing Agent context refuses
-without writes unless explicitly overridden, then records `missing_agent_trace`.
-A supplied context must be an existing valid Blob, verified under the lock.
-The attribution is declared, not authenticated. Context is opaque immutable bytes.
+Exact paths and ancestor/descendant paths intersect. An intersection produces a
+durable `Conflict`, even when World and Layer independently reach identical new
+bytes. `Conflict.paths` is the sorted unique union of both endpoints of every
+intersecting pair. `a` and `ab` do not intersect. Different children of an implicit
+directory can compose. File kind, symlink target, executable mode and deletion
+all participate in entry equality. Directory deletions still require exact entry
+tombstones, as in capture.
 
-All durable outcomes replay exactly after later World or Layer changes, including
-original conflict paths and terminal/stale state. Changed input and raw operation
-collisions reject with OperationIdReused in both directions. Existing Layer capture
-operation-ID scope stays separate; no global namespace redesign is intended.
-A new capture/discard operation on a published Layer returns a typed refusal.
-Existing committed capture retries retain their original outcome without writes.
-A new Publish operation on a terminal Layer records LayerStale; the original
-accepted Publish operation replays. Clone of the frozen checkpoint is permitted.
+World changing A to B and back to A leaves that path unchanged relative to base,
+so it does not block composition. This rule uses the base/head manifests, not a
+union of intervening changes. Publish adds no semantic merge, forced refresh,
+automatic Stack, resolution, discard, tests or reviews.
 
-## Module and validation ownership
+## Atomic state and retry
 
-`src/publish.rs` owns the public Publish types, append-only publication schema,
-composition/conflict logic, transaction API and full receipt validation.
-`src/layer.rs` exposes only necessary crate-private exact head/event access and
-adds Published status/history and mutation refusal without altering checkpoint
-bytes or capture ID scope. `src/repository.rs` initializes format 3 and publication
-immutability triggers and wires complete validation into init/check/history/raw
-CAS. Its existing full object/manifest/history validators remain authoritative.
-`src/lib.rs` exports the bounded types and any necessary typed refusal errors.
-No Cargo, workflow, binding/helper, CLI or other crate changes are planned.
-Format 2 is rejected without migration or byte rewriting. Object/checkpoint/hash
-formats remain unchanged. Validation avoids recursion: publication validation may
-use existing history/layer graph validators; those internal validators must not
-recursively call publication validation. Public correctness boundaries call both.
+Format 3 adds an append-only `publications` table with immutable receipt Blobs.
+On success, one ordered commit binds the composed manifest, next World version,
+World attempt, exact Layer identity/final checkpoint, attribution/context, receipt
+and logical Published state. Existing object kinds, hashes, manifest/checkpoint
+bytes, capture tables and their constraints stay unchanged. A partial unique
+index permits only one successful publication per Layer.
 
-## Required evidence, still pending
+The three durable outcomes are `Published`, `Conflict`, and `LayerStale`.
+LayerStale records the observed Active, Discarded or Published state when the
+supplied token is no longer the latest Active head. Same operation and exact
+input return the original receipt after later World/Layer advances, including
+original conflict paths and stale observations. `publication` recovers it after a
+lost acknowledgment. Changed head, attribution, context or override flag returns
+`OperationIdReused`. Raw `compare_and_advance` and Publish cannot reuse each
+other's operation IDs in either direction, including failed durable publications
+that have no World attempt. Existing Layer capture/discard ID scope is separate.
 
-(a) Base-head Publish and exact final checkpoint/provenance.
-(b) Disjoint current-World composition without Layer base mutation, plus net revert.
-(c) Exact/prefix/delete-modify/structural/symlink/executable intersections, including
-identical-new-result conflicts.
-(d) Stale, discarded and already-published Layer outcomes and immutable clones.
-(e) Every durable retry after later advances, changed input and raw reuse both ways.
-(f) Real process kill before commit, after commit/lost acknowledgment, readers
-without partial references, pipe barriers and release hook exclusion.
-(g) Concurrent disjoint Layers all publish contiguously; overlapping Layers have
-exactly one winner; retries preserve all results.
-(h) Human/Agent attribution, valid/missing/overridden/corrupt/wrong-kind contexts.
-(i) Guard observes locked current World and exact candidate; refusal changes no
-objects, versions, attempts, publications or Layer heads and reserves no operation.
-(j) Tampered receipts/references/composition and old accepted damage reject without
-fallback. Compiled guard mutations must fail named defect assertions.
-(k) Format 2 refusal preserves bytes; format checks, warnings-denied Clippy,
-complete locked debug/release/all-features suites, release-library caller and
-actual inherited three-OS CI logs with exact source identities.
+A published Layer returns `LayerState::Published` with its exact final head,
+publication operation and World version. Current status projects this terminal
+record; history appends it after the unchanged original capture events. Fresh
+capture/discard returns `LayerPublished` without objects or rows. Previously
+committed capture/discard operations still replay their original historical
+outcomes. A new Publish operation records LayerStale; the accepted original
+operation replays. Frozen checkpoint read/diff and clone remain available.
 
-A fresh final independent Codex source/evidence review is required. Same-family
-review limits will be stated. Logical native mutation refusal does not prove
-physical mounted views read-only. Hardware power loss, scale, performance,
-network filesystems, full Gate 2, hosting and GA remain unverified.
+Public history/version, repeated init, check, raw CAS, Layer status/mutation and
+publication boundaries validate complete native state. Receipt validation
+reconstructs composition/conflicts against the original recorded World and stale
+state from the original recorded event/publication. It checks exact relational
+bindings and canonical receipt Blob bytes. Internal checkpoint base validation
+uses the existing raw World validator, avoiding recursive publication validation.
+Full object/manifest graph validation and old missing-tail checks remain intact.
+Object-only bounded availability/read guarantees are unchanged.
+
+Format 2 is unshipped and is rejected by open/init without migration or rewrite.
+Trigger/schema authentication and coherent removal of every historical anchor
+remain outside the existing integrity guarantee. This is not tamper-proof history.
+
+## Attribution and guard
+
+`PublishAttribution::Human` needs no trace. Agent attribution carries one optional
+opaque immutable Blob reference and `allow_missing_trace`. Missing context with
+false refuses with `MissingAgentTrace` and reserves no operation. Missing context
+with true commits warning `missing_agent_trace`. A supplied context always passes
+existence, kind and hash verification under the transaction; override cannot
+excuse a corrupt or wrong-kind context. The override flag remains part of exact
+input even with a supplied context. Attribution is declared, not authenticated.
+
+The `FnOnce(&WorldVersion, &Manifest) -> Result<()>` guard runs only for a
+publishable candidate, under the same write lock, before inserting any objects or
+metadata. Err leaves zero new objects, versions, attempts, publications or Layer
+rows and reserves no operation ID. A local caller can return Ok. Conflict,
+LayerStale and receipt replay do not invoke it. This is a future host integration
+hook, not an authorization ticket. It implements no identity, permissions, policy
+store, provider or durable hosted-request closure. A later host must check current
+state and reconcile request closure in its actual persistence boundary; this
+closure cannot atomically close an independent external database with SQLite.
+
+## Design decisions and limits
+
+The completed current-parent architect review selected a receipt-backed terminal
+projection over changing the Layer event discriminator. The implementation keeps
+historical events/retries unchanged, checks raw/Publish operation ownership before
+replay, and directs full-state validation above raw history/checkpoint validators.
+These settle review findings R1, R2 and R4. The selected single transaction avoids
+the World-churn/livelock of prepare/seal and two-store TOCTOU/crash boundaries.
+The older grounding proposal is design history only; revision base and current
+publication head are separate throughout this implementation.
+
+R3 is an explicit binding follow-on. Linux `certain` does not yet classify
+`LayerPublished` as a definite refusal, and mount/recovery recognizes Discarded
+rather than Published. A binding capture/discard after publication may retain
+pending/frozen state; a new mount can mislabel Published as discarded. This PR
+changes no binding/helper code. Logical native mutation refusal does not prove
+physical mounted views read-only or safe post-publication binding recovery.
+
+Tests in `tests/layer_publish.rs` cover composition, intersections, retries,
+terminal state, attribution, guard/refusal, tampered bindings and format refusal.
+`tests/support/process.rs` exercises disjoint/overlapping publishers, same-ID and
+raw-ID races, capture/discard races, readers, process kills and lost replies with
+pipe barriers. Hooks exist only under `cfg(test)`. Hardware power loss, mounted
+lifecycle, autosave, Stack/refresh, hosting, performance, network filesystems,
+Gate 2 and GA are not established by this bounded native API.
+
+
+## Implementation checklist
+
+The October 16 workflow replaces the original additional review/audit rounds.
+This bounded unit uses existing PR23 and leaves root TASKS unchanged from its
+starting dependency so the hub's main checklist survives integration.
+
+- [x] Apply the completed architect's four corrections and report the excluded
+  Linux binding integration gap to the hub.
+- [x] Implement atomic composition, durable outcomes, exact retries, attribution,
+  guard refusal, full receipt validation and logical Published state.
+- [x] Run all 16 Publish integration tests and six new pipe-controlled process tests.
+- [x] Run the full locked all-target/all-feature debug suite: 97 passed, one ignored
+  child-process entry point. The retained run also includes all 16 Publish tests.
+- [x] Run Clippy with warnings denied across all targets/features.
+- [x] Pass all six release process tests and the locked release build. Compile/run
+  an external caller against the production library; verify boundary-hook markers
+  are absent from the release library, binary and caller.
+- [ ] Make existing PR23 regular/ready; hub owns integration and merge.
+
+Retained local debug log: `/tmp/javelin-publish-pr23/oct16-full-debug.log`.
+The earlier parent baseline and architect report are historical inputs, not proof
+of this implementation. No new source-review round is required or claimed.
+
+Release logs are `oct16-release-process.log`, `oct16-release-build.log` and
+`oct16-release-caller.log` in that same local scratch directory. Formatting and
+warnings-denied Clippy pass. These are local macOS results; new-source hosted
+Linux/Windows outcomes are not claimed. No full release suite or new independent
+source review was run under the proportional October 16 workflow.
