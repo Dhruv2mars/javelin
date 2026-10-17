@@ -16,3 +16,10 @@ development packaging fingerprints the CLI inputs and rejects wrong binaries.
   Git-blocking smoke passed; standalone protocol `cargo check --locked` passed.
   No laptop mounts or cross-platform execution claimed.
 - [x] Prepare checked implementation for one regular PR; leave integration to the hub.
+
+- [x] Fix PR #27 Linux CI compilation: add Linux-only dev `libc` for the moved
+  ignored mount test's `getuid` call. Confirmed raw Native run 38993027564 error.
+  Linux x86_64 cross-target Clippy with all CLI targets/features and warnings
+  denied passes (Zig C compiler, `CRATE_CC_NO_DEFAULTS=1`); this compiles the
+  ignored Linux test without executing mounts. All 10 macOS CLI tests, CLI test
+  check, formatting and locked resolution pass. Root API and TASKS unchanged.

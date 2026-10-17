@@ -185,6 +185,7 @@ name = "javelin-cli"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "libc",
  "rusqlite",
  "serde_json",
  "tempfile",
