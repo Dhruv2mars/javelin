@@ -1,0 +1,36 @@
+registered root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e rootPlaceholders=13
+started root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e entries=21
+fetch-data key=README.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\snap\blobs\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46 flags=0 required=0+15
+transfer-data key=README.txt bytes=15 hr=00000000
+fetch-data key=cold-file-moved.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\cold-file.txt flags=0 required=0+16
+transfer-data key=cold-file-moved.txt bytes=16 hr=00000000
+transfer-placeholders key=cold-moved path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\cold-moved count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=cold-moved\sub path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\cold-moved\sub count=1 status=00000000 hr=00000000 processed=1
+fetch-data key=cold-moved\sub\cold.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\cold\sub\cold.txt flags=0 required=0+17
+transfer-data key=cold-moved\sub\cold.txt bytes=17 hr=00000000
+fetch-data key=completed.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\snap\blobs\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e flags=0 required=0+21
+transfer-data key=completed.txt bytes=21 hr=00000000
+fetch-data key=created.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\snap\blobs\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696 flags=0 required=0+13
+transfer-data key=created.txt bytes=13 hr=00000000
+transfer-placeholders key=dir2 path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\dir2 count=1 status=00000000 hr=00000000 processed=1
+fetch-data key=dir2\inner.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\dir2\inner.txt flags=0 required=0+6
+transfer-data key=dir2\inner.txt bytes=6 hr=00000000
+fetch-data key=main.c source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\main.c flags=0 required=0+90
+transfer-data key=main.c bytes=90 hr=00000000
+fetch-data key=moved-bytes.bin source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\bytes.bin flags=0 required=0+12288
+transfer-data key=moved-bytes.bin bytes=12288 hr=00000000
+fetch-data key=notes.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\snap\blobs\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137 flags=0 required=0+1280
+transfer-data key=notes.txt bytes=1280 hr=00000000
+transfer-placeholders key=renamed-dir path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\renamed-dir count=1 status=00000000 hr=00000000 processed=1
+fetch-data key=renamed-dir\nested.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\dir\nested.txt flags=0 required=0+7
+transfer-data key=renamed-dir\nested.txt bytes=7 hr=00000000
+transfer-placeholders key=renamed-dir3 path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\renamed-dir3 count=1 status=00000000 hr=00000000 processed=1
+transfer-placeholders key=renamed-dir3\deep path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\renamed-dir3\deep count=1 status=00000000 hr=00000000 processed=1
+fetch-data key=renamed-dir3\deep\leaf.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\dir3\deep\leaf.txt flags=0 required=0+5
+transfer-data key=renamed-dir3\deep\leaf.txt bytes=5 hr=00000000
+fetch-data key=slow.bin source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\slow.bin flags=0 required=0+9000
+transfer-data key=slow.bin bytes=9000 hr=00000000
+fetch-data key=value.h source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\snap\blobs\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905 flags=0 required=0+16
+transfer-data key=value.h bytes=16 hr=00000000
+notify-delete key=created.txt path=\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e\created.txt ack=00000000
+stopped root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\e

@@ -1,0 +1,169 @@
+{
+  "id": "protect-snapshot",
+  "verdict": "VERIFIED",
+  "commands": [
+    {
+      "argv": [
+        "attrib.exe",
+        "-R",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap",
+      "exitCode": 0,
+      "stdout": "Access denied - D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv\r\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "attrib.exe",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap",
+      "exitCode": 0,
+      "stdout": "A    R               D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv\r\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "icacls.exe",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv",
+        "/grant",
+        "runneradmin:F"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap",
+      "exitCode": 5,
+      "stdout": "Successfully processed 0 files; Failed processing 1 files\r\n",
+      "stderr": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv: Access is denied.\r\n"
+    },
+    {
+      "argv": [
+        "takeown.exe",
+        "/f",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: The current logged on user does not have ownership privileges on\r\n       the file (or folder) \"D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\manifest.tsv\".\r\n "
+    },
+    {
+      "argv": [
+        "attrib.exe",
+        "-R",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs",
+      "exitCode": 0,
+      "stdout": "Access denied - D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\r\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "attrib.exe",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs",
+      "exitCode": 0,
+      "stdout": "A    R               D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\r\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "icacls.exe",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905",
+        "/grant",
+        "runneradmin:F"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs",
+      "exitCode": 5,
+      "stdout": "Successfully processed 0 files; Failed processing 1 files\r\n",
+      "stderr": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905: Access is denied.\r\n"
+    },
+    {
+      "argv": [
+        "takeown.exe",
+        "/f",
+        "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: The current logged on user does not have ownership privileges on\r\n       the file (or folder) \"D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\".\r\n "
+    }
+  ],
+  "evidence": {
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-write": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-delete": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-create": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-container-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap-frozen-root-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "manifest": {
+      "attributeStillReadOnly": true,
+      "attribDenied": true,
+      "aclGrantDenied": true,
+      "takeOwnershipDenied": true,
+      "writeDenied": true,
+      "deleteDenied": true,
+      "renameDenied": true,
+      "createDenied": true,
+      "containerRenameDenied": true,
+      "frozenRootRenameDenied": true
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-write": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-delete": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-create": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-container-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\frozen\\snap\\blobs-frozen-root-rename": {
+      "refused": true,
+      "code": "EPERM"
+    },
+    "blob": {
+      "attributeStillReadOnly": true,
+      "attribDenied": true,
+      "aclGrantDenied": true,
+      "takeOwnershipDenied": true,
+      "writeDenied": true,
+      "deleteDenied": true,
+      "renameDenied": true,
+      "createDenied": true,
+      "containerRenameDenied": true,
+      "frozenRootRenameDenied": true
+    },
+    "unchangedSinceFreeze": true
+  }
+}

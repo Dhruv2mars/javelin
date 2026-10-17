@@ -1,0 +1,12 @@
+WINDOWS_JOB parent=6952 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=6668 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=2940 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=7124 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=3088 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=5516 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=7752 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=1912 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=5468 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=2864 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=5216 timedOut=0 exit=1 activeAfterTermination=0
+WINDOWS_JOB parent=1672 timedOut=0 exit=0 activeAfterTermination=0

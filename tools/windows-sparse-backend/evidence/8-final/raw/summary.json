@@ -1,0 +1,244 @@
+{
+  "schema": 1,
+  "sourceSHA": "8712866f0272f6cb12907fc0352002163fa61a1d",
+  "runId": "38508454070",
+  "runAttempt": "1",
+  "blockers": [],
+  "sources": {
+    "tools/windows-sparse-backend/run.ps1": "797f5bc76ef95412bc665d7101974c0ba8800b6fa618343ae4dda6369b8bd7ee",
+    "tools/windows-sparse-backend/user-run.ps1": "4d20fbe726ea087e9e44f0c57f6fbfae5676a150f9e038896d8ef5568d747cc5",
+    "tools/windows-sparse-backend/checks.mjs": "9da791b67399c14f99a4977e3785a31273e425c448a51089613de532a139fa20",
+    "tools/windows-sparse-backend/sparse.cpp": "85db1b08496c6200acae6f9b16ff1a7740d1627fe2169784c3b2fe718e587681",
+    "tools/windows-sparse-backend/projfs-provider.cpp": "3fdb4dc04ca8795bda954f3e3b581b5b528878977998cd0a55e59c13feddad5e",
+    ".github/workflows/windows-sparse-backend.yml": "5b578df2d8b1d69c68175bb99a03439fc385aaabca364f81df15f3fe0dd4dffb",
+    "tools/workspace-probe/probe.mjs": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d",
+    "tools/workspace-probe/atomic-writer.mjs": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767",
+    "binary/sparse.exe": "863ede52bc32c28d42d31bd2dafeade2b0a0948857e8d68058d1adacb207c3d5",
+    "binary/projfs-provider.exe": "0f1b4dbeccd956fadf80e4a30280c0609da016fd4aa2eaa16602e86d66af49e0"
+  },
+  "account": "jvs127c2b16d4c6",
+  "accountCreated": true,
+  "accountRemoved": true,
+  "freeze": {
+    "tree": [
+      {
+        "kind": "directory",
+        "path": "blobs"
+      },
+      {
+        "kind": "file",
+        "sha256": "210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905",
+        "bytes": 16,
+        "path": "blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905"
+      },
+      {
+        "kind": "file",
+        "sha256": "61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46",
+        "bytes": 15,
+        "path": "blobs\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46"
+      },
+      {
+        "kind": "file",
+        "sha256": "6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e",
+        "bytes": 21,
+        "path": "blobs\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e"
+      },
+      {
+        "kind": "file",
+        "sha256": "f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137",
+        "bytes": 1280,
+        "path": "blobs\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137"
+      },
+      {
+        "kind": "file",
+        "sha256": "fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696",
+        "bytes": 13,
+        "path": "blobs\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696"
+      },
+      {
+        "kind": "file",
+        "sha256": "14ce79c771b28fb7df33027c4aaf6e3d3286470cff05ae0b642b3bd74ea87ed9",
+        "bytes": 749,
+        "path": "manifest.tsv"
+      }
+    ],
+    "at": "2026-10-14T03:53:19.0813394Z"
+  },
+  "host": {
+    "caption": "Microsoft Windows Server 2022 Datacenter",
+    "build": "20348",
+    "setupAdministrator": true,
+    "version": "10.0.20348",
+    "imageOS": "win22",
+    "setupIdentity": "runnervmtn0fv\\runneradmin",
+    "imageVersion": "20261004.326.1"
+  },
+  "projfsFeature": "Enabled",
+  "cldflt": {
+    "present": true,
+    "startType": "Automatic",
+    "status": "Running"
+  },
+  "sdk": {
+    "cfapi": "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\um\\cfapi.h",
+    "sha256": "c50fb112b31a38e91151b84c46fcfefeb395aa12faa60cdc270103cdce7c4ae7"
+  },
+  "baseTrees": {
+    "common": [
+      {
+        "kind": "file",
+        "sha256": "dc404a613fedaeb54034514bc6505f56b933caa5250299ba7d094377a51caa46",
+        "bytes": 8192,
+        "path": "bytes.bin"
+      },
+      {
+        "kind": "file",
+        "sha256": "a48a2fc5ec60360f7b0a1cc163f21e624c7ac9c077ad6db064769d3ac5ed09cd",
+        "bytes": 17,
+        "path": "delete.txt"
+      },
+      {
+        "kind": "directory",
+        "path": "dir"
+      },
+      {
+        "kind": "file",
+        "sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3",
+        "bytes": 7,
+        "path": "dir\\nested.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "3bc8535c8309d3354a9a74b6850c41ae08df49d8736b1bb2ba49a885e41ca366",
+        "bytes": 0,
+        "path": "inside-link"
+      },
+      {
+        "kind": "file",
+        "sha256": "f15b379cec93d5ac2272875f21f696ac9d887e236fa68db754c29b3e79c8e567",
+        "bytes": 90,
+        "path": "main.c"
+      },
+      {
+        "kind": "file",
+        "sha256": "3bc8535c8309d3354a9a74b6850c41ae08df49d8736b1bb2ba49a885e41ca366",
+        "bytes": 17,
+        "path": "README.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "b26369e647fb784e8d539541d1f5a281610c63341f0685c9d9072ec4c81b4ad9",
+        "bytes": 16,
+        "path": "value.h"
+      }
+    ],
+    "native": [
+      {
+        "kind": "file",
+        "sha256": "c80239b66c3f26395cbcf099ce99fbe15543bd16b411d15c0689826f7701a7fe",
+        "bytes": 12288,
+        "path": "bytes.bin"
+      },
+      {
+        "kind": "directory",
+        "path": "cold"
+      },
+      {
+        "kind": "file",
+        "sha256": "1f4ceab786a8e9e7e611939ad45f25a83d02acd62bdc9c7ca34b1481f9c59b3f",
+        "bytes": 16,
+        "path": "cold-file.txt"
+      },
+      {
+        "kind": "directory",
+        "path": "cold\\sub"
+      },
+      {
+        "kind": "file",
+        "sha256": "ac037eff718b614155bc820f2ade9f75442e37866fc40b48c240e40634d56cdb",
+        "bytes": 17,
+        "path": "cold\\sub\\cold.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "fa7148967cd4072ccc494b424f8722944a1a4d47692e938202517d7485bfd0eb",
+        "bytes": 13,
+        "path": "delete.txt"
+      },
+      {
+        "kind": "directory",
+        "path": "dir"
+      },
+      {
+        "kind": "file",
+        "sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3",
+        "bytes": 7,
+        "path": "dir\\nested.txt"
+      },
+      {
+        "kind": "directory",
+        "path": "dir2"
+      },
+      {
+        "kind": "file",
+        "sha256": "940a68104d3b690442453f4be394b0a14721a174127d84c1c2f834b7ad05d684",
+        "bytes": 6,
+        "path": "dir2\\inner.txt"
+      },
+      {
+        "kind": "directory",
+        "path": "dir3"
+      },
+      {
+        "kind": "directory",
+        "path": "dir3\\deep"
+      },
+      {
+        "kind": "file",
+        "sha256": "26d0bac9f0c7a35b2f3322a0f4ad4517265f56b2c0f4b2ed7cb5cbd30c5868e2",
+        "bytes": 5,
+        "path": "dir3\\deep\\leaf.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "3bc8535c8309d3354a9a74b6850c41ae08df49d8736b1bb2ba49a885e41ca366",
+        "bytes": 0,
+        "path": "inside-link"
+      },
+      {
+        "kind": "file",
+        "sha256": "f15b379cec93d5ac2272875f21f696ac9d887e236fa68db754c29b3e79c8e567",
+        "bytes": 90,
+        "path": "main.c"
+      },
+      {
+        "kind": "file",
+        "sha256": "ce045bb762c6f5ab3fd0f58d139c4db59681b5f151f702dab90b3c57a2908b75",
+        "bytes": 1280,
+        "path": "notes.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "3bc8535c8309d3354a9a74b6850c41ae08df49d8736b1bb2ba49a885e41ca366",
+        "bytes": 17,
+        "path": "README.txt"
+      },
+      {
+        "kind": "file",
+        "sha256": "d8d28122647767c99b3d1fcbbc76c20caadec40e56f1cc4ad6eff89305258153",
+        "bytes": 9000,
+        "path": "slow.bin"
+      },
+      {
+        "kind": "file",
+        "sha256": "b26369e647fb784e8d539541d1f5a281610c63341f0685c9d9072ec4c81b4ad9",
+        "bytes": 16,
+        "path": "value.h"
+      }
+    ]
+  },
+  "userWrapperExit": 0,
+  "snapshotUnchangedAtEnd": true,
+  "baseUnchangedAtEnd": true,
+  "cleanupVerified": true
+}
