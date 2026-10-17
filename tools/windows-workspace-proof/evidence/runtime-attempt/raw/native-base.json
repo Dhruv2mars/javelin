@@ -1,7 +1,0 @@
-{
-  "id": "base",
-  "verdict": "INCONCLUSIVE",
-  "commands": [],
-  "evidence": {},
-  "error": "Error: EPERM: operation not permitted, open 'D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\README.txt'\n    at async visit (D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\user-tools\\checks.mjs:29:62)\n    at async visit (D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\user-tools\\checks.mjs:28:66)\n    at async snapshot (D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\user-tools\\checks.mjs:32:9)"
-}

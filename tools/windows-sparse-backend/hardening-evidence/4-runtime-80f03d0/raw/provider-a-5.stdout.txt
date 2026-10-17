@@ -1,3 +1,0 @@
-started root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\a entries=19
-fetch-data key=slow.bin source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-native\slow.bin flags=0 required=0+9000
-fetch-slow-wait key=slow.bin

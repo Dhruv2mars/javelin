@@ -92,7 +92,7 @@ no delete-child right, so it cannot rename or replace the frozen container.
 ## Attempts
 
 Every attempt ran as a `pull_request` job on `windows-2022`. Original archives and cloud
-run/job/artifact records are under `tools/windows-sparse-backend/evidence/<attempt>/`. The
+run/job/artifact records were retained and are now only in Git history. The
 planned bound was six attempts; it was extended to eight because every failure was a harness
 defect, not a platform refusal. Attempt 8 applies the independent review findings below.
 
@@ -104,14 +104,14 @@ defect, not a platform refusal. Attempt 8 applies the independent review finding
 | 4 | `60fdf62` | `38506542313` | Backslash path fixed cmd; `CF_SIZE_OF_OP_PARAM` undefined |
 | 5 | `e738c3f` | `38506681907` | Workflow concluded `failure`: both compiled; recursive inheritance grants left files with empty DACLs |
 | 6 | `ee23f17` | `38506890542` | All phases ran; traversal hydrated the slow file; renamed unchanged file copied |
-| 7 | `4588385` | `38507282143` | All native phases passed; reviewed as `fdd0f4b` (`evidence/7-pre-review/`) |
+| 7 | `4588385` | `38507282143` | All native phases passed; reviewed as `fdd0f4b` |
 | **8** | **`8712866`** | **`38508454070`** | **Final; review fixes; all native phases VERIFIED** |
 
 The final tested source is exactly `8712866f0272f6cb12907fc0352002163fa61a1d`, job
 `115671233319`. Artifact `windows-sparse-backend-38508454070-1` (id `11869270547`, expires
 2026-10-28) has digest
-`sha256:c7b9b68d9f677946edf068f5ba0a4d08b1b271ec58e7cd4196533e411f95d999`; its 96 raw files are
-extracted in `evidence/8-final/raw/`. Owned files are checked out without line-ending conversion
+`sha256:c7b9b68d9f677946edf068f5ba0a4d08b1b271ec58e7cd4196533e411f95d999`; its 96 raw files were
+extracted into Git history. Owned files are checked out without line-ending conversion
 (`.gitattributes`), so their runner hashes equal the committed bytes. The workflow and unchanged
 common probe received Windows CRLF conversion; the verifier applies that transform explicitly.
 Host: Windows Server 2022 Datacenter build 20348, image `20261004.326.1`. The Cloud Files
@@ -213,10 +213,4 @@ The workflow runs on pull requests that change the owned executable files or wor
 bound. The scripts refuse local execution. Checkout is developer setup; nothing under test
 invokes or reads Git.
 
-```sh
-rtk proxy bun tools/windows-sparse-backend/verify-evidence.mjs
-```
-
-The audit checks all eight archive digests against GitHub's recorded digests, every final raw
-file against the archive, tested source hashes, identity, cleanup and the recorded verdicts
-above. A one-byte change to a raw file makes it exit 1. It never projects a root or runs setup.
+The offline evidence audit was removed with the raw evidence; it remains in Git history.

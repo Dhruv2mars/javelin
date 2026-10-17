@@ -1,2 +1,0 @@
-started root=D:\a\_temp\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\b instance={BFBAB3DA-C4B3-4104-AC73-31A52EA08378} alignment=512 entries=8
-stopped root=D:\a\_temp\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\b

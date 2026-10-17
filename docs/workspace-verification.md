@@ -30,8 +30,7 @@ rtk proxy bun tools/workspace-probe/discover.mjs /tmp/javelin-host.json
 rtk proxy /usr/sbin/diskutil info /System/Volumes/Data
 ```
 
-The [committed evidence](../tools/workspace-probe/evidence/macos-arm64/)
-contains command outputs and fixture hashes.
+The command outputs and fixture hashes were committed and are now only in Git history.
 The final omitted-output run created the unique directory
 `javelin-probe-evidence-6sxr25` under the host temporary directory and exited 0.
 Its JSON files are the committed behavior evidence. The hub also independently

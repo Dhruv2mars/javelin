@@ -1,5 +1,0 @@
-registered root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\b rootPlaceholders=12
-started root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\b entries=19
-fetch-data key=README.txt source=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\frozen\base-native\README.txt flags=0 required=0+17
-transfer-data key=README.txt bytes=17 hr=00000000
-stopped root=D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\b

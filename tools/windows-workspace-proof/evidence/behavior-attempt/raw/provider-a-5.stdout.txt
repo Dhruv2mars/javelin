@@ -1,4 +1,0 @@
-started root=D:\a\_temp\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\a instance={EF7E4D4C-425E-4A62-BD3E-ABFC0F435461} alignment=512 entries=8
-notification 2 README.txt destination=
-hydrate README.txt requested=0+17 supplied=17 hr=00000000
-stopped root=D:\a\_temp\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\a

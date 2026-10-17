@@ -1,8 +1,0 @@
-{
-  "command": "Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS",
-  "before": "Enabled",
-  "enable": null,
-  "after": "Enabled",
-  "ready": true,
-  "error": null
-}

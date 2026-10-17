@@ -1,9 +1,0 @@
-{
-  "id": "base",
-  "verdict": "VERIFIED",
-  "commands": [],
-  "evidence": {
-    "entries": 9,
-    "baseWriteDenied": true
-  }
-}

@@ -66,15 +66,14 @@ establish writer/provider termination before supported capture.
 Run `38570489714` at `bd42718` stopped at helper compilation, exit 2 with SDK
 `CompletionStatus` type errors because `NTSTATUS` was undeclared. No ordinary
 proof account was created; cleanup completed. Its successful collection job
-does not establish runtime reproduction. The raw attempt is retained separately
-under `hardening-evidence/1-control-bd42718`. A focused compile-only control
+does not establish runtime reproduction. The raw attempt was retained
+in Git history. A focused compile-only control
 precedes further runtime assertions. No hardening result is verified.
 
 The compile-only run `38695475455` at `809e71d` failed with the same missing
 `NTSTATUS` type. Adding `ntstatus.h` supplied constants but did not declare the
 type. The helper must also match the inherited provider's `bcrypt.h` include
-before `cfapi.h`. This failed attempt is retained under
-`hardening-evidence/2-compile-809e71d`; no proof account was created and cleanup
+before `cfapi.h`. This failed attempt was retained in Git history; no proof account was created and cleanup
 completed. Microsoft distinguishes the type from the status-code constants in
 its [NTSTATUS documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-ntstatus-values).
 
@@ -120,7 +119,7 @@ Other bounded observations in this same unchanged-source run are separate:
   outside relative link. These observations establish loading acceptance only;
   this fixture did not read the malformed views through ordinary filesystem paths.
 
-The raw attempt remains immutable under `hardening-evidence/4-runtime-80f03d0`.
+The raw attempt remains in Git history.
 
 Independent Codex high review `windows-pr19-sdk-preconditions-r1` confirmed the
 missing setup and compared helper creation to the inherited successful path.
@@ -176,8 +175,7 @@ The focused Windows checks include partial-file refusal, junctions, relative
 link escape, marker edits, actual token SID self-grants, active provider/writer
 refusal and retry, limits, malformed manifests, missing/tampered/truncated blobs,
 and mutation before hydration. Existing ordinary operations, seven Cloud Files
-rename cases, clone isolation and restart checks still run. Verify a downloaded
-artifact against current source with `bun tools/windows-sparse-backend/verify-hardening.mjs <attempt-directory>`.
+rename cases, clone isolation and restart checks still run.
 
 The latest hosted check on this PR records the current regression result.
 Historical control failures above remain failed attempts. The shared POSIX probe
