@@ -1,0 +1,16 @@
+{
+  "name": "snapshot-tree",
+  "executable": "D:\\a\\_temp\\javelin-sparse-proof-f6559bc2eec54ba98f2bae313585b337\\user-tools\\bun.exe",
+  "argv": [
+    "-e",
+    "const fs=require('fs/promises'),p=require('path'),c=require('crypto');async function t(b){const r=[];async function v(n){const q=p.join(b,n),s=await fs.lstat(q);if(s.isDirectory()){r.push([n,'directory']);for(const x of (await fs.readdir(q)).sort())await v(p.join(n,x))}else r.push([n,'file',s.size,c.createHash('sha256').update(await fs.readFile(q)).digest('hex')])}await v('');return r}t(process.argv[1]).then(x=>console.log(JSON.stringify({tree:x})))",
+    "D:\\a\\_temp\\javelin-sparse-proof-f6559bc2eec54ba98f2bae313585b337\\frozen\\snap"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 2512,
+  "stdout": "{\"tree\":[[\"\",\"directory\"],[\"blobs\",\"directory\"],[\"blobs\\\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\",\"file\",16,\"210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\"],[\"blobs\\\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\",\"file\",15,\"61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\"],[\"blobs\\\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\",\"file\",21,\"6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\"],[\"blobs\\\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\",\"file\",1280,\"f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\"],[\"blobs\\\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\",\"file\",13,\"fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\"],[\"manifest.tsv\",\"file\",749,\"14ce79c771b28fb7df33027c4aaf6e3d3286470cff05ae0b642b3bd74ea87ed9\"]]}\n",
+  "stderr": ""
+}

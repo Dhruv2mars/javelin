@@ -1,0 +1,3 @@
+started root=D:\a\_temp\javelin-sparse-proof-98e3201d96e646df828ec13371361050\hpartial-zero entries=19
+notify-rename key=bytes.bin from=\a\_temp\javelin-sparse-proof-98e3201d96e646df828ec13371361050\hpartial-zero\partial.bin to=\a\_temp\javelin-sparse-proof-98e3201d96e646df828ec13371361050\hpartial-zero\moved-partial.bin flags=6 ack=00000000
+stopped root=D:\a\_temp\javelin-sparse-proof-98e3201d96e646df828ec13371361050\hpartial-zero

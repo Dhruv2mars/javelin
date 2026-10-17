@@ -1,0 +1,48 @@
+**********************
+PowerShell transcript start
+Start time: 20261015065639
+Username: runnervmgnbhw\runneradmin
+RunAs User: runnervmgnbhw\runneradmin
+Configuration Name: 
+Machine: runnervmgnbhw (Microsoft Windows NT 10.0.20348.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -command . 'D:\a\_temp\1e26a515-0b2a-44e8-8a82-6c032e6d55dc.ps1'
+Process ID: 7428
+PSVersion: 7.6.6
+PSEdition: Core
+GitCommitId: 7.6.6
+OS: Microsoft Windows 10.0.20348
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+COMMAND cldflt-query exit=0 timedOut=False
+COMMAND cldflt-config exit=0 timedOut=False
+COMMAND filters exit=0 timedOut=False
+COMMAND developer-mode exit=0 timedOut=False
+COMMAND compiler-discovery exit=0 timedOut=False
+COMMAND cmd-echo-sparse exit=0 timedOut=False
+COMMAND cmd-echo-owned-sparse exit=0 timedOut=False
+COMMAND compile-sparse exit=0 timedOut=False
+COMMAND cmd-echo-hardening-control exit=0 timedOut=False
+COMMAND cmd-echo-owned-hardening-control exit=0 timedOut=False
+COMMAND compile-hardening-control exit=2 timedOut=False
+
+PSMessageDetails      : 
+Exception             : System.Management.Automation.RuntimeException: Native hardening-control compile failed; this
+                        is a source failure, not a platform verdict.
+TargetObject          : Native hardening-control compile failed; this is a source failure, not a platform verdict.
+CategoryInfo          : OperationStopped: (Native hardening-co…a platform verdict.:String) [], RuntimeException
+FullyQualifiedErrorId : Native hardening-control compile failed; this is a source failure, not a platform verdict.
+ErrorDetails          : 
+InvocationInfo        : System.Management.Automation.InvocationInfo
+ScriptStackTrace      : at <ScriptBlock>, D:\a\javelin\javelin\tools\windows-sparse-backend\run.ps1: line 111
+                        at <ScriptBlock>, D:\a\_temp\1e26a515-0b2a-44e8-8a82-6c032e6d55dc.ps1: line 2
+                        at <ScriptBlock>, <No file>: line 1
+PipelineIterationInfo : {}
+
+**********************
+PowerShell transcript end
+End time: 20261015065702
+**********************

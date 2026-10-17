@@ -1,0 +1,17 @@
+{
+  "name": "owned-user-acl",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d",
+    "/grant",
+    "jvs55fc5fb9c2f8:(RX,WD,AD)",
+    "jvs55fc5fb9c2f8:(OI)(CI)(IO)F"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 3628,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

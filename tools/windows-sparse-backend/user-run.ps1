@@ -23,9 +23,28 @@ $userTemp = Join-Path $Owned 'user-temp'
 New-Item -ItemType Directory -Path $userTemp | Out-Null
 $env:TEMP = $userTemp; $env:TMP = $userTemp; $env:TMPDIR = $userTemp
 
+function Admin-Control([string]$Operation, [string]$Name, [string]$Base = '', [string]$Snapshot = '-') {
+    $request = Join-Path $Owned "control-$([guid]::NewGuid().ToString('N')).request.json"
+    $temporary = "$request.writing"
+    @{ operation = $Operation; name = $Name; base = $Base; snapshot = $Snapshot } | ConvertTo-Json | Set-Content -LiteralPath $temporary
+    Move-Item -LiteralPath $temporary -Destination $request
+    Wait-File "$request.done" 25
+    $response = Get-Content -Raw -LiteralPath "$request.done" | ConvertFrom-Json
+    Remove-Item -LiteralPath "$request.done"
+    if (-not $response.ok) { throw "Administrator fixture request failed: $($response.error)" }
+}
+function Capture-Sealed([string]$Base, [string]$Name, [string]$Output) {
+    Admin-Control 'seal' $Name
+    try { & $sparse capture $Base (Join-Path $Owned $Name) $Output; $script:captureExit = $LASTEXITCODE }
+    finally { Admin-Control 'unseal' $Name }
+}
 function Start-Provider([string]$Name, [string]$Kind, [string]$Base, [string]$Snapshot = '-') {
     $script:generation++
     $root = Join-Path $Owned $Name
+    if ($Kind -eq 'cfapi' -and -not (Test-Path -LiteralPath (Join-Path $frozen "bindings/$Name.txt"))) {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        Admin-Control 'bind' $Name $Base $Snapshot
+    }
     $stop = Join-Path $Owned "$Name.stop"; $ready = Join-Path $Owned "$Name.ready"
     Remove-Item -LiteralPath $stop, $ready -Force -ErrorAction SilentlyContinue
     if ($Kind -eq 'cfapi') { $file = $sparse; $argv = @('serve', $Base, $Snapshot, $root, $stop, $ready) }
@@ -125,10 +144,10 @@ try {
     Audit 'a' 'before-capture'; Audit 'b' 'final'
     Step 'capture-and-clones' {
         $staging = Join-Path $Owned 'staging/snap'
-        $capture = & $sparse capture $native (Join-Path $Owned 'a') $staging
-        $summary.phases['capture'] = $LASTEXITCODE
+        $capture = Capture-Sealed $native 'a' $staging
+        $summary.phases['capture'] = $captureExit
         $capture | Set-Content -LiteralPath (Join-Path $Evidence 'capture.json')
-        if ($LASTEXITCODE -ne 0) { throw 'Quiescent capture failed.' }
+        if ($captureExit -ne 0) { throw 'Quiescent capture failed.' }
         Copy-Item -LiteralPath (Join-Path $staging 'manifest.tsv') -Destination (Join-Path $Evidence 'snapshot-manifest.tsv')
         Set-Content -LiteralPath (Join-Path $Owned 'freeze.request') -Value 'snap'
         Wait-File (Join-Path $Owned 'freeze.done') 60
@@ -142,6 +161,9 @@ try {
         [void](Check 'clones')
         Stop-Provider 'd'; Stop-Provider 'e'
         Audit 'd' 'final'; Audit 'e' 'final'; Audit 'a' 'final'
+    }
+    Step 'hardening-checks' {
+        . (Join-Path $Owned 'user-tools/hardening-checks.ps1')
     }
     Step 'common-probe' {
         $common = Join-Path $frozen 'base-common'

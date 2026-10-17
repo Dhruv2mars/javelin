@@ -1,0 +1,15 @@
+{
+  "name": "cldflt-query",
+  "executable": "C:\\Windows\\System32\\sc.exe",
+  "argv": [
+    "query",
+    "cldflt"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 5708,
+  "stdout": "\r\nSERVICE_NAME: cldflt \r\n        TYPE               : 2  FILE_SYSTEM_DRIVER  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+  "stderr": ""
+}

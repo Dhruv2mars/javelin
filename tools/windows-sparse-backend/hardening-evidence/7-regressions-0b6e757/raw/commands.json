@@ -1,0 +1,3007 @@
+[
+  {
+    "name": "cldflt-query",
+    "executable": "C:\\Windows\\System32\\sc.exe",
+    "argv": [
+      "query",
+      "cldflt"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3764,
+    "stdout": "\r\nSERVICE_NAME: cldflt \r\n        TYPE               : 2  FILE_SYSTEM_DRIVER  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cldflt-config",
+    "executable": "C:\\Windows\\System32\\sc.exe",
+    "argv": [
+      "qc",
+      "cldflt"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7364,
+    "stdout": "[SC] QueryServiceConfig SUCCESS\r\n\r\nSERVICE_NAME: cldflt\r\n        TYPE               : 2  FILE_SYSTEM_DRIVER \r\n        START_TYPE         : 2   AUTO_START\r\n        ERROR_CONTROL      : 1   NORMAL\r\n        BINARY_PATH_NAME   : system32\\drivers\\cldflt.sys\r\n        LOAD_ORDER_GROUP   : FSFilter HSM\r\n        TAG                : 1\r\n        DISPLAY_NAME       : Windows Cloud Files Filter Driver\r\n        DEPENDENCIES       : FltMgr\r\n        SERVICE_START_NAME : \r\n",
+    "stderr": ""
+  },
+  {
+    "name": "filters",
+    "executable": "C:\\Windows\\System32\\fltMC.exe",
+    "argv": [
+      "filters"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2764,
+    "stdout": "\r\nFilter Name                     Num Instances    Altitude    Frame\r\n------------------------------  -------------  ------------  -----\r\nbindflt                                 0       409800         0\r\nWdFilter                                5       328010         0\r\nstorqosflt                              0       244000         0\r\nwcifs                                   0       189900         0\r\nPrjFlt                                  0       189800         0\r\nCldFlt                                  0       180451         0\r\nFileCrypt                               0       141100         0\r\nluafv                                   1       135000         0\r\nUnionFS                                 0       130850         0\r\nnpsvctrig                               1        46000         0\r\nWof                                     1        40700         0\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "developer-mode",
+    "executable": "C:\\Windows\\System32\\reg.exe",
+    "argv": [
+      "query",
+      "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6108,
+    "stdout": "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock\r\n    AllowDevelopmentWithoutDevLicense    REG_DWORD    0x1\r\n\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compiler-discovery",
+    "executable": "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe",
+    "argv": [
+      "-latest",
+      "-products",
+      "*",
+      "-requires",
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "-property",
+      "installationPath"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7948,
+    "stdout": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cmd-echo-sparse",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7992,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cmd-echo-owned-sparse",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 640,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compile-sparse",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\build-sparse.cmd"
+    ],
+    "timeoutMs": 90000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5532,
+    "stdout": "\r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d>call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch=x64 \r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\r\nsparse.cpp\r\n",
+    "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+  },
+  {
+    "name": "cmd-echo-hardening-control",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1392,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cmd-echo-owned-hardening-control",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 960,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compile-hardening-control",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\build-hardening-control.cmd"
+    ],
+    "timeoutMs": 90000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3444,
+    "stdout": "\r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d>call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch=x64 \r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\r\nhardening-control.cpp\r\n",
+    "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+  },
+  {
+    "name": "cmd-echo-projfs-provider",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 752,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cmd-echo-owned-projfs-provider",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "echo",
+      "cmd-ok"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4068,
+    "stdout": "cmd-ok\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compile-projfs-provider",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\build-projfs-provider.cmd"
+    ],
+    "timeoutMs": 90000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7148,
+    "stdout": "\r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d>call \"C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch=x64 \r\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\r\nprojfs-provider.cpp\r\n",
+    "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+  },
+  {
+    "name": "fixture-seed-native",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\user-tools\\bun.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\user-tools\\checks.mjs",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\admin-results",
+      "seed"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5884,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "fixture-seed-common",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\user-tools\\bun.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\user-tools\\probe.mjs",
+      "--seed",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1772,
+    "stdout": "Seeded D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\n",
+    "stderr": ""
+  },
+  {
+    "name": "owned-user-acl",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d",
+      "/grant",
+      "jvsde9e3c3e9af8:(RX,WD,AD)",
+      "jvsde9e3c3e9af8:(OI)(CI)(IO)F"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2432,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "frozen-owner",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5708,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep\\leaf.txt\r\nSuccessfully processed 50 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "frozen-acl",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen",
+      "/inheritance:r",
+      "/grant:r",
+      "jvsde9e3c3e9af8:(OI)(CI)RX",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "*S-1-5-18:(OI)(CI)F",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5404,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "frozen-children-inherit",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\*",
+      "/reset",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1060,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep\\leaf.txt\r\nSuccessfully processed 49 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "frozen-acl-readback",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen",
+      "/T"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6724,
+    "stdout": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen BUILTIN\\Administrators:(F)\n                                                                        NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n                                                                        BUILTIN\\Administrators:(OI)(CI)(F)\n                                                                        runnervmgnbhw\\jvsde9e3c3e9af8:(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\bytes.bin NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\delete.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                        BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                        runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\inside-link NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\main.c NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                           BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                           runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\README.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\value.h NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                            BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                            runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common\\dir\\nested.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\bytes.bin NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold-file.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                  BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                  runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\delete.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                        BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                        runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\inside-link NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\main.c NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                           BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                           runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\notes.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\README.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\slow.bin NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                             BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\value.h NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                            BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                            runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                             BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\cold\\sub\\cold.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                      BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                      runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir\\nested.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir2\\inner.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native\\dir3\\deep\\leaf.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                       BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                       runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\bytes.bin NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold-file.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                  BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                  runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\delete.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                        BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                        runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                         BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                         runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\inside-link NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\main.c NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                           BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                           runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\notes.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\README.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                               BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                               runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\slow.bin NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                             BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\value.h NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                            BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                            runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                             BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\cold\\sub\\cold.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                      BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                      runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir\\nested.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir2\\inner.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                              BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                              runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename\\dir3\\deep\\leaf.txt NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                       BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                       runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nSuccessfully processed 50 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bindings-owner",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1692,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-cr",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-rename",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 980,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-cr",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\cr.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4400,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\cr.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-a",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6676,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-a",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\a.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4296,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\a.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-b",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7528,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-b",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\b.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1916,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\b.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-a",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1500,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-a",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6164,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-owner",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5992,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\manifest.tsv\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\r\nSuccessfully processed 8 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-acl",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "/inheritance:r",
+      "/grant:r",
+      "jvsde9e3c3e9af8:(OI)(CI)RX",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "*S-1-5-18:(OI)(CI)F",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5220,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-children-inherit",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\*",
+      "/reset",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7504,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\manifest.tsv\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\r\nSuccessfully processed 7 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-readonly",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "+R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\*",
+      "/S"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5476,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-acl-readback",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "/T"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5644,
+    "stdout": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n                                                                             BUILTIN\\Administrators:(OI)(CI)(F)\n                                                                             runnervmgnbhw\\jvsde9e3c3e9af8:(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                   BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                   runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\manifest.tsv NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                          BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                          runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nD:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap\\blobs\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696 NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n                                                                                                                                                    BUILTIN\\Administrators:(I)(OI)(CI)(F)\n                                                                                                                                                    runnervmgnbhw\\jvsde9e3c3e9af8:(I)(OI)(CI)(RX)\n\nSuccessfully processed 8 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "snapshot-tree",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\user-tools\\bun.exe",
+    "argv": [
+      "-e",
+      "const fs=require('fs/promises'),p=require('path'),c=require('crypto');async function t(b){const r=[];async function v(n){const q=p.join(b,n),s=await fs.lstat(q);if(s.isDirectory()){r.push([n,'directory']);for(const x of (await fs.readdir(q)).sort())await v(p.join(n,x))}else r.push([n,'file',s.size,c.createHash('sha256').update(await fs.readFile(q)).digest('hex')])}await v('');return r}t(process.argv[1]).then(x=>console.log(JSON.stringify({tree:x})))",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 8004,
+    "stdout": "{\"tree\":[[\"\",\"directory\"],[\"blobs\",\"directory\"],[\"blobs\\\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\",\"file\",16,\"210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\"],[\"blobs\\\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\",\"file\",15,\"61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\"],[\"blobs\\\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\",\"file\",21,\"6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\"],[\"blobs\\\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\",\"file\",1280,\"f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\"],[\"blobs\\\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\",\"file\",13,\"fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\"],[\"manifest.tsv\",\"file\",749,\"14ce79c771b28fb7df33027c4aaf6e3d3286470cff05ae0b642b3bd74ea87ed9\"]]}\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-d",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5812,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-d",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\d.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3448,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\d.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-e",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2168,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-e",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\e.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 8152,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\e.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hpartial-zero",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2860,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hpartial-zero",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hpartial-zero.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7528,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hpartial-zero.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hpartial-zero",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5172,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hpartial-zero",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1936,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hpartial-resident",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7128,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hpartial-resident",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hpartial-resident.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2556,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hpartial-resident.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hpartial-resident",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2836,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hpartial-resident",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7992,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hjunction",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2604,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hjunction",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hjunction.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1580,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hjunction.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hjunction",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1108,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hjunction",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 780,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hjunction",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2100,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hjunction",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1620,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmarker",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\snap",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1656,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmarker",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 364,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmarker.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hmarker",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6740,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hmarker",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1500,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4892,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hactive",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hactive.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4400,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hactive.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5476,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1148,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1400,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2064,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7308,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4284,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "seal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "seal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3644,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "unseal-hactive",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "access",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "S-1-5-21-3213014087-2684668049-2838998412-1003",
+      "unseal"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1228,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hbudget",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7288,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hbudget",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hbudget.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2176,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hbudget.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-escape",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-escape",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1568,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-escape",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-escape.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7348,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-escape.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-absolute",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-absolute",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1076,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-absolute",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-absolute.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 8156,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-absolute.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-ads",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-ads",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1524,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-ads",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-ads.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2516,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-ads.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-missing",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-missing",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6576,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-missing",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-missing.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 784,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-missing.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-mismatch",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-mismatch",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4404,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-mismatch",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-mismatch.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5608,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-mismatch.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-duplicate",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-duplicate",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6580,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-duplicate",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-duplicate.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7220,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-duplicate.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-prefix",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-prefix",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2312,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-prefix",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-prefix.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6040,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-prefix.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-malformed",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-malformed",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7940,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-malformed",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-malformed.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1896,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-malformed.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-base",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-base",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6908,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-base",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-base.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6916,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-base.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-hmanifest-link",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-native",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\staging\\invalid-link",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5044,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-hmanifest-link",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-link.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 556,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\hmanifest-link.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-pa",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7916,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-pa",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pa.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4584,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pa.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-pb",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3404,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-pb",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pb.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4216,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pb.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "bind-pc",
+    "executable": "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\sparse.exe",
+    "argv": [
+      "bind",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\base-common",
+      "-",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2800,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "binding-owner-pc",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pc.txt",
+      "/setowner",
+      "*S-1-5-32-544"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7148,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\frozen\\bindings\\pc.txt\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-a",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3644,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 22 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-a",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5460,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 22 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-a",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3084,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-b",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7484,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\b-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\README.txt\r\nSuccessfully processed 4 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-b",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6224,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\b-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\README.txt\r\nSuccessfully processed 4 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-b",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6812,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-d",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6712,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\d-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 23 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-d",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5540,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\d-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 23 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-d",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4416,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-e",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1568,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\e-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 22 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-e",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7908,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\e-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 22 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-e",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1032,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-cr",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 344,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-mixed-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\notes-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir-moved\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-mixed-moved\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-moved\\own.txt\r\nSuccessfully processed 24 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-cr",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4824,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-mixed-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\notes-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir-moved\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir2-moved\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\dir3-moved\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-mixed-moved\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\local-moved\\own.txt\r\nSuccessfully processed 24 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-cr",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3560,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-pa",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4724,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\concurrent.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\probe-app.exe\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\recovery.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\renamed-dir\\nested.txt\r\nSuccessfully processed 12 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-pa",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7900,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\concurrent.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\probe-app.exe\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\recovery.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\renamed-dir\\nested.txt\r\nSuccessfully processed 12 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-pa",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5452,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-pb",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5588,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\concurrent.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\dir\\nested.txt\r\nSuccessfully processed 10 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-pb",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4244,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\concurrent.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\dir\\nested.txt\r\nSuccessfully processed 10 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-pb",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6664,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-pc",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2292,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\dir\\nested.txt\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-pc",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5748,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\dir\\nested.txt\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-pc",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3196,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-pr",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3924,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-mixed-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-mixed-moved\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-moved\\own.txt\r\nSuccessfully processed 26 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-pr",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4000,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold-file.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-mixed-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\cold\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir2\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\dir3\\deep\\leaf.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-mixed-moved\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\local-moved\\own.txt\r\nSuccessfully processed 26 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-pr",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2592,
+    "stdout": "Not resetting hidden file - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes.txt\r\nNot resetting hidden file - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\README.txt\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hactive",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4812,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir3\\deep\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hactive",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5300,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\dir3\\deep\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hactive",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4764,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hbudget",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2684,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nSuccessfully processed 19 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hbudget",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3888,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\\x\r\nSuccessfully processed 19 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hbudget",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7616,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hjunction",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7084,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hjunction",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4464,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hjunction",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5040,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-absolute",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1844,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-absolute",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5224,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-absolute",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2800,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-absolute\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-ads",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5968,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-ads",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6104,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-ads",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1440,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-ads\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-base",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4024,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-base",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7912,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-base",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 740,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-base\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-duplicate",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 540,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-duplicate",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 8104,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-duplicate",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7740,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-duplicate\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-escape",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1580,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-escape",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 992,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-escape",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5220,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-escape\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-link",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6872,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-link",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7076,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-link",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4676,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-link\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-malformed",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 1208,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-malformed",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6724,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-malformed",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3400,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-malformed\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-mismatch",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6496,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-mismatch",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6412,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-mismatch",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 96,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-mismatch\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-missing",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3756,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-missing",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6568,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-missing",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7988,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-missing\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmanifest-prefix",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 7056,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmanifest-prefix",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 776,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmanifest-prefix",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 6904,
+    "stdout": "File not found - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmanifest-prefix\\*\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hmarker",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 2540,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\\new-link\r\nSuccessfully processed 3 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hmarker",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5880,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\\new-link\r\nSuccessfully processed 3 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hmarker",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 640,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hpartial-resident",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3840,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hpartial-resident",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 512,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hpartial-resident",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 828,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-owner-hpartial-zero",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+      "/setowner",
+      "*S-1-5-32-544",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 4684,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-acl-hpartial-zero",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+      "/grant",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "/T",
+      "/C",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 5160,
+    "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\inside-link\r\nSuccessfully processed 2 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "cleanup-attributes-hpartial-zero",
+    "executable": "C:\\Windows\\System32\\attrib.exe",
+    "argv": [
+      "-R",
+      "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero\\*",
+      "/S",
+      "/D",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "pid": 3216,
+    "stdout": "",
+    "stderr": ""
+  }
+]
