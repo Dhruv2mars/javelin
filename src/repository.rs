@@ -6,7 +6,7 @@ use sha2::Digest;
 
 use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
 
-const FORMAT: i64 = 3;
+const FORMAT: i64 = 4;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 const SCHEMA: &str = "
@@ -33,7 +33,7 @@ CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 PRAGMA application_id=1245795916;
-PRAGMA user_version=3;
+PRAGMA user_version=4;
 ";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -109,6 +109,7 @@ impl Repository {
             tx.execute_batch(SCHEMA)?;
             tx.execute_batch(crate::layer::SCHEMA)?;
             tx.execute_batch(crate::publish::SCHEMA)?;
+            tx.execute_batch(crate::stack::SCHEMA)?;
             for table in [
                 "objects",
                 "versions",
@@ -117,6 +118,7 @@ impl Repository {
                 "layer_heads",
                 "layer_attempts",
                 "publications",
+                "stacks",
             ] {
                 for action in ["UPDATE", "DELETE"] {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
@@ -400,6 +402,7 @@ pub(crate) fn validate_state_in(conn: &Connection) -> Result<Vec<WorldVersion>> 
     validate_format(conn)?;
     let history = history_in(conn)?;
     crate::layer::check_layers(conn)?;
+    crate::stack::check_stacks(conn)?;
     crate::publish::check_publications(conn, &history)?;
     Ok(history)
 }
