@@ -11,13 +11,23 @@ use super::{AttributionInput, Output, publication, success, update};
 pub fn run(
     action: &str,
     repo: PathBuf,
-    root: PathBuf,
-    helper: PathBuf,
+    paths: (PathBuf, PathBuf),
     layer: Option<LayerId>,
     operation: Option<OperationId>,
     attribution: AttributionInput,
+    rebind: Option<(u64, u64)>,
 ) -> Result<Output> {
+    let (root, helper) = paths;
     let mut repo = Repository::open(repo)?;
+    let rebind = rebind
+        .map(|(old, desired)| {
+            let layer = layer.as_ref().expect("validated Layer");
+            Ok::<_, Error>((
+                super::historical_head(&repo, layer, old)?,
+                super::historical_head(&repo, layer, desired)?,
+            ))
+        })
+        .transpose()?;
     let helper = LayerMountHelper::sudo(helper)?;
     let mut runtime = if action == "init" {
         LinuxLayerRuntime::init(&repo, &root, helper)?
@@ -55,6 +65,20 @@ pub fn run(
         _ => {
             let layer = layer.expect("validated Layer argument");
             match action {
+                "rebind" => {
+                    let (expected, desired) = rebind.expect("validated revisions");
+                    runtime.rebind(&mut repo, &expected, &desired)?;
+                    Ok(success(
+                        json!({"ok": true, "command": command, "expected": expected, "desired": desired}),
+                        format!(
+                            "Layer {}: selected revision {} checkpoint {} (from revision {}).",
+                            layer.as_str(),
+                            desired.revision(),
+                            desired.checkpoint().object(),
+                            expected.revision()
+                        ),
+                    ))
+                }
                 "mount" => {
                     let path = runtime.mount(&mut repo, &layer)?;
                     Ok(success(

@@ -54,3 +54,25 @@ continuation in a disposable hosted Linux run. Root TASKS remains main's file.
   observed on remount; no out-of-band backing-path guarantee is claimed.
 
 Delivery: one regular T3-linked PR against main; merge belongs to the hub.
+
+
+## Native Stack CLI and explicit Linux workspace rebind
+
+Done: separate actual CLI actions Stack a frozen source into an exact target and
+rebind its clean view through the public adapters, then tools/checkpoint/Publish
+work in disposable Linux. Exact retries preserve original inputs and outcomes.
+Root TASKS stays identical to main; no native or adapter changes.
+
+- [x] Read contracts and verify merged main includes PRs 26–29 and format 4.
+- [x] Implement separate Stack/rebind commands, explicit tokens and outcomes.
+- [x] Add actual-binary merge/conflict/retry/frozen-source/error coverage.
+- [x] Extend existing disposable Linux smoke through rebind/tools/Publish.
+- [x] Document checkpoint/unmount safety and explicit retry boundaries.
+- [ ] Run fmt, Clippy, tests/release and inspect hosted Linux smoke.
+- [ ] Open and T3-link one regular PR against main; leave merge to hub.
+
+- [x] Authorized integration: make merge/Stack default root members, remove
+  unused local locks, hash root lock in mechanical CI, and fingerprint both
+  adapters in the existing packager list and regression.
+- [x] Linux cross-target all-target/all-feature Clippy passes with Zig; no mounts
+  were attempted on the laptop. Mutation tests run in an isolated source copy.

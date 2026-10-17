@@ -574,6 +574,7 @@ fn binary_workspace_commands_return_unsupported_without_touching_paths() {
         "publish",
         "discard",
         "recover",
+        "rebind",
     ] {
         let mut args = vec!["workspace", action];
         if !["init", "recover"].contains(&action) {
@@ -588,6 +589,9 @@ fn binary_workspace_commands_return_unsupported_without_touching_paths() {
         ]);
         if ["checkpoint", "discard", "publish"].contains(&action) {
             args.extend(["--operation", "test-op"]);
+        }
+        if action == "rebind" {
+            args.extend(["--revision", "0", "--to-revision", "1"]);
         }
         let failure = value(invoke(root.path(), &args), 1);
         assert_eq!(failure["error"]["code"], "unsupported");
@@ -1052,5 +1056,511 @@ fn linux_cli_whole_layer_publish() {
             .len(),
         4
     );
+    ok(root.path(), &["check"]);
+}
+
+fn stack_fixture() -> (TempDir, Repository) {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let content = repo.put_blob(b"first\nanchor\nlast\n").unwrap();
+    let manifest = repo
+        .put_manifest(
+            &Manifest::new([(
+                path("file"),
+                FileEntry::Regular {
+                    content,
+                    executable: false,
+                },
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    repo.compare_and_advance(&operation("base"), VersionNumber::new(0).unwrap(), manifest)
+        .unwrap();
+    for name in ["source", "target"] {
+        ok(root.path(), &["layer", "create", name, "--world", "1"]);
+    }
+    (root, repo)
+}
+
+fn capture_text(repo: &mut Repository, layer: &str, bytes: &[u8], op: &str) {
+    let content = repo.put_blob(bytes).unwrap();
+    capture_fixture(
+        repo,
+        layer,
+        vec![(
+            path("file"),
+            Some(FileEntry::Regular {
+                content,
+                executable: false,
+            }),
+        )],
+        op,
+    );
+}
+
+#[test]
+fn binary_stack_merges_frozen_source_and_replays_original_inputs_and_ancestry() {
+    let (root, mut repo) = stack_fixture();
+    capture_text(&mut repo, "source", b"first\nanchor\nLAST\n", "save-source");
+    capture_text(&mut repo, "target", b"FIRST\nanchor\nlast\n", "save-target");
+    let source = ok(root.path(), &["layer", "state", "source"])["state"]["head"]["checkpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Advance the live source before Stack: the CLI must use the supplied frozen hash.
+    capture_text(&mut repo, "source", b"later live source", "later-source");
+    let args = [
+        "layer",
+        "stack",
+        "target",
+        "--revision",
+        "1",
+        "--source",
+        &source,
+        "--operation",
+        "stack",
+    ];
+    let result = ok(root.path(), &args);
+    assert_eq!(result["source"], source);
+    assert_eq!(result["target"]["revision"], 1);
+    assert_eq!(result["update"]["state"]["head"]["revision"], 2);
+    let checkpoint = javelin::CheckpointId::parse(
+        result["update"]["state"]["head"]["checkpoint"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let frozen = repo.read_checkpoint(checkpoint).unwrap();
+    assert_eq!(
+        frozen.stack_sources(),
+        &[javelin::CheckpointId::parse(&source).unwrap()]
+    );
+    assert_eq!(
+        repo.read_blob(frozen.manifest().entries()[&path("file")].content())
+            .unwrap(),
+        b"FIRST\nanchor\nLAST\n"
+    );
+    assert_eq!(ok(root.path(), &args), result);
+    let plain = invoke(root.path(), &args);
+    assert!(plain.status.success());
+    assert!(
+        String::from_utf8(plain.stdout)
+            .unwrap()
+            .contains("Operation stack: applied")
+    );
+    capture_text(&mut repo, "target", b"later target", "later-target");
+    let state = ok(root.path(), &["layer", "state", "target"]);
+    assert_eq!(ok(root.path(), &args), result);
+    assert_eq!(ok(root.path(), &["layer", "state", "target"]), state);
+    let latest = state["state"]["head"]["checkpoint"].as_str().unwrap();
+    assert_eq!(
+        repo.read_checkpoint(javelin::CheckpointId::parse(latest).unwrap())
+            .unwrap()
+            .stack_sources(),
+        frozen.stack_sources()
+    );
+    for (revision, source) in [("2", source.as_str()), ("1", latest)] {
+        let reused = value(
+            invoke(
+                root.path(),
+                &[
+                    "layer",
+                    "stack",
+                    "target",
+                    "--revision",
+                    revision,
+                    "--source",
+                    source,
+                    "--operation",
+                    "stack",
+                    "--json",
+                ],
+            ),
+            1,
+        );
+        assert_eq!(reused["error"]["code"], "operation_id_reused");
+    }
+    let stale_args = [
+        "layer",
+        "stack",
+        "target",
+        "--revision",
+        "1",
+        "--source",
+        &source,
+        "--operation",
+        "stale-stack",
+        "--json",
+    ];
+    let stale = value(invoke(root.path(), &stale_args), 3);
+    assert_eq!(stale["update"]["outcome"], "stale");
+    capture_text(&mut repo, "target", b"later again", "later-again");
+    assert_eq!(value(invoke(root.path(), &stale_args), 3), stale);
+    assert_eq!(repo.read_checkpoint(checkpoint).unwrap(), frozen);
+    assert_eq!(repo.history().unwrap().len(), 2);
+    ok(root.path(), &["check"]);
+}
+
+#[test]
+fn binary_stack_reports_conflicts_and_resource_or_loader_errors_without_mutation() {
+    for bytes in [
+        b"ours".to_vec(),
+        b"line\n".repeat(8193),
+        vec![b'x'; 1024 * 1024 + 1],
+    ] {
+        let (root, mut repo) = stack_fixture();
+        capture_text(&mut repo, "source", b"theirs", "save-source");
+        capture_text(&mut repo, "target", &bytes, "save-target");
+        let source = ok(root.path(), &["layer", "state", "source"])["state"]["head"]["checkpoint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let before = ok(root.path(), &["layer", "state", "target"]);
+        let integrity = ok(root.path(), &["check"]);
+        let args = [
+            "layer",
+            "stack",
+            "target",
+            "--revision",
+            "1",
+            "--source",
+            &source,
+            "--operation",
+            "stack",
+            "--json",
+        ];
+        if bytes == b"ours" {
+            let conflict = value(invoke(root.path(), &args), 3);
+            assert_eq!(conflict["conflicts"][0]["path"], "file");
+            assert_eq!(conflict["conflicts"][0]["kind"], "Content");
+            assert!(conflict["conflicts"][0]["ours"].is_object());
+            assert_eq!(value(invoke(root.path(), &args), 3), conflict);
+            let plain = invoke(root.path(), &args[..args.len() - 1]);
+            assert_eq!(plain.status.code(), Some(3));
+            assert!(
+                String::from_utf8(plain.stdout)
+                    .unwrap()
+                    .contains("conflicts; nothing applied")
+            );
+        } else {
+            let error = value(invoke(root.path(), &args), 1);
+            assert_eq!(error["error"]["code"], "stack_merge_error");
+            assert!(error["error"]["message"].as_str().unwrap().contains(
+                if bytes.len() > 1024 * 1024 {
+                    "merge loader:"
+                } else {
+                    "merge resource Lines:"
+                }
+            ));
+        }
+        assert_eq!(ok(root.path(), &["layer", "state", "target"]), before);
+        assert_eq!(ok(root.path(), &["check"]), integrity);
+        // Refusals did not reserve the operation ID.
+        ok(
+            root.path(),
+            &[
+                "layer",
+                "stack",
+                "target",
+                "--revision",
+                "1",
+                "--source",
+                before["state"]["head"]["checkpoint"].as_str().unwrap(),
+                "--operation",
+                "stack",
+            ],
+        );
+    }
+}
+
+#[test]
+fn binary_stack_and_rebind_require_explicit_inputs_before_opening_repository() {
+    let root = TempDir::new().unwrap();
+    for args in [
+        vec!["layer", "stack", "target"],
+        vec![
+            "layer",
+            "stack",
+            "target",
+            "--revision",
+            "1",
+            "--source",
+            "live-layer",
+            "--operation",
+            "stack",
+        ],
+        vec![
+            "layer",
+            "stack",
+            "target",
+            "--revision",
+            "1",
+            "--source",
+            &"0".repeat(64),
+        ],
+        vec![
+            "workspace",
+            "rebind",
+            "target",
+            "--root",
+            "/abs",
+            "--helper",
+            "/abs",
+        ],
+        vec![
+            "workspace",
+            "rebind",
+            "target",
+            "--root",
+            "/abs",
+            "--helper",
+            "/abs",
+            "--revision",
+            "1",
+            "--to-revision",
+            "bad",
+        ],
+        vec![
+            "workspace",
+            "rebind",
+            "target",
+            "--root",
+            "/abs",
+            "--helper",
+            "/abs",
+            "--revision",
+            "1",
+            "--to-revision",
+            "2",
+            "--operation",
+            "unused",
+        ],
+    ] {
+        let mut args = args;
+        args.push("--json");
+        assert_eq!(
+            value(invoke(root.path(), &args), 2)["error"]["code"],
+            "invalid_input"
+        );
+    }
+    assert!(!root.path().join(".javelin").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
+fn linux_cli_stack_rebind_tools_checkpoint_publish() {
+    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+    assert_eq!(
+        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
+        Ok("github-hosted")
+    );
+    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
+    assert_ne!(unsafe { libc::getuid() }, 0);
+    let (root, repo) = stack_fixture();
+    let runtime = format!("{}-stack", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
+    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
+    let call = |action: &str, layer: Option<&str>, extras: &[&str], code| {
+        let mut args = vec![
+            "workspace",
+            action,
+            "--root",
+            &runtime,
+            "--helper",
+            &helper,
+            "--json",
+        ];
+        if let Some(layer) = layer {
+            args.push(layer);
+        }
+        args.extend_from_slice(extras);
+        value(invoke(root.path(), &args), code)
+    };
+    call("init", None, &[], 0);
+    let target = call("mount", Some("target"), &[], 0);
+    let target = Path::new(target["path"].as_str().unwrap());
+    let source = call("mount", Some("source"), &[], 0);
+    let source_view = Path::new(source["path"].as_str().unwrap());
+    std::fs::write(target.join("file"), b"FIRST\nanchor\nlast\n").unwrap();
+    std::fs::write(source_view.join("file"), b"first\nanchor\nLAST\n").unwrap();
+    let saved = call(
+        "checkpoint",
+        Some("source"),
+        &["--operation", "save-source"],
+        0,
+    );
+    let frozen = saved["capture"]["update"]["state"]["head"]["checkpoint"]
+        .as_str()
+        .unwrap();
+    call(
+        "checkpoint",
+        Some("target"),
+        &["--operation", "save-target"],
+        0,
+    );
+    call("unmount", Some("target"), &[], 0);
+    std::fs::write(source_view.join("file"), b"later source").unwrap();
+    call(
+        "checkpoint",
+        Some("source"),
+        &["--operation", "later-source"],
+        0,
+    );
+    let stack = [
+        "layer",
+        "stack",
+        "target",
+        "--revision",
+        "1",
+        "--source",
+        frozen,
+        "--operation",
+        "stack",
+    ];
+    let stacked = ok(root.path(), &stack);
+    assert_eq!(stacked["update"]["state"]["head"]["revision"], 2);
+    assert_eq!(ok(root.path(), &stack), stacked);
+    let rebind = ["--revision", "1", "--to-revision", "2"];
+    call("rebind", Some("target"), &rebind, 0);
+    // Rebind validates an unmounted view but must not leave it mounted.
+    assert_eq!(
+        call("path", Some("target"), &[], 2)["error"]["code"],
+        "invalid_input"
+    );
+    call("mount", Some("target"), &[], 0);
+    assert_eq!(
+        std::fs::read(target.join("file")).unwrap(),
+        b"FIRST\nanchor\nLAST\n"
+    );
+    let merged = javelin::CheckpointId::parse(
+        stacked["update"]["state"]["head"]["checkpoint"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        repo.read_checkpoint(merged).unwrap().stack_sources(),
+        &[javelin::CheckpointId::parse(frozen).unwrap()]
+    );
+
+    // A second native advance lets the CLI exercise refusal while the view is old.
+    std::fs::write(source_view.join("extra"), b"new immutable input").unwrap();
+    // The new source delta changes only extra; retain the target merged file.
+    std::fs::write(source_view.join("file"), b"first\nanchor\nlast\n").unwrap();
+    let next = call(
+        "checkpoint",
+        Some("source"),
+        &["--operation", "next-source"],
+        0,
+    );
+    let next = next["capture"]["update"]["state"]["head"]["checkpoint"]
+        .as_str()
+        .unwrap();
+    call("unmount", Some("target"), &[], 0);
+    ok(
+        root.path(),
+        &[
+            "layer",
+            "stack",
+            "target",
+            "--revision",
+            "2",
+            "--source",
+            next,
+            "--operation",
+            "stack-next",
+        ],
+    );
+    call("mount", Some("target"), &[], 0);
+    std::fs::write(target.join("private"), b"uncaptured").unwrap();
+    let rebind_next = ["--revision", "2", "--to-revision", "3"];
+    assert_eq!(
+        call("rebind", Some("target"), &rebind_next, 2)["error"]["code"],
+        "invalid_input"
+    );
+    assert_eq!(
+        std::fs::read(target.join("private")).unwrap(),
+        b"uncaptured"
+    );
+    assert!(!target.join("extra").exists());
+    // Explicitly remove only this test's disposable edit, then hold a writer.
+    std::fs::remove_file(target.join("private")).unwrap();
+    let held = std::fs::OpenOptions::new()
+        .write(true)
+        .open(target.join("file"))
+        .unwrap();
+    assert_eq!(
+        call("rebind", Some("target"), &rebind_next, 1)["error"]["code"],
+        "busy"
+    );
+    assert_eq!(
+        std::fs::read(target.join("file")).unwrap(),
+        b"FIRST\nanchor\nLAST\n"
+    );
+    drop(held);
+    let rebound = call("rebind", Some("target"), &rebind_next, 0);
+    assert_eq!(rebound["expected"]["revision"], 2);
+    assert_eq!(rebound["desired"]["revision"], 3);
+    assert_eq!(
+        std::fs::read(target.join("extra")).unwrap(),
+        b"new immutable input"
+    );
+    std::fs::write(target.join("private"), b"retained on exact retry").unwrap();
+    assert_eq!(call("rebind", Some("target"), &rebind_next, 0), rebound);
+    assert_eq!(
+        std::fs::read(target.join("private")).unwrap(),
+        b"retained on exact retry"
+    );
+    let tools = Command::new("sh")
+        .current_dir(target)
+        .args([
+            "-eu",
+            "-c",
+            "printf 'int main(void) { return 0; }\\n' > main.c; cc main.c -o app; ./app; rm app",
+        ])
+        .output()
+        .unwrap();
+    assert!(tools.status.success(), "{tools:?}");
+    let saved = call(
+        "checkpoint",
+        Some("target"),
+        &["--operation", "tools-save"],
+        0,
+    );
+    let saved = javelin::CheckpointId::parse(
+        saved["capture"]["update"]["state"]["head"]["checkpoint"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        repo.read_checkpoint(saved)
+            .unwrap()
+            .stack_sources()
+            .contains(&javelin::CheckpointId::parse(frozen).unwrap())
+    );
+    let published = call(
+        "publish",
+        Some("target"),
+        &["--operation", "publish-stacked"],
+        0,
+    );
+    assert_eq!(published["receipt"]["outcome"]["version"]["number"], 2);
+    assert_eq!(ok(root.path(), &stack), stacked);
+    assert_eq!(
+        std::fs::write(target.join("private"), b"clobber")
+            .unwrap_err()
+            .raw_os_error(),
+        Some(libc::EROFS)
+    );
+    call("unmount", Some("target"), &[], 0);
+    call(
+        "discard",
+        Some("source"),
+        &["--operation", "discard-source"],
+        0,
+    );
+    call("recover", None, &[], 0);
     ok(root.path(), &["check"]);
 }

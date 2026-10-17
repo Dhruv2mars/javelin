@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 javelin = { path = "../.." }
+javelin-stack = { path = "../javelin-stack" }
 serde_json = "1.0.154"
 
 [dev-dependencies]

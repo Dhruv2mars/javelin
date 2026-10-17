@@ -25,7 +25,9 @@ Default root build, test and lint commands select both the library and CLI.
 The release executable remains `target/release/javelin` (`javelin.exe` on Windows),
 and installation still provides `javelin`. The Linux helper remains in the root
 package. Use `-p javelin` for library-only checks and `-p javelin-cli` for CLI-only
-checks; standalone adapter crates retain their own workspaces.
+checks. Merge and Stack adapters are root workspace members and default check
+targets; they use the root lockfile. Other standalone packages retain their own
+workspaces.
 
 ## Commands
 
@@ -40,6 +42,7 @@ javelin layer history ID
 javelin layer publication --operation ID
 javelin layer diff ID [--revision N]
 javelin layer clone ID --checkpoint HASH
+javelin layer stack ID --revision N --source HASH --operation ID
 javelin layer discard ID --revision N --operation ID
 
 javelin workspace init
@@ -50,6 +53,7 @@ javelin workspace checkpoint ID --operation ID
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
 javelin workspace discard ID --operation ID
+javelin workspace rebind ID --revision OLD --to-revision NEW
 javelin workspace recover
 ```
 
@@ -145,6 +149,66 @@ The last command still prints `hello`. Uncheckpointed changes exist only in a
 view's private storage. `workspace unmount` retains them, and `mount` resumes
 them. The runtime stores sparse private changes over shared immutable caches.
 There is no full-copy fallback or separate CLI capture implementation.
+
+## Stack and explicit workspace rebind
+
+`layer stack TARGET --revision N --source HASH --operation ID` delegates to
+`javelin_stack::stack_layer`. HASH is an immutable source checkpoint, not a live
+Layer name. N selects the exact retained target head. Read both from checkpoint
+output or `layer history`; keep those inputs and the operation ID for retries.
+Compatible edits, including separated changes within one text file, combine.
+Structural or overlapping edits return explicit conflicts without changing the
+native Layer or World. The CLI never resolves a conflict for its owner.
+
+Before metadata Stack, stop target tools, checkpoint **both** source and target,
+and unmount the target. Unmount alone retains uncaptured edits; it does not save
+them into native state. Stack only changes native metadata and does not inspect,
+freeze, or select filesystem views. Checkpoint and unmount protect private edits
+and prevent tools from continuing against an old view during this separate action.
+
+For example, after source checkpoint HASH and target revision 1 are saved:
+
+```sh
+javelin workspace unmount target --root "$runtime" --helper "$helper"
+javelin layer stack target --revision 1 --source HASH --operation stack-1
+# Use the resulting revision reported by Stack (2 in this example):
+javelin workspace rebind target --revision 1 --to-revision 2 --root "$runtime" --helper "$helper"
+target_view=$(javelin workspace mount target --root "$runtime" --helper "$helper")
+# Run editor/compiler tools in "$target_view", then:
+javelin workspace checkpoint target --operation target-save-2 --root "$runtime" --helper "$helper"
+javelin workspace publish target --operation target-publish-1 --root "$runtime" --helper "$helper"
+```
+
+Stack and filesystem selection are separate durable actions, with no shared atomic
+transaction. If rebind fails, Stack's native result remains; fix the reported
+workspace condition and retry the same explicit old/new pair. Rebind delegates to
+`LinuxLayerRuntime::rebind(repo, old, desired)`. Both tokens are retained active
+heads of the named Layer; desired must be its current native active head.
+Rebind refuses uncaptured edits, empty directories and held writers without
+deleting them. Checkpoint before Stack; if edits were missed, retain the old view
+and resolve explicitly rather than deleting private storage. An originally
+unmounted view stays unmounted after validation. Mount it explicitly to use tools.
+There is no automatic refresh, freeze retry loop, or automatic head selection.
+
+Rebind has no additional operation ID: the runtime's durable selection is keyed
+by the exact old/desired heads. A completed exact retry is a no-op even after new
+private edits, provided desired is still the current native active head. Recovery
+finishes recorded selections, never retargets them to a later native advance.
+
+Stack success and stale retries return the original native outcome even after
+later edits or Publish. Reusing an operation ID with another target revision or
+source hash returns `operation_id_reused`; use a new ID for new work. Successful
+Stack retains frozen source ancestry in the target checkpoint. Later source
+edits cannot change that identity or the selected bytes. Conflicts reserve no
+operation ID. A changed resolution must be checkpointed and supplied explicitly.
+
+JSON Stack output includes `target`, `source`, `operation`, and either the native
+`update` or explicit `conflicts` with path, kind, and base/ours/theirs entries.
+Rebind output includes the exact `expected` and `desired` heads. Plain output
+reports the outcome and immutable selection. Merge admission/load failures use
+`stack_merge_error` on stderr with the adapter's resource/limit or loader message;
+native storage failures retain their native error codes. Both return exit 1.
+Conflict and stale Stack outcomes return exit 3 on stdout, with `ok: false`.
 
 ## Whole-Layer Publish
 
