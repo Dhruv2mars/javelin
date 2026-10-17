@@ -8,7 +8,7 @@ use javelin::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, 
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{VERSION, read_frame, write_frame},
+    codec::{VERSION, encode, read_frame, write_frame},
     limits::*,
 };
 
@@ -42,8 +42,12 @@ pub fn push(
             .map(|(path, entry)| Ok((RepoPath::parse(&path)?, entry)))
             .collect::<javelin::Result<Vec<_>>>()?,
     )?;
-    let mut offered: Vec<(Kind, ObjectId)> = vec![(Kind::Manifest, manifest_id)];
+    // Native paths and manifests can exceed wire limits. Validate the complete
+    // message with the codec before negotiating or transferring any objects.
     let blobs: BTreeSet<ObjectId> = manifest.entries().values().map(|e| e.content()).collect();
+    let manifest_message = Message::Manifests(vec![(manifest_id, manifest)]);
+    encode(&manifest_message)?;
+    let mut offered: Vec<(Kind, ObjectId)> = vec![(Kind::Manifest, manifest_id)];
     offered.extend(blobs.into_iter().map(|id| (Kind::Blob, id)));
 
     let mut missing = Vec::new();
@@ -80,7 +84,7 @@ pub fn push(
         send_batch(&mut call, Message::Blobs(batch))?;
     }
     if missing.contains(&(Kind::Manifest, manifest_id)) {
-        send_batch(&mut call, Message::Manifests(vec![(manifest_id, manifest)]))?;
+        send_batch(&mut call, manifest_message)?;
     }
 
     match call(Message::Publish {

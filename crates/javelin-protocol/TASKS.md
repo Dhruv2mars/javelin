@@ -101,3 +101,26 @@ parser heap beyond the encoded-byte cap, SQLite C allocations and RSS, repeated
 hashing work, quotas/retention, operation principal namespaces, and the 16-MiB outer
 frame reservation. There is no HTTP, authentication, provider or GA claim. Whole-Layer
 Publish is not this dependency and v1 Publish does not gain Layer fields.
+
+### Bounded post-merge manifest preflight and batching follow-up
+
+Done means invalid native manifests fail wire preflight before Want or object
+transfer and leave the receiver untouched; real successful process pushes cross
+Want count, blob count and frame byte boundaries, transfer each missing object
+once in legal frames, and publish the expected manifest. Only protocol paths
+are owned. Native/receiver integrity and existing graph/hosting limits remain.
+
+- [x] Reuse the codec encoder for manifest preflight before object negotiation.
+- [x] Prove the 4097-byte native path sends no objects and leaves receiver state unchanged.
+- [x] Prove successful count-boundary and byte-boundary process pushes.
+- [x] Run protocol formatting, Clippy, component and process checks.
+- [x] Prepare the checked change for one regular PR against main; the thread opens and T3-links it as its final action.
+
+VERIFIED locally on macOS arm64: `cargo fmt --all -- --check`,
+`cargo clippy --locked --all-targets -- -D warnings`, and
+`cargo test --locked --all-targets` (28 tests) pass. All five release process
+tests pass with a failing Git shim first on PATH; the positive control exits
+97 (without shim: 0), and the product-run invocation marker stays absent.
+The count fixture offers 4097 objects and sends 4095 missing blobs in batches
+of 1024/1024/1024/1023; the byte fixture sends two legal 8-MiB blobs separately.
+No fresh three-OS or hosting acceptance is claimed.
