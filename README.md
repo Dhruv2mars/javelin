@@ -3,7 +3,12 @@
 Javelin is agent-native version control built around immutable accepted World versions
 and isolated Layers. Its runtime is independent of Git.
 
-The local VCS and hosting service are under active development. No GA release is
-available from this branch. See [the build contract](docs/build-contract.md) and
-[the build checklist](TASKS.md) for the accepted behavior and verified progress.
+Start with the [developer quickstart](docs/quickstart.md) to build from source,
+try repository metadata commands, and follow the prerequisite-gated Linux workflow.
+Metadata works on macOS, Linux, and Windows; writable native workspaces are Linux-only
+today, with explicit checkpoints.
+
+The local VCS and hosting service are under active development; no GA release or
+complete hosting workflow is available. See the [CLI and setup reference](docs/cli.md),
+[build contract](docs/build-contract.md), and [build checklist](TASKS.md).
 
