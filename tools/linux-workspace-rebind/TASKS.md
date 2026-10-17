@@ -11,6 +11,6 @@ Root TASKS.md stays identical to main. No laptop mounts.
 - [x] Implement bounded durable rebind using existing caches, helper and runtime lock.
 - [x] Add focused hosted Stack, refusal and process-loss coverage.
 - [x] Document selection, retry and concurrency semantics.
-- [ ] Run proportional local fmt, Clippy, tests and release build.
-- [ ] Run and inspect the existing hosted Linux runtime proof.
-- [ ] Open and T3-link one regular PR against main; report to hub.
+- [x] Run proportional local fmt, Clippy, tests and release build (117 passed, one ignored actor).
+- [x] Run and inspect the existing hosted Linux runtime proof (39011891335: 26 tests, 25 summary checks, 14 rebind kill cases; cleanup verified).
+- [x] Open and T3-link regular PR #29 against main; report to hub.
