@@ -134,6 +134,7 @@ pub fn build(
         }
     }
     cargo
+        .current_dir(&source)
         .args(&command[1..])
         .arg("--manifest-path")
         .arg(source.join("Cargo.toml"))
