@@ -1,0 +1,16 @@
+{
+  "name": "utility-bun",
+  "executable": "C:\\Users\\runneradmin\\.bun\\bin\\bun.exe",
+  "argv": [
+    "--version"
+  ],
+  "timeoutMs": 30000,
+  "pid": 2196,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "1.3.13\n",
+  "stderr": ""
+}

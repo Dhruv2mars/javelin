@@ -1,0 +1,16 @@
+{
+  "name": "utility-mv",
+  "executable": "C:\\Program Files\\Git\\usr\\bin\\mv.exe",
+  "argv": [
+    "--version"
+  ],
+  "timeoutMs": 30000,
+  "pid": 3060,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "mv (GNU coreutils) 8.32\nCopyright (C) 2020 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Mike Parker, David MacKenzie, and Jim Meyering.\n",
+  "stderr": ""
+}

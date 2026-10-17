@@ -1,0 +1,23 @@
+{
+  "id": "build",
+  "verdict": "INCONCLUSIVE",
+  "commands": [
+    {
+      "argv": [
+        "cc",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "main.c",
+        "-o",
+        "native-build.exe"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\\a",
+      "exitCode": 9,
+      "stdout": "",
+      "stderr": "Cannot create temporary file in C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\: Permission denied\r\n"
+    }
+  ],
+  "evidence": {},
+  "error": "AssertionError [ERR_ASSERTION]: Cannot create temporary file in C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\: Permission denied\r\n\n\n9 !== 0\n\n    at run (D:\\a\\_temp\\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\\user-tools\\checks.mjs:37:10)\n    at D:\\a\\_temp\\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\\user-tools\\checks.mjs:55:5\n    at asyncModuleEvaluation (native:2)\n    at processTicksAndRejections (native:7:39)"
+}

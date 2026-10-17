@@ -1,0 +1,26 @@
+{
+  "verdict": "INCONCLUSIVE",
+  "error": null,
+  "account": "jvp591361ac8f72",
+  "accountRemoved": true,
+  "wrapperPid": 5284,
+  "exitCode": 3,
+  "results": {
+    "verdict": "INCONCLUSIVE",
+    "identity": {
+      "sid": "S-1-5-21-1000861503-3182281758-1041194900-1003",
+      "name": "runnervmtn0fv\\jvp591361ac8f72",
+      "administrator": false
+    },
+    "providerStarted": false,
+    "rootsCreated": 0,
+    "phases": [
+      {
+        "exitCode": 3,
+        "id": "base"
+      }
+    ],
+    "error": "Native Windows check base failed; inspect raw phase result.",
+    "stoppedProviders": true
+  }
+}

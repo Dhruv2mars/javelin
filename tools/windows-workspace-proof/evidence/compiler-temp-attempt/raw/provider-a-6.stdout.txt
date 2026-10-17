@@ -1,0 +1,5 @@
+started root=D:\a\_temp\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\a instance={91ADA47D-997A-4168-A4B6-AD9A449618C6} alignment=512 entries=8
+notification 2  destination=
+placeholder main.c hr=00000000
+notification 2 main.c destination=
+stopped root=D:\a\_temp\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\a
