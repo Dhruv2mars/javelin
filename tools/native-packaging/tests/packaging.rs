@@ -1054,10 +1054,12 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         "crates/javelin-cli/src/cli.rs",
         "crates/javelin-cli/src/cli_linux.rs",
         "crates/javelin-merge/Cargo.toml",
+        "crates/javelin-merge/LICENSE",
         "crates/javelin-merge/src/lib.rs",
         "crates/javelin-merge/src/matching.rs",
         "crates/javelin-merge/src/resources.rs",
         "crates/javelin-stack/Cargo.toml",
+        "crates/javelin-stack/LICENSE",
         "crates/javelin-stack/src/lib.rs",
         "src/lib.rs",
     ] {

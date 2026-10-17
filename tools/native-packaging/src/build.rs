@@ -188,8 +188,8 @@ fn shell_quote(word: &str) -> String {
 }
 
 /// The files that define a build: `Cargo.toml`, `Cargo.lock`, `LICENSE`, any
-/// `.cargo/config*`, root `src/**`, and the CLI/merge/Stack manifests and sources, as `/`-joined
-/// relative paths.
+/// `.cargo/config*`, root `src/**`, CLI/merge/Stack manifests and sources, and
+/// adapter licenses, as `/`-joined relative paths.
 pub fn source_files(source: &Path) -> Result<Vec<String>> {
     let mut files = vec![
         "Cargo.toml".to_string(),
@@ -208,6 +208,9 @@ pub fn source_files(source: &Path) -> Result<Vec<String>> {
     );
     for package in ["javelin-cli", "javelin-merge", "javelin-stack"] {
         files.push(format!("crates/{package}/Cargo.toml"));
+        if package != "javelin-cli" {
+            files.push(format!("crates/{package}/LICENSE"));
+        }
         files.extend(
             list_files(&source.join(format!("crates/{package}/src")))?
                 .into_iter()
