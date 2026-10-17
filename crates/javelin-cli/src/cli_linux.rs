@@ -6,7 +6,7 @@ use javelin::{
 };
 use serde_json::json;
 
-use super::{Output, success, update};
+use super::{AttributionInput, Output, publication, success, update};
 
 pub fn run(
     action: &str,
@@ -15,6 +15,7 @@ pub fn run(
     helper: PathBuf,
     layer: Option<LayerId>,
     operation: Option<OperationId>,
+    attribution: AttributionInput,
 ) -> Result<Output> {
     let mut repo = Repository::open(repo)?;
     let helper = LayerMountHelper::sudo(helper)?;
@@ -90,6 +91,14 @@ pub fn run(
                     reply.1.push_str(&format!("\n{} checkpointed paths; {} empty directories are not represented. Replay: {}.", capture.changed_paths, capture.unrepresented_directories.len(), capture.replayed));
                     reply.0 = json!({"ok": applied, "command": command, "operation": operation, "capture": capture});
                     Ok(reply)
+                }
+                "publish" => {
+                    let operation = operation.expect("validated operation");
+                    let attribution = attribution.store(&mut repo)?;
+                    let receipt =
+                        runtime
+                            .publish(&mut repo, &layer, &operation, &attribution, |_, _| Ok(()))?;
+                    Ok(publication(&command, receipt))
                 }
                 "discard" => {
                     let operation = operation.expect("validated operation");

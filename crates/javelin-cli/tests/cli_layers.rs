@@ -308,6 +308,44 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
         let failure = value(invoke(root.path(), &args), 2);
         assert_eq!(failure["error"]["code"], "invalid_input", "{args:?}");
     }
+    for extra in [
+        vec!["--actor", "robot"],
+        vec!["--context", "bad"],
+        vec!["--actor", "human", "--allow-missing-trace"],
+        vec!["--trace", "missing"],
+        vec![
+            "--actor",
+            "agent",
+            "--context",
+            &"a".repeat(64),
+            "--trace",
+            "missing",
+        ],
+        vec![
+            "--actor",
+            "agent",
+            "--allow-missing-trace",
+            "--allow-missing-trace",
+        ],
+    ] {
+        let mut args = vec![
+            "workspace",
+            "publish",
+            "work",
+            "--root",
+            "/missing",
+            "--helper",
+            "/missing",
+            "--operation",
+            "publish",
+            "--json",
+        ];
+        args.extend(extra);
+        assert_eq!(
+            value(invoke(root.path(), &args), 2)["error"]["code"],
+            "invalid_input"
+        );
+    }
     assert!(!root.path().join(".javelin").exists());
     for args in [
         vec!["--help"],
@@ -324,7 +362,7 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
             "--operation",
             "recover",
             "Linux",
-            "Autosave and Publish are later",
+            "Autosave is later",
         ] {
             assert!(help.contains(text), "{text}: {help}");
         }
@@ -380,7 +418,7 @@ fn binary_inspects_and_clones_a_published_layer_in_format_three() {
     else {
         panic!("expected active Layer");
     };
-    // Seed a native publication without a mounted view. The CLI exposes no Publish command.
+    // Seed a receipt for platform-independent inspection without mounting a view.
     repo.publish_layer(
         &operation("fixture-publish"),
         &head,
@@ -388,6 +426,55 @@ fn binary_inspects_and_clones_a_published_layer_in_format_three() {
         |_, _| Ok(()),
     )
     .unwrap();
+    let receipt = ok(
+        root.path(),
+        &["layer", "publication", "--operation", "fixture-publish"],
+    );
+    assert_eq!(receipt["receipt"]["outcome"]["outcome"], "published");
+    assert_eq!(receipt["receipt"]["attribution"]["kind"], "human");
+    assert!(
+        ok(
+            root.path(),
+            &["layer", "publication", "--operation", "unknown"]
+        )["receipt"]
+            .is_null()
+    );
+    let stale_receipt = repo
+        .publish_layer(
+            &operation("stale-inspection"),
+            &head,
+            &javelin::PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    let stale = value(
+        invoke(
+            root.path(),
+            &[
+                "layer",
+                "publication",
+                "--operation",
+                "stale-inspection",
+                "--json",
+            ],
+        ),
+        3,
+    );
+    assert_eq!(
+        stale["receipt"],
+        serde_json::to_value(stale_receipt).unwrap()
+    );
+    assert_eq!(stale["receipt"]["outcome"]["outcome"], "layer_stale");
+    let plain_receipt = invoke(
+        root.path(),
+        &["layer", "publication", "--operation", "fixture-publish"],
+    );
+    assert!(plain_receipt.status.success());
+    assert!(
+        String::from_utf8(plain_receipt.stdout)
+            .unwrap()
+            .contains("published as World 1")
+    );
     let state = repo.layer_state(head.layer()).unwrap();
     let inspected = ok(root.path(), &["layer", "state", "published"]);
     assert_eq!(inspected["state"], serde_json::to_value(&state).unwrap());
@@ -484,6 +571,7 @@ fn binary_workspace_commands_return_unsupported_without_touching_paths() {
         "path",
         "unmount",
         "checkpoint",
+        "publish",
         "discard",
         "recover",
     ] {
@@ -498,7 +586,7 @@ fn binary_workspace_commands_return_unsupported_without_touching_paths() {
             "/does-not-exist",
             "--json",
         ]);
-        if ["checkpoint", "discard"].contains(&action) {
+        if ["checkpoint", "discard", "publish"].contains(&action) {
             args.extend(["--operation", "test-op"]);
         }
         let failure = value(invoke(root.path(), &args), 1);
@@ -675,6 +763,294 @@ fn linux_cli_path_checkpoint_clone_and_recovery() {
             .unwrap()
             .len(),
         1
+    );
+    ok(root.path(), &["check"]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
+fn linux_cli_whole_layer_publish() {
+    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+    assert_eq!(
+        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
+        Ok("github-hosted")
+    );
+    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
+    assert_ne!(unsafe { libc::getuid() }, 0);
+    let root = TempDir::new().unwrap();
+    let runtime = format!("{}-publish", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
+    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
+    let call = |action: &str, layer: Option<&str>, extras: &[&str], code| {
+        let mut args = vec![
+            "workspace",
+            action,
+            "--root",
+            &runtime,
+            "--helper",
+            &helper,
+            "--json",
+        ];
+        if let Some(layer) = layer {
+            args.push(layer);
+        }
+        args.extend_from_slice(extras);
+        value(invoke(root.path(), &args), code)
+    };
+    ok(root.path(), &["init"]);
+    for layer in ["work", "competing", "agent"] {
+        ok(root.path(), &["layer", "create", layer, "--world", "0"]);
+    }
+    call("init", None, &[], 0);
+    let mounted = call("mount", Some("work"), &[], 0);
+    let view = Path::new(mounted["path"].as_str().unwrap());
+    std::fs::write(view.join("file"), b"accepted").unwrap();
+    let publish = ["--operation", "publish-work"];
+    let uncaptured = call("publish", Some("work"), &publish, 2);
+    assert_eq!(uncaptured["error"]["code"], "invalid_input");
+    assert!(
+        ok(
+            root.path(),
+            &["layer", "publication", "--operation", "publish-work"]
+        )["receipt"]
+            .is_null()
+    );
+    call("checkpoint", Some("work"), &["--operation", "save-work"], 0);
+    let held = std::fs::OpenOptions::new()
+        .write(true)
+        .open(view.join("file"))
+        .unwrap();
+    assert_eq!(
+        call("publish", Some("work"), &publish, 1)["error"]["code"],
+        "busy"
+    );
+    drop(held);
+    let accepted = call("publish", Some("work"), &publish, 0);
+    assert_eq!(accepted["receipt"]["outcome"]["version"]["number"], 1);
+    assert_eq!(accepted["receipt"]["warnings"], serde_json::json!([]));
+    assert_eq!(call("publish", Some("work"), &publish, 0), accepted);
+    assert_eq!(std::fs::read(view.join("file")).unwrap(), b"accepted");
+    let error = std::fs::write(view.join("file"), b"clobber").unwrap_err();
+    assert_eq!(error.raw_os_error(), Some(libc::EROFS));
+    assert_eq!(
+        ok(root.path(), &["layer", "state", "work"])["state"]["state"],
+        "published"
+    );
+    assert_eq!(
+        call(
+            "publish",
+            Some("work"),
+            &[
+                "--operation",
+                "publish-work",
+                "--actor",
+                "agent",
+                "--allow-missing-trace"
+            ],
+            1
+        )["error"]["code"],
+        "operation_id_reused"
+    );
+
+    // A conflicting whole Layer never clobbers the accepted file. Its durable
+    // receipt remains the original result even after another checkpoint.
+    let competing = call("mount", Some("competing"), &[], 0);
+    assert_eq!(
+        call("publish", Some("competing"), &publish, 1)["error"]["code"],
+        "operation_id_reused"
+    );
+    let competing = Path::new(competing["path"].as_str().unwrap());
+    std::fs::write(competing.join("file"), b"conflict").unwrap();
+    call(
+        "checkpoint",
+        Some("competing"),
+        &["--operation", "save-competing"],
+        0,
+    );
+    let conflict = call(
+        "publish",
+        Some("competing"),
+        &["--operation", "conflict"],
+        3,
+    );
+    assert_eq!(
+        conflict["receipt"]["outcome"]["paths"],
+        serde_json::json!(["file"])
+    );
+    std::fs::write(competing.join("file"), b"still writable").unwrap();
+    call(
+        "checkpoint",
+        Some("competing"),
+        &["--operation", "save-competing-two"],
+        0,
+    );
+    assert_eq!(
+        call(
+            "publish",
+            Some("competing"),
+            &["--operation", "conflict"],
+            3
+        ),
+        conflict
+    );
+    assert_eq!(std::fs::read(view.join("file")).unwrap(), b"accepted");
+    assert_eq!(
+        value(
+            invoke(
+                root.path(),
+                &["layer", "publication", "--operation", "conflict", "--json"]
+            ),
+            3
+        )["receipt"],
+        conflict["receipt"]
+    );
+
+    let agent = call("mount", Some("agent"), &[], 0);
+    let agent = Path::new(agent["path"].as_str().unwrap());
+    std::fs::write(agent.join("agent.txt"), b"agent change").unwrap();
+    call(
+        "checkpoint",
+        Some("agent"),
+        &["--operation", "save-agent"],
+        0,
+    );
+    let missing = ["--operation", "publish-agent", "--actor", "agent"];
+    assert_eq!(
+        call("publish", Some("agent"), &missing, 1)["error"]["code"],
+        "missing_agent_trace"
+    );
+    let mut override_args = missing.to_vec();
+    override_args.push("--allow-missing-trace");
+    let overridden = call("publish", Some("agent"), &override_args, 0);
+    assert_eq!(
+        overridden["receipt"]["warnings"],
+        serde_json::json!(["missing_agent_trace"])
+    );
+    assert_eq!(
+        call("publish", Some("agent"), &override_args, 0),
+        overridden
+    );
+    assert_eq!(call("publish", Some("work"), &publish, 0), accepted);
+
+    for (op, code, expected_text) in [
+        ("publish-work", 0, "published as World 1"),
+        ("conflict", 3, "conflict; nothing published"),
+        ("publish-agent", 0, "Warning: \"missing_agent_trace\""),
+    ] {
+        let plain = invoke(root.path(), &["layer", "publication", "--operation", op]);
+        assert_eq!(plain.status.code(), Some(code));
+        assert!(plain.stderr.is_empty());
+        assert!(
+            String::from_utf8(plain.stdout)
+                .unwrap()
+                .contains(expected_text)
+        );
+    }
+
+    // Continue from the current World, keeping opaque raw context in a Blob.
+    ok(root.path(), &["layer", "create", "next"]);
+    let next = call("mount", Some("next"), &[], 0);
+    let next_view = Path::new(next["path"].as_str().unwrap());
+    assert_eq!(std::fs::read(next_view.join("file")).unwrap(), b"accepted");
+    std::fs::write(next_view.join("next.txt"), b"next").unwrap();
+    call("checkpoint", Some("next"), &["--operation", "save-next"], 0);
+    let trace_path = root.path().join("trace.bin");
+    let raw = b"opaque\0trace\xff";
+    std::fs::write(&trace_path, raw).unwrap();
+    let trace = trace_path.to_str().unwrap();
+    let traced = call(
+        "publish",
+        Some("next"),
+        &[
+            "--operation",
+            "publish-next",
+            "--actor",
+            "agent",
+            "--trace",
+            trace,
+        ],
+        0,
+    );
+    let context = traced["receipt"]["attribution"]["context"]
+        .as_str()
+        .unwrap();
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(
+        repo.read_blob(javelin::ObjectId::parse(context).unwrap())
+            .unwrap(),
+        raw
+    );
+    let referenced = call(
+        "publish",
+        Some("next"),
+        &[
+            "--operation",
+            "publish-next",
+            "--actor",
+            "agent",
+            "--context",
+            context,
+        ],
+        0,
+    );
+    assert_eq!(referenced, traced);
+    std::fs::write(&trace_path, b"changed").unwrap();
+    assert_eq!(
+        call(
+            "publish",
+            Some("next"),
+            &[
+                "--operation",
+                "publish-next",
+                "--actor",
+                "agent",
+                "--trace",
+                trace
+            ],
+            1
+        )["error"]["code"],
+        "operation_id_reused"
+    );
+    call("unmount", Some("work"), &[], 0);
+    assert_eq!(call("publish", Some("work"), &publish, 0), accepted);
+    call("recover", None, &[], 0);
+    call("mount", Some("work"), &[], 0);
+    assert_eq!(
+        std::fs::write(view.join("file"), b"remount clobber")
+            .unwrap_err()
+            .raw_os_error(),
+        Some(libc::EROFS)
+    );
+    let checkpoint = traced["receipt"]["expected"]["checkpoint"]
+        .as_str()
+        .unwrap();
+    ok(
+        root.path(),
+        &["layer", "clone", "continued", "--checkpoint", checkpoint],
+    );
+    call("mount", Some("continued"), &[], 0);
+    call(
+        "discard",
+        Some("continued"),
+        &["--operation", "discard-continued"],
+        0,
+    );
+    call(
+        "discard",
+        Some("competing"),
+        &["--operation", "discard-competing"],
+        0,
+    );
+    for layer in ["work", "agent", "next"] {
+        call("unmount", Some(layer), &[], 0);
+    }
+    call("recover", None, &[], 0);
+    assert_eq!(
+        ok(root.path(), &["history"])["versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
     );
     ok(root.path(), &["check"]);
 }

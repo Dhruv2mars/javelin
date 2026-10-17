@@ -31,3 +31,26 @@ development packaging fingerprints the CLI inputs and rejects wrong binaries.
   All six standalone lockfiles pass locked offline metadata; refreshed only the
   profile lockfile's missing root `libc` entry. Native source/tests (with the CLI
   moves mapped) and root TASKS match main byte for byte. No manual benchmarks.
+
+
+## Whole-Layer Publish CLI
+
+Done means actual CLI commands delegate safe Linux Publish, retain exact receipts
+and opaque attribution, and prove refusal, conflict/retry, read-only success and
+continuation in a disposable hosted Linux run. Root TASKS remains main's file.
+
+- [x] Read rules, build contract and merged CLI/runtime dependencies.
+- [x] Wire workspace Publish and platform-independent receipt inspection.
+- [x] Add grammar/output tests, hosted actual-binary workflow and focused docs.
+- [x] Run fmt, warnings-denied Clippy, workspace/binary tests and release build.
+  macOS: 103 workspace tests passed, one inherited ignored test; 10 actual-binary
+  CLI tests passed. Linux cross-target CLI all-target/all-feature Clippy passed.
+- [x] Verify disposable hosted Linux smoke with a failing Git stand-in.
+  Run 38994939678 passed both actual-binary mount tests and cleanup (`exit=0`).
+  Raw logs downloaded and inspected. PR CI repeats this smoke and the existing
+  native/package checks. Limits: Linux helper must be configured separately;
+  macOS/Windows ordinary paths, autosave and refresh remain unsupported. Raw trace
+  import reads the file into memory. Unmounted physical enforcement is only
+  observed on remount; no out-of-band backing-path guarantee is claimed.
+
+Delivery: one regular T3-linked PR against main; merge belongs to the hub.
