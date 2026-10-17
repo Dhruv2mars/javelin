@@ -39,7 +39,13 @@ fn build_uses_source_cargo_config_instead_of_caller_config() {
     .unwrap();
     fs::write(source.join("LICENSE"), "fixture license\n").unwrap();
     // Supply the other inputs required by the production source fingerprint.
-    for package in ["javelin-cli", "javelin-merge", "javelin-stack"] {
+    for package in [
+        "javelin-cli",
+        "javelin-collaboration",
+        "javelin-merge",
+        "javelin-protocol",
+        "javelin-stack",
+    ] {
         let dir = source.join("crates").join(package);
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join("Cargo.toml"), "# fingerprint fixture\n").unwrap();

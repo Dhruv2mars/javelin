@@ -193,10 +193,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "javelin-collaboration"
+version = "0.1.0"
+dependencies = [
+ "javelin",
+ "tempfile",
+]
+
+[[package]]
 name = "javelin-merge"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "tempfile",
+]
+
+[[package]]
+name = "javelin-protocol"
+version = "0.1.0"
+dependencies = [
+ "javelin",
+ "rusqlite",
+ "serde_json",
  "tempfile",
 ]
 
