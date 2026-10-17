@@ -1422,8 +1422,10 @@ impl LinuxLayerRuntime {
             .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
         let layer = LayerId::parse(&record.layer)
             .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
-        if self::slot(&layer) != slot {
-            return Err(Error::CorruptRepository("view record slot mismatch".into()));
+        if self::slot(&layer) != slot || record.format != RECORD_FORMAT {
+            return Err(Error::CorruptRepository(
+                "view record slot/format mismatch".into(),
+            ));
         }
         if record.pending.is_some() {
             if let Err(error) = self.resolve(repo, &layer, slot, &mut record)
