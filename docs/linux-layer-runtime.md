@@ -3,7 +3,9 @@
 ## Bounded outcome
 
 The original binding and its historical evidence are recorded first. The
-whole-Layer publication extension and its limits are described below.
+whole-Layer publication extension and its limits are described below. The later
+foreground watch extension is documented at the end; earlier evidence below does
+not claim to verify it.
 
 This unit binds native repository Layer state to ordinary Linux paths through
 sparse OverlayFS views. It is a production-library foundation, not a complete
@@ -469,3 +471,35 @@ was included before the successful run; the earlier run also removed all mounts.
 No helper, native core, Cargo, CLI, adapter or probe changes are part of this
 extension. Root `TASKS.md` is unchanged. Other kernels, distributions, production
 privileges, automatic refresh, power loss and GA remain outside this proof.
+
+
+## Opt-in foreground stable checkpoints
+
+`workspace watch ID [--quiet-ms N] [--duration-ms N]` runs the focused runtime
+`watch` method. See [the command reference](cli.md#foreground-automatic-checkpoints-on-linux)
+for setup, timing, retry, terminal-stop and cleanup behavior. Existing commands do
+not start a controller or daemon.
+
+The controller hashes every file's actual bytes and symlink target without storing
+observation objects. Samples are separated by a 250ms sleep after each scan; equal
+samples must span the quiet window (1000ms default, minimum 250ms). A view equal to
+its bound immutable checkpoint is a no-op. It acquires the existing runtime lock
+for each sample and releases it before sleeping. It validates the active binding,
+freezes through the unchanged helper, reads the frozen candidate and verifies its
+exact entries and empty-directory observation plus the helper epoch. Only then is
+a fresh capture operation written to the existing pending record and submitted to
+the unchanged freeze/capture/receipt flow. Capture validates its own epoch again.
+
+A quiet observation does not delimit an application transaction. Writers/mappings
+must close before freeze succeeds; boundary changes invalidate the attempt and
+restart the quiet window. Capture IO/corruption errors are surfaced, and uncertain
+native outcomes retain the pending operation for restart/recovery. No separate
+watch metadata, schema, native capture semantics, ignore algorithm or event
+framework is added. A killed process before the pending write may leave a frozen
+active view; restart uses existing resume behavior before observation. A process
+killed after the pending write resolves that same capture and receipt first.
+
+Published/Discarded stop; a stale external binding requires explicit rebind.
+Watch does not change World or recover interrupted Publish/discard/rebind on the
+user's behalf. Performance and large-tree bounds beyond existing limits remain
+unverified. Ignore rules remain unimplemented, and all files are considered.

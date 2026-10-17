@@ -287,7 +287,7 @@ fn mounted_views_capture_clone_and_discard() {
         // SAFETY: valid path and zeroed out-parameter.
         let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
         assert_eq!(unsafe { libc::statfs(c.as_ptr(), &mut stat) }, 0);
-        assert_eq!(stat.f_type as i64, 0x794c7630, "view is not OverlayFS");
+        assert_eq!(stat.f_type, 0x794c7630, "view is not OverlayFS");
         assert_eq!(tree(view), fixture);
     }
     let initial = inventory(&env, &root, "flow-inventory-initial");
@@ -661,6 +661,15 @@ fn runtime_actor() {
     let layer = id(&var("JAVELIN_TEST_LAYER"));
     let operation = op(&var("JAVELIN_TEST_OPERATION"));
     let result = match mode.as_str() {
+        "watch" => format!(
+            "{:?}",
+            rt.watch(
+                &mut repo,
+                &layer,
+                Duration::from_millis(250),
+                Some(Duration::from_millis(2000))
+            )
+        ),
         "capture" => format!(
             "{:?}",
             rt.capture(&mut repo, &layer, &operation).map(|o| o.update)
@@ -2999,5 +3008,269 @@ fn published_observation_preserves_explicitly_unmounted_views() {
         &json!({"verdict": "VERIFIED", "cases": cases,
             "pendingRecovery": recovery, "pendingReceiptRetained": true,
             "partialRecovery": partial}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn foreground_watch_stability_busy_and_terminal_stops() {
+    let env = env();
+    let mut s = setup(&env, "watch-flow");
+    let watch = |s: &mut Setup| {
+        s.rt.watch(
+            &mut s.repo,
+            &s.layer,
+            Duration::from_millis(250),
+            Some(Duration::from_millis(800)),
+        )
+    };
+    let history = s.repo.layer_history(&s.layer).unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    assert_eq!(s.repo.layer_history(&s.layer).unwrap(), history);
+    let mut log = vec![];
+    sh(
+        &s.view,
+        "cc main.c -o app; ./app; rm app; printf 'saved\\n' > temporary; mv temporary README.txt; mv bytes.bin renamed.bin; rm delete.txt; ln -s renamed.bin new-link; chmod +x main.c",
+        &mut log,
+    );
+    assert_eq!(watch(&mut s).unwrap(), 1);
+    let captured = active(&s.repo, &s.layer);
+    let manifest = s.repo.read_checkpoint(captured.checkpoint()).unwrap();
+    assert!(
+        !manifest
+            .manifest()
+            .entries()
+            .contains_key(&RepoPath::parse("delete.txt").unwrap())
+    );
+    assert!(
+        !manifest
+            .manifest()
+            .entries()
+            .contains_key(&RepoPath::parse("bytes.bin").unwrap())
+    );
+    assert!(matches!(
+        manifest.manifest().entries()[&RepoPath::parse("main.c").unwrap()],
+        FileEntry::Regular {
+            executable: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        manifest.manifest().entries()[&RepoPath::parse("new-link").unwrap()],
+        FileEntry::Symlink { .. }
+    ));
+    let frozen =
+        s.rt.mount_checkpoint(&s.repo, captured.checkpoint())
+            .unwrap();
+    assert_eq!(tree(&frozen), tree(&s.view));
+    s.rt.unmount_checkpoint(&s.repo, captured.checkpoint())
+        .unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    // Rewriting unchanged bytes must not grow retained history.
+    let bytes = fs::read(s.view.join("README.txt")).unwrap();
+    fs::write(s.view.join("README.txt"), bytes).unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    assert_eq!(active(&s.repo, &s.layer), captured);
+    let writer = publication_writer(&s.view);
+    fs::write(s.view.join("new.txt"), b"waiting for writer").unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    assert_eq!(active(&s.repo, &s.layer), captured);
+    assert!(writer.release().contains("written"));
+    assert_eq!(watch(&mut s).unwrap(), 1);
+    let mut command = Command::new("python3");
+    command.args(["-I", "-c", "import mmap,sys\nf=open('README.txt','r+b')\nm=mmap.mmap(f.fileno(),0)\nf.close()\nprint('READY',flush=True)\nsys.stdin.buffer.read(1)\nm.close()\nprint('RESULT closed',flush=True)"]).current_dir(&s.view);
+    let mut mapping = Actor::start(command);
+    mapping.marker("READY");
+    fs::write(s.view.join("new.txt"), b"mapping must close").unwrap();
+    let before = active(&s.repo, &s.layer);
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    assert_eq!(active(&s.repo, &s.layer), before);
+    assert!(mapping.release().contains("closed"));
+    assert_eq!(watch(&mut s).unwrap(), 1);
+    let mut watching = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "watch",
+        "A",
+        "unused",
+        "watch_sleep",
+    );
+    watching.marker("BOUNDARY watch_sleep");
+    let receipt =
+        s.rt.publish(
+            &mut s.repo,
+            &s.layer,
+            &op("watch-publish"),
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    published(&receipt);
+    assert!(watching.release().contains("LayerPublished"));
+    assert!(matches!(watch(&mut s), Err(Error::LayerPublished { .. })));
+    assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    assert!(fs::write(s.view.join("readonly"), b"forbidden").is_err());
+    let sibling = id("watch-discard");
+    let base = s
+        .repo
+        .layer_base(s.repo.history().unwrap().last().unwrap().number)
+        .unwrap();
+    s.repo.create_layer(&sibling, &base).unwrap();
+    s.rt.mount(&mut s.repo, &sibling).unwrap();
+    s.rt.discard(&mut s.repo, &sibling, &op("watch-discard"))
+        .unwrap();
+    assert!(
+        s.rt.watch(
+            &mut s.repo,
+            &sibling,
+            Duration::from_millis(250),
+            Some(Duration::from_secs(1))
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("discarded")
+    );
+    save(
+        &env,
+        "watch-flow",
+        &json!({"verdict":"VERIFIED", "commands":log,
+        "writersAndMappings":"refused until closed", "terminal":"Published read-only and Discarded stopped", "integrity":s.repo.check().unwrap()}),
+    );
+    s.rt.unmount(&s.layer).unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn foreground_watch_revalidates_quiet_boundary_and_releases_locks() {
+    let env = env();
+    let mut s = setup(&env, "watch-race");
+    fs::write(s.view.join("edit"), b"quiet observation").unwrap();
+    let mut actor = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "watch",
+        "A",
+        "unused",
+        "watch_quiet",
+    );
+    actor.marker("BOUNDARY watch_quiet");
+    // A real edit after the observation but before freeze invalidates this attempt.
+    fs::write(s.view.join("edit"), b"arrived at freeze boundary").unwrap();
+    assert!(matches!(
+        s.rt.capture(&mut s.repo, &s.layer, &op("watch-contender")),
+        Err(Error::Busy(_))
+    ));
+    actor.send(b"x");
+    actor.marker("BOUNDARY watch_quiet");
+    assert_eq!(
+        active(&s.repo, &s.layer).revision(),
+        0,
+        "old observation committed"
+    );
+    let result = actor.release();
+    assert!(result.contains("Ok(1)"), "{result}");
+    assert_eq!(active(&s.repo, &s.layer).revision(), 1);
+    // Runtime callers work normally between samples, including explicit checkpoint.
+    assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    s.rt.capture(&mut s.repo, &s.layer, &op("explicit-after-watch"))
+        .unwrap();
+    let mut sleeping = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "watch",
+        "A",
+        "unused",
+        "watch_sleep",
+    );
+    sleeping.marker("BOUNDARY watch_sleep");
+    assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    s.rt.capture(&mut s.repo, &s.layer, &op("checkpoint-between-samples"))
+        .unwrap();
+    sleeping.kill();
+    // A direct native advance is a hard stop requiring explicit rebind.
+    let head = active(&s.repo, &s.layer);
+    s.repo
+        .capture_layer(
+            &op("external-watch"),
+            &head,
+            &SparseChanges::new([]).unwrap(),
+        )
+        .unwrap();
+    let error =
+        s.rt.watch(
+            &mut s.repo,
+            &s.layer,
+            Duration::from_millis(250),
+            Some(Duration::from_secs(1)),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("rebind"), "{error}");
+    save(
+        &env,
+        "watch-race",
+        &json!({"verdict":"VERIFIED", "boundary":"changed candidate refused before pending/native call", "stale":error.to_string()}),
+    );
+    s.rt.unmount(&s.layer).unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn foreground_watch_restarts_same_pending_operation_without_duplicate() {
+    let env = env();
+    for (i, boundary) in ["watch_pending", "capture_listed", "capture_committed"]
+        .iter()
+        .enumerate()
+    {
+        let mut s = setup(&env, &format!("watch-kill-{i}"));
+        fs::write(s.view.join("edit"), b"durable automatic edit").unwrap();
+        let mut actor = Actor::spawn(
+            &env,
+            s.repo_dir.path(),
+            &s.root,
+            "watch",
+            "A",
+            "unused",
+            boundary,
+        );
+        actor.marker(&format!("BOUNDARY {boundary}"));
+        actor.kill();
+        let status = s.rt.status(&s.repo, &s.layer).unwrap();
+        let operation = op(status.pending.as_ref().unwrap());
+        assert!(status.frozen);
+        assert_eq!(
+            s.rt.watch(
+                &mut s.repo,
+                &s.layer,
+                Duration::from_millis(250),
+                Some(Duration::from_millis(800))
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(active(&s.repo, &s.layer).revision(), 1);
+        let attempt = s.repo.layer_operation(&operation).unwrap().unwrap();
+        assert_eq!(attempt.expected, 0);
+        assert_eq!(s.repo.layer_history(&s.layer).unwrap().len(), 2);
+        assert_eq!(
+            s.rt.watch(
+                &mut s.repo,
+                &s.layer,
+                Duration::from_millis(250),
+                Some(Duration::from_millis(600))
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(s.repo.layer_history(&s.layer).unwrap().len(), 2);
+        assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+        s.rt.unmount(&s.layer).unwrap();
+    }
+    save(
+        &env,
+        "watch-recovery",
+        &json!({"verdict":"VERIFIED", "boundaries":["watch_pending","capture_listed","capture_committed"], "duplicateAcceptedCheckpoints":0}),
     );
 }

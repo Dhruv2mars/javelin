@@ -3,7 +3,8 @@
 The CLI provides native Layer metadata on macOS, Linux, and Windows. Writable
 ordinary paths use the existing Linux OverlayFS runtime and configured mount
 helper. Workspace commands return `unsupported` on macOS and Windows.
-Checkpoints are explicit. Whole-Layer Publish uses the safe Linux runtime. Autosave remains later work.
+Checkpoints can be explicit or captured by an opt-in foreground Linux watch command.
+Whole-Layer Publish uses the safe Linux runtime.
 
 ## Build and install
 
@@ -50,6 +51,7 @@ javelin workspace mount ID
 javelin workspace path ID
 javelin workspace unmount ID
 javelin workspace checkpoint ID --operation ID
+javelin workspace watch ID [--quiet-ms N] [--duration-ms N]
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
 javelin workspace discard ID --operation ID
@@ -188,7 +190,8 @@ Rebind refuses uncaptured edits, empty directories and held writers without
 deleting them. Checkpoint before Stack; if edits were missed, retain the old view
 and resolve explicitly rather than deleting private storage. An originally
 unmounted view stays unmounted after validation. Mount it explicitly to use tools.
-There is no automatic refresh, freeze retry loop, or automatic head selection.
+There is no automatic refresh or automatic head selection. Foreground watch retries
+busy freezes after a new quiet window.
 
 Rebind has no additional operation ID: the runtime's durable selection is keyed
 by the exact old/desired heads. A completed exact retry is a no-op even after new
@@ -323,3 +326,49 @@ output has `ok: false` and the native `stale` outcome. Partial recovery has
 The existing `init`, `history`, and `check` syntax and JSON fields are unchanged.
 No command invokes or interprets Git. The disposable hosted Linux actual-binary
 smoke runs with a failing Git stand-in and a checked positive control.
+
+
+## Foreground automatic checkpoints on Linux
+
+After explicitly mounting a Layer, run this in a foreground terminal:
+
+```sh
+javelin workspace watch my-layer --root /configured/runtime --helper /configured/helper
+# Bounded automation: stop scheduling samples after 10 seconds.
+javelin workspace watch my-layer --root /configured/runtime --helper /configured/helper --duration-ms 10000
+```
+
+Nothing starts watch from init, mount or other commands. There is no daemon. Stop
+with Ctrl-C; private edits remain. Output (or `--json`) is a final summary on duration
+expiry, or an error on failure. Individual checkpoints appear in `layer history`
+while watch runs. The summary counts captures completed or recovered by this run.
+
+Watch reads all file bytes, symlink targets and executable bits, then waits 250ms
+after each scan before sampling again. The default quiet window is 1000ms; choose
+`--quiet-ms N` with N >= 250. At least two equal content samples spanning that
+window are required. Renames and deletions appear as normal native path changes.
+Unchanged content, including a rewrite of identical bytes, creates no new history.
+Empty directories are not represented by native checkpoints.
+
+A quiet sample is not an application transaction. Watch still freezes the view;
+held write descriptors and shared writable mappings prevent capture. The frozen
+candidate must match the quiet observation exactly. A busy freeze or a boundary
+change restarts observation and retries later. Locks are released between samples,
+so explicit checkpoint, status and Publish can run. Watch never publishes, Stacks,
+refreshes, discards, changes World or automatically selects an external head.
+
+On interruption after a pending capture was written, rerun the same watch command
+(or use `workspace recover`). Existing runtime pending records and durable native
+receipts preserve the operation ID and recover its outcome before another sample.
+IO and corruption errors stop watch and remain visible; they are not silently
+retried. Resolve the cause and retry. Published stops with `layer_published` and
+preserves the read-only view; Discarded stops with a clear error. An externally
+advanced native head stops and requires explicit rebind. Interrupted Publish,
+discard or rebind must be recovered explicitly.
+
+`--duration-ms N` must be positive. It bounds scheduling, not the time spent in an
+individual scan/helper/storage call; it does not force a final checkpoint of
+nonquiet edits. Sampling can miss edits made and reverted entirely between scans.
+There is no ignore filtering: capture includes files regardless of ignore rules;
+ignore support remains unimplemented. Large-tree performance and resource bounds
+beyond existing capture/storage limits remain unverified.

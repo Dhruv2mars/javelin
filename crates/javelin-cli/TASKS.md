@@ -98,3 +98,19 @@ Final integration adds only license files/fingerprint regression and this checkl
 after that CLI source. No laptop mounts, daemon, autosave, refresh, restore or
 project adoption were added. Linux helper setup and macOS/Windows workspace support
 remain outside this unit.
+
+
+## Foreground automatic stable checkpoints
+
+Done: explicit workspace watch captures content-stable edits with existing durable
+receipts, frozen validation and no redundant history; hosted disposable Linux
+proves tools, rename/delete/modes/symlinks, writers/mappings, boundary races,
+competing callers, killed capture recovery and terminal stops with full cleanup.
+Root TASKS stays identical to merged main.
+
+- [x] Read current rules/contracts and verify PR30 merged base b234dd6.
+- [x] Implement bounded foreground polling and exact frozen validation.
+- [x] Add deterministic tests and real-process Linux/CLI coverage.
+- [x] Document sampling, opt-in/retry behavior and unsupported ignore/scale limits.
+- [ ] Run proportional fmt/Clippy/workspace/release and hosted smoke checks.
+- [ ] Open and T3-link one regular PR against main.
