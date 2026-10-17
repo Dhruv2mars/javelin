@@ -5,6 +5,28 @@ ordinary paths use the existing Linux OverlayFS runtime and configured mount
 helper. Workspace commands return `unsupported` on macOS and Windows.
 Checkpoints are explicit. Autosave and Publish are later integration work.
 
+## Build and install
+
+The root `javelin` package remains the library. `crates/javelin-cli` owns the
+`javelin` executable and its actual-binary tests. The CLI can depend on standalone
+adapters that also use the library without creating a library dependency cycle.
+
+From the checkout root:
+
+```sh
+cargo build --locked --release
+cargo run --locked -p javelin-cli -- --help
+cargo test --locked
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo install --locked --path crates/javelin-cli --bin javelin
+```
+
+Default root build, test and lint commands select both the library and CLI.
+The release executable remains `target/release/javelin` (`javelin.exe` on Windows),
+and installation still provides `javelin`. The Linux helper remains in the root
+package. Use `-p javelin` for library-only checks and `-p javelin-cli` for CLI-only
+checks; standalone adapter crates retain their own workspaces.
+
 ## Commands
 
 ```text

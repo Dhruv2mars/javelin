@@ -24,7 +24,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
-    ObjectId, OperationId, RepoPath, Repository, Result, SparseChanges, domain::ObjectKind,
+    ObjectId, OperationId, PublicationReceipt, PublishAttribution, RepoPath, Repository, Result,
+    SparseChanges, WorldVersion, domain::ObjectKind,
 };
 
 const RECORD_FORMAT: u32 = 1;
@@ -115,6 +116,7 @@ impl LayerMountHelper {
 enum Action {
     Capture,
     Discard,
+    Publish,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -127,6 +129,9 @@ struct Pending {
     /// ID only if it matches, so ownership never depends on re-reading the view.
     #[serde(default)]
     candidate: Option<Candidate>,
+    /// Exact native publication input digest; absent before frozen-view validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publication: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -150,6 +155,13 @@ fn changes_digest(changes: &SparseChanges) -> String {
         .map(|(path, entry)| (path.as_str(), entry))
         .collect();
     Sha256::digest(serde_json::to_vec(&entries).expect("delta encoding"))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn publication_input(head: &LayerHead, attribution: &PublishAttribution) -> String {
+    Sha256::digest(serde_json::to_vec(&(head, attribution)).expect("publication input encoding"))
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
@@ -194,6 +206,7 @@ pub struct RecoveryReport {
     pub pending_resolved: usize,
     pub views_removed: usize,
     pub views_thawed: usize,
+    pub views_published: usize,
     /// Views that could not be recovered; others are still processed.
     pub failures: Vec<String>,
 }
@@ -464,7 +477,11 @@ fn hash_only(bytes: &[u8]) -> Result<ObjectId> {
 fn certain(error: &Error) -> bool {
     matches!(
         error,
-        Error::InvalidInput(_) | Error::Unsupported(_) | Error::OperationIdReused(_)
+        Error::InvalidInput(_)
+            | Error::Unsupported(_)
+            | Error::OperationIdReused(_)
+            | Error::LayerPublished { .. }
+            | Error::MissingAgentTrace
     )
 }
 
@@ -542,6 +559,29 @@ impl LinuxLayerRuntime {
                 write_atomic(&path, &serde_json::to_vec(&expected).unwrap())?;
             }
             Err(e) => return Err(e.into()),
+        }
+        for entry in fs::read_dir(runtime.root.join("state"))? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            let Some(slot) = name.strip_suffix(".json").filter(|s| *s != "runtime") else {
+                continue;
+            };
+            // A damaged view must not prevent opening the runtime for recover(),
+            // which reports per-view failures and still processes healthy views.
+            let Ok(bytes) = fs::read(runtime.record_path(slot)) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_slice::<ViewRecord>(&bytes) else {
+                continue;
+            };
+            let Ok(layer) = LayerId::parse(&record.layer) else {
+                continue;
+            };
+            if self::slot(&layer) != slot || record.format != RECORD_FORMAT {
+                continue;
+            }
+            if matches!(repo.layer_state(&layer)?, LayerState::Published { .. }) {
+                runtime.freeze_view(slot)?;
+            }
         }
         Ok(runtime)
     }
@@ -685,7 +725,7 @@ impl LinuxLayerRuntime {
         }
     }
 
-    /// Opens or resumes an ordinary writable path for an active Layer.
+    /// Opens or resumes a path; a published Layer is mounted read-only.
     pub fn mount(&mut self, repo: &mut Repository, layer: &LayerId) -> Result<PathBuf> {
         let _lock = self.lock()?;
         let slot = slot(layer);
@@ -701,8 +741,11 @@ impl LinuxLayerRuntime {
                 record
             }
             None => {
-                let LayerState::Active { head } = repo.layer_state(layer)? else {
-                    return Err(Error::InvalidInput("Layer is discarded".into()));
+                let head = match repo.layer_state(layer)? {
+                    LayerState::Active { head } | LayerState::Published { head, .. } => head,
+                    LayerState::Discarded { .. } => {
+                        return Err(Error::InvalidInput("Layer is discarded".into()));
+                    }
                 };
                 let lowers = self.ensure_caches(repo, head.checkpoint())?;
                 let checkpoint = head.checkpoint().object().to_string();
@@ -724,10 +767,7 @@ impl LinuxLayerRuntime {
                 "Layer is discarded; recover removes its view".into(),
             ));
         }
-        self.mount_view(&slot, &record, false)?;
-        if mount_state(&path)? == Some(true) {
-            self.helper("thaw", &["view", &slot])?;
-        }
+        self.resume_view(repo, layer, &slot, &record, true)?;
         Ok(path)
     }
 
@@ -745,6 +785,42 @@ impl LinuxLayerRuntime {
             self.helper("thaw", &["view", slot])?;
         }
         Ok(())
+    }
+
+    /// Observation freezes existing mounts without undoing an explicit unmount.
+    fn freeze_view(&self, slot: &str) -> Result<bool> {
+        match mount_state(&self.root.join("views").join(slot))? {
+            None => Ok(false),
+            Some(readonly) => {
+                if !readonly {
+                    self.helper("freeze", &["view", slot])?;
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// A terminal native publication is never thawed. There is no continuous
+    /// reconciler: a direct native caller is enforced when next observed here.
+    fn resume_view(
+        &self,
+        repo: &Repository,
+        layer: &LayerId,
+        slot: &str,
+        record: &ViewRecord,
+        mount: bool,
+    ) -> Result<()> {
+        if matches!(repo.layer_state(layer)?, LayerState::Published { .. }) {
+            if mount {
+                self.mount_view(slot, record, true)?;
+            }
+            self.freeze_view(slot).map(|_| ())
+        } else {
+            if mount {
+                self.mount_view(slot, record, false)?;
+            }
+            self.ensure_thawed(slot)
+        }
     }
 
     fn epoch(&self) -> Result<u64> {
@@ -772,10 +848,16 @@ impl LinuxLayerRuntime {
         }
     }
 
-    fn abandon(&self, slot: &str, record: &mut ViewRecord) -> Result<()> {
+    fn abandon(
+        &self,
+        repo: &Repository,
+        layer: &LayerId,
+        slot: &str,
+        record: &mut ViewRecord,
+    ) -> Result<()> {
         record.pending = None;
         self.write_record(slot, record)?;
-        self.ensure_thawed(slot)
+        self.resume_view(repo, layer, slot, record, false)
     }
 
     /// Records an outcome and thaws. Only an operation this view froze for (its
@@ -783,6 +865,8 @@ impl LinuxLayerRuntime {
     /// another caller's operation must not adopt that caller's head.
     fn settle_capture(
         &self,
+        repo: &Repository,
+        layer: &LayerId,
         slot: &str,
         record: &mut ViewRecord,
         owned: bool,
@@ -799,7 +883,7 @@ impl LinuxLayerRuntime {
         }
         record.pending = None;
         self.write_record(slot, record)?;
-        self.ensure_thawed(slot)?;
+        self.resume_view(repo, layer, slot, record, false)?;
         Ok(outcome)
     }
 
@@ -823,6 +907,7 @@ impl LinuxLayerRuntime {
             operation: operation.as_str().into(),
             action: Action::Capture,
             candidate: None,
+            publication: None,
         };
         if record
             .pending
@@ -864,7 +949,7 @@ impl LinuxLayerRuntime {
             Err(error) => {
                 // The ID was used natively elsewhere; this capture can never commit.
                 if certain(&error) && owned {
-                    self.abandon(slot, record)?;
+                    self.abandon(repo, layer, slot, record)?;
                 }
                 return Err(error);
             }
@@ -879,6 +964,8 @@ impl LinuxLayerRuntime {
                 .entries()
                 .len();
             return self.settle_capture(
+                repo,
+                layer,
                 slot,
                 record,
                 false,
@@ -899,10 +986,12 @@ impl LinuxLayerRuntime {
                 c.expected == attempt.expected && c.changes == changes_digest(&changes)
             });
             if !ours {
-                self.abandon(slot, record)?;
+                self.abandon(repo, layer, slot, record)?;
                 return Err(Error::OperationIdReused(operation.clone()));
             }
             return self.settle_capture(
+                repo,
+                layer,
                 slot,
                 record,
                 true,
@@ -913,6 +1002,13 @@ impl LinuxLayerRuntime {
                     replayed: true,
                 },
             );
+        }
+        if let LayerState::Published { operation, .. } = repo.layer_state(layer)? {
+            self.abandon(repo, layer, slot, record)?;
+            return Err(Error::LayerPublished {
+                layer: layer.clone(),
+                operation,
+            });
         }
         match mount_state(&self.root.join("views").join(slot))? {
             None => self.mount_view(slot, record, true)?,
@@ -945,7 +1041,7 @@ impl LinuxLayerRuntime {
             Err(error) => {
                 // No native attempt exists for this operation, so nothing committed:
                 // thaw and keep the edits.
-                self.abandon(slot, record)?;
+                self.abandon(repo, layer, slot, record)?;
                 return Err(error);
             }
         };
@@ -962,7 +1058,7 @@ impl LinuxLayerRuntime {
                 // Uncertain storage errors stay frozen; the retry consults the
                 // durable native record and verifies it before adopting anything.
                 if certain(&error) {
-                    self.abandon(slot, record)?;
+                    self.abandon(repo, layer, slot, record)?;
                 }
                 return Err(error);
             }
@@ -971,6 +1067,8 @@ impl LinuxLayerRuntime {
         crate::repository::test_boundary("capture_committed");
         let changed = changes.entries().len();
         self.settle_capture(
+            repo,
+            layer,
             slot,
             record,
             true,
@@ -981,6 +1079,149 @@ impl LinuxLayerRuntime {
                 replayed: false,
             },
         )
+    }
+
+    /// Publishes the whole bound checkpoint after freezing the ordinary path.
+    /// Uncaptured file changes or empty directories require an explicit checkpoint
+    /// or cleanup first; no edits are silently omitted. A successful view stays
+    /// read-only. Completed retries return the original native receipt and never
+    /// rerun the guard. Recovery with no native receipt releases the intent without
+    /// publishing: callers must explicitly retry with their guard/policy again.
+    pub fn publish<F>(
+        &mut self,
+        repo: &mut Repository,
+        layer: &LayerId,
+        operation: &OperationId,
+        attribution: &PublishAttribution,
+        guard: F,
+    ) -> Result<PublicationReceipt>
+    where
+        F: FnOnce(&WorldVersion, &Manifest) -> Result<()>,
+    {
+        let _lock = self.lock()?;
+        let slot = slot(layer);
+        let mut record = self
+            .read_record(&slot, layer)?
+            .ok_or_else(|| Error::InvalidInput("Layer has no view".into()))?;
+        if record.pending.is_some() {
+            self.resolve(repo, layer, &slot, &mut record)?;
+            record = self
+                .read_record(&slot, layer)?
+                .ok_or_else(|| Error::InvalidInput("Layer was discarded".into()))?;
+        }
+        if let Some(receipt) = repo.publication(operation)? {
+            self.resume_view(repo, layer, &slot, &record, false)?;
+            if receipt.expected.layer() != layer || receipt.attribution != *attribution {
+                return Err(Error::OperationIdReused(operation.clone()));
+            }
+            return Ok(receipt);
+        }
+        if repo.layer_operation(operation)?.is_some() {
+            return Err(Error::OperationIdReused(operation.clone()));
+        }
+        let view = self.root.join("views").join(&slot);
+        if mount_state(&view)?.is_none() {
+            return Err(Error::InvalidInput("Layer view is not mounted".into()));
+        }
+        self.helper("freeze", &["view", &slot])?;
+        record.pending = Some(Pending {
+            operation: operation.as_str().into(),
+            action: Action::Publish,
+            candidate: None,
+            publication: None,
+        });
+        self.write_record(&slot, &record)?;
+        #[cfg(test)]
+        crate::repository::test_boundary("workspace_publish_frozen");
+        let prepared = (|| {
+            let expected = self.head(repo, layer, &record)?;
+            let (epoch, upper) = parse_upper(&self.helper("list", &["view", &slot])?)?;
+            let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
+            let snap = snapshot(&view, &upper, opened.manifest(), &mut hash_only)?;
+            let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
+            if snap.entries != *checkpoint.manifest().entries() || !snap.unrepresented.is_empty() {
+                return Err(Error::InvalidInput(
+                    "workspace has uncaptured changes; checkpoint first (remove empty directories, which checkpoints cannot represent)".into(),
+                ));
+            }
+            if self.epoch()? != epoch {
+                return Err(Error::Busy(
+                    "view changed during publication preparation".into(),
+                ));
+            }
+            Ok((expected, epoch))
+        })();
+        let (expected, epoch) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.abandon(repo, layer, &slot, &mut record)?;
+                return Err(error);
+            }
+        };
+        record.pending.as_mut().unwrap().publication =
+            Some(publication_input(&expected, attribution));
+        self.write_record(&slot, &record)?;
+        #[cfg(test)]
+        crate::repository::test_boundary("workspace_publish_prepared");
+        let mut guard_refused = false;
+        let result = repo.publish_layer(operation, &expected, attribution, |world, candidate| {
+            let checked = (|| {
+                if self.epoch()? != epoch {
+                    return Err(Error::Busy("view changed before publication".into()));
+                }
+                guard(world, candidate)?;
+                if self.epoch()? != epoch {
+                    return Err(Error::Busy("view changed in publication guard".into()));
+                }
+                Ok(())
+            })();
+            guard_refused = checked.is_err();
+            checked
+        });
+        let receipt = match result {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                // A guard refusal cannot have committed. Uncertain storage errors
+                // retain the frozen intent until publication() resolves certainty.
+                if guard_refused || certain(&error) {
+                    self.abandon(repo, layer, &slot, &mut record)?;
+                }
+                return Err(error);
+            }
+        };
+        #[cfg(test)]
+        crate::repository::test_boundary("workspace_publish_committed");
+        self.abandon(repo, layer, &slot, &mut record)?;
+        Ok(receipt)
+    }
+
+    fn resolve_publication(
+        &self,
+        repo: &Repository,
+        layer: &LayerId,
+        slot: &str,
+        record: &mut ViewRecord,
+    ) -> Result<()> {
+        let pending = record.pending.as_ref().unwrap();
+        let operation = OperationId::parse(&pending.operation)?;
+        let receipt = repo.publication(&operation)?;
+        let agrees = receipt.as_ref().is_none_or(|receipt| {
+            receipt.expected.layer() == layer
+                && pending.publication.as_ref()
+                    == Some(&publication_input(&receipt.expected, &receipt.attribution))
+        });
+        // No receipt means no native acceptance. Never invent or replay optional
+        // policy on recovery; release for an explicit caller retry instead.
+        if agrees && receipt.is_some() {
+            // A pending native receipt may need its view restored to complete
+            // recovery. Plain observation never creates a missing mount.
+            self.resume_view(repo, layer, slot, record, true)?;
+        }
+        self.abandon(repo, layer, slot, record)?;
+        if !agrees {
+            return Err(Error::OperationIdReused(operation));
+        }
+        Ok(())
     }
 
     /// Terminal native discard, then bounded removal of this view's private storage.
@@ -1001,6 +1242,7 @@ impl LinuxLayerRuntime {
             operation: operation.as_str().into(),
             action: Action::Discard,
             candidate: None,
+            publication: None,
         };
         if record
             .pending
@@ -1044,7 +1286,7 @@ impl LinuxLayerRuntime {
                 if certain(&error) {
                     record.pending = None;
                     self.write_record(slot, record)?;
-                    self.mount_view(slot, record, false)?;
+                    self.resume_view(repo, layer, slot, record, true)?;
                 }
                 return Err(error);
             }
@@ -1057,7 +1299,7 @@ impl LinuxLayerRuntime {
             LayerUpdate::Stale { .. } => {
                 record.pending = None;
                 self.write_record(slot, record)?;
-                self.mount_view(slot, record, false)?;
+                self.resume_view(repo, layer, slot, record, true)?;
             }
         }
         Ok(update)
@@ -1076,6 +1318,7 @@ impl LinuxLayerRuntime {
         let operation = OperationId::parse(&pending.operation)
             .map_err(|_| Error::CorruptRepository("invalid pending operation".into()))?;
         match pending.action {
+            Action::Publish => self.resolve_publication(repo, layer, slot, record),
             Action::Capture => self
                 .capture_frozen(repo, layer, slot, record, &operation)
                 .map(|_| ()),
@@ -1114,11 +1357,16 @@ impl LinuxLayerRuntime {
     }
 
     pub fn status(&self, repo: &Repository, layer: &LayerId) -> Result<ViewStatus> {
+        let _lock = self.lock()?;
         let slot = slot(layer);
         let record = self
             .read_record(&slot, layer)?
             .ok_or_else(|| Error::InvalidInput("Layer has no view".into()))?;
         let path = self.root.join("views").join(&slot);
+        let current = repo.layer_state(layer)?;
+        if matches!(current, LayerState::Published { .. }) {
+            self.freeze_view(&slot)?;
+        }
         let state = mount_state(&path)?;
         Ok(ViewStatus {
             path,
@@ -1127,7 +1375,7 @@ impl LinuxLayerRuntime {
             bound_revision: record.revision,
             bound_checkpoint: record.head,
             pending: record.pending.map(|p| p.operation),
-            current: repo.layer_state(layer)?,
+            current,
         })
     }
 
@@ -1174,12 +1422,22 @@ impl LinuxLayerRuntime {
             .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
         let layer = LayerId::parse(&record.layer)
             .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
-        if self::slot(&layer) != slot {
-            return Err(Error::CorruptRepository("view record slot mismatch".into()));
+        if self::slot(&layer) != slot || record.format != RECORD_FORMAT {
+            return Err(Error::CorruptRepository(
+                "view record slot/format mismatch".into(),
+            ));
         }
         if record.pending.is_some() {
-            self.resolve(repo, &layer, slot, &mut record)?;
+            if let Err(error) = self.resolve(repo, &layer, slot, &mut record)
+                && (!matches!(error, Error::LayerPublished { .. }) || record.pending.is_some())
+            {
+                return Err(error);
+            }
             report.pending_resolved += 1;
+        } else if matches!(repo.layer_state(&layer)?, LayerState::Published { .. }) {
+            if self.freeze_view(slot)? {
+                report.views_published += 1;
+            }
         } else if matches!(repo.layer_state(&layer)?, LayerState::Discarded { .. }) {
             self.helper("unmount-view", &[slot])?;
             self.helper("remove-view", &[slot])?;

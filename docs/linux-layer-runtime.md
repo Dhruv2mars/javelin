@@ -2,6 +2,9 @@
 
 ## Bounded outcome
 
+The original binding and its historical evidence are recorded first. The
+whole-Layer publication extension and its limits are described below.
+
 This unit binds native repository Layer state to ordinary Linux paths through
 sparse OverlayFS views. It is a production-library foundation, not a complete
 Layer product flow.
@@ -312,3 +315,70 @@ Verdicts: bounded Linux runtime binding VERIFIED at `8137111` on this runner ima
 and kernel. File-watch reliability INCONCLUSIVE. NOT VERIFIED: other kernels and
 distributions, the production privilege model, autosave, re-binding stale views,
 Stack and Publish, macOS/Windows bindings, Gate 2 and GA.
+
+## Whole-Layer workspace publication (October 17)
+
+Dependency: native Publish PR #23 merged into main at `dd4c915`.
+The implementation began on its exact source `f6ee9b94c462723fef9a26b4021f4cd8c962c37b`
+while it was unmerged and native CI was pending. This branch now includes merged
+main; it does not independently re-accept that native core.
+
+Done for this scoped extension means real disposable hosted Linux tests prove
+that safe workspace publication freezes before acceptance, refuses held writers
+and uncaptured edits, preserves the original native receipt across retries and
+process loss, and retains a read-only published view plus a writable clone of its
+final checkpoint. Root `TASKS.md` belongs to the hub and is unchanged.
+
+- [x] Read instructions, runtime/helper behavior and native publication boundary.
+- [x] Implement `LinuxLayerRuntime::publish` and terminal publication reconciliation.
+- [x] Compile the public caller signature and notify the hub and CLI owner.
+- [x] Add and inspect focused mounted/process publication regressions.
+- [x] Run formatting, lint, all 97 local native tests and the release build.
+- [x] Run and inspect disposable hosted Linux publication proof (run 38958858572).
+- [x] Open and T3-link regular PR #25 against main.
+- [x] Reproduce and fix published observation recreating explicitly unmounted views;
+      keep existing mounts read-only and permit pending-operation recovery.
+
+```rust
+let receipt = runtime.publish(&mut repo, &layer, &operation,
+    &PublishAttribution::Human, |_current_world, _candidate| Ok(()))?;
+```
+
+The guard has the native `FnOnce(&WorldVersion, &Manifest) -> Result<()>` signature.
+No extra policy is imposed. Before native acceptance, the runtime freezes the
+view's own superblock, reads it using the existing helper listing/epoch protocol,
+and requires exact agreement with its bound immutable checkpoint. Uncaptured
+changes refuse with `invalid_input` and a checkpoint-required message. Empty
+directories must be removed because native checkpoints cannot represent them.
+Refusal retains the private bytes and restores a writable Active view. Successful
+publication leaves the view read-only and keeps its upper and binding; it never
+replaces private bytes with the composed World or removes recoverable state.
+
+The native `publication` receipt is the acceptance authority. A pending runtime
+intent stores a digest of the exact expected head and attribution. Lost replies
+and process kills after native acceptance recover that receipt without advancing
+again or rerunning the guard. With no native receipt, recovery releases the intent
+and preserves edits; publishing requires an explicit retry so caller policy can
+run again. A completed operation retry with the same Layer and attribution returns
+its original receipt, including its original World observation, even after later
+World advancement. A changed attribution or Layer refuses operation reuse.
+
+`LayerPublished` is a definite terminal capture/discard refusal. Pending state is
+cleared and the view is read-only, rather than stranded waiting for a commit that
+cannot occur. Historical native capture/discard outcomes remain historical; a
+capture replay must never thaw a currently Published Layer. Mount can also expose
+a final published checkpoint read-only when no earlier view binding exists.
+
+Open, status and recovery freeze existing mounts when they observe native
+publication; they preserve explicitly unmounted views. Explicit mount requests
+and recovery of a pending native receipt may recreate the view read-only.
+Damaged view records are reported per view by recovery rather than blocking open;
+healthy published views are still frozen during open.
+If a writer prevents that freeze, the operation reports `busy` and preserves the
+view/upper for retry after the writer closes. **There is no continuous reconciler:**
+a direct low-level native publication in another process is not instantly enforced
+on an existing writable mount. Until a runtime call observes it, that mount can
+remain writable. Such private edits remain recoverable and are never silently
+adopted into the already accepted checkpoint. Use this safe workspace API for the
+ordinary publication path. Production privilege, other kernels and autosave remain
+outside this bounded extension.

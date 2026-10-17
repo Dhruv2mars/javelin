@@ -1,0 +1,8 @@
+info: syncing channel updates for 1.99.0-aarch64-apple-darwin
+info: latest update on 2026-10-01 for version 1.99.0 (b940084d7 2026-09-28)
+info: downloading 5 components
+
+  1.99.0-aarch64-apple-darwin installed - rustc 1.99.0 (b940084d7 2026-09-28)
+
+info: self-update is disabled for this build of rustup
+info: any updates to rustup will need to be fetched with your system package manager
