@@ -237,6 +237,10 @@ No throughput, scale, network-filesystem, or GA platform support claim is made.
 
 ## Whole-Layer publication format
 
+The current unshipped format is 4: durable Stack adds immutable source ancestry
+and exact retry bindings. Formats 1–3 are refused without rewriting. See
+[Layer Stack](layer-stack.md) for the atomic boundary and verification scope.
+
 Format 3 adds immutable publication records and receipt Blobs for the native
 whole-Layer API. Unshipped format 2 is rejected without migration or rewriting.
 Object kinds, hashes and canonical manifest/checkpoint encoding are unchanged.
