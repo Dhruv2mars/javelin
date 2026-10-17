@@ -1,0 +1,14 @@
+{
+  "verdict": "VERIFIED",
+  "lowerBytesMetadataAndInodesUnchanged": true,
+  "frozenSnapshotUnchanged": true,
+  "upperFileBytes": {
+    "lower": 8339,
+    "a-upper": 8244,
+    "b-upper": 0,
+    "c-upper": 0,
+    "a-next-upper": 24,
+    "c-next-upper": 17
+  },
+  "commands": []
+}
