@@ -345,7 +345,7 @@ fn read_snapshot(
     tracked: Option<&Manifest>,
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Snapshot> {
-    let rules = tracked.map(|_| ignore::Rules::load(root)).transpose()?;
+    let rules = tracked.map(|_| ignore::load(root)).transpose()?;
     let mut entries = BTreeMap::new();
     let mut unrepresented = Vec::new();
     let mut pending = vec![PathBuf::new()];

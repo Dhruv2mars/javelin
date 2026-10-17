@@ -37,6 +37,45 @@ fn ok(root: &Path, args: &[&str]) -> Value {
     result
 }
 
+#[cfg(target_os = "linux")]
+fn require_mount_environment() {
+    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+    assert_eq!(
+        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
+        Ok("github-hosted")
+    );
+    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
+    assert_ne!(unsafe { libc::getuid() }, 0);
+}
+
+#[cfg(target_os = "linux")]
+fn workspace_command(
+    root: &Path,
+    runtime: &str,
+    action: &str,
+    layer: Option<&str>,
+    extras: &[&str],
+    code: i32,
+) -> Value {
+    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
+    let mut args = vec![
+        "workspace",
+        action,
+        "--root",
+        runtime,
+        "--helper",
+        &helper,
+        "--json",
+    ];
+    args.extend(layer);
+    args.extend_from_slice(extras);
+    let result = value(invoke(root, &args), code);
+    if code == 0 {
+        assert_eq!(result["ok"], true);
+    }
+    result
+}
+
 fn operation(id: &str) -> OperationId {
     OperationId::parse(id).unwrap()
 }
@@ -610,25 +649,13 @@ fn binary_workspace_commands_return_unsupported_without_touching_paths() {
 #[test]
 #[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
 fn linux_cli_path_checkpoint_clone_and_recovery() {
-    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-    assert_eq!(
-        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
-        Ok("github-hosted")
-    );
-    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
-    assert_ne!(unsafe { libc::getuid() }, 0);
+    require_mount_environment();
     let root = TempDir::new().unwrap();
     let runtime = std::env::var("JAVELIN_CLI_RUNTIME").unwrap();
     let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
     let workspace = |action: &str, layer: Option<&str>, op: Option<&str>| {
-        let mut args = vec!["workspace", action, "--root", &runtime, "--helper", &helper];
-        if let Some(layer) = layer {
-            args.push(layer);
-        }
-        if let Some(op) = op {
-            args.extend(["--operation", op]);
-        }
-        ok(root.path(), &args)
+        let extras = op.map_or_else(Vec::new, |op| vec!["--operation", op]);
+        workspace_command(root.path(), &runtime, action, layer, &extras, 0)
     };
     ok(root.path(), &["init"]);
     ok(root.path(), &["layer", "create", "source"]);
@@ -776,31 +803,11 @@ fn linux_cli_path_checkpoint_clone_and_recovery() {
 #[test]
 #[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
 fn linux_cli_whole_layer_publish() {
-    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-    assert_eq!(
-        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
-        Ok("github-hosted")
-    );
-    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
-    assert_ne!(unsafe { libc::getuid() }, 0);
+    require_mount_environment();
     let root = TempDir::new().unwrap();
     let runtime = format!("{}-publish", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
-    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
     let call = |action: &str, layer: Option<&str>, extras: &[&str], code| {
-        let mut args = vec![
-            "workspace",
-            action,
-            "--root",
-            &runtime,
-            "--helper",
-            &helper,
-            "--json",
-        ];
-        if let Some(layer) = layer {
-            args.push(layer);
-        }
-        args.extend_from_slice(extras);
-        value(invoke(root.path(), &args), code)
+        workspace_command(root.path(), &runtime, action, layer, extras, code)
     };
     ok(root.path(), &["init"]);
     for layer in ["work", "competing", "agent"] {
@@ -1352,31 +1359,11 @@ fn binary_stack_and_rebind_require_explicit_inputs_before_opening_repository() {
 #[test]
 #[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
 fn linux_cli_stack_rebind_tools_checkpoint_publish() {
-    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-    assert_eq!(
-        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
-        Ok("github-hosted")
-    );
-    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
-    assert_ne!(unsafe { libc::getuid() }, 0);
+    require_mount_environment();
     let (root, repo) = stack_fixture();
     let runtime = format!("{}-stack", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
-    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
     let call = |action: &str, layer: Option<&str>, extras: &[&str], code| {
-        let mut args = vec![
-            "workspace",
-            action,
-            "--root",
-            &runtime,
-            "--helper",
-            &helper,
-            "--json",
-        ];
-        if let Some(layer) = layer {
-            args.push(layer);
-        }
-        args.extend_from_slice(extras);
-        value(invoke(root.path(), &args), code)
+        workspace_command(root.path(), &runtime, action, layer, extras, code)
     };
     call("init", None, &[], 0);
     let target = call("mount", Some("target"), &[], 0);
@@ -1599,21 +1586,12 @@ fn binary_watch_rejects_invalid_timing_and_mutation_options() {
 #[test]
 #[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
 fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
-    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-    assert_eq!(
-        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
-        Ok("github-hosted")
-    );
-    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
-    assert_ne!(unsafe { libc::getuid() }, 0);
+    require_mount_environment();
     let root = TempDir::new().unwrap();
     let runtime = format!("{}-watch", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
     let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
-    let workspace = |action, extra: &[&str]| {
-        let mut args = vec!["workspace", action, "--root", &runtime, "--helper", &helper];
-        args.extend_from_slice(extra);
-        ok(root.path(), &args)
-    };
+    let workspace =
+        |action, extra: &[&str]| workspace_command(root.path(), &runtime, action, None, extra, 0);
     ok(root.path(), &["init"]);
     ok(root.path(), &["layer", "create", "watched"]);
     workspace("init", &[]);

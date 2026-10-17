@@ -3011,19 +3011,20 @@ fn published_observation_preserves_explicitly_unmounted_views() {
     );
 }
 
+fn watch(s: &mut Setup) -> Result<u64> {
+    s.rt.watch(
+        &mut s.repo,
+        &s.layer,
+        Duration::from_millis(250),
+        Some(Duration::from_millis(800)),
+    )
+}
+
 #[test]
 #[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
 fn foreground_watch_stability_busy_and_terminal_stops() {
     let env = env();
     let mut s = setup(&env, "watch-flow");
-    let watch = |s: &mut Setup| {
-        s.rt.watch(
-            &mut s.repo,
-            &s.layer,
-            Duration::from_millis(250),
-            Some(Duration::from_millis(800)),
-        )
-    };
     let history = s.repo.layer_history(&s.layer).unwrap();
     assert_eq!(watch(&mut s).unwrap(), 0);
     assert_eq!(s.repo.layer_history(&s.layer).unwrap(), history);
@@ -3315,15 +3316,6 @@ fn foreground_watch_restarts_same_pending_operation_without_duplicate() {
 fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
     let env = env();
     let mut s = setup(&env, "ignore-flow");
-    let watch = |s: &mut Setup| {
-        s.rt.watch(
-            &mut s.repo,
-            &s.layer,
-            Duration::from_millis(250),
-            Some(Duration::from_millis(800)),
-        )
-        .unwrap()
-    };
     fs::create_dir_all(s.view.join("build/nested")).unwrap();
     fs::write(s.view.join("build/tracked"), b"initial").unwrap();
     s.rt.capture(&mut s.repo, &s.layer, &op("ignore-initial"))
@@ -3357,7 +3349,7 @@ fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
     fs::remove_file(s.view.join("inside-link")).unwrap();
     std::os::unix::fs::symlink("ordinary", s.view.join("inside-link")).unwrap();
     fs::remove_file(s.view.join("delete.txt")).unwrap();
-    assert_eq!(watch(&mut s), 1);
+    assert_eq!(watch(&mut s).unwrap(), 1);
     let head = active(&s.repo, &s.layer);
     let checkpoint = s.repo.read_checkpoint(head.checkpoint()).unwrap();
     let entries = checkpoint.manifest().entries();
@@ -3387,13 +3379,13 @@ fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
     s.rt.unmount_checkpoint(&s.repo, head.checkpoint()).unwrap();
     // Ignored-only writes never make watch grow history.
     fs::write(s.view.join("build/nested/private"), b"private changed").unwrap();
-    assert_eq!(watch(&mut s), 0);
+    assert_eq!(watch(&mut s).unwrap(), 0);
     assert_eq!(active(&s.repo, &s.layer), head);
     // Explicit checkpoint also keeps ignored bytes outside the native graph.
     s.rt.capture(&mut s.repo, &s.layer, &op("ignore-explicit"))
         .unwrap();
     fs::remove_file(s.view.join("build/tracked")).unwrap();
-    assert_eq!(watch(&mut s), 1);
+    assert_eq!(watch(&mut s).unwrap(), 1);
     assert!(
         !s.repo
             .read_checkpoint(active(&s.repo, &s.layer).checkpoint())

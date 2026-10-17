@@ -165,13 +165,14 @@ Code: src/linux_layer.rs, crates/javelin-merge/src/resources.rs, crates/javelin-
 
 ## Unverified
 
-Claims from the removed narrative docs (named below) that were not traced in code:
+Claims from the removed narrative docs (linked to their pre-removal versions below)
+that were not traced in code:
 
-- `docs/review-permission-model.md`: a `(repository, request)` store. Not traced in code.
-- `docs/layer-checkpoints.md`: checkpoints stored under the `Checkpoint` object kind. Not traced end to end.
-- `docs/native-repository.md`: scope of `Repository::check`. Not traced.
-- `docs/native-repository.md`: `fullfsync` behavior on Apple platforms. Platform behavior, not verified in code or by running it.
-- `docs/layer-publish.md`: that the World advance and receipt write share one transaction. Not traced.
-- `docs/bounded-mechanical-merge.md`: exact failure outcome when a merge limit is exceeded. Not traced.
-- `docs/layer-publish.md`: the exact trace check behind `missing_agent_trace`. Not traced.
-- `docs/layer-stack.md`: the blob load order inside `stack_layer`. Not traced.
+- [docs/review-permission-model.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/review-permission-model.md): a `(repository, request)` store. Not traced in code.
+- [docs/layer-checkpoints.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/layer-checkpoints.md): checkpoints stored under the `Checkpoint` object kind. Not traced end to end.
+- [docs/native-repository.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/native-repository.md): scope of `Repository::check`. Not traced.
+- [docs/native-repository.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/native-repository.md): `fullfsync` behavior on Apple platforms. Platform behavior, not verified in code or by running it.
+- [docs/layer-publish.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/layer-publish.md): that the World advance and receipt write share one transaction. Not traced.
+- [docs/bounded-mechanical-merge.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/bounded-mechanical-merge.md): exact failure outcome when a merge limit is exceeded. Not traced.
+- [docs/layer-publish.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/layer-publish.md): the exact trace check behind `missing_agent_trace`. Not traced.
+- [docs/layer-stack.md](https://github.com/Dhruv2mars/javelin/blob/476b92d/docs/layer-stack.md): the blob load order inside `stack_layer`. Not traced.

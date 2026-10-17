@@ -244,8 +244,8 @@ Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope
 All reviews below are read-only Claude Opus 5.5 (medium effort) passes. Every
 finding after the first round was reproduced on hosted Linux against unchanged
 production source before it was fixed (the round-one race repro adds only a
-`#[cfg(test)]` boundary). Raw repro files are kept under
-`tools/linux-layer-runtime/evidence/repro-run*`.
+`#[cfg(test)]` boundary). The linked Actions runs below record those repros.
+The committed evidence copies were removed in PR #37.
 
 - Round 1 (`34f6312`): six findings, fixed or documented in `4c9b894..93f9eaa`.
   The hub held `93f9eaa`; its "fixed" claims for the list race and frozen
@@ -350,9 +350,11 @@ let receipt = runtime.publish(&mut repo, &layer, &operation,
 The guard has the native `FnOnce(&WorldVersion, &Manifest) -> Result<()>` signature.
 No extra policy is imposed. Before native acceptance, the runtime freezes the
 view's own superblock, reads it using the existing helper listing/epoch protocol,
-and requires exact agreement with its bound immutable checkpoint. Uncaptured
-changes refuse with `invalid_input` and a checkpoint-required message. Empty
-directories must be removed because native checkpoints cannot represent them.
+and requires exact agreement of the effective capture tree with its bound
+immutable checkpoint. Uncaptured tracked/nonignored changes refuse with
+`invalid_input` and a checkpoint-required message. Nonignored empty directories
+must be removed because native checkpoints cannot represent them. Ignored
+untracked artifacts remain private, as described under ignore-aware discovery.
 Refusal retains the private bytes and restores a writable Active view. Successful
 publication leaves the view read-only and keeps its upper and binding; it never
 replaces private bytes with the composed World or removes recoverable state.
@@ -505,6 +507,12 @@ user's behalf. Performance and large-tree bounds beyond existing limits remain
 unverified. Discovery uses the root ignore rules described below.
 
 ## Ignore-aware discovery
+
+The shared `javelin::IgnoreRules` API parses rule text and answers `ignored(path)`
+without filesystem access or a platform backend. Clone-backed Layers and
+daemonless stat-cache scans can use the same matcher, preserving tracked paths
+and traversing their ancestors even when a rule matches. File loading and
+OverlayFS validation remain in the Linux runtime adapter.
 
 Linux workspace checkpoint, foreground watch and Publish read the root
 `.javelinignore` from the workspace view. Each nonempty line is a literal,
