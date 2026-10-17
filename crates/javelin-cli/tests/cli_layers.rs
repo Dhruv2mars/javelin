@@ -1619,6 +1619,9 @@ fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
     workspace("init", &[]);
     let mounted = workspace("mount", &["watched"]);
     let mounted = Path::new(mounted["path"].as_str().unwrap());
+    std::fs::write(mounted.join(".javelinignore"), "build/\n").unwrap();
+    std::fs::create_dir_all(mounted.join("build/nested")).unwrap();
+    std::fs::write(mounted.join("build/nested/private"), b"private output").unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(root.path())
         .args([
@@ -1639,11 +1642,34 @@ fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let tools = Command::new("sh").current_dir(mounted).args(["-eu", "-c", "printf 'int main(void) { return 0; }\\n' > main.c; cc main.c -o app; ./app; rm app; printf 'one\\n' > tmp; mv tmp saved; ln -s saved link; chmod +x main.c"]).output().unwrap();
+    let tools = Command::new("sh").current_dir(mounted).args(["-eu", "-c", "printf 'int main(void) { return 0; }\\n' > main.c; cc main.c -o build/app; ./build/app; printf 'one\\n' > tmp; mv tmp saved; ln -s saved link; chmod +x main.c"]).output().unwrap();
     assert!(tools.status.success(), "{tools:?}");
     let result = child.wait_with_output().unwrap();
     let result = value(result, 0);
     assert_eq!(result["captures"], 1);
+    workspace("checkpoint", &["watched", "--operation", "ignore-explicit"]);
+    let repo = Repository::open(root.path()).unwrap();
+    let LayerState::Active { head } = repo
+        .layer_state(&LayerId::parse("watched").unwrap())
+        .unwrap()
+    else {
+        panic!("active")
+    };
+    let checkpoint = repo.read_checkpoint(head.checkpoint()).unwrap();
+    assert!(
+        checkpoint
+            .manifest()
+            .entries()
+            .contains_key(&path("main.c"))
+    );
+    assert!(
+        !checkpoint
+            .manifest()
+            .entries()
+            .keys()
+            .any(|p| p.as_str().starts_with("build/"))
+    );
+    std::fs::write(mounted.join("build/nested/private"), b"new private output").unwrap();
     let history = ok(root.path(), &["layer", "history", "watched"]);
     assert_eq!(
         workspace(
@@ -1682,6 +1708,11 @@ fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
         1,
     );
     assert_eq!(result["error"]["code"], "layer_published");
+    assert_eq!(
+        std::fs::read(mounted.join("build/nested/private")).unwrap(),
+        b"new private output"
+    );
+    assert!(std::fs::write(mounted.join("build/nested/private"), b"read-only").is_err());
     assert!(std::fs::write(mounted.join("forbidden"), b"read-only").is_err());
     workspace("unmount", &["watched"]);
     ok(root.path(), &["check"]);
