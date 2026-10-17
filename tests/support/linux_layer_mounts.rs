@@ -676,6 +676,16 @@ fn runtime_actor() {
                 |_, _| Ok(()),
             )
         ),
+        "rebind" => {
+            let status = rt.status(&repo, &layer).unwrap();
+            let expected =
+                match &repo.layer_history(&layer).unwrap()[status.bound_revision as usize] {
+                    LayerState::Active { head } => head.clone(),
+                    _ => panic!("bound head must be active"),
+                };
+            let desired = active(&repo, &layer);
+            format!("{:?}", rt.rebind(&mut repo, &expected, &desired))
+        }
         "native_publish" => {
             let head = active(&repo, &layer);
             format!(
@@ -1094,6 +1104,461 @@ fn publication_writer(view: &Path) -> Actor {
     let mut writer = Actor::start(command);
     writer.marker("READY");
     writer
+}
+
+/// A deliberately disjoint prepared fixture, committed through the public native
+/// Stack storage API. No adapter dependency or merge algorithm lives in this test.
+fn stacked(s: &mut Setup) -> (LayerHead, LayerHead, LayerHead) {
+    fs::write(s.view.join("owned.txt"), b"target checkpoint bytes\n").unwrap();
+    let old = applied(
+        &s.rt
+            .capture(&mut s.repo, &s.layer, &op("rebind-old"))
+            .unwrap()
+            .update,
+    );
+    let source = id("source");
+    let base = s.repo.layer_base(VersionNumber::new(1).unwrap()).unwrap();
+    s.repo.create_layer(&source, &base).unwrap();
+    let blob = s.repo.put_blob(b"#define VALUE 42\n").unwrap();
+    let source_changes = SparseChanges::new([
+        (
+            RepoPath::parse("value.h").unwrap(),
+            Some(FileEntry::Regular {
+                content: blob,
+                executable: false,
+            }),
+        ),
+        (RepoPath::parse("delete.txt").unwrap(), None),
+    ])
+    .unwrap();
+    let source_head = applied(
+        &s.repo
+            .capture_layer(
+                &op("rebind-source"),
+                &active(&s.repo, &source),
+                &source_changes,
+            )
+            .unwrap(),
+    );
+    let mut entries = s
+        .repo
+        .read_checkpoint(old.checkpoint())
+        .unwrap()
+        .changes()
+        .entries()
+        .clone();
+    entries.extend(source_changes.entries().clone());
+    let desired = applied(
+        &s.repo
+            .commit_stack(
+                &op("rebind-stack"),
+                &old,
+                source_head.checkpoint(),
+                &SparseChanges::new(entries).unwrap(),
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        s.repo
+            .read_checkpoint(desired.checkpoint())
+            .unwrap()
+            .stack_sources(),
+        &[source_head.checkpoint()]
+    );
+    (old, desired, source_head)
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn stack_rebind_tools_checkpoint_and_publish() {
+    let env = env();
+    let mut s = setup(&env, "rebind-flow");
+    let (old, desired, source) = stacked(&mut s);
+    let world = s.repo.history().unwrap();
+    let sibling = s.rt.mount(&mut s.repo, source.layer()).unwrap();
+    let sibling_tree = tree(&sibling);
+    let sibling_history = s.repo.layer_history(source.layer()).unwrap();
+    let old_checkpoint = s.repo.read_checkpoint(old.checkpoint()).unwrap();
+    assert_eq!(
+        fs::read(s.view.join("value.h")).unwrap(),
+        b"#define VALUE 7\n"
+    );
+    s.rt.rebind(&mut s.repo, &old, &desired).unwrap();
+    let status = s.rt.status(&s.repo, &s.layer).unwrap();
+    assert!(status.mounted && !status.frozen && status.pending.is_none());
+    assert_eq!(status.bound_revision, desired.revision());
+    assert_eq!(
+        fs::read(s.view.join("value.h")).unwrap(),
+        b"#define VALUE 42\n"
+    );
+    assert!(!s.view.join("delete.txt").exists());
+    assert_eq!(
+        fs::read(s.view.join("owned.txt")).unwrap(),
+        b"target checkpoint bytes\n"
+    );
+    assert_eq!(s.repo.history().unwrap(), world);
+    assert_eq!(
+        s.repo.layer_history(source.layer()).unwrap(),
+        sibling_history
+    );
+    assert_eq!(tree(&sibling), sibling_tree);
+    assert_eq!(
+        s.repo.read_checkpoint(old.checkpoint()).unwrap().manifest(),
+        old_checkpoint.manifest()
+    );
+    let inv = inventory(&env, &s.root, "rebind-flow-inventory");
+    assert!(inv["stages"].as_array().unwrap().is_empty());
+    let mut log = Vec::new();
+    assert_eq!(
+        sh(
+            &s.view,
+            "cc main.c -o app && ./app && rm app && printf 'tool edit\\n' > tool.txt",
+            &mut log
+        ),
+        "42\n"
+    );
+    // Exact completed retry preserves later private work.
+    let edited = tree(&s.view);
+    s.rt.rebind(&mut s.repo, &old, &desired).unwrap();
+    assert_eq!(tree(&s.view), edited);
+    let captured = applied(
+        &s.rt
+            .capture(&mut s.repo, &s.layer, &op("rebind-tool-capture"))
+            .unwrap()
+            .update,
+    );
+    assert!(captured.revision() > desired.revision());
+    let receipt =
+        s.rt.publish(
+            &mut s.repo,
+            &s.layer,
+            &op("rebind-publish"),
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(published(&receipt).number.get(), 2);
+    let manifest = s.repo.read_manifest(published(&receipt).manifest).unwrap();
+    assert_eq!(
+        s.repo
+            .read_blob(manifest.entries()[&RepoPath::parse("tool.txt").unwrap()].content())
+            .unwrap(),
+        b"tool edit\n"
+    );
+    assert!(s.rt.rebind(&mut s.repo, &old, &desired).is_err());
+    assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    s.repo.check().unwrap();
+    save(
+        &env,
+        "rebind-flow",
+        &json!({"verdict":"VERIFIED", "old":old, "desired":desired, "capture":captured, "publication":receipt, "commands":log}),
+    );
+    s.rt.unmount(&s.layer).unwrap();
+    s.rt.unmount(source.layer()).unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn rebind_refuses_edits_writers_mappings_and_wrong_heads() {
+    let env = env();
+    let mut s = setup(&env, "rebind-refusals");
+    let (old, desired, source) = stacked(&mut s);
+    let before = tree(&s.view);
+    let history = s.repo.layer_history(&s.layer).unwrap();
+    let foreign_dir = TempDir::new().unwrap();
+    let mut foreign = Repository::init(foreign_dir.path()).unwrap();
+    let base = foreign.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+    let foreign_head = foreign.create_layer(&s.layer, &base).unwrap();
+    assert!(s.rt.rebind(&mut s.repo, &foreign_head, &desired).is_err());
+    assert!(s.rt.rebind(&mut s.repo, &old, &foreign_head).is_err());
+    assert!(
+        s.rt.rebind(&mut foreign, &foreign_head, &foreign_head)
+            .is_err()
+    );
+    assert!(s.rt.rebind(&mut s.repo, &source, &desired).is_err());
+    assert!(s.rt.rebind(&mut s.repo, &old, &source).is_err());
+    assert!(s.rt.rebind(&mut s.repo, &desired, &desired).is_err());
+    assert!(s.rt.rebind(&mut s.repo, &old, &old).is_err());
+    let writer = publication_writer(&s.view);
+    let result = s.rt.rebind(&mut s.repo, &old, &desired);
+    assert!(matches!(result, Err(Error::Busy(_))), "{result:?}");
+    assert_eq!(writer.release(), "written");
+    assert_eq!(
+        fs::read(s.view.join("README.txt")).unwrap(),
+        b"shared base text\nwriter bytes\n"
+    );
+    let edits = tree(&s.view);
+    for unmounted in [false, true] {
+        if unmounted {
+            s.rt.unmount(&s.layer).unwrap();
+        }
+        let result = s.rt.rebind(&mut s.repo, &old, &desired);
+        assert!(matches!(result, Err(Error::InvalidInput(_))), "{result:?}");
+        assert_eq!(s.rt.status(&s.repo, &s.layer).unwrap().mounted, !unmounted);
+        s.rt.mount(&mut s.repo, &s.layer).unwrap();
+        assert_eq!(tree(&s.view), edits);
+    }
+    fs::write(s.view.join("README.txt"), b"shared base text\n").unwrap();
+    assert_eq!(tree(&s.view), before);
+    let mut command = Command::new("python3");
+    command.args(["-I", "-c", "import mmap,sys\nf=open('README.txt','r+b')\nm=mmap.mmap(f.fileno(),0)\nf.close()\nprint('ready',flush=True)\nsys.stdin.readline()\nm[0:1]=b'S'\nm.flush()\nprint('RESULT written',flush=True)"]).current_dir(&s.view);
+    let mut mapper = Actor::start(command);
+    mapper.marker("ready");
+    let result = s.rt.rebind(&mut s.repo, &old, &desired);
+    assert!(matches!(result, Err(Error::Busy(_))), "{result:?}");
+    assert_eq!(mapper.release(), "written");
+    assert_eq!(
+        fs::read(s.view.join("README.txt")).unwrap(),
+        b"Shared base text\n"
+    );
+    fs::write(s.view.join("README.txt"), b"shared base text\n").unwrap();
+    assert_eq!(
+        s.rt.status(&s.repo, &s.layer).unwrap().bound_revision,
+        old.revision()
+    );
+    assert_eq!(tree(&s.view), before);
+    assert_eq!(s.repo.layer_history(&s.layer).unwrap(), history);
+    s.rt.unmount(&s.layer).unwrap();
+    s.rt.rebind(&mut s.repo, &old, &desired).unwrap();
+    assert!(!s.rt.status(&s.repo, &s.layer).unwrap().mounted);
+    assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    assert!(!s.rt.status(&s.repo, &s.layer).unwrap().mounted);
+    s.rt.mount(&mut s.repo, &s.layer).unwrap();
+    assert_eq!(
+        fs::read(s.view.join("value.h")).unwrap(),
+        b"#define VALUE 42\n"
+    );
+    s.rt.unmount(&s.layer).unwrap();
+    let current = active(&s.repo, &s.layer);
+    s.repo
+        .discard_layer(&op("rebind-discard"), &current)
+        .unwrap();
+    assert!(s.rt.rebind(&mut s.repo, &old, &desired).is_err());
+    s.rt.recover(&mut s.repo).unwrap();
+    save(
+        &env,
+        "rebind-refusals",
+        &json!({"verdict":"VERIFIED", "writer":"busy", "mapping":"busy", "uncaptured":"retained", "unmounted":"preserved", "integrity":s.repo.check().unwrap()}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn rebind_process_loss_preserves_old_or_selects_exact_new_checkpoint() {
+    let env = env();
+    let mut cases = Vec::new();
+    for mounted in [false, true] {
+        for (index, boundary) in [
+            "cache_staged",
+            "rebind_frozen",
+            "rebind_validated",
+            "rebind_prepared",
+            "rebind_removed",
+            "rebind_selected",
+            "rebind_complete",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut s = setup(&env, &format!("rebind-kill-{}-{index}", u8::from(mounted)));
+            let (old, desired, source) = stacked(&mut s);
+            let before = tree(&s.view);
+            let world = s.repo.history().unwrap();
+            let source_history = s.repo.layer_history(source.layer()).unwrap();
+            if !mounted {
+                s.rt.unmount(&s.layer).unwrap();
+            }
+            let mut actor = Actor::spawn(
+                &env,
+                s.repo_dir.path(),
+                &s.root,
+                "rebind",
+                s.layer.as_str(),
+                "rebind",
+                boundary,
+            );
+            actor.marker(&format!("BOUNDARY {boundary}"));
+            let busy = s.rt.recover(&mut s.repo);
+            assert!(
+                matches!(busy, Err(Error::Busy(_))),
+                "runtime lock was not held: {busy:?}"
+            );
+            actor.kill();
+            s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            let recovered = s.rt.recover(&mut s.repo).unwrap();
+            assert!(recovered.failures.is_empty(), "{recovered:?}");
+            let selected = index >= 3;
+            let status = s.rt.status(&s.repo, &s.layer).unwrap();
+            assert!(status.pending.is_none());
+            assert_eq!(status.mounted, mounted, "mount state at {boundary}");
+            assert_eq!(
+                status.bound_revision,
+                if selected {
+                    desired.revision()
+                } else {
+                    old.revision()
+                }
+            );
+            s.rt.mount(&mut s.repo, &s.layer).unwrap();
+            if selected {
+                assert_eq!(
+                    fs::read(s.view.join("value.h")).unwrap(),
+                    b"#define VALUE 42\n"
+                );
+                assert!(!s.view.join("delete.txt").exists());
+                // New bytes after recovery must survive both recover and exact retry.
+                fs::write(s.view.join("after-recovery.txt"), b"retained\n").unwrap();
+            } else {
+                assert_eq!(tree(&s.view), before);
+            }
+            s.rt.rebind(&mut s.repo, &old, &desired).unwrap();
+            let expected_tree = tree(&s.view);
+            assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+            assert_eq!(tree(&s.view), expected_tree);
+            assert_eq!(s.repo.history().unwrap(), world);
+            assert_eq!(active(&s.repo, &s.layer), desired);
+            assert_eq!(
+                s.repo.layer_history(source.layer()).unwrap(),
+                source_history
+            );
+            let old_view = s.rt.mount_checkpoint(&s.repo, old.checkpoint()).unwrap();
+            assert_eq!(tree(&old_view), before);
+            s.rt.unmount_checkpoint(&s.repo, old.checkpoint()).unwrap();
+            let inv = inventory(
+                &env,
+                &s.root,
+                &format!("rebind-kill-{}-{index}-inventory", u8::from(mounted)),
+            );
+            assert!(inv["stages"].as_array().unwrap().is_empty());
+            cases.push(json!({"boundary":boundary,"originalMounted":mounted,"selectedNew":selected,"recovery":recovered,"integrity":s.repo.check().unwrap()}));
+            s.rt.unmount(&s.layer).unwrap();
+        }
+    }
+    save(
+        &env,
+        "rebind-recovery",
+        &json!({"verdict":"VERIFIED","cases":cases}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn rebind_refuses_head_race_and_helper_epoch_change() {
+    let env = env();
+    let mut cases = Vec::new();
+    for native in [false, true] {
+        let mut s = setup(
+            &env,
+            if native {
+                "rebind-head-race"
+            } else {
+                "rebind-epoch-race"
+            },
+        );
+        let (old, desired, _) = stacked(&mut s);
+        let before = tree(&s.view);
+        let mut actor = Actor::spawn(
+            &env,
+            s.repo_dir.path(),
+            &s.root,
+            "rebind",
+            s.layer.as_str(),
+            "rebind",
+            "rebind_validated",
+        );
+        actor.marker("BOUNDARY rebind_validated");
+        if native {
+            let changes = s
+                .repo
+                .read_checkpoint(desired.checkpoint())
+                .unwrap()
+                .changes()
+                .clone();
+            applied(
+                &s.repo
+                    .capture_layer(&op("rebind-raced-head"), &desired, &changes)
+                    .unwrap(),
+            );
+        } else {
+            assert!(
+                direct(
+                    &env,
+                    &["thaw", s.root.to_str().unwrap(), "view", &slot(&s.layer)]
+                )
+                .status
+                .success()
+            );
+            fs::write(s.view.join("raced.txt"), b"keep race bytes\n").unwrap();
+        }
+        let result = actor.release();
+        assert!(
+            result.starts_with(if native {
+                "Err(InvalidInput"
+            } else {
+                "Err(Busy"
+            }),
+            "{result}"
+        );
+        assert_eq!(
+            s.rt.status(&s.repo, &s.layer).unwrap().bound_revision,
+            old.revision()
+        );
+        assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+        if native {
+            assert_eq!(tree(&s.view), before);
+        } else {
+            assert_eq!(
+                fs::read(s.view.join("raced.txt")).unwrap(),
+                b"keep race bytes\n"
+            );
+        }
+        cases.push(json!({"nativeHeadRace":native,"result":result}));
+        s.rt.unmount(&s.layer).unwrap();
+    }
+    // After the durable intent, a later native advance does not retarget recovery.
+    let mut s = setup(&env, "rebind-later-head");
+    let (old, desired, _) = stacked(&mut s);
+    let mut actor = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "rebind",
+        s.layer.as_str(),
+        "rebind",
+        "rebind_prepared",
+    );
+    actor.marker("BOUNDARY rebind_prepared");
+    let changes = s
+        .repo
+        .read_checkpoint(desired.checkpoint())
+        .unwrap()
+        .changes()
+        .clone();
+    let later = applied(
+        &s.repo
+            .capture_layer(&op("rebind-later-head"), &desired, &changes)
+            .unwrap(),
+    );
+    actor.kill();
+    assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    assert_eq!(
+        s.rt.status(&s.repo, &s.layer).unwrap().bound_revision,
+        desired.revision()
+    );
+    assert_eq!(active(&s.repo, &s.layer), later);
+    assert!(s.rt.rebind(&mut s.repo, &old, &desired).is_err());
+    assert!(matches!(
+        s.rt.capture(&mut s.repo, &s.layer, &op("rebind-stale-capture"))
+            .unwrap()
+            .update,
+        LayerUpdate::Stale { .. }
+    ));
+    s.rt.unmount(&s.layer).unwrap();
+    save(
+        &env,
+        "rebind-races",
+        &json!({"verdict":"VERIFIED", "refusals":cases, "selected":desired, "laterNative":later}),
+    );
 }
 
 /// Check actual filesystem refusals, including namespace changes and truncation.

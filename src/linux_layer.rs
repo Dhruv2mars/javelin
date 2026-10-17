@@ -179,6 +179,51 @@ struct ViewRecord {
     revision: u64,
     head: String,
     pending: Option<Pending>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rebind: Option<Rebind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rebind {
+    expected: BoundHead,
+    desired: BoundHead,
+    lowers: Vec<String>,
+    mounted: bool,
+    phase: RebindPhase,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundHead {
+    revision: u64,
+    checkpoint: String,
+}
+
+impl From<&LayerHead> for BoundHead {
+    fn from(head: &LayerHead) -> Self {
+        Self {
+            revision: head.revision(),
+            checkpoint: head.checkpoint().object().to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RebindPhase {
+    Validating,
+    Prepared,
+    Selected,
+    Complete,
+}
+
+impl ViewRecord {
+    fn rebinding(&self) -> bool {
+        self.rebind
+            .as_ref()
+            .is_some_and(|r| r.phase != RebindPhase::Complete)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -732,7 +777,7 @@ impl LinuxLayerRuntime {
         let path = self.root.join("views").join(&slot);
         let record = match self.read_record(&slot, layer)? {
             Some(mut record) => {
-                if record.pending.is_some() {
+                if record.pending.is_some() || record.rebinding() {
                     self.resolve(repo, layer, &slot, &mut record)?;
                     if self.read_record(&slot, layer)?.is_none() {
                         return Err(Error::InvalidInput("Layer was discarded".into()));
@@ -757,6 +802,7 @@ impl LinuxLayerRuntime {
                     revision: head.revision(),
                     head: checkpoint,
                     pending: None,
+                    rebind: None,
                 };
                 self.write_record(&slot, &record)?;
                 record
@@ -771,12 +817,185 @@ impl LinuxLayerRuntime {
         Ok(path)
     }
 
+    /// Explicitly selects the current Active checkpoint after a native head advance.
+    /// Both heads must be exact tokens of the same Layer. Uncaptured edits and
+    /// held writers refuse without replacing the old view. An unmounted view is
+    /// mounted read-only only for validation, then remains unmounted.
+    ///
+    /// The durable local intent is the selection boundary; subsequent native
+    /// advances do not retarget it. Recovery finishes that immutable selection.
+    /// A completed exact retry is a no-op, including after new private edits.
+    pub fn rebind(
+        &mut self,
+        repo: &mut Repository,
+        expected: &LayerHead,
+        desired: &LayerHead,
+    ) -> Result<()> {
+        let _lock = self.lock()?;
+        if repo.repository_identity()? != self.repository {
+            return Err(Error::InvalidInput(
+                "runtime is bound to another repository".into(),
+            ));
+        }
+        let layer = expected.layer();
+        if desired.layer() != layer {
+            return Err(Error::InvalidInput(
+                "rebind heads belong to different Layers".into(),
+            ));
+        }
+        let slot = slot(layer);
+        let mut record = self
+            .read_record(&slot, layer)?
+            .ok_or_else(|| Error::InvalidInput("Layer has no view".into()))?;
+        if record.pending.is_some() || record.rebinding() {
+            self.resolve(repo, layer, &slot, &mut record)?;
+            record = self
+                .read_record(&slot, layer)?
+                .ok_or_else(|| Error::InvalidInput("Layer was discarded".into()))?;
+        }
+        self.require_active(repo, desired)?;
+        let mut old = record.clone();
+        old.revision = expected.revision();
+        old.head = expected.checkpoint().object().to_string();
+        if self.head(repo, layer, &old)? != *expected {
+            return Err(Error::InvalidInput("invalid old rebind head".into()));
+        }
+        if record.rebind.as_ref().is_some_and(|r| {
+            r.phase == RebindPhase::Complete
+                && r.expected == BoundHead::from(expected)
+                && r.desired == BoundHead::from(desired)
+        }) && self.head(repo, layer, &record)? == *desired
+        {
+            return Ok(());
+        }
+        if self.head(repo, layer, &record)? != *expected
+            || desired.revision() <= expected.revision()
+        {
+            return Err(Error::InvalidInput(
+                "rebind requires the exact old view and a newer head".into(),
+            ));
+        }
+        let lowers = self.ensure_caches(repo, desired.checkpoint())?;
+        let mounted = mount_state(&self.view_path(layer))?.is_some();
+        record.rebind = Some(Rebind {
+            expected: expected.into(),
+            desired: desired.into(),
+            lowers,
+            mounted,
+            phase: RebindPhase::Validating,
+        });
+        self.write_record(&slot, &record)?;
+        let prepared = (|| {
+            self.mount_view(&slot, &record, true)?;
+            self.freeze_view(&slot)?;
+            #[cfg(test)]
+            crate::repository::test_boundary("rebind_frozen");
+            let (epoch, upper) = parse_upper(&self.helper("list", &["view", &slot])?)?;
+            let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
+            let snap = snapshot(
+                &self.view_path(layer),
+                &upper,
+                opened.manifest(),
+                &mut hash_only,
+            )?;
+            let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
+            if snap.entries != *checkpoint.manifest().entries() || !snap.unrepresented.is_empty() {
+                return Err(Error::InvalidInput(
+                    "workspace has uncaptured changes; checkpoint before rebinding".into(),
+                ));
+            }
+            if self.epoch()? != epoch {
+                return Err(Error::Busy("view changed during rebind validation".into()));
+            }
+            #[cfg(test)]
+            crate::repository::test_boundary("rebind_validated");
+            self.require_active(repo, desired)?;
+            if self.epoch()? != epoch {
+                return Err(Error::Busy("view changed before rebind selection".into()));
+            }
+            self.helper("unmount-view", &[&slot])?;
+            Ok(())
+        })();
+        match prepared {
+            Ok(()) => (),
+            Err(error) => {
+                self.finish_rebind(repo, layer, &slot, &mut record)?;
+                return Err(error);
+            }
+        };
+        record.rebind.as_mut().unwrap().phase = RebindPhase::Prepared;
+        self.write_record(&slot, &record)?;
+        #[cfg(test)]
+        crate::repository::test_boundary("rebind_prepared");
+        self.finish_rebind(repo, layer, &slot, &mut record)
+    }
+
+    fn require_active(&self, repo: &Repository, desired: &LayerHead) -> Result<()> {
+        match repo.layer_state(desired.layer())? {
+            LayerState::Active { head } if head == *desired => Ok(()),
+            _ => Err(Error::InvalidInput(
+                "desired rebind head is not the Layer's current Active head".into(),
+            )),
+        }
+    }
+
+    fn finish_rebind(
+        &self,
+        repo: &Repository,
+        layer: &LayerId,
+        slot: &str,
+        record: &mut ViewRecord,
+    ) -> Result<()> {
+        let mut intent = record.rebind.clone().expect("rebind intent");
+        if intent.phase == RebindPhase::Validating {
+            if intent.mounted {
+                self.resume_view(repo, layer, slot, record, true)?;
+            } else {
+                self.helper("unmount-view", &[slot])?;
+            }
+            record.rebind = None;
+            return self.write_record(slot, record);
+        }
+        if intent.phase == RebindPhase::Prepared {
+            // The old upper was verified clean and detached before the intent.
+            // Until Selected is durable, no new writable view can be exposed.
+            self.helper("unmount-view", &[slot])?;
+            self.helper("remove-view", &[slot])?;
+            #[cfg(test)]
+            crate::repository::test_boundary("rebind_removed");
+            record.opened = intent.desired.checkpoint.clone();
+            record.head = record.opened.clone();
+            record.revision = intent.desired.revision;
+            record.lowers = intent.lowers.clone();
+            intent.phase = RebindPhase::Selected;
+            record.rebind = Some(intent.clone());
+            self.write_record(slot, record)?;
+        }
+        #[cfg(test)]
+        crate::repository::test_boundary("rebind_selected");
+        if intent.mounted {
+            self.mount_view(slot, record, true)?;
+        }
+        intent.phase = RebindPhase::Complete;
+        record.rebind = Some(intent);
+        self.write_record(slot, record)?;
+        #[cfg(test)]
+        crate::repository::test_boundary("rebind_complete");
+        self.resume_view(repo, layer, slot, record, false)
+    }
+
     /// Unmounts without discarding; the private upper and binding remain.
     pub fn unmount(&mut self, layer: &LayerId) -> Result<()> {
         let _lock = self.lock()?;
         let slot = slot(layer);
-        self.read_record(&slot, layer)?
+        let record = self
+            .read_record(&slot, layer)?
             .ok_or_else(|| Error::InvalidInput("Layer has no view".into()))?;
+        if record.rebinding() {
+            return Err(Error::Busy(
+                "recover interrupted rebind before unmounting".into(),
+            ));
+        }
         self.helper("unmount-view", &[&slot]).map(|_| ())
     }
 
@@ -909,10 +1128,11 @@ impl LinuxLayerRuntime {
             candidate: None,
             publication: None,
         };
-        if record
-            .pending
-            .as_ref()
-            .is_some_and(|p| !p.is(operation, Action::Capture))
+        if record.rebinding()
+            || record
+                .pending
+                .as_ref()
+                .is_some_and(|p| !p.is(operation, Action::Capture))
         {
             self.resolve(repo, layer, &slot, &mut record)?;
             record = self
@@ -1103,7 +1323,7 @@ impl LinuxLayerRuntime {
         let mut record = self
             .read_record(&slot, layer)?
             .ok_or_else(|| Error::InvalidInput("Layer has no view".into()))?;
-        if record.pending.is_some() {
+        if record.pending.is_some() || record.rebinding() {
             self.resolve(repo, layer, &slot, &mut record)?;
             record = self
                 .read_record(&slot, layer)?
@@ -1244,10 +1464,11 @@ impl LinuxLayerRuntime {
             candidate: None,
             publication: None,
         };
-        if record
-            .pending
-            .as_ref()
-            .is_some_and(|p| !p.is(operation, Action::Discard))
+        if record.rebinding()
+            || record
+                .pending
+                .as_ref()
+                .is_some_and(|p| !p.is(operation, Action::Discard))
         {
             self.resolve(repo, layer, &slot, &mut record)?;
             record = self
@@ -1312,6 +1533,9 @@ impl LinuxLayerRuntime {
         slot: &str,
         record: &mut ViewRecord,
     ) -> Result<()> {
+        if record.rebinding() {
+            self.finish_rebind(repo, layer, slot, record)?;
+        }
         let Some(pending) = record.pending.clone() else {
             return Ok(());
         };
@@ -1373,8 +1597,12 @@ impl LinuxLayerRuntime {
             mounted: state.is_some(),
             frozen: state == Some(true),
             bound_revision: record.revision,
-            bound_checkpoint: record.head,
-            pending: record.pending.map(|p| p.operation),
+            bound_checkpoint: record.head.clone(),
+            pending: if record.rebinding() {
+                Some("rebind".into())
+            } else {
+                record.pending.map(|p| p.operation)
+            },
             current,
         })
     }
@@ -1427,7 +1655,7 @@ impl LinuxLayerRuntime {
                 "view record slot/format mismatch".into(),
             ));
         }
-        if record.pending.is_some() {
+        if record.pending.is_some() || record.rebinding() {
             if let Err(error) = self.resolve(repo, &layer, slot, &mut record)
                 && (!matches!(error, Error::LayerPublished { .. }) || record.pending.is_some())
             {
