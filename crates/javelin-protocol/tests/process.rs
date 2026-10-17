@@ -4,6 +4,7 @@
 mod support;
 
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
@@ -11,7 +12,7 @@ use std::{
 };
 
 use javelin::{FileEntry, Manifest, ObjectId, RepoPath, Repository};
-use javelin_protocol::{Message, codec};
+use javelin_protocol::{Kind, Message, codec, limits::*};
 use support::*;
 
 const BIN: &str = env!("CARGO_BIN_EXE_javelin-protocol");
@@ -33,6 +34,7 @@ fn relay(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         while let Some(body) = read_raw(&mut from) {
+            assert!(body.len() <= MAX_FRAME, "peer exceeded the frame limit");
             let message = codec::decode(&body).expect("peer sent a valid frame");
             let is_outcome = matches!(message, Message::Outcome(_));
             seen.lock().unwrap().push(message);
@@ -219,4 +221,206 @@ fn receiver_process_refuses_unsupported_version() {
     assert!(matches!(reply, Some(Message::Error { code, .. }) if code == "unsupported_version"));
     let history = Repository::open(dst_dir.path()).unwrap().history().unwrap();
     assert_eq!(history.len(), 1);
+}
+
+#[test]
+fn invalid_native_manifest_fails_before_object_negotiation() {
+    let (src_dir, mut source) = repo();
+    let blob = source.put_blob(b"must never reach the receiver").unwrap();
+    let manifest = Manifest::new([(
+        RepoPath::parse(&"p".repeat(MAX_PATH + 1)).unwrap(),
+        FileEntry::Regular {
+            content: blob,
+            executable: false,
+        },
+    )])
+    .unwrap();
+    let id = source.put_manifest(&manifest).unwrap();
+    let (dst_dir, dest) = repo();
+    let before = dest.history().unwrap();
+    drop(dest);
+
+    let run = push(
+        src_dir.path().to_str().unwrap(),
+        dst_dir.path().to_str().unwrap(),
+        id,
+        "invalid-manifest",
+        0,
+        false,
+    );
+    assert!(!run.ok);
+    assert!(
+        run.report.starts_with("error limit_exceeded"),
+        "{}",
+        run.report
+    );
+    assert!(
+        matches!(run.sent.as_slice(), [Message::Hello { .. }]),
+        "preflight must precede Want, object transfer and Publish"
+    );
+    let dest = Repository::open(dst_dir.path()).unwrap();
+    assert_eq!(dest.history().unwrap(), before);
+    assert!(!dest.has_blob(blob).unwrap());
+    assert!(!dest.has_manifest(id).unwrap());
+}
+
+/// Checks actual missing IDs, deduplication, accepted publication and stored data.
+fn assert_published(
+    run: &Run,
+    dest: &Repository,
+    id: ObjectId,
+    manifest: &Manifest,
+    missing: &BTreeSet<ObjectId>,
+) {
+    assert!(run.ok, "{}", run.report);
+    assert_eq!(run.report, format!("accepted 1 {id} boundary"));
+    let sent: Vec<_> = run
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            Message::Blobs(items) => Some(items.iter().map(|(id, _)| *id)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(sent.len(), missing.len(), "each missing blob is sent once");
+    assert_eq!(sent.into_iter().collect::<BTreeSet<_>>(), *missing);
+    let manifests: Vec<_> = run
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            Message::Manifests(items) => Some(items.iter().map(|(id, _)| *id)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(manifests, vec![id]);
+    assert!(matches!(run.replies.last(), Some(Message::Outcome(
+        javelin_protocol::Outcome::Accepted { manifest: accepted, .. }
+    )) if *accepted == id));
+    assert_eq!(dest.history().unwrap().len(), 2);
+    assert_eq!(dest.read_manifest(id).unwrap(), *manifest);
+    for message in &run.sent {
+        if let Message::Blobs(items) = message {
+            for (id, bytes) in items {
+                assert_eq!(dest.read_blob(*id).unwrap(), *bytes);
+            }
+        }
+    }
+}
+
+#[test]
+fn successful_push_splits_want_and_blob_counts() {
+    let (src_dir, mut source) = repo();
+    let (dst_dir, mut dest) = repo();
+    let mut entries = Vec::new();
+    let mut missing = BTreeSet::new();
+    let mut offered = BTreeSet::new();
+    // One more offered object than MAX_WANT, with one blob already present.
+    for i in 0..MAX_WANT {
+        let bytes = (i as u64).to_be_bytes();
+        let content = source.put_blob(&bytes).unwrap();
+        offered.insert((Kind::Blob, content));
+        if i == 0 {
+            dest.put_blob(&bytes).unwrap();
+        } else {
+            missing.insert(content);
+        }
+        entries.push((
+            RepoPath::parse(&format!("file-{i:04}")).unwrap(),
+            FileEntry::Regular {
+                content,
+                executable: false,
+            },
+        ));
+    }
+    // Shared content is offered and transferred only once.
+    entries.push((RepoPath::parse("shared").unwrap(), entries[1].1.clone()));
+    let manifest = Manifest::new(entries).unwrap();
+    let id = source.put_manifest(&manifest).unwrap();
+    offered.insert((Kind::Manifest, id));
+    drop(dest);
+    let run = push(
+        src_dir.path().to_str().unwrap(),
+        dst_dir.path().to_str().unwrap(),
+        id,
+        "boundary",
+        0,
+        false,
+    );
+    let wants: Vec<_> = run
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            Message::Want(items) => Some(items),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        wants.iter().map(|items| items.len()).collect::<Vec<_>>(),
+        vec![MAX_WANT, 1]
+    );
+    let actual: Vec<_> = wants.into_iter().flatten().copied().collect();
+    assert_eq!(actual.len(), offered.len());
+    assert_eq!(actual.into_iter().collect::<BTreeSet<_>>(), offered);
+    let batches: Vec<_> = run
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            Message::Blobs(items) => Some(items.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        batches,
+        vec![MAX_BLOBS, MAX_BLOBS, MAX_BLOBS, MAX_BLOBS - 1]
+    );
+    let dest = Repository::open(dst_dir.path()).unwrap();
+    assert_published(&run, &dest, id, &manifest, &missing);
+}
+
+#[test]
+fn successful_push_splits_legal_blobs_at_frame_byte_limit() {
+    let (src_dir, mut source) = repo();
+    let mut entries = Vec::new();
+    let mut missing = BTreeSet::new();
+    // Two individually legal blobs cannot share a MAX_FRAME message.
+    for i in 0..2 {
+        let content = source.put_blob(&vec![i; MAX_BLOB]).unwrap();
+        missing.insert(content);
+        entries.push((
+            RepoPath::parse(&format!("large-{i}")).unwrap(),
+            FileEntry::Regular {
+                content,
+                executable: false,
+            },
+        ));
+    }
+    let manifest = Manifest::new(entries).unwrap();
+    let id = source.put_manifest(&manifest).unwrap();
+    let (dst_dir, dest) = repo();
+    drop(dest);
+    let run = push(
+        src_dir.path().to_str().unwrap(),
+        dst_dir.path().to_str().unwrap(),
+        id,
+        "boundary",
+        0,
+        false,
+    );
+    let batches: Vec<_> = run
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            Message::Blobs(items) => Some(items),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(batches.len(), 2);
+    for batch in batches {
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].1.len(), MAX_BLOB);
+    }
+    let dest = Repository::open(dst_dir.path()).unwrap();
+    assert_published(&run, &dest, id, &manifest, &missing);
 }
