@@ -117,6 +117,8 @@ pub fn build(
         "build",
         "--locked",
         "--release",
+        "--package",
+        "javelin-cli",
         "--bin",
         "javelin",
     ]
@@ -140,6 +142,12 @@ pub fn build(
     for (key, value) in &extra_env {
         cargo.env(key, value);
     }
+    let source_before = source_files_hash(&source)?;
+    // A failed or interrupted rebuild must not leave a usable stale record.
+    let record_path = out.join(RECORD_FILE);
+    if record_path.exists() {
+        fs::remove_file(&record_path)?;
+    }
     let status = cargo.status()?;
     if !status.success() {
         bail!("cargo build failed: {status}");
@@ -151,6 +159,9 @@ pub fn build(
         bail!("expected binary missing: {}", binary_path.display());
     }
     let (source_files_sha256, source_files) = source_files_hash(&source)?;
+    if (source_files_sha256.clone(), source_files) != source_before {
+        bail!("source changed during cargo build; refusing build provenance");
+    }
     let record = BuildRecord {
         command,
         rustflags,
@@ -177,7 +188,8 @@ fn shell_quote(word: &str) -> String {
 }
 
 /// The files that define a build: `Cargo.toml`, `Cargo.lock`, `LICENSE`, any
-/// `.cargo/config*`, and `src/**`, as `/`-joined relative paths.
+/// `.cargo/config*`, root `src/**`, and the CLI manifest and sources, as `/`-joined
+/// relative paths.
 pub fn source_files(source: &Path) -> Result<Vec<String>> {
     let mut files = vec![
         "Cargo.toml".to_string(),
@@ -193,6 +205,12 @@ pub fn source_files(source: &Path) -> Result<Vec<String>> {
         list_files(&source.join("src"))?
             .into_iter()
             .map(|f| format!("src/{f}")),
+    );
+    files.push("crates/javelin-cli/Cargo.toml".to_string());
+    files.extend(
+        list_files(&source.join("crates/javelin-cli/src"))?
+            .into_iter()
+            .map(|f| format!("crates/javelin-cli/src/{f}")),
     );
     Ok(files)
 }

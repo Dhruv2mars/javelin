@@ -6,9 +6,10 @@ published, and not Gate 5 (installation, upgrade, and recovery on every platform
 evidence. The CLI inside supports only `init`, `history`, and `check`; Layers and the
 complete Layer Publish workflow do not exist yet, and the CLI has no `--version` flag.
 
-Base source: accepted native Layer state `e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`
-(unmerged dependency; PR #17 claims no independent acceptance). Nothing in this change
-edits root Cargo files, `src/`, or `tests/`.
+The original packager used native Layer state
+`e56fc86e3415217de2b960a7ea0dbe6d2eb450b1`. The CLI workspace refactor starts from
+merged main `c48209f`, adds `crates/javelin-cli`, and updates packaging build and
+provenance checks for the moved executable.
 
 ## What it does
 
@@ -17,7 +18,7 @@ no dependency on the `javelin` crate) that builds the `javelin-pack` developer t
 
 | Command | Purpose |
 | --- | --- |
-| `build` | `cargo build --locked --release --bin javelin` with a controlled environment; writes `build-record.json` including a fingerprint of the sources built |
+| `build` | `cargo build --locked --release --package javelin-cli --bin javelin` with a controlled environment; writes `build-record.json` including a fingerprint of the sources built |
 | `package` | Archive, `.sha256`, and `PACKAGE.json` for one built binary; refuses a `--source` that differs from what was built |
 | `install` | Verify checksum, extract into an owned temp directory, rename into a **fresh** path |
 | `smoke` | Resolve `javelin` through `PATH` and exercise it in a new non-Git project |
@@ -59,12 +60,13 @@ elevation, registry, or signing and leave the choice of `PATH` to the user.
 
 - `channel: "development"`, `pre_ga: true`, `cargo_version: "0.1.0"`, a notice.
 - `source`: caller-supplied commit SHA; SHA-256 of `Cargo.lock`; SHA-256 over
-  `Cargo.toml`, `Cargo.lock`, `LICENSE`, any `.cargo/config*`, and `src/**` (path and
-  content hashes, Git-free).
+  `Cargo.toml`, `Cargo.lock`, `LICENSE`, any `.cargo/config*`, root `src/**`,
+  `crates/javelin-cli/Cargo.toml`, and `crates/javelin-cli/src/**`
+  (path and content hashes, Git-free).
 - `toolchain`: full `rustc -vV`, cargo version, exact build command, rustflags
   (path remaps), `SOURCE_DATE_EPOCH`.
 - `binary`: path, SHA-256, size, and the test-hook markers confirmed absent.
-- `dependencies`: normal-dependency closure for the target with `Cargo.lock` checksums.
+- `dependencies`: CLI normal-dependency closure for the target (including the root library) with `Cargo.lock` checksums.
 - `platform.known`: OS, architecture, target triple of the build host.
 - `platform.minimum_os_version`: `"unconfirmed"`; other architectures: unconfirmed.
 
@@ -161,10 +163,14 @@ Javelin is MIT licensed (`LICENSE` shipped unchanged). The root `Cargo.toml` dec
 `license` field. Dependencies are MIT, Apache-2.0, MIT/Apache-2.0, Zlib,
 Unlicense OR MIT, or `(MIT OR Apache-2.0) AND Unicode-3.0` (`unicode-ident`), plus the bundled SQLite amalgamation (public-domain notice in its own
 source header, version 3.53.2) built by `libsqlite3-sys`. The notices list the
-normal-dependency closure for the target, a conservative superset that includes
+CLI normal-dependency closure for the target (including the root library), a conservative superset that includes
 compile-time proc-macro crates; packaging fails if a listed crate has no license file.
 This is a developer's inspection of `Cargo.lock` metadata and crate sources, not legal
 advice or a complete audit of transitive build tools.
+
+The source fingerprint is taken before and after Cargo runs. If the covered inputs
+change during the build, no build record is retained. This detects ordinary saves
+during a build; an edit reverted between samples is outside this check.
 
 ## Reproducibility
 

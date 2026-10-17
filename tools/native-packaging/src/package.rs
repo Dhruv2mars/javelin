@@ -42,7 +42,7 @@ pub struct SourceInfo {
     /// Supplied by the developer or CI; this tool never reads Git.
     pub sha: String,
     pub cargo_lock_sha256: String,
-    /// SHA-256 over `Cargo.toml`, `Cargo.lock`, and `src/**` (path and content hashes).
+    /// SHA-256 over build inputs, including root and CLI sources (path and content hashes).
     pub source_files_sha256: String,
     pub source_files: usize,
 }
@@ -271,7 +271,7 @@ fn crate_version(source: &Path) -> Result<String> {
 
 type LicenseFiles = BTreeMap<String, Vec<u8>>;
 
-/// Normal-dependency closure of `javelin` for `target`, with lock checksums and license texts.
+/// Normal-dependency closure of `javelin-cli` for `target`, with lock checksums and license texts.
 fn dependency_graph(
     source: &Path,
     target: &str,
@@ -307,7 +307,7 @@ fn dependency_graph(
                 target,
             ])
             .arg("--manifest-path")
-            .arg(source.join("Cargo.toml")),
+            .arg(source.join("crates/javelin-cli/Cargo.toml")),
     )?)?;
     let packages: BTreeMap<&str, &Value> = metadata["packages"]
         .as_array()
