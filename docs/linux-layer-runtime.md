@@ -334,8 +334,10 @@ final checkpoint. Root `TASKS.md` belongs to the hub and is unchanged.
 - [x] Compile the public caller signature and notify the hub and CLI owner.
 - [x] Add and inspect focused mounted/process publication regressions.
 - [x] Run formatting, lint, all 97 local native tests and the release build.
-- [ ] Run and inspect disposable hosted Linux publication proof.
-- [ ] Open one regular PR against main, T3-link it and report evidence/blockers.
+- [x] Run and inspect disposable hosted Linux publication proof (run 38958858572).
+- [x] Open and T3-link regular PR #25 against main.
+- [x] Reproduce and fix published observation recreating explicitly unmounted views;
+      keep existing mounts read-only and permit pending-operation recovery.
 
 ```rust
 let receipt = runtime.publish(&mut repo, &layer, &operation,
@@ -367,7 +369,9 @@ cannot occur. Historical native capture/discard outcomes remain historical; a
 capture replay must never thaw a currently Published Layer. Mount can also expose
 a final published checkpoint read-only when no earlier view binding exists.
 
-Open, mount, status and recovery freeze native publication when they observe it.
+Open, status and recovery freeze existing mounts when they observe native
+publication; they preserve explicitly unmounted views. Explicit mount requests
+and recovery of a pending native receipt may recreate the view read-only.
 If a writer prevents that freeze, the operation reports `busy` and preserves the
 view/upper for retry after the writer closes. **There is no continuous reconciler:**
 a direct low-level native publication in another process is not instantly enforced

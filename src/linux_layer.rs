@@ -575,7 +575,7 @@ impl LinuxLayerRuntime {
                 ));
             }
             if matches!(repo.layer_state(&layer)?, LayerState::Published { .. }) {
-                runtime.freeze_view(slot, &record)?;
+                runtime.freeze_view(slot)?;
             }
         }
         Ok(runtime)
@@ -782,9 +782,17 @@ impl LinuxLayerRuntime {
         Ok(())
     }
 
-    fn freeze_view(&self, slot: &str, record: &ViewRecord) -> Result<()> {
-        self.mount_view(slot, record, true)?;
-        self.helper("freeze", &["view", slot]).map(|_| ())
+    /// Observation freezes existing mounts without undoing an explicit unmount.
+    fn freeze_view(&self, slot: &str) -> Result<bool> {
+        match mount_state(&self.root.join("views").join(slot))? {
+            None => Ok(false),
+            Some(readonly) => {
+                if !readonly {
+                    self.helper("freeze", &["view", slot])?;
+                }
+                Ok(true)
+            }
+        }
     }
 
     /// A terminal native publication is never thawed. There is no continuous
@@ -798,7 +806,10 @@ impl LinuxLayerRuntime {
         mount: bool,
     ) -> Result<()> {
         if matches!(repo.layer_state(layer)?, LayerState::Published { .. }) {
-            self.freeze_view(slot, record)
+            if mount {
+                self.mount_view(slot, record, true)?;
+            }
+            self.freeze_view(slot).map(|_| ())
         } else {
             if mount {
                 self.mount_view(slot, record, false)?;
@@ -1196,6 +1207,11 @@ impl LinuxLayerRuntime {
         });
         // No receipt means no native acceptance. Never invent or replay optional
         // policy on recovery; release for an explicit caller retry instead.
+        if agrees && receipt.is_some() {
+            // A pending native receipt may need its view restored to complete
+            // recovery. Plain observation never creates a missing mount.
+            self.resume_view(repo, layer, slot, record, true)?;
+        }
         self.abandon(repo, layer, slot, record)?;
         if !agrees {
             return Err(Error::OperationIdReused(operation));
@@ -1344,7 +1360,7 @@ impl LinuxLayerRuntime {
         let path = self.root.join("views").join(&slot);
         let current = repo.layer_state(layer)?;
         if matches!(current, LayerState::Published { .. }) {
-            self.freeze_view(&slot, &record)?;
+            self.freeze_view(&slot)?;
         }
         let state = mount_state(&path)?;
         Ok(ViewStatus {
@@ -1412,8 +1428,9 @@ impl LinuxLayerRuntime {
             }
             report.pending_resolved += 1;
         } else if matches!(repo.layer_state(&layer)?, LayerState::Published { .. }) {
-            self.freeze_view(slot, &record)?;
-            report.views_published += 1;
+            if self.freeze_view(slot)? {
+                report.views_published += 1;
+            }
         } else if matches!(repo.layer_state(&layer)?, LayerState::Discarded { .. }) {
             self.helper("unmount-view", &[slot])?;
             self.helper("remove-view", &[slot])?;

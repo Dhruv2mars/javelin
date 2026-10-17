@@ -2474,9 +2474,45 @@ fn published_observation_preserves_explicitly_unmounted_views() {
             "existingMountFrozen": true}));
     }
     s.rt.unmount(&s.layer).unwrap();
+
+    // A lost publication reply is pending work, so recovery may restore its view.
+    let mut pending = setup(&env, "publication-unmounted-pending");
+    let mut actor = Actor::spawn(
+        &env,
+        pending.repo_dir.path(),
+        &pending.root,
+        "publish",
+        "A",
+        "unmounted-pending",
+        "workspace_publish_committed",
+    );
+    actor.marker("BOUNDARY workspace_publish_committed");
+    actor.kill();
+    let receipt = pending
+        .repo
+        .publication(&op("unmounted-pending"))
+        .unwrap()
+        .unwrap();
+    pending.rt.unmount(&pending.layer).unwrap();
+    let status = pending.rt.status(&pending.repo, &pending.layer).unwrap();
+    assert!(!status.mounted && status.pending.as_deref() == Some("unmounted-pending"));
+    pending.rt = LinuxLayerRuntime::open(&pending.repo, &pending.root, helper(&env)).unwrap();
+    assert_eq!(mount_state(&pending.view).unwrap(), None);
+    let recovery = pending.rt.recover(&mut pending.repo).unwrap();
+    assert!(recovery.failures.is_empty());
+    assert_eq!(recovery.pending_resolved, 1);
+    publication_settled(&pending.rt, &pending.repo, &pending.layer);
+    publication_read_only(&pending.view);
+    assert_eq!(
+        pending.repo.publication(&op("unmounted-pending")).unwrap(),
+        Some(receipt)
+    );
+    assert_eq!(pending.repo.history().unwrap().len(), 3);
+    pending.rt.unmount(&pending.layer).unwrap();
     save(
         &env,
         "publication-unmounted",
-        &json!({"verdict": "VERIFIED", "cases": cases}),
+        &json!({"verdict": "VERIFIED", "cases": cases,
+            "pendingRecovery": recovery, "pendingReceiptRetained": true}),
     );
 }
