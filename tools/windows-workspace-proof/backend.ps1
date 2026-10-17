@@ -5,6 +5,8 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 $username = "jvp$($token.Substring(0, 12))"
 $credential = $null
 $accountCreated = $false
+$userEvidence = $null
+$userResultsCopied = $false
 $result.runtime = [ordered]@{ verdict = 'INCONCLUSIVE'; error = $null; account = $username; accountRemoved = $false }
 try {
     $provider = Join-Path $owned 'provider.exe'
@@ -53,6 +55,7 @@ try {
     Get-Content -LiteralPath $stdoutPath
     Get-Content -LiteralPath $stderrPath
     Copy-Item -Path (Join-Path $userEvidence '*') -Destination $evidence
+    $userResultsCopied = $true
     $runtimeSummary = Join-Path $evidence 'runtime-summary.json'
     if (Test-Path -LiteralPath $runtimeSummary) { $result.runtime.results = Get-Content -Raw -LiteralPath $runtimeSummary | ConvertFrom-Json }
     $result.providerStarted = [bool]$result.runtime.results.providerStarted
@@ -62,6 +65,11 @@ try {
     $result.runtime.error = $_.ToString()
     $_ | Format-List * -Force
 } finally {
+    # Keep completed phase reports even when the wrapper timed out or a later step threw.
+    if (-not $userResultsCopied -and $userEvidence -and (Test-Path -LiteralPath $userEvidence)) {
+        try { Copy-Item -Path (Join-Path $userEvidence '*') -Destination $evidence -Force }
+        catch { $result.runtime.resultsCopyError = $_.ToString() }
+    }
     if (-not $accountCreated) { $result.runtime.accountRemoved = $true }
     if ($accountCreated) {
         try { Remove-LocalUser -Name $username; $result.runtime.accountRemoved = -not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) }
