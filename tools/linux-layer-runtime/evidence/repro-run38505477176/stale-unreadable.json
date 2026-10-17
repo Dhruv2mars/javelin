@@ -1,7 +1,0 @@
-{
-  "boundRevision": 1,
-  "captureResult": "Err(Io(Os { code: 13, kind: PermissionDenied, message: \"Permission denied\" }))",
-  "frozen": true,
-  "nativeRevisions": 3,
-  "pending": "s-unreadable"
-}

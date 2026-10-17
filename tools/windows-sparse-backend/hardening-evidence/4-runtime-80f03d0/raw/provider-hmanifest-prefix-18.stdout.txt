@@ -1,3 +1,0 @@
-registered root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hmanifest-prefix rootPlaceholders=13
-started root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hmanifest-prefix entries=21
-stopped root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\hmanifest-prefix

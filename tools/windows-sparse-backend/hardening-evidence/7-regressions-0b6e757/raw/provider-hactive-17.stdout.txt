@@ -1,9 +1,0 @@
-registered root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive rootPlaceholders=12
-started root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive entries=19
-transfer-placeholders key=cold path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\cold count=1 status=00000000 hr=00000000 processed=1
-transfer-placeholders key=cold\sub path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\cold\sub count=1 status=00000000 hr=00000000 processed=1
-transfer-placeholders key=dir path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\dir count=1 status=00000000 hr=00000000 processed=1
-transfer-placeholders key=dir2 path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\dir2 count=1 status=00000000 hr=00000000 processed=1
-transfer-placeholders key=dir3 path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\dir3 count=1 status=00000000 hr=00000000 processed=1
-transfer-placeholders key=dir3\deep path=\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive\dir3\deep count=1 status=00000000 hr=00000000 processed=1
-stopped root=D:\a\_temp\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\hactive

@@ -1,5 +1,0 @@
-{
-  "frozenAfterReplay": true,
-  "replayFirst": "Err(OperationIdReused(OperationId(\"r-1\")))",
-  "replaySecond": "Ok(CaptureOutcome { update: Applied { state: Active { head: LayerHead { repository: ObjectId([33, 108, 144, 15, 39, 143, 37, 137, 46, 110, 160, 49, 243, 58, 155, 44, 205, 209, 79, 169, 157, 89, 130, 102, 87, 192, 2, 4, 193, 161, 53, 237]), layer: LayerId(\"A\"), revision: 2, checkpoint: CheckpointId(ObjectId([161, 139, 238, 246, 248, 9, 204, 178, 98, 182, 9, 66, 51, 205, 99, 169, 48, 94, 140, 21, 45, 155, 231, 41, 114, 47, 93, 193, 60, 163, 128, 246])) } } }, changed_paths: 2, unrepresented_directories: [] })"
-}

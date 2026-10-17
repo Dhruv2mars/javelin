@@ -1,8 +1,0 @@
-WINDOWS_JOB parent=7268 timedOut=0 exit=0 activeAfterTermination=0
-WINDOWS_JOB parent=6388 timedOut=0 exit=0 activeAfterTermination=0
-WINDOWS_JOB parent=6596 timedOut=0 exit=0 activeAfterTermination=0
-WINDOWS_JOB parent=8076 timedOut=0 exit=0 activeAfterTermination=0
-WINDOWS_JOB parent=6216 timedOut=0 exit=0 activeAfterTermination=0
-WINDOWS_JOB parent=7348 timedOut=0 exit=1 activeAfterTermination=0
-WINDOWS_JOB parent=1124 timedOut=0 exit=3 activeAfterTermination=0
-WINDOWS_JOB parent=7220 timedOut=0 exit=3 activeAfterTermination=0
