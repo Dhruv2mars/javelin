@@ -565,14 +565,19 @@ impl LinuxLayerRuntime {
             let Some(slot) = name.strip_suffix(".json").filter(|s| *s != "runtime") else {
                 continue;
             };
-            let bytes = fs::read(runtime.record_path(slot))?;
-            let record: ViewRecord = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::CorruptRepository("invalid view record".into()))?;
-            let layer = LayerId::parse(&record.layer)?;
+            // A damaged view must not prevent opening the runtime for recover(),
+            // which reports per-view failures and still processes healthy views.
+            let Ok(bytes) = fs::read(runtime.record_path(slot)) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_slice::<ViewRecord>(&bytes) else {
+                continue;
+            };
+            let Ok(layer) = LayerId::parse(&record.layer) else {
+                continue;
+            };
             if self::slot(&layer) != slot || record.format != RECORD_FORMAT {
-                return Err(Error::CorruptRepository(
-                    "view record slot/format mismatch".into(),
-                ));
+                continue;
             }
             if matches!(repo.layer_state(&layer)?, LayerState::Published { .. }) {
                 runtime.freeze_view(slot)?;

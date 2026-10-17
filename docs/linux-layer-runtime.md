@@ -372,6 +372,8 @@ a final published checkpoint read-only when no earlier view binding exists.
 Open, status and recovery freeze existing mounts when they observe native
 publication; they preserve explicitly unmounted views. Explicit mount requests
 and recovery of a pending native receipt may recreate the view read-only.
+Damaged view records are reported per view by recovery rather than blocking open;
+healthy published views are still frozen during open.
 If a writer prevents that freeze, the operation reports `busy` and preserves the
 view/upper for retry after the writer closes. **There is no continuous reconciler:**
 a direct low-level native publication in another process is not instantly enforced

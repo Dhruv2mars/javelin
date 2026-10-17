@@ -2473,6 +2473,25 @@ fn published_observation_preserves_explicitly_unmounted_views() {
         cases.push(json!({"observer": observer, "absentMountPreserved": true,
             "existingMountFrozen": true}));
     }
+    // Damaged unrelated metadata must not prevent partial recovery from opening,
+    // or prevent a healthy Published mount from being frozen on that open.
+    let broken = s.root.join("state/broken.json");
+    fs::write(&broken, b"{}").unwrap();
+    assert!(
+        direct(
+            &env,
+            &["thaw", s.root.to_str().unwrap(), "view", &slot(&s.layer)]
+        )
+        .status
+        .success()
+    );
+    s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+    assert_eq!(mount_state(&s.view).unwrap(), Some(true));
+    let partial = s.rt.recover(&mut s.repo).unwrap();
+    assert_eq!(partial.failures.len(), 1);
+    assert!(partial.failures[0].contains("invalid view record"));
+    publication_read_only(&s.view);
+    fs::remove_file(broken).unwrap();
     s.rt.unmount(&s.layer).unwrap();
 
     // A lost publication reply is pending work, so recovery may restore its view.
@@ -2513,6 +2532,7 @@ fn published_observation_preserves_explicitly_unmounted_views() {
         &env,
         "publication-unmounted",
         &json!({"verdict": "VERIFIED", "cases": cases,
-            "pendingRecovery": recovery, "pendingReceiptRetained": true}),
+            "pendingRecovery": recovery, "pendingReceiptRetained": true,
+            "partialRecovery": partial}),
     );
 }
