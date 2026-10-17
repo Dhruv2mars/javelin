@@ -207,9 +207,15 @@ pub fn source_files(source: &Path) -> Result<Vec<String>> {
             .into_iter()
             .map(|f| format!("src/{f}")),
     );
-    for package in ["javelin-cli", "javelin-merge", "javelin-stack"] {
+    for package in [
+        "javelin-cli",
+        "javelin-collaboration",
+        "javelin-merge",
+        "javelin-protocol",
+        "javelin-stack",
+    ] {
         files.push(format!("crates/{package}/Cargo.toml"));
-        if package != "javelin-cli" {
+        if source.join(format!("crates/{package}/LICENSE")).is_file() {
             files.push(format!("crates/{package}/LICENSE"));
         }
         files.extend(
