@@ -1,0 +1,16 @@
+{
+  "name": "utility-node",
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--version"
+  ],
+  "timeoutMs": 30000,
+  "pid": 4688,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "v22.23.3\r\n",
+  "stderr": ""
+}

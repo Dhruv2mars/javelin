@@ -1,0 +1,11 @@
+{
+  "id": "clones",
+  "verdict": "VERIFIED",
+  "commands": [],
+  "evidence": {
+    "cloneTreesMatchSource": true,
+    "privateWritesIsolated": true,
+    "snapshotUnchanged": true,
+    "entries": 22
+  }
+}

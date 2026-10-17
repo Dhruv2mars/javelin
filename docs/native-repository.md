@@ -53,7 +53,7 @@ keys and fixed field order, checked by exact re-encoding. Raw bytes never pass
 through text decoding. Blob and manifest readers enforce the requested kind.
 
 `src/domain.rs` owns validation and encoding. `src/repository.rs` owns SQLite,
-graph verification, history and transaction boundaries. `src/main.rs` owns CLI
+graph verification, history and transaction boundaries. `crates/javelin-cli/src/main.rs` owns CLI
 parsing and output. The public methods are init/open, put/read blob, put/read
 manifest, exact manifest bytes, version/history, compare-and-advance, and check.
 SQL connections and storage rows remain private. Callers do not coordinate locks
@@ -198,7 +198,7 @@ exited successfully and integrity returned one World, one object, zero attempts.
   after the acknowledged result also retains the exact outcome. Init survives
   kills on both sides of commit. There are no artificial sleeps. Test hooks are
   absent from the production library and CLI.
-- `tests/cli.rs` drives the actual CLI in temporary projects and proves structured
+- `crates/javelin-cli/tests/cli.rs` drives the actual CLI in temporary projects and proves structured
   and ordinary output, restart, file preservation, corruption failures, exit 1
   for repository errors, and exit 2 for usage errors. Successful JSON goes to
   stdout; errors go to stderr with `ok: false` and a stable error code/message.
@@ -218,7 +218,7 @@ Init and history returned World 0 with empty-manifest ID
 `2169214789bd2b417d915c470c6d8d4de146200334bd19930a24ebce709e763e`.
 Integrity reported one World, one object, and zero operation outcomes. An existing
 file containing bytes `00 ff 2a` stayed unchanged after both init calls, checked
-with Python byte equality. This fixture is temporary; `tests/cli.rs` reproduces it.
+with Python byte equality. This fixture is temporary; `crates/javelin-cli/tests/cli.rs` reproduces it.
 
 `rtk proxy rg -n 'Command::new|std::process|sleep|[.]git|\bgit\b' src tests`
 found only the test launches of the built Javelin CLI and current test executable.
@@ -236,6 +236,10 @@ No throughput, scale, network-filesystem, or GA platform support claim is made.
 
 
 ## Whole-Layer publication format
+
+The current unshipped format is 4: durable Stack adds immutable source ancestry
+and exact retry bindings. Formats 1–3 are refused without rewriting. See
+[Layer Stack](layer-stack.md) for the atomic boundary and verification scope.
 
 Format 3 adds immutable publication records and receipt Blobs for the native
 whole-Layer API. Unshipped format 2 is rejected without migration or rewriting.

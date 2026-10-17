@@ -1,0 +1,10 @@
+{
+  "id": "recovery-reopen-after",
+  "verdict": "VERIFIED",
+  "commands": [],
+  "evidence": {
+    "renamedBytesPreserved": true,
+    "temporaryAbsent": true,
+    "deletionPreserved": true
+  }
+}

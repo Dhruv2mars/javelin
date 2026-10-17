@@ -1,0 +1,11 @@
+{
+  "ownedRoot": "D:\\a\\_temp\\javelin-sparse-proof-f6559bc2eec54ba98f2bae313585b337",
+  "removed": false,
+  "error": "Owned root a removal failed.",
+  "roots": {
+    "a": {
+      "unregister": "{\"unregister\":\"80070186\"}",
+      "removed": false
+    }
+  }
+}

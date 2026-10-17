@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-owner-hmanifest-truncated",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hmanifest-truncated",
+    "/setowner",
+    "*S-1-5-32-544",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 4496,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hmanifest-truncated\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

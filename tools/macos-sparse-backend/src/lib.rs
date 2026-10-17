@@ -26,6 +26,7 @@ use nfsserve::nfs::{
 use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
 const ROOT: fileid3 = 1;
+const WHITEOUTS_HEADER: &[u8] = b"JAVELIN_WHITEOUTS_V1\0";
 static NEXT_CLONE: AtomicU64 = AtomicU64::new(0);
 
 /// Test-only fault injection: abort the process at a named point. `stage`
@@ -80,7 +81,7 @@ fn io_err(e: io::Error) -> nfsstat3 {
 
 fn name(n: &filename3) -> Result<PathBuf, nfsstat3> {
     let bytes = &n.0;
-    if bytes.is_empty() || bytes.contains(&b'/') || bytes.contains(&0) || bytes.contains(&b'\n') {
+    if bytes.is_empty() || bytes.contains(&b'/') || bytes.contains(&0) {
         return Err(nfsstat3::NFS3ERR_INVAL);
     }
     let p = PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
@@ -94,11 +95,42 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
+fn check_readable_base(dir: &Path) -> io::Result<()> {
+    let entries = fs::read_dir(dir).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "unsupported base layout: cannot enumerate {}: {e}",
+                dir.display()
+            ),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            check_readable_base(&entry.path())?;
+        } else if kind.is_file() {
+            File::open(entry.path()).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "unsupported base layout: file {} is not readable by the server: {e}",
+                        entry.path().display()
+                    ),
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 impl Overlay {
     /// Opens a Layer. `upper` is created if missing; stale staging files from an
     /// interrupted copy-up are discarded.
     pub fn open(base: &Path, upper: &Path) -> io::Result<Overlay> {
         let base = base.canonicalize()?;
+        check_readable_base(&base)?;
         fs::create_dir_all(upper)?;
         let upper = upper.canonicalize()?;
         if upper.starts_with(&base) || base.starts_with(&upper) {
@@ -232,10 +264,10 @@ impl Overlay {
         if next.len() == st.whiteouts.len() {
             return Ok(());
         }
-        let mut body = Vec::new();
+        let mut body = WHITEOUTS_HEADER.to_vec();
         for w in &next {
             body.extend_from_slice(w.as_os_str().as_bytes());
-            body.push(b'\n');
+            body.push(0);
         }
         let tmp = self.upper.join("tmp").join("whiteouts");
         let mut f = File::create(&tmp).map_err(io_err)?;
@@ -416,16 +448,29 @@ fn to_time(t: nfstime3) -> SystemTime {
 /// Applies NFS mode, size and time changes to an upper entry. Ownership changes
 /// are ignored because every Layer entry belongs to the serving user.
 fn apply_sattr(path: &Path, a: &sattr3) -> io::Result<()> {
-    if let set_size3::size(n) = a.size {
-        let f = OpenOptions::new().write(true).open(path)?;
-        f.set_len(n)?;
-        f.sync_all()?;
+    let original = fs::symlink_metadata(path)?.permissions();
+    let grant_write = matches!(a.size, set_size3::size(_))
+        && matches!(a.mode, set_mode3::mode(m) if m & 0o200 != 0)
+        && original.mode() & 0o200 == 0;
+    if grant_write {
+        fs::set_permissions(path, fs::Permissions::from_mode(original.mode() | 0o200))?;
     }
-    apply_times(path, a)?;
-    if let set_mode3::mode(m) = a.mode {
-        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
+    let result = (|| {
+        if let set_size3::size(n) = a.size {
+            let f = OpenOptions::new().write(true).open(path)?;
+            f.set_len(n)?;
+            f.sync_all()?;
+        }
+        apply_times(path, a)?;
+        if let set_mode3::mode(m) = a.mode {
+            fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
+        }
+        Ok(())
+    })();
+    if result.is_err() && grant_write {
+        fs::set_permissions(path, original)?;
     }
-    Ok(())
+    result
 }
 
 fn apply_times(path: &Path, a: &sattr3) -> io::Result<()> {
@@ -478,8 +523,25 @@ fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
         Err(e) => return Err(e),
     }
-    Ok(body
-        .split(|b| *b == b'\n')
+    let (paths, separator) = if let Some(paths) = body.strip_prefix(WHITEOUTS_HEADER) {
+        if !paths.is_empty() && !paths.ends_with(&[0]) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated whiteouts",
+            ));
+        }
+        (paths, 0)
+    } else {
+        if body.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported whiteout encoding",
+            ));
+        }
+        (body.as_slice(), b'\n')
+    };
+    Ok(paths
+        .split(|b| *b == separator)
         .filter(|l| !l.is_empty())
         .map(|l| PathBuf::from(std::ffi::OsStr::from_bytes(l)))
         .collect())

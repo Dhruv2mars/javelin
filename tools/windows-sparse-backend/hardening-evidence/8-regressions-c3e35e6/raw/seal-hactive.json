@@ -1,0 +1,17 @@
+{
+  "name": "seal-hactive",
+  "executable": "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\sparse.exe",
+  "argv": [
+    "access",
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive",
+    "S-1-5-21-3213014087-2684668049-2838998412-1003",
+    "seal"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 4760,
+  "stdout": "",
+  "stderr": ""
+}

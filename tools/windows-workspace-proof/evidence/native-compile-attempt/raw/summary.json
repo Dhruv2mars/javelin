@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "sourceSHA": "1311f81db6ca5273ee0228b254dc016e2c835af6",
+  "runId": "38467591404",
+  "runAttempt": "1",
+  "backend": "INCONCLUSIVE",
+  "available": true,
+  "blockers": [],
+  "sources": {
+    "tools/windows-workspace-proof/run.ps1": "4f34031579a2da7e90734a90495fe2db79075d89b7056483761967e0e63d8685",
+    "tools/windows-workspace-proof/feature.ps1": "df10a105cb74b8cd101a8c9baa75262d67fda4979c3f972dc587edbd0f03c6af",
+    "tools/windows-workspace-proof/api-probe.cpp": "7a011a5ea773afab4b1ff49bb5ac886778b60d80eca76b80ee8fa0212aabbf53",
+    ".github/workflows/windows-workspace-proof.yml": "f7de0fa8073a5e974d6650016d4e7bea5214c650d6cf0476dcb4dd6e451bf767",
+    "tools/windows-workspace-proof/provider.cpp": "b029254e8e0f338bf9a7b79a90a3e84651bbbce5e56db6c2d74e68fd19f60136",
+    "tools/windows-workspace-proof/backend.ps1": "045dff9cf3612cc40c49f228a8f30e30c71c6cef2fa62ff811d79e9a39db7663",
+    "tools/windows-workspace-proof/user-run.ps1": "119d364942c9cdd3c68455acbbadb5047251d7756b5dbbfd60d0f1c41b701577",
+    "tools/windows-workspace-proof/checks.mjs": "66fe88ff4d7624e66c1b74ee60e49d035c99afb4403a35c8024b6b3e951c8678",
+    "tools/workspace-probe/probe.mjs": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d",
+    "tools/workspace-probe/atomic-writer.mjs": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767"
+  },
+  "rootsCreated": 0,
+  "providerStarted": false,
+  "host": {
+    "runnerEnvironment": "github-hosted",
+    "powershell": "7.6.6",
+    "architecture": "64-bit",
+    "imageOS": "win22",
+    "build": "20348",
+    "version": "10.0.20348",
+    "caption": "Microsoft Windows Server 2022 Datacenter",
+    "imageVersion": "20261004.326.1"
+  },
+  "identity": {
+    "ordinaryUserVerified": false,
+    "sid": "S-1-5-21-1000861503-3182281758-1041194900-500",
+    "name": "runnervmtn0fv\\runneradmin",
+    "administrator": true
+  },
+  "feature": {
+    "command": "Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS",
+    "before": "Enabled",
+    "enable": null,
+    "after": "Enabled",
+    "ready": true,
+    "error": null
+  },
+  "compilerReady": true,
+  "apiReady": true,
+  "runtime": {
+    "verdict": "INCONCLUSIVE",
+    "error": "Native provider compile failed; this is not an unavailable platform verdict.",
+    "account": "jvp132ff8ac7b32",
+    "accountRemoved": true
+  },
+  "cleanupVerified": true,
+  "scopes": {
+    "ordinary-path-common-probe": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "read-write-atomic-save-delete": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "traversal-symlinks-watching": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "projected-compiler": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cross-root-isolation": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "sparse-delta-clone": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "provider-kill-restart": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cache-private-state-cost": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "base-immutability": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "non-admin-provider": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "product-Gate2": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "GA": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    }
+  }
+}

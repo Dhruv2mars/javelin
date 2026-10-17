@@ -1,0 +1,12 @@
+WINDOWS_JOB parent=1100 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=3684 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=4876 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=4344 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=5040 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=1532 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=6528 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=7860 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=772 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=5772 timedOut=0 exit=0 activeAfterTermination=0
+WINDOWS_JOB parent=2344 timedOut=0 exit=1 activeAfterTermination=0
+CONTROL_JOB parent=4556 wallMs=190000 cpuLimit100ns=1200000000 cpuUsed100ns=65781250 timedOut=0 exit=0 activeAfterTermination=0

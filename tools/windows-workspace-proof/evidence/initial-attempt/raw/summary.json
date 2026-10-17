@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "sourceSHA": "4d817c50f23c849635f07c1e33c552bbf69ea758",
+  "runId": "38465330661",
+  "runAttempt": "1",
+  "backend": "INCONCLUSIVE",
+  "available": false,
+  "blockers": [
+    "SDK/compiler/link check failed; inspect compiler.json."
+  ],
+  "sources": {
+    "tools/windows-workspace-proof/run.ps1": "f6dcd63a6506a11410eebf84b2314535d00ec6711f0110e152920bf4ff80c5ad",
+    "tools/windows-workspace-proof/feature.ps1": "df10a105cb74b8cd101a8c9baa75262d67fda4979c3f972dc587edbd0f03c6af",
+    "tools/windows-workspace-proof/api-probe.cpp": "d4fbc0dc0bd831a63d2577f02f4c00bcf15a474d6c2056a94a01901cab5fc68a",
+    ".github/workflows/windows-workspace-proof.yml": "0b3487bba788c2d6dde0deaf3019238530ef4b4ea23bc4fbfc927b8a6debcbc5",
+    "tools/workspace-probe/probe.mjs": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d",
+    "tools/workspace-probe/atomic-writer.mjs": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767"
+  },
+  "rootsCreated": 0,
+  "providerStarted": false,
+  "host": {
+    "architecture": "64-bit",
+    "version": "10.0.20348",
+    "runnerEnvironment": "github-hosted",
+    "powershell": "7.6.6",
+    "imageVersion": "20261004.326.1",
+    "imageOS": "win22",
+    "caption": "Microsoft Windows Server 2022 Datacenter",
+    "build": "20348"
+  },
+  "identity": {
+    "administrator": true,
+    "name": "runnervmtn0fv\\runneradmin",
+    "sid": "S-1-5-21-1000861503-3182281758-1041194900-500",
+    "ordinaryUserVerified": false
+  },
+  "feature": {
+    "command": "Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS",
+    "before": "Enabled",
+    "enable": null,
+    "after": "Enabled",
+    "ready": true,
+    "error": null
+  },
+  "compilerReady": false,
+  "cleanupVerified": true,
+  "scopes": {
+    "ordinary-path-common-probe": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "read-write-atomic-save-delete": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "traversal-symlinks-watching": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "projected-compiler": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cross-root-isolation": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "sparse-delta-clone": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "provider-kill-restart": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cache-private-state-cost": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "base-immutability": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "non-admin-provider": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "product-Gate2": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "GA": {
+      "reason": "No provider started in prerequisite-only attempt.",
+      "verdict": "INCONCLUSIVE"
+    }
+  }
+}

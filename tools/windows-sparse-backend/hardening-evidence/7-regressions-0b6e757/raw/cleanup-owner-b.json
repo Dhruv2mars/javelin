@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-owner-b",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b",
+    "/setowner",
+    "*S-1-5-32-544",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 7484,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\b-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b\\README.txt\r\nSuccessfully processed 4 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

@@ -1,0 +1,16 @@
+{
+  "id": "job-termination",
+  "verdict": "VERIFIED",
+  "commands": [
+    {
+      "argv": [
+        "bounded",
+        "1500",
+        "hang-parent"
+      ],
+      "exitCode": 124,
+      "stderr": "WINDOWS_JOB parent=3984 timedOut=1 exit=124 activeAfterTermination=0\r\n"
+    }
+  ],
+  "evidence": {}
+}

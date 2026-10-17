@@ -1,0 +1,14 @@
+{
+  "name": "api",
+  "executable": "D:\\a\\_temp\\javelin-windows-proof-132ff8ac7b324e338172fe6a4b27c1a4\\api-probe.exe",
+  "argv": [],
+  "timeoutMs": 30000,
+  "pid": 7364,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "SDK PRJ_CALLBACKS=64 PRJ_PLACEHOLDER_INFO=344\r\nexport PrjMarkDirectoryAsPlaceholder=present\r\nexport PrjStartVirtualizing=present\r\nexport PrjStopVirtualizing=present\r\nexport PrjWritePlaceholderInfo=present\r\nexport PrjWriteFileData=present\r\nexport PrjGetOnDiskFileState=present\r\nexport PrjFileNameCompare=present\r\nexport PrjFileNameMatch=present\r\nexport PrjFillDirEntryBuffer=present\r\nexport PrjAllocateAlignedBuffer=present\r\nexport PrjFreeAlignedBuffer=present\r\nexport PrjWritePlaceholderInfo2=present\r\nexport PrjFillDirEntryBuffer2=present\r\n",
+  "stderr": ""
+}

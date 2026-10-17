@@ -1,0 +1,18 @@
+{
+  "name": "compiler-provider",
+  "executable": "C:\\Windows\\System32\\cmd.exe",
+  "argv": [
+    "/d",
+    "/c",
+    "D:\\a\\_temp\\javelin-windows-proof-132ff8ac7b324e338172fe6a4b27c1a4\\build-provider.cmd"
+  ],
+  "timeoutMs": 60000,
+  "pid": 7532,
+  "exitCode": 2,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "provider.cpp\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(104): error C2664: 'HRESULT PrjFillDirEntryBuffer(PCWSTR,PRJ_FILE_BASIC_INFO *,PRJ_DIR_ENTRY_BUFFER_HANDLE)': cannot convert argument 2 from 'const PRJ_FILE_BASIC_INFO *' to 'PRJ_FILE_BASIC_INFO *'\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(104): note: Conversion loses qualifiers\r\nC:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\um\\projectedfslib.h(485): note: see declaration of 'PrjFillDirEntryBuffer'\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(104): note: while trying to match the argument list '(const _Elem *, const PRJ_FILE_BASIC_INFO *, PRJ_DIR_ENTRY_BUFFER_HANDLE)'\r\n        with\r\n        [\r\n            _Elem=wchar_t\r\n        ]\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(105): error C2664: 'HRESULT PrjFillDirEntryBuffer2(PRJ_DIR_ENTRY_BUFFER_HANDLE,PCWSTR,PRJ_FILE_BASIC_INFO *,PRJ_EXTENDED_INFO *)': cannot convert argument 3 from 'const PRJ_FILE_BASIC_INFO *' to 'PRJ_FILE_BASIC_INFO *'\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(105): note: Conversion loses qualifiers\r\nC:\\Program Files (x86)\\Windows Kits\\10\\\\include\\10.0.26100.0\\\\um\\projectedfslib.h(492): note: see declaration of 'PrjFillDirEntryBuffer2'\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(105): note: while trying to match the argument list '(PRJ_DIR_ENTRY_BUFFER_HANDLE, const _Elem *, const PRJ_FILE_BASIC_INFO *, PRJ_EXTENDED_INFO *)'\r\n        with\r\n        [\r\n            _Elem=wchar_t\r\n        ]\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(167): warning C4456: declaration of 'name' hides previous local declaration\r\nD:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\provider.cpp(160): note: see declaration of 'name'\r\n",
+  "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+}

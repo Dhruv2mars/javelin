@@ -1,0 +1,4 @@
+call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
+if errorlevel 1 exit /b 2
+cd
+cl /nologo /Bv /std:c++20 /W4 /WX /EHsc /D_WIN32_WINNT=0x0A00 /DUNICODE /D_UNICODE /DNTDDI_VERSION=0x0A00000A "D:\a\javelin\javelin\tools\windows-sparse-backend\sparse.cpp" /Fe:"D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\sparse.exe" /Fo:"D:\a\_temp\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\sparse.obj" CldApi.lib Bcrypt.lib

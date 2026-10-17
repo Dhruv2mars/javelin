@@ -1,0 +1,18 @@
+{
+  "name": "cleanup-attributes-pr",
+  "executable": "C:\\Windows\\System32\\attrib.exe",
+  "argv": [
+    "-R",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\*",
+    "/S",
+    "/D",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 2592,
+  "stdout": "Not resetting hidden file - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\notes.txt\r\nNot resetting hidden file - D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pr\\README.txt\r\n",
+  "stderr": ""
+}

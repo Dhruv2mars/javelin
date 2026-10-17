@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "sourceSHA": "56830581824c6e651a2a0a557e09c4646d112558",
+  "runId": "38695682464",
+  "runAttempt": "1",
+  "blockers": [],
+  "sources": {
+    "tools/windows-sparse-backend/run.ps1": "fe70a9c6baef266afaddf440c36a503a9281ebc457bc20e793219cfcc95c1534",
+    "tools/windows-sparse-backend/user-run.ps1": "f7ee30f6d4fc7eecab6c22a3804f67ac9d1414f0b3dd57c21c166d956ed4e49b",
+    "tools/windows-sparse-backend/checks.mjs": "9da791b67399c14f99a4977e3785a31273e425c448a51089613de532a139fa20",
+    "tools/windows-sparse-backend/sparse.cpp": "85db1b08496c6200acae6f9b16ff1a7740d1627fe2169784c3b2fe718e587681",
+    "tools/windows-sparse-backend/projfs-provider.cpp": "3fdb4dc04ca8795bda954f3e3b581b5b528878977998cd0a55e59c13feddad5e",
+    "tools/windows-sparse-backend/hardening-repro.ps1": "43d5eb26f953081809d65e30f7661f65ce321a58c7b0eb5391d46051870d533a",
+    "tools/windows-sparse-backend/hardening-control.cpp": "e029089f89b2c4f69874a15397373d80f71564ce3fb7d803d205ea2685fa27b6",
+    ".github/workflows/windows-sparse-backend.yml": "e13bc1ded4b470b210d0aeccdc537590ed724c1472545d49f0e835e4b1e5d19e",
+    "tools/workspace-probe/probe.mjs": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d",
+    "tools/workspace-probe/atomic-writer.mjs": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767",
+    "binary/sparse.exe": "efd1cf87c62aca257e580eb2a41fab80c94d5cc31e1d519ade39ecda245d8895",
+    "binary/hardening-control.exe": "ebc1f6fe4e3081d460e9943a67caf27213906c9496aed0f053f71d49897de98d",
+    "binary/projfs-provider.exe": "19b58f07f0f1d7ce8a6182c94dfd6454979d56c1d11e701b8225bdc1b802349b"
+  },
+  "account": "jvs1f2549176704",
+  "accountCreated": false,
+  "accountRemoved": true,
+  "freeze": null,
+  "host": {
+    "setupIdentity": "runnervmtn0fv\\runneradmin",
+    "imageOS": "win22",
+    "setupAdministrator": true,
+    "imageVersion": "20261004.326.1",
+    "caption": "Microsoft Windows Server 2022 Datacenter",
+    "build": "20348",
+    "version": "10.0.20348"
+  },
+  "projfsFeature": "Enabled",
+  "cldflt": {
+    "startType": "Automatic",
+    "present": true,
+    "status": "Running"
+  },
+  "sdk": {
+    "sha256": "c50fb112b31a38e91151b84c46fcfefeb395aa12faa60cdc270103cdce7c4ae7",
+    "cfapi": "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\um\\cfapi.h"
+  },
+  "compileOnly": true,
+  "cleanupVerified": true
+}

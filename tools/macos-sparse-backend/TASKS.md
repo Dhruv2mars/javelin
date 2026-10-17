@@ -20,3 +20,11 @@ retained. Root TASKS stays exactly as supplied by current main.
 - [x] Run the focused regression and warnings-denied Clippy; push the same PR with
   current main integrated and root TASKS unchanged. No mounted proof repeated.
   Permission restoration after process kill remains an explicit limit.
+
+- [x] Retain the completed reproductions for 4300860233/237/243 without repeating them.
+- [x] Fix combined mode/size changes in both directions; refuse unreadable bases
+  before serving without changing base modes or ACLs; encode new whiteouts with
+  a version header and NUL separators while retaining legacy reads.
+- [x] Pass 38 component tests, including the three new focused regressions.
+- [x] Finish lint, runner syntax and CLI refusal checks; push the same regular PR
+  with root TASKS unchanged and archived evidence preserved.

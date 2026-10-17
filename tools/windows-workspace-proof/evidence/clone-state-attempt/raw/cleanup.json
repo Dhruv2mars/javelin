@@ -1,0 +1,109 @@
+{
+  "ownedRoot": "D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b",
+  "providerStarted": true,
+  "rootsProjected": 3,
+  "removed": true,
+  "error": null,
+  "children": [
+    {
+      "pid": 2968,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 1412,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 2816,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 2588,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 6212,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 4004,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 1732,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 1300,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 6476,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 5356,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 4688,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7504,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 5708,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7284,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7392,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7276,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7700,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 7924,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 1664,
+      "timedOut": false,
+      "exitCode": 0
+    },
+    {
+      "pid": 2892,
+      "timedOut": false,
+      "exitCode": 0
+    }
+  ]
+}

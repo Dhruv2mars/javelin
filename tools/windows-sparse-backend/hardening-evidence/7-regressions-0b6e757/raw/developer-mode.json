@@ -1,0 +1,15 @@
+{
+  "name": "developer-mode",
+  "executable": "C:\\Windows\\System32\\reg.exe",
+  "argv": [
+    "query",
+    "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 6108,
+  "stdout": "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock\r\n    AllowDevelopmentWithoutDevLicense    REG_DWORD    0x1\r\n\r\n",
+  "stderr": ""
+}

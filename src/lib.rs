@@ -8,6 +8,7 @@ mod layer;
 mod linux_layer;
 mod publish;
 mod repository;
+mod stack;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
 pub use layer::{

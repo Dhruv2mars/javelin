@@ -159,15 +159,16 @@ async fn writable_base_files_copy_up_beneath_readonly_directories() {
     )
     .unwrap();
     fs::write(dir.join("nested/blocked"), b"unreadable").unwrap();
+    for path in [&dir, &dir.join("nested")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    let a = fx.open("a");
+    // Inject a read failure after preflight; production bases stay immutable.
     fs::set_permissions(
         dir.join("nested/blocked"),
         fs::Permissions::from_mode(0o000),
     )
     .unwrap();
-    for path in [&dir, &dir.join("nested")] {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
-    }
-    let a = fx.open("a");
     let fid = id(&a, "dir/nested/editable").await.unwrap();
     let written = a.write(fid, 0, b"EDIT").await;
     let blocked = a
@@ -685,6 +686,110 @@ async fn owner_can_change_times_on_mode_zero_file() {
         (attr.mtime.seconds, attr.mtime.nseconds),
         (mtime.seconds, mtime.nseconds)
     );
+}
+
+#[tokio::test]
+async fn combined_setattr_grants_and_restricts_write_with_truncation() {
+    for (before, after) in [
+        (0o444, 0o644),
+        (0o644, 0o444),
+        (0o000, 0o600),
+        (0o644, 0o000),
+    ] {
+        let fx = Fixture::new();
+        let a = fx.open("a");
+        write_new(&a, "", "private", b"old bytes").await;
+        let fid = id(&a, "private").await.unwrap();
+        a.setattr(
+            fid,
+            sattr3 {
+                mode: set_mode3::mode(before),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let result = a
+            .setattr(
+                fid,
+                sattr3 {
+                    mode: set_mode3::mode(after),
+                    size: set_size3::size(0),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let path = fx.upper("a").join("tree/private");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let attr = result.unwrap();
+        assert_eq!(attr.mode, after);
+        assert_eq!(attr.size, 0);
+        assert!(fs::read(path).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn write_only_base_is_refused_without_changing_permissions() {
+    let fx = Fixture::new();
+    let file = fx.base().join("dir/nested.txt");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o200)).unwrap();
+    let result = Overlay::open(&fx.base(), &fx.upper("a"));
+    let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(mode, 0o200, "preflight must not relax base permissions");
+    assert_eq!(fs::read(file).unwrap(), b"nested\n");
+    let error = result
+        .err()
+        .expect("unreadable base must be refused before serving");
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert!(
+        error.to_string().contains("unsupported base layout"),
+        "{error}"
+    );
+    assert!(
+        !fx.upper("a").exists(),
+        "base preflight must precede private state creation"
+    );
+}
+
+#[tokio::test]
+async fn newline_names_roundtrip_whiteouts_and_legacy_state() {
+    let fx = Fixture::new();
+    for name in ["line\nname", "gone\nentry", "gone", "entry"] {
+        fs::write(fx.base().join(name), name).unwrap();
+    }
+    drop(fx.open("a"));
+    fs::write(fx.upper("a").join("whiteouts"), b"keep.txt\n").unwrap();
+    let a = fx.open("a");
+    assert!(id(&a, "keep.txt").await.is_err());
+    assert!(names(&a, "").await.contains(&"line\nname".to_string()));
+    assert_eq!(read(&a, "line\nname").await, b"line\nname");
+    let root = a.root_dir();
+    a.rename(
+        root,
+        &b"line\nname".as_slice().into(),
+        root,
+        &b"moved\nname".as_slice().into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read(&a, "moved\nname").await, b"line\nname");
+    a.remove(root, &b"moved\nname".as_slice().into())
+        .await
+        .unwrap();
+    a.remove(root, &b"gone\nentry".as_slice().into())
+        .await
+        .unwrap();
+    drop(a);
+    clone_upper(&fx.upper("a"), &fx.upper("c")).unwrap();
+    for name in ["a", "c"] {
+        let a = fx.open(name);
+        for hidden in ["keep.txt", "line\nname", "moved\nname", "gone\nentry"] {
+            assert!(id(&a, hidden).await.is_err(), "{name}: {hidden:?}");
+        }
+        assert_eq!(read(&a, "gone").await, b"gone");
+        assert_eq!(read(&a, "entry").await, b"entry");
+    }
 }
 
 #[tokio::test]

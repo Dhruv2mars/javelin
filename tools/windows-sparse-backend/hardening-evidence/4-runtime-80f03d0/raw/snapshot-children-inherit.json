@@ -1,0 +1,18 @@
+{
+  "name": "snapshot-children-inherit",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\*",
+    "/reset",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 1316,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\manifest.tsv\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\\210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\\61b87293ec7474b8e685692aaf8040ad42c4d087880bba63e252a443baa15c46\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\\6761305caf6739c334546b2618e634c985a2547fd195ddead688cf04d4fb9c1e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\\f54ba64acbb7f54f78c4cabca7cfe2cd951800eaa7d944cc5e55f2a59db40137\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\\frozen\\snap\\blobs\\fb85ef4eaf14346b1ba6e09bd59b355a2bde77a7261c2909515fb6afbf407696\r\nSuccessfully processed 7 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

@@ -76,7 +76,11 @@ Layer gives independent kill and remount, and a lock file per Layer.
 
 - Unchanged entries are read from the shared base. The server never opens it for writing.
 - `upper/tree/` holds created and copied-up entries. A write copies up only that file.
-- `upper/whiteouts` lists hidden base paths and is replaced atomically. A whiteout
+- `upper/whiteouts` lists hidden base paths and is replaced atomically. New writes
+  use the `JAVELIN_WHITEOUTS_V1` header followed by a NUL byte and NUL-terminated
+  raw relative paths, so newline names are unambiguous. Legacy newline-separated
+  metadata remains readable; the next whiteout write uses the new encoding.
+  Archived raw evidence remains unchanged. A whiteout
   also hides the base subtree beneath it, so a recreated directory starts empty.
 - Copy-ups are staged in `upper/tmp/` and renamed into place; staging is cleared on open.
 - A directory rename copies the visible subtree into `upper/tree/`. That subtree
@@ -91,6 +95,14 @@ On the hosted runner, the base is owned by `root:wheel`, so the server user cann
 write it. Mounting requires `sudo -n /sbin/mount_nfs`; this is not a non-admin setup proof.
 Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft,rdirplus`.
 `rdirplus` is required: `nfsserve` 0.11.0 ignores the cookie for plain READDIR.
+
+The current fixture requires every regular base file to be readable by the server
+and every base directory to be enumerable. `Overlay::open` checks this before
+creating private state, and the CLI refuses an unsupported layout before listening.
+A protected write-only base file that the server cannot read is unsupported.
+Preflight only opens files read-only and enumerates directories; it never relaxes
+base modes or ACLs. Base mutation after preflight is outside the immutable-base
+assumption. This scan adds startup work that the old `39a065b` measurements did not include.
 
 ## Run
 
@@ -155,6 +167,16 @@ nested `0555` parents, a successful edit, an unreadable-source error, mode repor
 and reopen, unchanged base bytes, and rejection of new-file creation. The prior
 timestamp fix from comment `4292228021` remains in the copy-up and clone paths.
 No hosted or mounted result is claimed for this change.
+
+### Combined attributes and newline names
+
+Comments `4300860233`, `4300860237` and `4300860243` have focused regressions.
+Combined mode and size requests support granting owner-write access before the
+size operation and applying restrictive modes afterwards. Unreadable base files
+are refused at startup under the bounded layout requirement above. Newline names
+work through lookup, rename, delete, reopen and clone, with both old and new
+whiteout metadata. These fixes have local trait/process validation only; retained
+hosted evidence and PR #20 measurements still refer to the old source.
 
 The first run's stale handles came from a rename bookkeeping bug that stored the
 renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.

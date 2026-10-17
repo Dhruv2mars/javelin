@@ -1,0 +1,9 @@
+{
+  "id": "recovery-reopen-before",
+  "verdict": "VERIFIED",
+  "commands": [],
+  "evidence": {
+    "oldBytesAndTemporaryPreserved": true,
+    "deletionPreserved": true
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "build",
+  "verdict": "VERIFIED",
+  "commands": [
+    {
+      "argv": [
+        "cc",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "main.c",
+        "-o",
+        "native-build.exe"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\\a",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "D:\\a\\_temp\\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\\a\\native-build.exe"
+      ],
+      "cwd": "D:\\a\\_temp\\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\\a",
+      "exitCode": 0,
+      "stdout": "7\r\n",
+      "stderr": ""
+    }
+  ],
+  "evidence": {}
+}

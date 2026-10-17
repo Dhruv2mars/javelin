@@ -1,0 +1,3 @@
+started root=D:\a\_temp\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\a instance={E404CDB7-373C-4437-B8C1-E4D255B3EDEF} alignment=512 entries=8
+notification 2 native-recovery.txt destination=
+stopped root=D:\a\_temp\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\a

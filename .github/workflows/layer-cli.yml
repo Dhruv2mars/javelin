@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - src/**
-      - tests/cli*.rs
+      - crates/javelin-cli/**
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/layer-cli.yml
   workflow_dispatch:
 
@@ -76,7 +78,7 @@ jobs:
           rm "$JAVELIN_GIT_MARKER"
           export PATH="$evidence/guard:$PATH"
           uname -a
-          timeout --signal=TERM --kill-after=15s 240s cargo test --locked --test cli_layers linux_cli_path_checkpoint_clone_and_recovery -- --ignored --exact --nocapture
+          timeout --signal=TERM --kill-after=15s 240s cargo test --locked --test cli_layers linux_cli_ -- --ignored --nocapture
           [[ ! -e "$JAVELIN_GIT_MARKER" ]]
       - name: Upload bounded smoke logs
         if: always() && env.CLI_EVIDENCE != ''

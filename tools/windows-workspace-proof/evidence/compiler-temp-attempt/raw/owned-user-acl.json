@@ -1,0 +1,18 @@
+{
+  "name": "owned-user-acl",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679",
+    "/grant",
+    "jvp3e2351259a13:(OI)(CI)F"
+  ],
+  "timeoutMs": 30000,
+  "pid": 5180,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "processed file: D:\\a\\_temp\\javelin-windows-proof-3e2351259a134ee6969ac6abadaf0679\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

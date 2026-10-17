@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-acl-e",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e",
+    "/grant",
+    "*S-1-5-32-544:(OI)(CI)F",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 1180,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\cold-file-moved.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\cold-moved\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\completed.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\e-only.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\moved-bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\new-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\notes.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\renamed-dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\slow.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\cold-moved\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\cold-moved\\sub\\cold.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\dir2\\inner.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\renamed-dir\\nested.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\renamed-dir3\\deep\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\e\\renamed-dir3\\deep\\leaf.txt\r\nSuccessfully processed 22 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

@@ -1,0 +1,63 @@
+{
+  "identity": {
+    "administrator": false,
+    "sid": "S-1-5-21-1000861503-3182281758-1041194900-1003",
+    "name": "runnervmtn0fv\\jvs127c2b16d4c6"
+  },
+  "phases": {
+    "job-termination": 0,
+    "protect-base": 0,
+    "rename-projfs": 0,
+    "rename-cfapi": 0,
+    "native-ops": 0,
+    "audit-before-hydration-kill-a": 0,
+    "audit-after-hydration-kill-a": 0,
+    "closed-write": 0,
+    "audit-after-write-kill-a": 0,
+    "after-kills": 0,
+    "audit-before-capture-a": 0,
+    "audit-final-b": 0,
+    "capture": 0,
+    "protect-snapshot": 0,
+    "tree-a": 0,
+    "clones": 0,
+    "audit-final-d": 0,
+    "audit-final-e": 0,
+    "audit-final-a": 0,
+    "common-probe": 1,
+    "audit-final-pa": 0,
+    "audit-final-pb": 0,
+    "audit-final-pc": 0
+  },
+  "errors": [],
+  "providersStopped": true,
+  "registeredRoots": [
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\cr",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\a",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\b",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\d",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\e",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pa",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pb",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pc"
+  ],
+  "readerExitAfterProviderKill": 0,
+  "holdersAliveBeforeKill": [
+    true,
+    true
+  ],
+  "holderExitCodes": [
+    -1,
+    -1
+  ],
+  "unregister": {
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\cr": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\a": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\b": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\d": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\e": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pa": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pb": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-127c2b16d4c64d43ae8f9b115f3805fb\\pc": "{\"unregister\":\"00000000\"}"
+  }
+}
