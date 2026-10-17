@@ -3268,6 +3268,41 @@ fn foreground_watch_restarts_same_pending_operation_without_duplicate() {
         assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
         s.rt.unmount(&s.layer).unwrap();
     }
+    // Recovery must surface a stale durable outcome immediately, even if a
+    // bounded run expires before another sample could notice the external head.
+    let mut s = setup(&env, "watch-stale-pending");
+    fs::write(s.view.join("edit"), b"pending edit").unwrap();
+    let mut actor = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "watch",
+        "A",
+        "unused",
+        "watch_pending",
+    );
+    actor.marker("BOUNDARY watch_pending");
+    actor.kill();
+    let head = active(&s.repo, &s.layer);
+    s.repo
+        .capture_layer(
+            &op("external-before-recovery"),
+            &head,
+            &SparseChanges::new([]).unwrap(),
+        )
+        .unwrap();
+    let error =
+        s.rt.watch(
+            &mut s.repo,
+            &s.layer,
+            Duration::from_millis(250),
+            Some(Duration::from_millis(1)),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("rebind"), "{error}");
+    assert_eq!(s.rt.status(&s.repo, &s.layer).unwrap().bound_revision, 0);
+    assert_eq!(s.repo.layer_history(&s.layer).unwrap().len(), 2);
+    s.rt.unmount(&s.layer).unwrap();
     save(
         &env,
         "watch-recovery",

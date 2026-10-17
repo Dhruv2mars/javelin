@@ -105,7 +105,12 @@ impl LinuxLayerRuntime {
                 ));
             }
             let operation = OperationId::parse(&pending.operation)?;
-            self.capture_frozen(repo, layer, &slot, &mut record, &operation)?;
+            let outcome = self.capture_frozen(repo, layer, &slot, &mut record, &operation)?;
+            if !matches!(outcome.update, LayerUpdate::Applied { .. }) {
+                return Err(Error::InvalidInput(
+                    "watch stopped: pending capture has a stale binding; explicitly rebind".into(),
+                ));
+            }
             *stable = Quiet::default();
             return Ok(true);
         }

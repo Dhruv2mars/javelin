@@ -112,5 +112,25 @@ Root TASKS stays identical to merged main.
 - [x] Implement bounded foreground polling and exact frozen validation.
 - [x] Add deterministic tests and real-process Linux/CLI coverage.
 - [x] Document sampling, opt-in/retry behavior and unsupported ignore/scale limits.
-- [ ] Run proportional fmt/Clippy/workspace/release and hosted smoke checks.
-- [ ] Open and T3-link one regular PR against main.
+- [x] Run proportional fmt/Clippy/workspace/release and hosted smoke checks.
+- [x] Prepare checked implementation for one regular T3-linked PR against main;
+  delivery URL is reported in this thread and integration belongs to the hub.
+
+Verification: local macOS workspace tests passed 162 tests with one inherited
+ignore; workspace fmt, warnings-denied Clippy and release build passed. Linux
+x86_64 cross-target all-target/all-feature Clippy also passed using Zig, without
+mounting on the laptop. The final stale-recovery change additionally passed the
+focused quiet-window test, both Clippy targets and release rebuild.
+
+Hosted implementation source `9aa7221` passed runtime run
+[39034554393](https://github.com/Dhruv2mars/javelin/actions/runs/39034554393)
+(29 mount tests, VERIFIED summary) and actual CLI run
+[39034556726](https://github.com/Dhruv2mars/javelin/actions/runs/39034556726)
+(four mount cases and three Stack binary cases). Raw logs/artifacts were downloaded
+and inspected; all 16 runtime evidence source hashes match delivered implementation
+files. Both runs proved failing-Git positive controls and absence during product
+execution, with complete cleanup (runtime allUnmountedAndRemoved=true; CLI exit=0).
+The final commit amend includes this scoped checklist; implementation/test/workflow
+files retain their tested hashes. Ignore support, large-tree performance, other
+kernels/platforms, production privilege setup and complete GA acceptance remain
+unverified. No native graph/schema/adapter/helper/probe changes were made.
