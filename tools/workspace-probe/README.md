@@ -101,5 +101,3 @@ Timeouts can leave an owned temporary fixture. Its path is recorded as
 uninterruptible kernel operation can still require host intervention; that
 failure mode was not induced. No component is installed, no host security
 setting changes, and neither the probe nor its fixtures uses Git.
-
-See [host evidence and platform gaps](../../docs/workspace-verification.md).

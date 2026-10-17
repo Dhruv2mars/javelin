@@ -1,7 +1,0 @@
-{
-  "tools/macos-sparse-backend/Cargo.toml": "057e2cdce68f7d7118e8d120da97c502bc65cbac0cd2df5724566bce2ea17973",
-  "tools/macos-sparse-backend/Cargo.lock": "c4fa4c615e6801b1ffb834560d00fc48db26303ce2a68983318d373c4f7876ad",
-  "tools/macos-sparse-backend/src/lib.rs": "8352a9ff73b7c2c93f998f035edfefdacdb483dadb7d58621dcd24ec477ba995",
-  "tools/macos-sparse-backend/src/main.rs": "317eb05447d378d9d360cb689cb58074e73e1a675e14808e03c3c881d20f56d4",
-  "tools/macos-sparse-backend/tests/overlay.rs": "c4b3977b5bb27604b16a6174d86c3a104d62527603a7d3b84fc860aa1bb157ec"
-}
