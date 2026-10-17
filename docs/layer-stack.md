@@ -6,9 +6,9 @@ head event. The target keeps its original World base and unrelated private or
 accepted content. Neither Layer is refreshed or published automatically.
 
 The standalone `javelin-stack` crate depends on `javelin` and `javelin-merge`.
-The native library never depends on either downstream crate. The current root
-binary cannot depend on this adapter without a cycle; a later separate CLI
-package owns that integration. This unit adds no CLI or filesystem runtime flow.
+The native library never depends on either downstream crate. The separate `javelin-cli`
+package can consume both libraries; adding its Stack command remains a separate
+unit. This unit adds no CLI or filesystem runtime flow.
 
 ## Public caller API
 
@@ -72,7 +72,11 @@ discard or Publish cannot change the imported snapshot. A source checkpoint can
 itself retain sources, so ancestry is transitive without copying source content.
 All source edges are in the content-addressed checkpoint bytes. An iterative
 graph walk verifies every source and its content, rejects cycles and invalid
-references, and avoids revisiting shared subgraphs within a read. Existing
+references, and reuses verified checkpoints across Layer revisions and attempts
+within one validation transaction. Repository integrity inspection shares that
+reader with its all-object walk. Later transactions start with an empty reader;
+no cached validation survives a transaction. This removes repeated ancestor
+hashing without skipping stored source edges or other existing graph checks. Existing
 checkpoint, Layer-state, mutation and repository integrity boundaries validate
 these graphs. The exact Stack input and original outcome have an immutable hash-bound record,
 protecting source bindings even when two sources were already retained.
@@ -80,8 +84,10 @@ protecting source bindings even when two sources were already retained.
 ## Unshipped storage format 4
 
 Format 4 adds append-only `stacks` rows referring to Layer attempts, frozen source
-checkpoints and input-binding Blobs. Their update/delete triggers match the other
-immutable tables. Checkpoints add a canonical `sources` field only when nonempty;
+checkpoints and input-binding Blobs. Each Layer attempt also records whether it
+is a Stack, requiring the binding row even if the source was already retained
+and the candidate ancestry is unchanged. Their update/delete triggers match the
+other immutable tables. Checkpoints add a canonical `sources` field only when nonempty;
 ordinary checkpoints without ancestry keep their previous byte encoding.
 Formats 1–3 are unshipped and refused by open/init without migration or rewrite.
 The format-3 refusal test compares the closed database bytes before and after both
@@ -91,7 +97,11 @@ calls. This is a small development-format boundary, not a migration facility.
 
 `tests/layer_stack.rs` checks input bindings, native stale/success retries, ancestry
 retention through capture/clone/discard/Publish, transaction rollback, corrupted
-source graphs and bindings, canonical encoding, and old-format refusal.
+source graphs and bindings (including missing repeated-source rows), canonical
+encoding, and old-format refusal. A test-only graph-load counter proves that an
+18-checkpoint shared-history fixture loads each checkpoint once per integrity
+transaction, repeats those loads in the next transaction, and detects damage
+introduced between them.
 `tests/support/process.rs` uses pipe barriers and independent processes to prove
 kill-before-commit rollback, kill-after-commit recovery, Stack/capture CAS races,
 and simultaneous exact retries appending once. Hooks exist only in library tests.

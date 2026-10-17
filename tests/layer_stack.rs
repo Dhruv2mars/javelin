@@ -400,3 +400,46 @@ fn stale_stack_observation_cannot_be_changed_to_a_later_valid_head() {
             .is_err()
     );
 }
+
+#[test]
+fn missing_repeated_source_stack_binding_is_corruption_for_success_and_stale() {
+    for stale in [false, true] {
+        let root = TempDir::new().unwrap();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let source = layer(&mut repo, "source");
+        let target = layer(&mut repo, "target");
+        let changes = SparseChanges::new([]).unwrap();
+        let target = applied(
+            repo.commit_stack(&op("first"), &target, source.checkpoint(), &changes)
+                .unwrap(),
+        );
+        if stale {
+            repo.capture_layer(&op("concurrent"), &target, &changes)
+                .unwrap();
+        }
+        let original = repo
+            .commit_stack(&op("repeat"), &target, source.checkpoint(), &changes)
+            .unwrap();
+        assert_eq!(matches!(original, LayerUpdate::Stale { .. }), stale);
+        assert_eq!(
+            repo.stack_operation(&op("repeat"), &target, source.checkpoint())
+                .unwrap(),
+            Some(original)
+        );
+        repo.check().unwrap();
+        let raw = db(&root);
+        raw.execute_batch("DROP TRIGGER stacks_no_DELETE;").unwrap();
+        raw.execute("DELETE FROM stacks WHERE id='repeat'", [])
+            .unwrap();
+        assert!(
+            matches!(repo.check(), Err(Error::CorruptRepository(_))),
+            "missing {stale} Stack binding passed integrity"
+        );
+        assert!(matches!(
+            repo.stack_operation(&op("repeat"), &target, source.checkpoint()),
+            Err(Error::CorruptRepository(_))
+        ));
+        assert!(repo.layer_state(target.layer()).is_err());
+        assert!(repo.capture_layer(&op("next"), &target, &changes).is_err());
+    }
+}

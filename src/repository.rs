@@ -362,7 +362,8 @@ impl Repository {
                 "invalid foreign-key references".into(),
             ));
         }
-        let history = validate_state_in(&tx)?;
+        let mut checkpoints = crate::layer::CheckpointReader::new(&tx);
+        let history = validate_state_with_checkpoints(&mut checkpoints)?;
         let objects = tx
             .prepare("SELECT id,kind FROM objects ORDER BY id")?
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
@@ -377,12 +378,12 @@ impl Repository {
                     manifest_in(&tx, id)?;
                 }
                 ObjectKind::Checkpoint => {
-                    crate::layer::checkpoint_in(&tx, id)?;
+                    checkpoints.read(id)?;
                 }
             }
         }
         let attempts: i64 = tx.query_row("SELECT count(*) FROM attempts", [], |r| r.get(0))?;
-        let layers = crate::layer::check_layers(&tx)?;
+        let layers = crate::layer::check_layers(&mut checkpoints)?;
         let report = IntegrityReport {
             layers,
             versions: history.len(),
@@ -399,9 +400,16 @@ impl Repository {
 /// Full state validation is above the raw World and Layer validators. Checkpoint
 /// base validation uses history_in, so it never recursively validates publications.
 pub(crate) fn validate_state_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
+    validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(conn))
+}
+
+fn validate_state_with_checkpoints(
+    checkpoints: &mut crate::layer::CheckpointReader<'_>,
+) -> Result<Vec<WorldVersion>> {
+    let conn = checkpoints.conn;
     validate_format(conn)?;
     let history = history_in(conn)?;
-    crate::layer::check_layers(conn)?;
+    crate::layer::check_layers(checkpoints)?;
     crate::stack::check_stacks(conn)?;
     crate::publish::check_publications(conn, &history)?;
     Ok(history)

@@ -1,5 +1,8 @@
 //! Sparse immutable checkpoints and repository-local durable Layer heads.
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -31,6 +34,7 @@ CREATE TABLE layer_attempts (
     expected INTEGER NOT NULL,
     checkpoint TEXT NOT NULL REFERENCES objects(id),
     discard INTEGER NOT NULL CHECK(discard IN (0,1)),
+    stack INTEGER NOT NULL DEFAULT 0 CHECK(stack IN (0,1)),
     accepted INTEGER NOT NULL CHECK(accepted IN (0,1)),
     result INTEGER NOT NULL,
     FOREIGN KEY(layer,expected) REFERENCES layer_heads(layer,revision),
@@ -495,33 +499,55 @@ pub(crate) fn prepare_checkpoint(
     )?))
 }
 
-pub(crate) fn checkpoint_in(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
-    // Iterative DFS: validate every ancestry graph without risking a recursive
-    // call stack or revisiting shared subgraphs. Hashes bind all source edges.
-    let root = checkpoint_node(conn, id)?;
-    if root.sources.is_empty() {
-        return Ok(root);
-    }
-    let mut pending = vec![(root.id, false)];
-    let mut visiting = BTreeSet::new();
-    let mut checked = BTreeSet::new();
-    while let Some((id, leaving)) = pending.pop() {
-        if leaving {
-            visiting.remove(&id);
-            checked.insert(id);
-        } else if !checked.contains(&id) {
-            if !visiting.insert(id) {
-                return Err(Error::CorruptRepository("cyclic Stack ancestry".into()));
-            }
-            let node = checkpoint_node(conn, id.0)?;
-            pending.push((id, true));
-            pending.extend(node.sources.into_iter().rev().map(|source| (source, false)));
+/// Scoped to one validation transaction; never stored on a Repository handle.
+/// Only fully verified graphs enter this cache. Rc avoids copying sparse trees
+/// every time an event/attempt refers to the same immutable checkpoint.
+pub(crate) struct CheckpointReader<'a> {
+    pub(crate) conn: &'a Connection,
+    checked: BTreeMap<ObjectId, Rc<LayerCheckpoint>>,
+}
+
+impl<'a> CheckpointReader<'a> {
+    pub(crate) fn new(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            checked: BTreeMap::new(),
         }
     }
-    Ok(root)
+
+    pub(crate) fn read(&mut self, id: ObjectId) -> Result<Rc<LayerCheckpoint>> {
+        let mut pending = vec![(id, None)];
+        let mut visiting = BTreeSet::new();
+        while let Some((id, leaving)) = pending.pop() {
+            if let Some(node) = leaving {
+                visiting.remove(&id);
+                self.checked.insert(id, node);
+            } else if !self.checked.contains_key(&id) {
+                if !visiting.insert(id) {
+                    return Err(Error::CorruptRepository("cyclic Stack ancestry".into()));
+                }
+                let node = Rc::new(checkpoint_node(self.conn, id)?);
+                let sources = node.sources.clone();
+                pending.push((id, Some(node)));
+                pending.extend(sources.into_iter().rev().map(|source| (source.0, None)));
+            }
+        }
+        Ok(Rc::clone(&self.checked[&id]))
+    }
+}
+
+pub(crate) fn checkpoint_in(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
+    Ok((*CheckpointReader::new(conn).read(id)?).clone())
+}
+
+#[cfg(test)]
+thread_local! {
+    static CHECKPOINT_NODE_READS: std::cell::RefCell<BTreeMap<ObjectId, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
 fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
+    #[cfg(test)]
+    CHECKPOINT_NODE_READS.with(|reads| *reads.borrow_mut().entry(id).or_default() += 1);
     let bytes = read_object(conn, id, ObjectKind::Checkpoint)?;
     let encoded: EncodedCheckpoint =
         serde_json::from_slice(&bytes).map_err(|_| Error::CorruptObject(id))?;
@@ -706,8 +732,8 @@ pub(crate) fn update_in(
     } else {
         current.revision
     };
-    conn.execute("INSERT INTO layer_attempts(id,layer,expected,checkpoint,discard,accepted,result) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-        params![operation.as_str(),expected.layer.as_str(),expected.revision as i64,checkpoint.0.to_string(),discard,accepted,result])?;
+    conn.execute("INSERT INTO layer_attempts(id,layer,expected,checkpoint,discard,accepted,result,stack) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![operation.as_str(),expected.layer.as_str(),expected.revision as i64,checkpoint.0.to_string(),discard,accepted,result,source.is_some()])?;
     if accepted {
         conn.execute("INSERT INTO layer_heads(layer,revision,checkpoint,discarded,operation) VALUES(?1,?2,?3,?4,?5)",
             params![expected.layer.as_str(),result,checkpoint.0.to_string(),discard,operation.as_str()])?;
@@ -725,15 +751,24 @@ pub(crate) fn update_in(
 }
 
 pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Result<LayerUpdate> {
-    let (layer, expected, checkpoint, discard, accepted, result): (
+    attempt_outcome_in(&mut CheckpointReader::new(conn), operation)
+}
+
+fn attempt_outcome_in(
+    checkpoints: &mut CheckpointReader<'_>,
+    operation: &OperationId,
+) -> Result<LayerUpdate> {
+    let conn = checkpoints.conn;
+    let (layer, expected, checkpoint, discard, accepted, result, stack): (
         String,
         i64,
         String,
+        i64,
         i64,
         i64,
         i64,
     ) = conn.query_row(
-        "SELECT layer,expected,checkpoint,discard,accepted,result FROM layer_attempts WHERE id=?1",
+        "SELECT layer,expected,checkpoint,discard,accepted,result,stack FROM layer_attempts WHERE id=?1",
         [operation.as_str()],
         |r| {
             Ok((
@@ -743,6 +778,7 @@ pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Res
                 r.get(3)?,
                 r.get(4)?,
                 r.get(5)?,
+                r.get(6)?,
             ))
         },
     )?;
@@ -750,8 +786,8 @@ pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Res
         .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))?;
     let before = event_in(conn, &layer, expected)?;
     let after = event_in(conn, &layer, result)?;
-    let candidate = checkpoint_in(conn, decode_id(&checkpoint)?)?;
-    let before_checkpoint = checkpoint_in(conn, before.checkpoint.0)?;
+    let candidate = checkpoints.read(decode_id(&checkpoint)?)?;
+    let before_checkpoint = checkpoints.read(before.checkpoint.0)?;
     if before.discarded
         || ![0, 1].contains(&discard)
         || ![0, 1].contains(&accepted)
@@ -762,12 +798,18 @@ pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Res
             "invalid Layer attempt binding".into(),
         ));
     }
-    let mut sources = before_checkpoint.sources;
-    if let Some(source) = crate::stack::source_in(conn, operation)? {
+    let source = crate::stack::source_in(conn, operation)?;
+    if stack != i64::from(source.is_some()) {
+        return Err(Error::CorruptRepository(
+            "missing or unexpected Stack binding".into(),
+        ));
+    }
+    let mut sources = before_checkpoint.sources.clone();
+    if let Some(source) = source {
         if discard != 0 {
             return Err(Error::CorruptRepository("Stack cannot discard".into()));
         }
-        checkpoint_in(conn, source.0)?;
+        checkpoints.read(source.0)?;
         sources.push(source);
         sources.sort();
         sources.dedup();
@@ -797,7 +839,7 @@ pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Res
         }
         LayerUpdate::Stale { state }
     };
-    if let Some(source) = crate::stack::source_in(conn, operation)? {
+    if let Some(source) = source {
         crate::stack::verify_binding(
             conn,
             operation,
@@ -810,7 +852,8 @@ pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Res
     Ok(outcome)
 }
 
-pub(crate) fn check_layers(conn: &Connection) -> Result<usize> {
+pub(crate) fn check_layers(checkpoints: &mut CheckpointReader<'_>) -> Result<usize> {
+    let conn = checkpoints.conn;
     identity_in(conn)?;
     let layers = conn
         .prepare("SELECT DISTINCT layer FROM layer_heads ORDER BY layer")?
@@ -832,13 +875,13 @@ pub(crate) fn check_layers(conn: &Connection) -> Result<usize> {
                 ));
             }
             let event = event_in(conn, &layer, revision)?;
-            let snapshot = checkpoint_in(conn, event.checkpoint.0)?;
+            let snapshot = checkpoints.read(event.checkpoint.0)?;
             if let Some(base) = &base {
                 if base != &snapshot.base {
                     return Err(Error::CorruptRepository("Layer base changed".into()));
                 }
             } else {
-                base = Some(snapshot.base);
+                base = Some(snapshot.base.clone());
             }
             if let Some(prev) = previous {
                 if prev.discarded || (event.discarded && prev.checkpoint != event.checkpoint) {
@@ -847,7 +890,7 @@ pub(crate) fn check_layers(conn: &Connection) -> Result<usize> {
                 let op = event.operation.as_ref().ok_or_else(|| {
                     Error::CorruptRepository("missing Layer head operation".into())
                 })?;
-                match attempt_outcome(conn, op)? {
+                match attempt_outcome_in(checkpoints, op)? {
                     LayerUpdate::Applied { state } if state == event.state(identity_in(conn)?) => {}
                     _ => {
                         return Err(Error::CorruptRepository(
@@ -868,7 +911,7 @@ pub(crate) fn check_layers(conn: &Connection) -> Result<usize> {
     for operation in operations {
         let op = OperationId::parse(&operation)
             .map_err(|_| Error::CorruptRepository("invalid stored Layer operation".into()))?;
-        attempt_outcome(conn, &op)?;
+        attempt_outcome_in(checkpoints, &op)?;
     }
     Ok(layers.len())
 }
@@ -896,3 +939,7 @@ pub(crate) fn head_in(conn: &Connection, layer: &LayerId, revision: u64) -> Resu
 pub(crate) fn latest_event_state_in(conn: &Connection, layer: &LayerId) -> Result<LayerState> {
     Ok(latest_in(conn, layer)?.state(identity_in(conn)?))
 }
+
+#[cfg(test)]
+#[path = "../tests/support/stack_validation.rs"]
+mod stack_validation_tests;
