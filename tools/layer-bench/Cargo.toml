@@ -1,0 +1,19 @@
+[package]
+name = "javelin-layer-bench"
+version = "0.1.0"
+edition = "2024"
+description = "Measures Layer creation, discard and status-scan cost per filesystem; not product code"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "layer-bench"
+path = "src/main.rs"
+
+[dependencies]
+fs4 = "1.1.0"
+reflink-copy = "0.1.30"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.190"
