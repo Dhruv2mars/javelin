@@ -1,0 +1,1372 @@
+{
+  "barrier": {
+    "max_lateness_after_target_ns": 1908,
+    "release_skew_ns": 106,
+    "workers": 4
+  },
+  "disk": [
+    {
+      "files": 1,
+      "label": "empty_repository",
+      "objects": null,
+      "payload_bytes": 0,
+      "physical_bytes": 61440,
+      "scenario": "ingest",
+      "stored_bytes": 61440
+    },
+    {
+      "files": 1,
+      "label": "after_put_blob",
+      "objects": 271,
+      "payload_bytes": 4631106,
+      "physical_bytes": 4939776,
+      "scenario": "ingest",
+      "stored_bytes": 4939776
+    },
+    {
+      "files": 1,
+      "label": "after_duplicate_put_blob",
+      "objects": 271,
+      "payload_bytes": 4631106,
+      "physical_bytes": 4939776,
+      "scenario": "ingest",
+      "stored_bytes": 4939776
+    },
+    {
+      "files": 1,
+      "label": "history_1",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4980736,
+      "scenario": "history",
+      "stored_bytes": 4980736
+    },
+    {
+      "files": 1,
+      "label": "history_7",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 6164480,
+      "scenario": "history",
+      "stored_bytes": 6164480
+    },
+    {
+      "files": 1,
+      "label": "history_15",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 7901184,
+      "scenario": "history",
+      "stored_bytes": 7901184
+    },
+    {
+      "files": 1,
+      "label": "history_30",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 11567104,
+      "scenario": "history",
+      "stored_bytes": 11563008
+    },
+    {
+      "files": 1,
+      "label": "layer_created",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3534848,
+      "scenario": "layers",
+      "stored_bytes": 3530752
+    },
+    {
+      "files": 1,
+      "label": "after_capture_1",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3588096,
+      "scenario": "layers",
+      "stored_bytes": 3584000
+    },
+    {
+      "files": 1,
+      "label": "after_capture_2",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3682304,
+      "scenario": "layers",
+      "stored_bytes": 3678208
+    },
+    {
+      "files": 1,
+      "label": "after_capture_3",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3846144,
+      "scenario": "layers",
+      "stored_bytes": 3842048
+    },
+    {
+      "files": 1,
+      "label": "after_capture_4",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4038656,
+      "scenario": "layers",
+      "stored_bytes": 4034560
+    },
+    {
+      "files": 1,
+      "label": "after_capture_5",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4288512,
+      "scenario": "layers",
+      "stored_bytes": 4284416
+    },
+    {
+      "files": 1,
+      "label": "after_capture_6",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4603904,
+      "scenario": "layers",
+      "stored_bytes": 4599808
+    },
+    {
+      "files": 1,
+      "label": "before_clones",
+      "objects": 401,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_1",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_2",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_3",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_4",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_5",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_6",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_7",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_8",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_9",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_10",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_11",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_12",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_13",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_14",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_15",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_16",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_17",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_18",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_19",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_20",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_21",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_22",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_23",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_24",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5656576,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_contention",
+      "objects": 467,
+      "payload_bytes": null,
+      "physical_bytes": 1179648,
+      "scenario": "contention",
+      "stored_bytes": 1175552
+    }
+  ],
+  "error_counts": {},
+  "groups": [
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 4,
+      "op": "barrier_release",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 8,
+      "max_ns": 13609962,
+      "mean_ns": 13315843,
+      "min_ns": 13116828,
+      "n": 8,
+      "op": "baseline_compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 13237510,
+      "p95_ns": 13609962,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 106526746,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 13157820,
+        "last_quarter_p50_ns": 13116828
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1239250,
+      "mean_ns": 1096617,
+      "min_ns": 991686,
+      "n": 8,
+      "op": "baseline_put_blob",
+      "outcome": "ok",
+      "p50_ns": 1068532,
+      "p95_ns": 1239250,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 8772936,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1016904,
+        "last_quarter_p50_ns": 1112078
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1326521,
+      "mean_ns": 1057560,
+      "min_ns": 968831,
+      "n": 8,
+      "op": "baseline_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 1011706,
+      "p95_ns": 1326521,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 8460484,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 995212,
+        "last_quarter_p50_ns": 968831
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 28553,
+      "mean_ns": 14554,
+      "min_ns": 13901,
+      "n": 80,
+      "op": "blob_readback",
+      "outcome": "ok",
+      "p50_ns": 14191,
+      "p95_ns": 14902,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 1164395,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 14362,
+        "last_quarter_p50_ns": 14122
+      }
+    },
+    {
+      "distinct_state_points": 56,
+      "max_ns": 47977433,
+      "mean_ns": 18608943,
+      "min_ns": 13636057,
+      "n": 56,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 16965224,
+      "p95_ns": 32790697,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 1042100831,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 16890911,
+        "last_quarter_p50_ns": 14656300
+      }
+    },
+    {
+      "distinct_state_points": 38,
+      "max_ns": 1144389788,
+      "mean_ns": 67909931,
+      "min_ns": 16489245,
+      "n": 44,
+      "op": "compare_and_advance",
+      "outcome": "stale",
+      "p50_ns": 17938050,
+      "p95_ns": 246438944,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 2988036975,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 16972224,
+        "last_quarter_p50_ns": 22523519
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 47977433,
+      "mean_ns": 18608943,
+      "min_ns": 13636057,
+      "n": 56,
+      "op": "compare_and_advance_attempts_sum",
+      "outcome": "accepted",
+      "p50_ns": 16965224,
+      "p95_ns": 32790697,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 1042100831,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 17590867,
+        "last_quarter_p50_ns": 14656300
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1144389788,
+      "mean_ns": 67909931,
+      "min_ns": 16489245,
+      "n": 44,
+      "op": "compare_and_advance_attempts_sum",
+      "outcome": "stale",
+      "p50_ns": 17938050,
+      "p95_ns": 246438944,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 2988036975,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 17262462,
+        "last_quarter_p50_ns": 22812174
+      }
+    },
+    {
+      "distinct_state_points": 74,
+      "max_ns": 14490540,
+      "mean_ns": 13723856,
+      "min_ns": 13325300,
+      "n": 118,
+      "op": "exact_retry_check",
+      "outcome": "ok",
+      "p50_ns": 13686395,
+      "p95_ns": 14368867,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 1619415048,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 13763562,
+        "last_quarter_p50_ns": 13675398
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 23299930,
+      "mean_ns": 23299930,
+      "min_ns": 23299930,
+      "n": 1,
+      "op": "final_check",
+      "outcome": "ok",
+      "p50_ns": 23299930,
+      "p95_ns": 23299930,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 23299930,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 14094238,
+      "mean_ns": 14094238,
+      "min_ns": 14094238,
+      "n": 1,
+      "op": "final_history",
+      "outcome": "ok",
+      "p50_ns": 14094238,
+      "p95_ns": 14094238,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 14094238,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 53742685,
+      "mean_ns": 13736823,
+      "min_ns": 379122,
+      "n": 4,
+      "op": "open",
+      "outcome": "ok",
+      "p50_ns": 402948,
+      "p95_ns": 53742685,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 54947293,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 13471260,
+      "mean_ns": 13471260,
+      "min_ns": 13471260,
+      "n": 1,
+      "op": "operation_id_reuse_check",
+      "outcome": "ok",
+      "p50_ns": 13471260,
+      "p95_ns": 13471260,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 13471260,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 10,
+      "max_ns": 12937257,
+      "mean_ns": 7248571,
+      "min_ns": 1754196,
+      "n": 10,
+      "op": "prefill_compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 6473887,
+      "p95_ns": 12937257,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 72485710,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1754196,
+        "last_quarter_p50_ns": 11331264
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 2772332,
+      "mean_ns": 1013566,
+      "min_ns": 37186,
+      "n": 200,
+      "op": "prefill_put_blob",
+      "outcome": "ok",
+      "p50_ns": 1025498,
+      "p95_ns": 1282364,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 202713363,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 969983,
+        "last_quarter_p50_ns": 1060009
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 4900953,
+      "mean_ns": 2029189,
+      "min_ns": 1548196,
+      "n": 10,
+      "op": "prefill_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 1718002,
+      "p95_ns": 4900953,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 20291892,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1669188,
+        "last_quarter_p50_ns": 1718002
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 229983628,
+      "mean_ns": 4751747,
+      "min_ns": 906928,
+      "n": 100,
+      "op": "prep_put_blob",
+      "outcome": "ok",
+      "p50_ns": 1008761,
+      "p95_ns": 2091606,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 475174792,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1054511,
+        "last_quarter_p50_ns": 1021381
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1449717,
+      "mean_ns": 1025285,
+      "min_ns": 887859,
+      "n": 100,
+      "op": "prep_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 1005226,
+      "p95_ns": 1195474,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 102528578,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1021431,
+        "last_quarter_p50_ns": 1025687
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 5496382,
+      "mean_ns": 750511,
+      "min_ns": 41533,
+      "n": 80,
+      "op": "put_blob",
+      "outcome": "ok",
+      "p50_ns": 997124,
+      "p95_ns": 1333662,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 60040929,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1093220,
+        "last_quarter_p50_ns": 64147
+      }
+    },
+    {
+      "distinct_state_points": 56,
+      "max_ns": 18133526,
+      "mean_ns": 13428637,
+      "min_ns": 11898460,
+      "n": 100,
+      "op": "read_head",
+      "outcome": "ok",
+      "p50_ns": 13049246,
+      "p95_ns": 17187939,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 1342863758,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 12447548,
+        "last_quarter_p50_ns": 13464973
+      }
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 1,
+      "op": "replay_database_unchanged",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 4,
+      "op": "worker_end",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 518191971,
+      "mean_ns": 220419229,
+      "min_ns": 20602225,
+      "n": 12,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 130673391,
+      "p95_ns": 518191971,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2645030750,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 20685431,
+        "last_quarter_p50_ns": 478986139
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 307583822,
+      "mean_ns": 156158961,
+      "min_ns": 7165819,
+      "n": 30,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 150890413,
+      "p95_ns": 297500434,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 4684768849,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 37040070,
+        "last_quarter_p50_ns": 275821647
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 339369343,
+      "mean_ns": 138880366,
+      "min_ns": 10486066,
+      "n": 12,
+      "op": "history",
+      "outcome": "ok",
+      "p50_ns": 72235417,
+      "p95_ns": 339369343,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 1666564399,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 10496322,
+        "last_quarter_p50_ns": 310463078
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 103927,
+      "mean_ns": 86307,
+      "min_ns": 72950,
+      "n": 30,
+      "op": "manifest_build",
+      "outcome": "ok",
+      "p50_ns": 84718,
+      "p95_ns": 99611,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2589227,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 84217,
+        "last_quarter_p50_ns": 85249
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 277338,
+      "mean_ns": 230458,
+      "min_ns": 190948,
+      "n": 12,
+      "op": "open",
+      "outcome": "ok",
+      "p50_ns": 228444,
+      "p95_ns": 277338,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2765501,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 192260,
+        "last_quarter_p50_ns": 273833
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 3676546,
+      "mean_ns": 1070206,
+      "min_ns": 35343,
+      "n": 300,
+      "op": "put_blob_base",
+      "outcome": "ok",
+      "p50_ns": 1093139,
+      "p95_ns": 1485881,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "history",
+      "sum_ns": 321061972,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1134020,
+        "last_quarter_p50_ns": 1073539
+      }
+    },
+    {
+      "distinct_state_points": 29,
+      "max_ns": 4052072,
+      "mean_ns": 1201020,
+      "min_ns": 933638,
+      "n": 290,
+      "op": "put_blob_changed",
+      "outcome": "ok",
+      "p50_ns": 1135763,
+      "p95_ns": 1518230,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 348295919,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1118507,
+        "last_quarter_p50_ns": 1162794
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 7105357,
+      "mean_ns": 6334007,
+      "min_ns": 5542460,
+      "n": 30,
+      "op": "put_manifest",
+      "outcome": "ok",
+      "p50_ns": 6292742,
+      "p95_ns": 7021901,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 190020215,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 6498352,
+        "last_quarter_p50_ns": 6277067
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 5959659,
+      "mean_ns": 5231732,
+      "min_ns": 4711496,
+      "n": 12,
+      "op": "read_manifest",
+      "outcome": "ok",
+      "p50_ns": 5131239,
+      "p95_ns": 5959659,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 62780792,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 5078360,
+        "last_quarter_p50_ns": 5223939
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 351332125,
+      "mean_ns": 139952845,
+      "min_ns": 10135508,
+      "n": 12,
+      "op": "version",
+      "outcome": "ok",
+      "p50_ns": 71164561,
+      "p95_ns": 351332125,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 1679434141,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 10155778,
+        "last_quarter_p50_ns": 312899609
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 5948663,
+      "mean_ns": 5948663,
+      "min_ns": 5948663,
+      "n": 1,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 5948663,
+      "p95_ns": 5948663,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 5948663,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 4202509,
+      "mean_ns": 1084536,
+      "min_ns": 35984,
+      "n": 300,
+      "op": "put_blob",
+      "outcome": "ok",
+      "p50_ns": 1083104,
+      "p95_ns": 1551290,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 325360954,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1115993,
+        "last_quarter_p50_ns": 1049663
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 519243,
+      "mean_ns": 49287,
+      "min_ns": 20802,
+      "n": 300,
+      "op": "put_blob_duplicate",
+      "outcome": "ok",
+      "p50_ns": 24738,
+      "p95_ns": 125920,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 14786325,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 24928,
+        "last_quarter_p50_ns": 24277
+      }
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 403907984,
+      "mean_ns": 235429544,
+      "min_ns": 68396317,
+      "n": 6,
+      "op": "capture_layer",
+      "outcome": "applied",
+      "p50_ns": 200945496,
+      "p95_ns": 403907984,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 1412577266,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 399760799,
+      "mean_ns": 399760799,
+      "min_ns": 399760799,
+      "n": 1,
+      "op": "capture_layer_big",
+      "outcome": "ok",
+      "p50_ns": 399760799,
+      "p95_ns": 399760799,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 399760799,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1009859618,
+      "mean_ns": 780462535,
+      "min_ns": 551065452,
+      "n": 2,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 551065452,
+      "p95_ns": 1009859618,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 1560925070,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 24,
+      "max_ns": 708246167,
+      "mean_ns": 557804406,
+      "min_ns": 421007375,
+      "n": 24,
+      "op": "clone_layer",
+      "outcome": "ok",
+      "p50_ns": 544180501,
+      "p95_ns": 700562817,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 13387305750,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 429402237,
+        "last_quarter_p50_ns": 657265600
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 24,
+      "op": "clone_state_check",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 0,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 0,
+        "last_quarter_p50_ns": 0
+      }
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 5702692,
+      "mean_ns": 5702692,
+      "min_ns": 5702692,
+      "n": 1,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 5702692,
+      "p95_ns": 5702692,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "layers",
+      "sum_ns": 5702692,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 14528924,
+      "mean_ns": 14528924,
+      "min_ns": 14528924,
+      "n": 1,
+      "op": "create_layer",
+      "outcome": "ok",
+      "p50_ns": 14528924,
+      "p95_ns": 14528924,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 14528924,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 812942401,
+      "mean_ns": 780302424,
+      "min_ns": 734012288,
+      "n": 3,
+      "op": "discard_layer",
+      "outcome": "ok",
+      "p50_ns": 793952583,
+      "p95_ns": 812942401,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 2340907272,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 8814164,
+      "mean_ns": 8814164,
+      "min_ns": 8814164,
+      "n": 1,
+      "op": "layer_base",
+      "outcome": "ok",
+      "p50_ns": 8814164,
+      "p95_ns": 8814164,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 8814164,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 1,
+      "op": "layer_count_check",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 18150386,
+      "mean_ns": 18045012,
+      "min_ns": 17738255,
+      "n": 6,
+      "op": "layer_diff",
+      "outcome": "ok",
+      "p50_ns": 18091438,
+      "p95_ns": 18150386,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 108270075,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 16337306,
+      "mean_ns": 16235492,
+      "min_ns": 16133679,
+      "n": 2,
+      "op": "layer_diff_clone",
+      "outcome": "ok",
+      "p50_ns": 16133679,
+      "p95_ns": 16337306,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 32470985,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 904284228,
+      "mean_ns": 904284228,
+      "min_ns": 904284228,
+      "n": 1,
+      "op": "layer_history",
+      "outcome": "ok",
+      "p50_ns": 904284228,
+      "p95_ns": 904284228,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 904284228,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 414765931,
+      "mean_ns": 245921251,
+      "min_ns": 78801366,
+      "n": 6,
+      "op": "layer_state",
+      "outcome": "ok",
+      "p50_ns": 212333963,
+      "p95_ns": 414765931,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 1475527507,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 3988617,
+      "mean_ns": 1120310,
+      "min_ns": 33631,
+      "n": 200,
+      "op": "put_blob_base",
+      "outcome": "ok",
+      "p50_ns": 1126329,
+      "p95_ns": 1655457,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 224062081,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 1138577,
+        "last_quarter_p50_ns": 1173870
+      }
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 13698571,
+      "mean_ns": 13421780,
+      "min_ns": 13110224,
+      "n": 6,
+      "op": "read_checkpoint",
+      "outcome": "ok",
+      "p50_ns": 13470848,
+      "p95_ns": 13698571,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 80530684,
+      "time_ordered_trend": null
+    }
+  ],
+  "memory": [
+    {
+      "peak_rss_bytes": 8540160,
+      "pid": 4987,
+      "process": null,
+      "scenario": "ingest"
+    },
+    {
+      "peak_rss_bytes": 11292672,
+      "pid": 4988,
+      "process": null,
+      "scenario": "history"
+    },
+    {
+      "peak_rss_bytes": 11436032,
+      "pid": 4991,
+      "process": null,
+      "scenario": "layers"
+    },
+    {
+      "peak_rss_bytes": 6406144,
+      "pid": 4997,
+      "process": 0,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6385664,
+      "pid": 4998,
+      "process": 1,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6422528,
+      "pid": 4999,
+      "process": 2,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6475776,
+      "pid": 5000,
+      "process": 3,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 9547776,
+      "pid": 4996,
+      "process": null,
+      "scenario": "contention"
+    }
+  ],
+  "notes": [],
+  "percentile_method": "nearest-rank ceil(p/100*n) over raw nanosecond samples; p95 equals the maximum when n < 20 (p95_reliable=false); groups with pooled_across_changing_state=true mix different repository states (read the raw param/expected series and time_ordered_trend instead); null means the state was not recorded for that operation; compare_and_advance_attempts_sum adds attempt durations per operation and excludes reopen samples and the parent's later resolution",
+  "scenarios": [
+    {
+      "exit_code": 0,
+      "name": "ingest",
+      "wall_ns": 362643214
+    },
+    {
+      "exit_code": 0,
+      "name": "history",
+      "wall_ns": 11619479510
+    },
+    {
+      "exit_code": 0,
+      "name": "layers",
+      "wall_ns": 35721956975
+    },
+    {
+      "exit_code": 0,
+      "name": "contention",
+      "wall_ns": 4607976614
+    }
+  ],
+  "truncated_scenarios": []
+}

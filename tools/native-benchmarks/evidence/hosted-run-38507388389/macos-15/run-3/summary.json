@@ -1,0 +1,1372 @@
+{
+  "barrier": {
+    "max_lateness_after_target_ns": 3120000,
+    "release_skew_ns": 3108000,
+    "workers": 4
+  },
+  "disk": [
+    {
+      "files": 1,
+      "label": "empty_repository",
+      "objects": null,
+      "payload_bytes": 0,
+      "physical_bytes": 61440,
+      "scenario": "ingest",
+      "stored_bytes": 61440
+    },
+    {
+      "files": 1,
+      "label": "after_put_blob",
+      "objects": 271,
+      "payload_bytes": 4631106,
+      "physical_bytes": 4939776,
+      "scenario": "ingest",
+      "stored_bytes": 4939776
+    },
+    {
+      "files": 1,
+      "label": "after_duplicate_put_blob",
+      "objects": 271,
+      "payload_bytes": 4631106,
+      "physical_bytes": 4939776,
+      "scenario": "ingest",
+      "stored_bytes": 4939776
+    },
+    {
+      "files": 1,
+      "label": "history_1",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4980736,
+      "scenario": "history",
+      "stored_bytes": 4980736
+    },
+    {
+      "files": 1,
+      "label": "history_7",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 6713344,
+      "scenario": "history",
+      "stored_bytes": 6164480
+    },
+    {
+      "files": 1,
+      "label": "history_15",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 8810496,
+      "scenario": "history",
+      "stored_bytes": 7901184
+    },
+    {
+      "files": 1,
+      "label": "history_30",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 11956224,
+      "scenario": "history",
+      "stored_bytes": 11563008
+    },
+    {
+      "files": 1,
+      "label": "layer_created",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3530752,
+      "scenario": "layers",
+      "stored_bytes": 3530752
+    },
+    {
+      "files": 1,
+      "label": "after_capture_1",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3584000,
+      "scenario": "layers",
+      "stored_bytes": 3584000
+    },
+    {
+      "files": 1,
+      "label": "after_capture_2",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 3678208,
+      "scenario": "layers",
+      "stored_bytes": 3678208
+    },
+    {
+      "files": 1,
+      "label": "after_capture_3",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4726784,
+      "scenario": "layers",
+      "stored_bytes": 3842048
+    },
+    {
+      "files": 1,
+      "label": "after_capture_4",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4726784,
+      "scenario": "layers",
+      "stored_bytes": 4034560
+    },
+    {
+      "files": 1,
+      "label": "after_capture_5",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4726784,
+      "scenario": "layers",
+      "stored_bytes": 4284416
+    },
+    {
+      "files": 1,
+      "label": "after_capture_6",
+      "objects": null,
+      "payload_bytes": null,
+      "physical_bytes": 4726784,
+      "scenario": "layers",
+      "stored_bytes": 4599808
+    },
+    {
+      "files": 1,
+      "label": "before_clones",
+      "objects": 401,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_1",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_2",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_3",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_4",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_5",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_6",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_7",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_8",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_9",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_10",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_11",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_12",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_13",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_14",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_15",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_16",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_17",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_18",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_19",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_20",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_21",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_22",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_23",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_clone_24",
+      "objects": null,
+      "payload_bytes": 1048576,
+      "physical_bytes": 5775360,
+      "scenario": "layers",
+      "stored_bytes": 5652480
+    },
+    {
+      "files": 1,
+      "label": "after_contention",
+      "objects": 467,
+      "payload_bytes": null,
+      "physical_bytes": 2113536,
+      "scenario": "contention",
+      "stored_bytes": 1171456
+    }
+  ],
+  "error_counts": {},
+  "groups": [
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 4,
+      "op": "barrier_release",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 8,
+      "max_ns": 24156250,
+      "mean_ns": 20068760,
+      "min_ns": 15295291,
+      "n": 8,
+      "op": "baseline_compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 18832667,
+      "p95_ns": 24156250,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 160550084,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 17788209,
+        "last_quarter_p50_ns": 21791875
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 6685959,
+      "mean_ns": 3693145,
+      "min_ns": 2705958,
+      "n": 8,
+      "op": "baseline_put_blob",
+      "outcome": "ok",
+      "p50_ns": 3317625,
+      "p95_ns": 6685959,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 29545167,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2705958,
+        "last_quarter_p50_ns": 3519709
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 6366750,
+      "mean_ns": 4254557,
+      "min_ns": 2860458,
+      "n": 8,
+      "op": "baseline_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 3500666,
+      "p95_ns": 6366750,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 34036458,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 3476125,
+        "last_quarter_p50_ns": 5274834
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 73167,
+      "mean_ns": 12449,
+      "min_ns": 10666,
+      "n": 80,
+      "op": "blob_readback",
+      "outcome": "ok",
+      "p50_ns": 11084,
+      "p95_ns": 15958,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 995996,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 11792,
+        "last_quarter_p50_ns": 11000
+      }
+    },
+    {
+      "distinct_state_points": 66,
+      "max_ns": 88721375,
+      "mean_ns": 24731956,
+      "min_ns": 14483084,
+      "n": 66,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 17900834,
+      "p95_ns": 53085083,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 1632309129,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 20990833,
+        "last_quarter_p50_ns": 18672958
+      }
+    },
+    {
+      "distinct_state_points": 25,
+      "max_ns": 1297823334,
+      "mean_ns": 185855140,
+      "min_ns": 22673250,
+      "n": 34,
+      "op": "compare_and_advance",
+      "outcome": "stale",
+      "p50_ns": 86757791,
+      "p95_ns": 929673958,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 6319074789,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 89673916,
+        "last_quarter_p50_ns": 54637583
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 88721375,
+      "mean_ns": 24731956,
+      "min_ns": 14483084,
+      "n": 66,
+      "op": "compare_and_advance_attempts_sum",
+      "outcome": "accepted",
+      "p50_ns": 17900834,
+      "p95_ns": 53085083,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 1632309129,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 16118375,
+        "last_quarter_p50_ns": 18672958
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1297823334,
+      "mean_ns": 185855140,
+      "min_ns": 22673250,
+      "n": 34,
+      "op": "compare_and_advance_attempts_sum",
+      "outcome": "stale",
+      "p50_ns": 86757791,
+      "p95_ns": 929673958,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 6319074789,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 93872833,
+        "last_quarter_p50_ns": 161955834
+      }
+    },
+    {
+      "distinct_state_points": 84,
+      "max_ns": 33070916,
+      "mean_ns": 17489133,
+      "min_ns": 12952916,
+      "n": 118,
+      "op": "exact_retry_check",
+      "outcome": "ok",
+      "p50_ns": 16006792,
+      "p95_ns": 26015250,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 2063717752,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 16995500,
+        "last_quarter_p50_ns": 15875625
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 26038583,
+      "mean_ns": 26038583,
+      "min_ns": 26038583,
+      "n": 1,
+      "op": "final_check",
+      "outcome": "ok",
+      "p50_ns": 26038583,
+      "p95_ns": 26038583,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 26038583,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 14491458,
+      "mean_ns": 14491458,
+      "min_ns": 14491458,
+      "n": 1,
+      "op": "final_history",
+      "outcome": "ok",
+      "p50_ns": 14491458,
+      "p95_ns": 14491458,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 14491458,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 468510834,
+      "mean_ns": 187890854,
+      "min_ns": 371750,
+      "n": 4,
+      "op": "open",
+      "outcome": "ok",
+      "p50_ns": 61247667,
+      "p95_ns": 468510834,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 751563418,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 22311916,
+      "mean_ns": 22311916,
+      "min_ns": 22311916,
+      "n": 1,
+      "op": "operation_id_reuse_check",
+      "outcome": "ok",
+      "p50_ns": 22311916,
+      "p95_ns": 22311916,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 22311916,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 10,
+      "max_ns": 17696041,
+      "mean_ns": 10469558,
+      "min_ns": 3451166,
+      "n": 10,
+      "op": "prefill_compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 8326334,
+      "p95_ns": 17696041,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 104695582,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 3451166,
+        "last_quarter_p50_ns": 17061708
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 26770417,
+      "mean_ns": 3328230,
+      "min_ns": 50917,
+      "n": 200,
+      "op": "prefill_put_blob",
+      "outcome": "ok",
+      "p50_ns": 2897458,
+      "p95_ns": 5142166,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 665646121,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2501667,
+        "last_quarter_p50_ns": 3246542
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 7426334,
+      "mean_ns": 4277295,
+      "min_ns": 2720958,
+      "n": 10,
+      "op": "prefill_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 3930542,
+      "p95_ns": 7426334,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 42772958,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 3716166,
+        "last_quarter_p50_ns": 3801500
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 640754417,
+      "mean_ns": 9891048,
+      "min_ns": 1893959,
+      "n": 100,
+      "op": "prep_put_blob",
+      "outcome": "ok",
+      "p50_ns": 3118375,
+      "p95_ns": 8042167,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 989104836,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 3662500,
+        "last_quarter_p50_ns": 3591125
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 7650750,
+      "mean_ns": 3287345,
+      "min_ns": 1850375,
+      "n": 100,
+      "op": "prep_put_manifest",
+      "outcome": "ok",
+      "p50_ns": 3050333,
+      "p95_ns": 5492542,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 328734582,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 3676958,
+        "last_quarter_p50_ns": 3575209
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 3958583,
+      "mean_ns": 1723502,
+      "min_ns": 42583,
+      "n": 80,
+      "op": "put_blob",
+      "outcome": "ok",
+      "p50_ns": 2097792,
+      "p95_ns": 3822417,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "contention",
+      "sum_ns": 137880215,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2714917,
+        "last_quarter_p50_ns": 186291
+      }
+    },
+    {
+      "distinct_state_points": 66,
+      "max_ns": 25017167,
+      "mean_ns": 14556972,
+      "min_ns": 11761708,
+      "n": 100,
+      "op": "read_head",
+      "outcome": "ok",
+      "p50_ns": 13825542,
+      "p95_ns": 18829250,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "contention",
+      "sum_ns": 1455697294,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 14409000,
+        "last_quarter_p50_ns": 14319917
+      }
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 1,
+      "op": "replay_database_unchanged",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 4,
+      "op": "worker_end",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "contention",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 712716334,
+      "mean_ns": 249879645,
+      "min_ns": 19278459,
+      "n": 12,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 110519708,
+      "p95_ns": 712716334,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2998555751,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 20758041,
+        "last_quarter_p50_ns": 581555625
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 369178250,
+      "mean_ns": 180304226,
+      "min_ns": 7286250,
+      "n": 30,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 145635125,
+      "p95_ns": 352900000,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 5409126792,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 36369750,
+        "last_quarter_p50_ns": 341727375
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 441935792,
+      "mean_ns": 155713433,
+      "min_ns": 10023958,
+      "n": 12,
+      "op": "history",
+      "outcome": "ok",
+      "p50_ns": 71481000,
+      "p95_ns": 441935792,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 1868561206,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 10176583,
+        "last_quarter_p50_ns": 370176458
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 158042,
+      "mean_ns": 102469,
+      "min_ns": 92375,
+      "n": 30,
+      "op": "manifest_build",
+      "outcome": "ok",
+      "p50_ns": 95500,
+      "p95_ns": 140083,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 3074083,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 95500,
+        "last_quarter_p50_ns": 103875
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 284042,
+      "mean_ns": 231132,
+      "min_ns": 204875,
+      "n": 12,
+      "op": "open",
+      "outcome": "ok",
+      "p50_ns": 230250,
+      "p95_ns": 284042,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2773584,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 221542,
+        "last_quarter_p50_ns": 255000
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 12827792,
+      "mean_ns": 2161605,
+      "min_ns": 35041,
+      "n": 300,
+      "op": "put_blob_base",
+      "outcome": "ok",
+      "p50_ns": 1992167,
+      "p95_ns": 4092334,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "history",
+      "sum_ns": 648481778,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2085250,
+        "last_quarter_p50_ns": 1952666
+      }
+    },
+    {
+      "distinct_state_points": 29,
+      "max_ns": 9842000,
+      "mean_ns": 2800324,
+      "min_ns": 1482584,
+      "n": 290,
+      "op": "put_blob_changed",
+      "outcome": "ok",
+      "p50_ns": 2616167,
+      "p95_ns": 4508292,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 812093968,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2057167,
+        "last_quarter_p50_ns": 3124625
+      }
+    },
+    {
+      "distinct_state_points": 30,
+      "max_ns": 11779834,
+      "mean_ns": 8303351,
+      "min_ns": 6643583,
+      "n": 30,
+      "op": "put_manifest",
+      "outcome": "ok",
+      "p50_ns": 7779209,
+      "p95_ns": 10582666,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 249100544,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 6963000,
+        "last_quarter_p50_ns": 9966750
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 9180250,
+      "mean_ns": 5665569,
+      "min_ns": 4834666,
+      "n": 12,
+      "op": "read_manifest",
+      "outcome": "ok",
+      "p50_ns": 4942084,
+      "p95_ns": 9180250,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 67986835,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 4845875,
+        "last_quarter_p50_ns": 8075167
+      }
+    },
+    {
+      "distinct_state_points": 4,
+      "max_ns": 666042208,
+      "mean_ns": 185689805,
+      "min_ns": 9126125,
+      "n": 12,
+      "op": "version",
+      "outcome": "ok",
+      "p50_ns": 89156125,
+      "p95_ns": 666042208,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "history",
+      "sum_ns": 2228277667,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 9313209,
+        "last_quarter_p50_ns": 425586667
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 5330083,
+      "mean_ns": 5330083,
+      "min_ns": 5330083,
+      "n": 1,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 5330083,
+      "p95_ns": 5330083,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 5330083,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 15512542,
+      "mean_ns": 2368628,
+      "min_ns": 35917,
+      "n": 300,
+      "op": "put_blob",
+      "outcome": "ok",
+      "p50_ns": 2238416,
+      "p95_ns": 3817958,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 710588494,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2059708,
+        "last_quarter_p50_ns": 2222375
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 364500,
+      "mean_ns": 40597,
+      "min_ns": 16084,
+      "n": 300,
+      "op": "put_blob_duplicate",
+      "outcome": "ok",
+      "p50_ns": 20541,
+      "p95_ns": 111250,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "ingest",
+      "sum_ns": 12179165,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 23125,
+        "last_quarter_p50_ns": 19625
+      }
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 484248333,
+      "mean_ns": 251648659,
+      "min_ns": 53619125,
+      "n": 6,
+      "op": "capture_layer",
+      "outcome": "applied",
+      "p50_ns": 251066167,
+      "p95_ns": 484248333,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 1509891958,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 481398792,
+      "mean_ns": 481398792,
+      "min_ns": 481398792,
+      "n": 1,
+      "op": "capture_layer_big",
+      "outcome": "ok",
+      "p50_ns": 481398792,
+      "p95_ns": 481398792,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 481398792,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1478704916,
+      "mean_ns": 1092608666,
+      "min_ns": 706512416,
+      "n": 2,
+      "op": "check",
+      "outcome": "ok",
+      "p50_ns": 706512416,
+      "p95_ns": 1478704916,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 2185217332,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 24,
+      "max_ns": 1061672333,
+      "mean_ns": 720263152,
+      "min_ns": 495497958,
+      "n": 24,
+      "op": "clone_layer",
+      "outcome": "ok",
+      "p50_ns": 685747958,
+      "p95_ns": 1001915125,
+      "p95_reliable": true,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 17286315664,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 538992917,
+        "last_quarter_p50_ns": 931079167
+      }
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 24,
+      "op": "clone_state_check",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 0,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 0,
+        "last_quarter_p50_ns": 0
+      }
+    },
+    {
+      "distinct_state_points": 1,
+      "max_ns": 5989584,
+      "mean_ns": 5989584,
+      "min_ns": 5989584,
+      "n": 1,
+      "op": "compare_and_advance",
+      "outcome": "accepted",
+      "p50_ns": 5989584,
+      "p95_ns": 5989584,
+      "p95_reliable": false,
+      "pooled_across_changing_state": false,
+      "scenario": "layers",
+      "sum_ns": 5989584,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 13445875,
+      "mean_ns": 13445875,
+      "min_ns": 13445875,
+      "n": 1,
+      "op": "create_layer",
+      "outcome": "ok",
+      "p50_ns": 13445875,
+      "p95_ns": 13445875,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 13445875,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1244262125,
+      "mean_ns": 1118821833,
+      "min_ns": 1029242792,
+      "n": 3,
+      "op": "discard_layer",
+      "outcome": "ok",
+      "p50_ns": 1082960583,
+      "p95_ns": 1244262125,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 3356465500,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 6835417,
+      "mean_ns": 6835417,
+      "min_ns": 6835417,
+      "n": 1,
+      "op": "layer_base",
+      "outcome": "ok",
+      "p50_ns": 6835417,
+      "p95_ns": 6835417,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 6835417,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 0,
+      "mean_ns": 0,
+      "min_ns": 0,
+      "n": 1,
+      "op": "layer_count_check",
+      "outcome": "ok",
+      "p50_ns": 0,
+      "p95_ns": 0,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 0,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 28627083,
+      "mean_ns": 17537242,
+      "min_ns": 13500583,
+      "n": 6,
+      "op": "layer_diff",
+      "outcome": "ok",
+      "p50_ns": 13994542,
+      "p95_ns": 28627083,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 105223457,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 21240417,
+      "mean_ns": 19147021,
+      "min_ns": 17053625,
+      "n": 2,
+      "op": "layer_diff_clone",
+      "outcome": "ok",
+      "p50_ns": 17053625,
+      "p95_ns": 21240417,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 38294042,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 1551250125,
+      "mean_ns": 1551250125,
+      "min_ns": 1551250125,
+      "n": 1,
+      "op": "layer_history",
+      "outcome": "ok",
+      "p50_ns": 1551250125,
+      "p95_ns": 1551250125,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 1551250125,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 571549209,
+      "mean_ns": 256281034,
+      "min_ns": 65770791,
+      "n": 6,
+      "op": "layer_state",
+      "outcome": "ok",
+      "p50_ns": 195864917,
+      "p95_ns": 571549209,
+      "p95_reliable": false,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 1537686209,
+      "time_ordered_trend": null
+    },
+    {
+      "distinct_state_points": 0,
+      "max_ns": 33962500,
+      "mean_ns": 2548511,
+      "min_ns": 35167,
+      "n": 200,
+      "op": "put_blob_base",
+      "outcome": "ok",
+      "p50_ns": 2093375,
+      "p95_ns": 3677417,
+      "p95_reliable": true,
+      "pooled_across_changing_state": null,
+      "scenario": "layers",
+      "sum_ns": 509702300,
+      "time_ordered_trend": {
+        "first_quarter_p50_ns": 2187542,
+        "last_quarter_p50_ns": 1908333
+      }
+    },
+    {
+      "distinct_state_points": 6,
+      "max_ns": 16980292,
+      "mean_ns": 12222903,
+      "min_ns": 9966417,
+      "n": 6,
+      "op": "read_checkpoint",
+      "outcome": "ok",
+      "p50_ns": 11273375,
+      "p95_ns": 16980292,
+      "p95_reliable": false,
+      "pooled_across_changing_state": true,
+      "scenario": "layers",
+      "sum_ns": 73337418,
+      "time_ordered_trend": null
+    }
+  ],
+  "memory": [
+    {
+      "peak_rss_bytes": 10223616,
+      "pid": 6399,
+      "process": null,
+      "scenario": "ingest"
+    },
+    {
+      "peak_rss_bytes": 17989632,
+      "pid": 6402,
+      "process": null,
+      "scenario": "history"
+    },
+    {
+      "peak_rss_bytes": 18399232,
+      "pid": 6672,
+      "process": null,
+      "scenario": "layers"
+    },
+    {
+      "peak_rss_bytes": 6111232,
+      "pid": 7731,
+      "process": 0,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6144000,
+      "pid": 7732,
+      "process": 1,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6160384,
+      "pid": 7734,
+      "process": 2,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 6291456,
+      "pid": 7735,
+      "process": 3,
+      "scenario": "contention"
+    },
+    {
+      "peak_rss_bytes": 9240576,
+      "pid": 7607,
+      "process": null,
+      "scenario": "contention"
+    }
+  ],
+  "notes": [],
+  "percentile_method": "nearest-rank ceil(p/100*n) over raw nanosecond samples; p95 equals the maximum when n < 20 (p95_reliable=false); groups with pooled_across_changing_state=true mix different repository states (read the raw param/expected series and time_ordered_trend instead); null means the state was not recorded for that operation; compare_and_advance_attempts_sum adds attempt durations per operation and excludes reopen samples and the parent's later resolution",
+  "scenarios": [
+    {
+      "exit_code": 0,
+      "name": "ingest",
+      "wall_ns": 777188625
+    },
+    {
+      "exit_code": 0,
+      "name": "history",
+      "wall_ns": 14319005084
+    },
+    {
+      "exit_code": 0,
+      "name": "layers",
+      "wall_ns": 46103534833
+    },
+    {
+      "exit_code": 0,
+      "name": "contention",
+      "wall_ns": 7557448750
+    }
+  ],
+  "truncated_scenarios": []
+}
