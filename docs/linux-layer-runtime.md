@@ -219,9 +219,10 @@ Results are reported as VERIFIED, NOT VERIFIED or INCONCLUSIVE per bounded scope
   editing during capture, stable-change detection and autosave remain follow-on.
 - If another caller advances a Layer outside the runtime, the view stays bound to
   its old head: captures return `Stale` and keep edits, and runtime `discard` also
-  returns `Stale`. The escape is a native `discard_layer` at the current head
-  followed by `recover`, which removes the view; its uncaptured edits are lost.
-  Re-binding a view to a newer head is follow-on work.
+  returns `Stale`. Clean stale views can explicitly rebind as described below.
+  Dirty views retain their bytes and require owner resolution. A native discard
+  at the current head followed by `recover` removes the view and loses uncaptured
+  edits, so it is a destructive terminal action rather than a rebind mechanism.
 - Direct helper calls by the same user are trusted, like cache sealing. Thawing a
   pending view directly while a writer keeps a file open makes later freezes
   `busy` until the writer closes it.
@@ -382,3 +383,89 @@ remain writable. Such private edits remain recoverable and are never silently
 adopted into the already accepted checkpoint. Use this safe workspace API for the
 ordinary publication path. Production privilege, other kernels and autosave remain
 outside this bounded extension.
+
+
+## Explicit workspace rebind after native Stack (October 17)
+
+```rust
+runtime.rebind(&mut repo, &old_bound_head, &desired_active_head)?;
+```
+
+This action adopts an already committed native checkpoint; it never runs Stack,
+refreshes a World, changes native history, or composes content. Both tokens must
+belong to this repository and the same Layer. The old token must exactly match
+this view's bound revision and checkpoint. The desired token must be newer and
+exactly match the current Active head. Foreign, discarded and published inputs
+refuse. The ordinary path remains at its old checkpoint until explicitly rebound.
+
+The runtime lock excludes other runtime operations. Existing verified staging
+builds and seals the desired immutable cache before touching the view. The old
+view is frozen with the existing helper and epoch protocol, then compared byte,
+kind and mode exactly against its bound checkpoint. Uncaptured files, deletions,
+mode changes and unrepresented empty directories refuse; bytes remain private and
+recoverable. A held writable descriptor or shared writable mapping refuses with
+`busy` on the verified kernel. The refusal restores the prior mounted/unmounted
+state. Validation may temporarily mount an explicitly unmounted view read-only;
+success and recovery preserve that explicit unmount.
+
+The binding record carries one small rebind intent and its original mount state:
+
+- **Validating:** old selection and upper remain authoritative. Recovery abandons
+  validation and restores the old mount state; a new explicit call is required.
+  Interrupted cache staging is aborted by the existing recovery path and never
+  selected.
+- **Prepared:** the complete old view was verified and non-lazily unmounted, and
+  the intent durably selects the exact desired cache. Recovery may remove the
+  clean old upper repeatedly. The old immutable checkpoint remains inspectable.
+- **Selected:** the new opened checkpoint, lowers and bound head are durable.
+  Recovery only recreates the new view read-only if originally mounted; it never
+  deletes the new upper.
+- **Complete:** the exact old/new pair is retained for no-op retries. Only after
+  this record is durable is an Active view thawed. A kill between completion and
+  thaw is handled by existing frozen-view recovery. Later tool edits are retained
+  by exact retries and recovery. Further captures use the new checkpoint as their
+  lower reference and continue through ordinary whole-Layer Publish.
+
+Native Stack commits before rebind. SQLite and filesystem selection are separate
+boundaries. The desired Active head is checked again after frozen validation,
+immediately before detach and durable intent. A native advance observed there
+refuses and keeps the old selection. A low-level native caller can still advance
+between that observation and intent persistence or at any later time: the runtime
+lock is not a native database lock. Once Prepared is durable, recovery finishes
+that requested immutable selection, even if native history advanced again. It
+never silently selects the later head. A subsequent capture is stale, and another
+explicit rebind is required. This is not an atomic native-head/filesystem CAS.
+The same user invoking helper verbs directly remains inside the documented trust
+boundary; an observed helper epoch change before detach refuses.
+
+An exact completed retry is accepted only while that desired token is still the
+current Active head and the view remains bound to it. A later capture or native
+advance requires new exact tokens. `mount`, capture, Publish, discard and recover
+resolve interrupted intents under the runtime lock. `status` reports a pending
+`rebind` without choosing a checkpoint. `unmount` during an unfinished intent
+returns `busy`; recover first so a successful explicit unmount is not undone.
+
+Focused tests use public native `Repository::commit_stack` with a known disjoint
+prepared fixture; the root crate gains no Stack adapter dependency or merge code.
+The existing disposable hosted Linux runtime workflow includes the end-to-end
+Stack → rebind → compiler/read/write → checkpoint → Publish proof, refusals,
+native/helper races and process kills at cache, validation, removal, selection and
+completion boundaries. The proof summary requires all four rebind evidence files
+and complete mount cleanup. No mounts run on the development laptop.
+
+
+Bounded hosted result: **VERIFIED** at executable/test source
+`a6f6d95a57917a29e4b25ce81508a74e538cc9e8` in
+[run 39011891335](https://github.com/Dhruv2mars/javelin/actions/runs/39011891335).
+The retained artifact reports 26/26 gated tests, 25/25 required summary checks,
+14 rebind process-kill cases, held-writer and shared-mapping refusal, and cleanup
+with exit code zero and every mount plus runtime parent removed. Ubuntu runner
+image `20261012.334.1`, kernel `6.17.0-1022-azure`, x86_64, ordinary UID 1001,
+Rust 1.99.0. Local Darwin checks passed fmt, Clippy with warnings denied, 117
+workspace tests (one ignored process actor), and the workspace release build.
+The first hosted run `39011644791` was NOT VERIFIED: a test-only mapper barrier
+waited for a newline while its release sent one byte. The one-line correction
+was included before the successful run; the earlier run also removed all mounts.
+No helper, native core, Cargo, CLI, adapter or probe changes are part of this
+extension. Root `TASKS.md` is unchanged. Other kernels, distributions, production
+privileges, automatic refresh, power loss and GA remain outside this proof.
