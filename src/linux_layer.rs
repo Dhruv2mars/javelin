@@ -28,6 +28,8 @@ use crate::{
     SparseChanges, WorldVersion, domain::ObjectKind,
 };
 
+mod watch;
+
 const RECORD_FORMAT: u32 = 1;
 
 fn ensure_linux() -> Result<()> {
@@ -313,6 +315,7 @@ fn mount_state(target: &Path) -> Result<Option<bool>> {
         .map(|(_, readonly)| readonly))
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
     pub(crate) entries: BTreeMap<RepoPath, FileEntry>,
     pub(crate) unrepresented: Vec<String>,
@@ -328,6 +331,15 @@ fn unsupported(relative: &Path, what: &str) -> Error {
 pub(crate) fn snapshot(
     root: &Path,
     upper: &HashSet<Vec<u8>>,
+    lower: &Manifest,
+    store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
+) -> Result<Snapshot> {
+    read_snapshot(root, Some(upper), lower, store)
+}
+
+fn read_snapshot(
+    root: &Path,
+    upper: Option<&HashSet<Vec<u8>>>,
     lower: &Manifest,
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Snapshot> {
@@ -359,7 +371,8 @@ pub(crate) fn snapshot(
             if !kind.is_file() && !kind.is_symlink() {
                 return Err(unsupported(&relative, "special file"));
             }
-            let entry = if upper.contains(relative.as_os_str().as_bytes()) {
+            let entry = if upper.is_none_or(|upper| upper.contains(relative.as_os_str().as_bytes()))
+            {
                 if kind.is_symlink() {
                     let target = fs::read_link(&full)?;
                     FileEntry::Symlink {
@@ -373,7 +386,9 @@ pub(crate) fn snapshot(
                     let opened = file.metadata()?;
                     if !opened.is_file() || opened.ino() != meta.ino() || opened.dev() != meta.dev()
                     {
-                        return Err(unsupported(&relative, "file changed during frozen read"));
+                        return Err(Error::Busy(format!(
+                            "file changed during read at {relative:?}"
+                        )));
                     }
                     if opened.mode() & 0o7000 != 0 {
                         return Err(unsupported(&relative, "setuid, setgid or sticky mode"));
@@ -1265,11 +1280,25 @@ impl LinuxLayerRuntime {
                 return Err(error);
             }
         };
+        let candidate = Candidate {
+            expected: expected.revision(),
+            changes: changes_digest(&changes),
+        };
+        if record
+            .pending
+            .as_ref()
+            .and_then(|p| p.candidate.as_ref())
+            .is_some_and(|recorded| recorded != &candidate)
+        {
+            // A watch observation (or an interrupted prepared capture) is bound
+            // to exact input. Never substitute a later frozen tree under its ID.
+            self.abandon(repo, layer, slot, record)?;
+            return Err(Error::Busy(
+                "frozen candidate differs from recorded capture input".into(),
+            ));
+        }
         if let Some(pending) = record.pending.as_mut() {
-            pending.candidate = Some(Candidate {
-                expected: expected.revision(),
-                changes: changes_digest(&changes),
-            });
+            pending.candidate = Some(candidate);
         }
         self.write_record(slot, record)?;
         let update = match repo.capture_layer(operation, &expected, &changes) {

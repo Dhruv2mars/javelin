@@ -341,6 +341,7 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
             "--json",
         ];
         args.extend(extra);
+        args.push("--json");
         assert_eq!(
             value(invoke(root.path(), &args), 2)["error"]["code"],
             "invalid_input"
@@ -362,7 +363,7 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
             "--operation",
             "recover",
             "Linux",
-            "Autosave is later",
+            "Watch is opt-in",
         ] {
             assert!(help.contains(text), "{text}: {help}");
         }
@@ -1562,5 +1563,126 @@ fn linux_cli_stack_rebind_tools_checkpoint_publish() {
         0,
     );
     call("recover", None, &[], 0);
+    ok(root.path(), &["check"]);
+}
+
+#[test]
+fn binary_watch_rejects_invalid_timing_and_mutation_options() {
+    let root = TempDir::new().unwrap();
+    for extra in [
+        vec!["--quiet-ms", "249"],
+        vec!["--duration-ms", "0"],
+        vec!["--quiet-ms", "no"],
+        vec!["--operation", "manual"],
+        vec!["--duration-ms", "-1"],
+    ] {
+        let mut args = vec![
+            "workspace",
+            "watch",
+            "a",
+            "--root",
+            "/runtime",
+            "--helper",
+            "/helper",
+        ];
+        args.extend(extra);
+        args.push("--json");
+        assert_eq!(
+            value(invoke(root.path(), &args), 2)["error"]["code"],
+            "invalid_input"
+        );
+    }
+    assert!(!root.path().join(".javelin").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "real mounts only on explicitly enabled disposable hosted Linux"]
+fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
+    assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
+    assert_eq!(
+        std::env::var("RUNNER_ENVIRONMENT").as_deref(),
+        Ok("github-hosted")
+    );
+    assert_eq!(std::env::var("JAVELIN_CLI_MOUNT_TEST").as_deref(), Ok("1"));
+    assert_ne!(unsafe { libc::getuid() }, 0);
+    let root = TempDir::new().unwrap();
+    let runtime = format!("{}-watch", std::env::var("JAVELIN_CLI_RUNTIME").unwrap());
+    let helper = std::env::var("JAVELIN_CLI_HELPER").unwrap();
+    let workspace = |action, extra: &[&str]| {
+        let mut args = vec!["workspace", action, "--root", &runtime, "--helper", &helper];
+        args.extend_from_slice(extra);
+        ok(root.path(), &args)
+    };
+    ok(root.path(), &["init"]);
+    ok(root.path(), &["layer", "create", "watched"]);
+    workspace("init", &[]);
+    let mounted = workspace("mount", &["watched"]);
+    let mounted = Path::new(mounted["path"].as_str().unwrap());
+    let child = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .current_dir(root.path())
+        .args([
+            "workspace",
+            "watch",
+            "watched",
+            "--root",
+            &runtime,
+            "--helper",
+            &helper,
+            "--quiet-ms",
+            "250",
+            "--duration-ms",
+            "2500",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let tools = Command::new("sh").current_dir(mounted).args(["-eu", "-c", "printf 'int main(void) { return 0; }\\n' > main.c; cc main.c -o app; ./app; rm app; printf 'one\\n' > tmp; mv tmp saved; ln -s saved link; chmod +x main.c"]).output().unwrap();
+    assert!(tools.status.success(), "{tools:?}");
+    let result = child.wait_with_output().unwrap();
+    let result = value(result, 0);
+    assert_eq!(result["captures"], 1);
+    let history = ok(root.path(), &["layer", "history", "watched"]);
+    assert_eq!(
+        workspace(
+            "watch",
+            &["watched", "--quiet-ms", "250", "--duration-ms", "800"]
+        )["captures"],
+        0
+    );
+    assert_eq!(ok(root.path(), &["layer", "history", "watched"]), history);
+    std::fs::rename(mounted.join("saved"), mounted.join("renamed")).unwrap();
+    std::fs::remove_file(mounted.join("link")).unwrap();
+    assert_eq!(
+        workspace(
+            "watch",
+            &["watched", "--quiet-ms", "250", "--duration-ms", "1000"]
+        )["captures"],
+        1
+    );
+    workspace("publish", &["watched", "--operation", "watch-publish"]);
+    let result = value(
+        invoke(
+            root.path(),
+            &[
+                "workspace",
+                "watch",
+                "watched",
+                "--root",
+                &runtime,
+                "--helper",
+                &helper,
+                "--duration-ms",
+                "1000",
+                "--json",
+            ],
+        ),
+        1,
+    );
+    assert_eq!(result["error"]["code"], "layer_published");
+    assert!(std::fs::write(mounted.join("forbidden"), b"read-only").is_err());
+    workspace("unmount", &["watched"]);
     ok(root.path(), &["check"]);
 }

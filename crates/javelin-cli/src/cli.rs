@@ -6,7 +6,7 @@ use javelin::{
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... --root ABS --helper ABS [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nLinux workspace (requires configured root-owned mount helper and sudo -n):\n  init                     Initialize runtime layout for this repository\n  mount ID                 Open or resume a writable Layer path\n  path ID                  Print an existing mounted writable path\n  unmount ID               Unmount, retaining private edits\n  checkpoint ID --operation ID\n                           Explicitly freeze, capture, and thaw the view\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Publish the whole explicit checkpoint; keep view read-only\n  discard ID --operation ID Remove a view through the runtime's bound head\n  rebind ID --revision OLD --to-revision NEW\n                           Explicitly select the newer immutable native head\n  recover                  Resolve pending operations and remove discarded views\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nAutosave is later work. Ordinary workspace paths require Linux; macOS and Windows are unsupported.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... --root ABS --helper ABS [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nLinux workspace (requires configured root-owned mount helper and sudo -n):\n  init                     Initialize runtime layout for this repository\n  mount ID                 Open or resume a writable Layer path\n  path ID                  Print an existing mounted writable path\n  unmount ID               Unmount, retaining private edits\n  checkpoint ID --operation ID\n                           Explicitly freeze, capture, and thaw the view\n  watch ID [--quiet-ms N] [--duration-ms N]\n                           Foreground stable checkpoints (250ms samples; 1000ms quiet)\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Publish the whole explicit checkpoint; keep view read-only\n  discard ID --operation ID Remove a view through the runtime's bound head\n  rebind ID --revision OLD --to-revision NEW\n                           Explicitly select the newer immutable native head\n  recover                  Resolve pending operations and remove discarded views\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nWatch is opt-in; ignore rules are not implemented. Ordinary workspace paths require Linux; macOS and Windows are unsupported.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -321,7 +321,8 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
 fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
     let count = match action {
         "init" | "recover" => 0,
-        "mount" | "path" | "unmount" | "checkpoint" | "discard" | "publish" | "rebind" => 1,
+        "mount" | "path" | "unmount" | "checkpoint" | "discard" | "publish" | "rebind"
+        | "watch" => 1,
         _ => {
             return Err(Error::InvalidInput(format!(
                 "unknown workspace command {action}; see javelin --help"
@@ -338,6 +339,14 @@ fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
             "--context",
             "--trace",
             "--allow-missing-trace",
+        ]
+    } else if action == "watch" {
+        &[
+            "--repo",
+            "--root",
+            "--helper",
+            "--quiet-ms",
+            "--duration-ms",
         ]
     } else if action == "rebind" {
         &[
@@ -375,6 +384,18 @@ fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
     } else {
         None
     };
+    let watch = if action == "watch" {
+        let quiet = args.number("--quiet-ms")?.unwrap_or(1000);
+        let duration = args.number("--duration-ms")?;
+        if quiet < 250 || duration == Some(0) {
+            return Err(Error::InvalidInput(
+                "--quiet-ms must be >=250 and --duration-ms must be positive".into(),
+            ));
+        }
+        Some((quiet, duration))
+    } else {
+        None
+    };
     let attribution = AttributionInput::parse(&args)?;
     if !cfg!(target_os = "linux") {
         return Err(Error::Unsupported("workspace commands require Linux OverlayFS; macOS and Windows ordinary paths are not supported".into()));
@@ -388,7 +409,7 @@ fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
             layer,
             operation,
             attribution,
-            rebind,
+            cli_linux::Options { rebind, watch },
         )
     }
     #[cfg(not(unix))]
@@ -403,6 +424,7 @@ fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
             attribution.trace,
             attribution.allow_missing_trace,
             rebind,
+            watch,
         );
         unreachable!()
     }

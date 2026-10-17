@@ -8,6 +8,11 @@ use serde_json::json;
 
 use super::{AttributionInput, Output, publication, success, update};
 
+pub struct Options {
+    pub rebind: Option<(u64, u64)>,
+    pub watch: Option<(u64, Option<u64>)>,
+}
+
 pub fn run(
     action: &str,
     repo: PathBuf,
@@ -15,11 +20,12 @@ pub fn run(
     layer: Option<LayerId>,
     operation: Option<OperationId>,
     attribution: AttributionInput,
-    rebind: Option<(u64, u64)>,
+    options: Options,
 ) -> Result<Output> {
     let (root, helper) = paths;
     let mut repo = Repository::open(repo)?;
-    let rebind = rebind
+    let rebind = options
+        .rebind
         .map(|(old, desired)| {
             let layer = layer.as_ref().expect("validated Layer");
             Ok::<_, Error>((
@@ -65,6 +71,19 @@ pub fn run(
         _ => {
             let layer = layer.expect("validated Layer argument");
             match action {
+                "watch" => {
+                    let (quiet, duration) = options.watch.expect("validated watch options");
+                    let captures = runtime.watch(
+                        &mut repo,
+                        &layer,
+                        std::time::Duration::from_millis(quiet),
+                        duration.map(std::time::Duration::from_millis),
+                    )?;
+                    Ok(success(
+                        json!({"ok": true, "command": command, "captures": captures, "reason": "duration_elapsed"}),
+                        format!("Watch duration elapsed; {captures} captures completed."),
+                    ))
+                }
                 "rebind" => {
                     let (expected, desired) = rebind.expect("validated revisions");
                     runtime.rebind(&mut repo, &expected, &desired)?;

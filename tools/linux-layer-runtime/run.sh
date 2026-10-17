@@ -41,9 +41,11 @@ cleanup() {
     fi
     [[ ! -e $parent ]] || failed=1
   fi
+  [[ ! -e ${JAVELIN_GIT_MARKER:-$evidence/git-invoked} ]] || failed=1
   printf '{"exitCode":%s,"allUnmountedAndRemoved":%s}\n' "$result" \
     "$([[ $failed == 0 ]] && echo true || echo false)" > "$evidence/cleanup.json"
   timeout 15s python3 -I "$script_dir/summary.py" "$evidence" || failed=1
+  [[ ! -e ${JAVELIN_GIT_MARKER:-$evidence/git-invoked} ]] || failed=1
   [[ $failed == 0 ]] || result=1
   exit "$result"
 }
@@ -81,6 +83,17 @@ json.dump({
 }, open(Path(sys.argv[1]) / "initial.json", "w"), indent=1)
 PY
 
+# Guard all product/runtime processes; checkout/build metadata above is development.
+mkdir "$evidence/guard"
+export JAVELIN_GIT_MARKER="$evidence/git-invoked"
+printf '#!/bin/sh\nprintf invoked > "$JAVELIN_GIT_MARKER"\nexit 97\n' > "$evidence/guard/git"
+chmod +x "$evidence/guard/git"
+"$evidence/guard/git" && exit 1 || [[ $? == 97 ]]
+[[ -s $JAVELIN_GIT_MARKER ]]
+printf 'failing Git stand-in positive control passed\n'
+rm "$JAVELIN_GIT_MARKER"
+export PATH="$evidence/guard:$PATH"
+
 export JAVELIN_LINUX_LAYER_MOUNT_TESTS=1
 export JAVELIN_LINUX_LAYER_HELPER=$libexec/javelin-linux-layer-helper
 export JAVELIN_LINUX_LAYER_PARENT=$parent
@@ -91,3 +104,6 @@ JAVELIN_BUN=$(command -v bun)
 export JAVELIN_BUN
 timeout --signal=TERM --kill-after=30s 420s cargo test --locked --lib linux_layer::mount_tests \
   -- --ignored --test-threads=1 --nocapture 2>&1 | tee "$evidence/mount-tests.log"
+
+[[ ! -e $JAVELIN_GIT_MARKER ]]
+printf 'product processes did not invoke Git\n'
