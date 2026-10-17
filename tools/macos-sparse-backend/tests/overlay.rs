@@ -1028,9 +1028,20 @@ async fn directory_and_symlink_copy_up_preserve_source_times() {
 }
 
 #[test]
-fn incomplete_clone_stays_unpublished_and_rollback_keeps_competing_layer() {
+fn clone_stays_private_until_and_after_publication_and_rollback_keeps_competing_layer() {
     let fx = Fixture::new();
     drop(fx.open("a"));
+    // Reproduce a private upper inside a shared parent, with 022-style entries.
+    fs::set_permissions(&fx.root, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(fx.upper("a"), fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(
+        fx.upper("a").join("tree"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let private_file = fx.upper("a").join("tree/private.txt");
+    fs::write(&private_file, b"private clone contents").unwrap();
+    fs::set_permissions(&private_file, fs::Permissions::from_mode(0o644)).unwrap();
     let fifo = fx.upper("a").join("tree/blocked");
     assert!(
         Command::new("mkfifo")
@@ -1040,7 +1051,9 @@ fn incomplete_clone_stays_unpublished_and_rollback_keeps_competing_layer() {
             .success()
     );
     let bin = env!("CARGO_BIN_EXE_macos-sparse-backend");
-    let mut clone = Command::new(bin)
+    // Set umask only in the child, never in the parallel test runner.
+    let mut clone = Command::new("sh")
+        .args(["-c", "umask 022\nexec \"$@\"", "clone-test", bin])
         .args(["clone", "--from"])
         .arg(fx.upper("a"))
         .arg("--to")
@@ -1051,10 +1064,21 @@ fn incomplete_clone_stays_unpublished_and_rollback_keeps_competing_layer() {
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut copying = false;
+    let mut stage_mode = None;
     while Instant::now() < deadline && clone.try_wait().unwrap().is_none() {
         copying = fs::read_dir(&fx.root).unwrap().any(|e| {
             let p = e.unwrap().path();
-            p != fx.base() && p != fx.upper("a") && p.join("tree").is_dir()
+            if p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".javelin-clone-")
+                && p.join("tree").is_dir()
+            {
+                stage_mode = Some(fs::metadata(&p).unwrap().permissions().mode() & 0o7777);
+                true
+            } else {
+                false
+            }
         });
         if copying {
             break;
@@ -1123,6 +1147,37 @@ else:
     );
     assert!(!status.success());
     assert_eq!(fs::read(sentinel).unwrap(), b"must survive clone rollback");
+    assert_eq!(
+        stage_mode,
+        Some(0o700),
+        "incomplete staging root must be private"
+    );
+
+    fs::remove_file(fifo).unwrap();
+    let status = Command::new("sh")
+        .args(["-c", "umask 022\nexec \"$@\"", "clone-test", bin])
+        .args(["clone", "--from"])
+        .arg(fx.upper("a"))
+        .arg("--to")
+        .arg(fx.upper("d"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for (path, mode) in [("", 0o700), ("tree", 0o755), ("tree/private.txt", 0o644)] {
+        assert_eq!(
+            fs::metadata(fx.upper("d").join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            mode,
+            "published clone mode for {path:?}"
+        );
+    }
+    assert_eq!(
+        fs::read(fx.upper("d").join("tree/private.txt")).unwrap(),
+        b"private clone contents"
+    );
 }
 
 #[tokio::test]

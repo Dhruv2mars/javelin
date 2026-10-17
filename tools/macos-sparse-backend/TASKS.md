@@ -28,3 +28,18 @@ retained. Root TASKS stays exactly as supplied by current main.
 - [x] Pass 38 component tests, including the three new focused regressions.
 - [x] Finish lint, runner syntax and CLI refusal checks; push the same regular PR
   with root TASKS unchanged and archived evidence preserved.
+
+# Private clone staging (4300860228)
+
+Done means clone staging is created atomically with mode 0700 and retains that
+private root after publication, verified while copying is blocked and after
+success under child-local umask 022 with 0755 directories and 0644 files.
+
+- [x] Read AGENTS, RTK and the build contract; confirm the missing stage-root mode.
+- [x] Reproduce exposure with the existing clone publication/rollback barrier:
+  incomplete stage was 0755 instead of 0700 under child-local umask 022.
+- [x] Create staging atomically as 0700 and verify private publication.
+- [x] Pass the focused regression, 38 component tests (2 existing child-process
+  helpers ignored), warnings-denied Clippy, formatting and whitespace checks.
+- [x] Open/link one regular PR. No mounted, authorization, case/Unicode, restart,
+  NFS suitability, Gate 2 or GA claim.
