@@ -249,31 +249,58 @@ impl Overlay {
 
     /// Creates upper directories for every ancestor, copying base modes.
     fn ensure_upper_dir(&self, st: &State, rel: &Path) -> Result<(), nfsstat3> {
-        let mut prefix = PathBuf::new();
-        for c in rel.components() {
-            prefix.push(c);
-            let up = self.tree(&prefix);
-            match fs::symlink_metadata(&up) {
-                Ok(m) if m.is_dir() => continue,
-                Ok(_) => return Err(nfsstat3::NFS3ERR_NOTDIR),
-                Err(_) => {}
-            }
-            let mode = match self.locate(st, &prefix) {
-                Some(Loc::Base(b)) => {
-                    let m = fs::metadata(&b).map_err(io_err)?;
-                    if !m.is_dir() {
-                        return Err(nfsstat3::NFS3ERR_NOTDIR);
+        self.with_upper_dir(st, rel, || Ok(()))
+    }
+
+    /// Copy-up may need to populate a private parent that is logically read-only.
+    /// The state mutex hides temporary access; restore modes on success and error.
+    fn with_upper_dir<T>(
+        &self,
+        st: &State,
+        rel: &Path,
+        copy: impl FnOnce() -> Result<T, nfsstat3>,
+    ) -> Result<T, nfsstat3> {
+        let mut restore = Vec::new();
+        let result = (|| {
+            for prefix in rel.ancestors().collect::<Vec<_>>().into_iter().rev() {
+                let up = self.tree(prefix);
+                let (mode, created) = match fs::symlink_metadata(&up) {
+                    Ok(m) if m.is_dir() => (m.mode() & 0o7777, false),
+                    Ok(_) => return Err(nfsstat3::NFS3ERR_NOTDIR),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        let loc = self.locate(st, prefix).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+                        let m = fs::symlink_metadata(loc.path()).map_err(io_err)?;
+                        if !m.is_dir() {
+                            return Err(nfsstat3::NFS3ERR_NOTDIR);
+                        }
+                        fs::create_dir(&up).map_err(io_err)?;
+                        (m.mode() & 0o7777, true)
                     }
-                    m.mode() & 0o7777
+                    Err(e) => return Err(io_err(e)),
+                };
+                if mode & 0o700 != 0o700 {
+                    restore.push((up.clone(), fs::Permissions::from_mode(mode)));
                 }
-                Some(Loc::Upper(_)) => unreachable!(),
-                None => return Err(nfsstat3::NFS3ERR_NOENT),
-            };
-            fs::create_dir(&up).map_err(io_err)?;
-            fs::set_permissions(&up, fs::Permissions::from_mode(mode)).map_err(io_err)?;
-            sync_dir(up.parent().unwrap()).map_err(io_err)?;
+                if created || mode & 0o700 != 0o700 {
+                    fs::set_permissions(&up, fs::Permissions::from_mode(mode | 0o700))
+                        .map_err(io_err)?;
+                }
+                if created {
+                    sync_dir(up.parent().unwrap()).map_err(io_err)?;
+                }
+            }
+            copy()
+        })();
+        let mut restore_error = None;
+        for (path, mode) in restore.into_iter().rev() {
+            if let Err(e) = fs::set_permissions(path, mode) {
+                restore_error = Some(io_err(e));
+            }
         }
-        Ok(())
+        match restore_error {
+            Some(e) => Err(e),
+            None => result,
+        }
     }
 
     /// Copies one visible base entry into the upper tree through staging.
@@ -282,43 +309,42 @@ impl Overlay {
             Loc::Upper(p) => return Ok(p),
             Loc::Base(p) => p,
         };
-        if let Some(parent) = rel.parent() {
-            self.ensure_upper_dir(st, parent)?;
-        }
-        let meta = fs::symlink_metadata(&src).map_err(io_err)?;
-        let dst = self.tree(rel);
-        if meta.is_dir() {
-            fs::create_dir(&dst).map_err(io_err)?;
-            fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
-                .map_err(io_err)?;
-            preserve_times(&dst, &meta).map_err(io_err)?;
+        self.with_upper_dir(st, rel.parent().unwrap_or(Path::new("")), || {
+            let meta = fs::symlink_metadata(&src).map_err(io_err)?;
+            let dst = self.tree(rel);
+            if meta.is_dir() {
+                fs::create_dir(&dst).map_err(io_err)?;
+                fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
+                    .map_err(io_err)?;
+                preserve_times(&dst, &meta).map_err(io_err)?;
+                sync_dir(dst.parent().unwrap()).map_err(io_err)?;
+                return Ok(dst);
+            }
+            let stage = self.upper.join("tmp").join(format!(
+                "copy-{}",
+                self.staged.fetch_add(1, Ordering::SeqCst)
+            ));
+            if meta.file_type().is_symlink() {
+                symlink(fs::read_link(&src).map_err(io_err)?, &stage).map_err(io_err)?;
+                preserve_times(&stage, &meta).map_err(io_err)?;
+            } else {
+                let mut from = File::open(&src).map_err(io_err)?;
+                let mut to = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&stage)
+                    .map_err(io_err)?;
+                io::copy(&mut from, &mut to).map_err(io_err)?;
+                to.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o7777))
+                    .map_err(io_err)?;
+                preserve_times(&stage, &meta).map_err(io_err)?;
+                to.sync_all().map_err(io_err)?;
+            }
+            crash_at("stage");
+            fs::rename(&stage, &dst).map_err(io_err)?;
             sync_dir(dst.parent().unwrap()).map_err(io_err)?;
-            return Ok(dst);
-        }
-        let stage = self.upper.join("tmp").join(format!(
-            "copy-{}",
-            self.staged.fetch_add(1, Ordering::SeqCst)
-        ));
-        if meta.file_type().is_symlink() {
-            symlink(fs::read_link(&src).map_err(io_err)?, &stage).map_err(io_err)?;
-            preserve_times(&stage, &meta).map_err(io_err)?;
-        } else {
-            let mut from = File::open(&src).map_err(io_err)?;
-            let mut to = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&stage)
-                .map_err(io_err)?;
-            io::copy(&mut from, &mut to).map_err(io_err)?;
-            to.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o7777))
-                .map_err(io_err)?;
-            preserve_times(&stage, &meta).map_err(io_err)?;
-            to.sync_all().map_err(io_err)?;
-        }
-        crash_at("stage");
-        fs::rename(&stage, &dst).map_err(io_err)?;
-        sync_dir(dst.parent().unwrap()).map_err(io_err)?;
-        Ok(dst)
+            Ok(dst)
+        })
     }
 
     /// Copies a whole visible subtree into the upper tree.

@@ -13,3 +13,10 @@ retained. Root TASKS stays exactly as supplied by current main.
   evidence and PR #20 measurements. Resume preserves those passed checks.
 - [x] Merge current main with root TASKS unchanged and push the same regular PR
   for hub integration. No new mounted or hosted claim.
+
+- [x] Reproduce comment 4298776857 with a writable file beneath nested mode-0555
+  directories; restore intended directory modes after copy-up success and failure.
+- [x] Confirm comment 4292228021 still matches the source timestamp-preservation fix.
+- [x] Run the focused regression and warnings-denied Clippy; push the same PR with
+  current main integrated and root TASKS unchanged. No mounted proof repeated.
+  Permission restoration after process kill remains an explicit limit.

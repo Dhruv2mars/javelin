@@ -1,0 +1,254 @@
+{
+  "lower": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052700,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {}
+      },
+      {
+        "path": "README.txt",
+        "inode": 6052712,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 17,
+        "sha256": "3bc8535c8309d3354a9a74b6850c41ae08df49d8736b1bb2ba49a885e41ca366",
+        "xattrs": {}
+      },
+      {
+        "path": "bytes.bin",
+        "inode": 6052713,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 8192,
+        "sha256": "dc404a613fedaeb54034514bc6505f56b933caa5250299ba7d094377a51caa46",
+        "xattrs": {}
+      },
+      {
+        "path": "delete.txt",
+        "inode": 6052714,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 17,
+        "sha256": "a48a2fc5ec60360f7b0a1cc163f21e624c7ac9c077ad6db064769d3ac5ed09cd",
+        "xattrs": {}
+      },
+      {
+        "path": "dir",
+        "inode": 6052711,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {}
+      },
+      {
+        "path": "dir/nested.txt",
+        "inode": 6052715,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 7,
+        "sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3",
+        "xattrs": {}
+      },
+      {
+        "path": "inside-link",
+        "inode": 6052718,
+        "device": 66305,
+        "mode": 511,
+        "type": "symlink",
+        "target": "README.txt",
+        "xattrs": {}
+      },
+      {
+        "path": "main.c",
+        "inode": 6052717,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 90,
+        "sha256": "f15b379cec93d5ac2272875f21f696ac9d887e236fa68db754c29b3e79c8e567",
+        "xattrs": {}
+      },
+      {
+        "path": "value.h",
+        "inode": 6052716,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 16,
+        "sha256": "b26369e647fb784e8d539541d1f5a281610c63341f0685c9d9072ec4c81b4ad9",
+        "xattrs": {}
+      }
+    ],
+    "fileBytes": 8339,
+    "allocatedBytes": 36864
+  },
+  "a-upper": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052701,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {
+          "trusted.overlay.uuid": "d1102c092cf64ebc8d5dc445bd55e4ed",
+          "trusted.overlay.impure": "79"
+        }
+      },
+      {
+        "path": "README.txt",
+        "inode": 6052728,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 15,
+        "sha256": "2aebb9c8836ece94b5df1017e559b70c3ce3c737273434e5356dd90f93dfb8b8",
+        "xattrs": {}
+      },
+      {
+        "path": "bytes.bin",
+        "inode": 6052727,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 8192,
+        "sha256": "1599a822a2cf72a0e59f8fa68ce85e63600cb5ed3345b1ea0d43dab5eb5459cf",
+        "xattrs": {
+          "trusted.overlay.origin": "00fb1d00014255d757c0f24577ba358c54d5fe7830695b5c00b2c2ea8b"
+        }
+      },
+      {
+        "path": "created.txt",
+        "inode": 6052726,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 14,
+        "sha256": "ac41cd1e93da96158d7d6ce1d7019662959baf92561680ce3d58d3b69e27ea5b",
+        "xattrs": {}
+      },
+      {
+        "path": "delete.txt",
+        "inode": 6052732,
+        "device": 66305,
+        "mode": 0,
+        "type": "whiteout",
+        "major": 0,
+        "minor": 0,
+        "xattrs": {}
+      },
+      {
+        "path": "dir",
+        "inode": 6052732,
+        "device": 66305,
+        "mode": 0,
+        "type": "whiteout",
+        "major": 0,
+        "minor": 0,
+        "xattrs": {}
+      },
+      {
+        "path": "renamed-dir",
+        "inode": 6052729,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {
+          "trusted.overlay.opaque": "79"
+        }
+      },
+      {
+        "path": "renamed-dir/nested.txt",
+        "inode": 6052730,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 7,
+        "sha256": "370a8c04b8a65bb4494275eec227f1b694db04c76da6b0b8ae88ed1ab19790a3",
+        "xattrs": {}
+      },
+      {
+        "path": "value.h",
+        "inode": 6052666,
+        "device": 66305,
+        "mode": 420,
+        "type": "file",
+        "bytes": 16,
+        "sha256": "210701f55e4defe7922da710589b3c371f70858a01bb3634aafe789eb8518905",
+        "xattrs": {
+          "trusted.overlay.origin": "00fb1d00014255d757c0f24577ba358c54d5fe78306c5b5c00c6bfe971"
+        }
+      }
+    ],
+    "fileBytes": 8244,
+    "allocatedBytes": 32768
+  },
+  "b-upper": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052703,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {
+          "trusted.overlay.uuid": "6981e3c999144833a14f1a53d3dea768"
+        }
+      }
+    ],
+    "fileBytes": 0,
+    "allocatedBytes": 4096
+  },
+  "c-upper": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052705,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {
+          "trusted.overlay.uuid": "3580ced1bf8d46c3841de43c96074187"
+        }
+      }
+    ],
+    "fileBytes": 0,
+    "allocatedBytes": 4096
+  },
+  "a-next-upper": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052707,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {}
+      }
+    ],
+    "fileBytes": 0,
+    "allocatedBytes": 4096
+  },
+  "c-next-upper": {
+    "entries": [
+      {
+        "path": ".",
+        "inode": 6052709,
+        "device": 66305,
+        "mode": 493,
+        "type": "directory",
+        "xattrs": {}
+      }
+    ],
+    "fileBytes": 0,
+    "allocatedBytes": 4096
+  }
+}

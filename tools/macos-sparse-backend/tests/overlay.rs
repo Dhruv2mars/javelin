@@ -148,6 +148,87 @@ async fn layers_over_one_base_are_isolated() {
 }
 
 #[tokio::test]
+async fn writable_base_files_copy_up_beneath_readonly_directories() {
+    let fx = Fixture::new();
+    let dir = fx.base().join("dir");
+    fs::create_dir(dir.join("nested")).unwrap();
+    fs::write(dir.join("nested/editable"), b"base bytes").unwrap();
+    fs::set_permissions(
+        dir.join("nested/editable"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    fs::write(dir.join("nested/blocked"), b"unreadable").unwrap();
+    fs::set_permissions(
+        dir.join("nested/blocked"),
+        fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    for path in [&dir, &dir.join("nested")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    let a = fx.open("a");
+    let fid = id(&a, "dir/nested/editable").await.unwrap();
+    let written = a.write(fid, 0, b"EDIT").await;
+    let blocked = a
+        .write(id(&a, "dir/nested/blocked").await.unwrap(), 0, b"X")
+        .await;
+    // Restore base access before assertions so fixture cleanup works on failure.
+    for path in [&dir, &dir.join("nested")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::set_permissions(
+        dir.join("nested/blocked"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    written.unwrap();
+    assert_eq!(a.getattr(fid).await.unwrap().mode, 0o644);
+    assert_eq!(blocked.unwrap_err() as u32, nfsstat3::NFS3ERR_ACCES as u32);
+    assert_eq!(read(&a, "dir/nested/editable").await, b"EDIT bytes");
+    assert_eq!(
+        fs::read(dir.join("nested/editable")).unwrap(),
+        b"base bytes"
+    );
+    let nested = id(&a, "dir/nested").await.unwrap();
+    assert_eq!(
+        a.create(nested, &b"new-file".as_slice().into(), sattr3::default())
+            .await
+            .unwrap_err() as u32,
+        nfsstat3::NFS3ERR_ACCES as u32,
+        "copy-up access must not permit creating new entries in a read-only directory"
+    );
+    for path in ["dir", "dir/nested"] {
+        let attr = a.getattr(id(&a, path).await.unwrap()).await.unwrap();
+        assert_eq!(attr.mode, 0o555, "reported mode: {path}");
+        assert_eq!(
+            fs::metadata(fx.upper("a").join("tree").join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o555
+        );
+    }
+    let reopened = fx.open("a");
+    assert_eq!(
+        reopened
+            .getattr(id(&reopened, "dir/nested").await.unwrap())
+            .await
+            .unwrap()
+            .mode,
+        0o555
+    );
+    for path in ["dir", "dir/nested"] {
+        fs::set_permissions(
+            fx.upper("a").join("tree").join(path),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn atomic_save_rename_and_delete_persist_across_reopen() {
     let fx = Fixture::new();
     let before = fx.base_listing();

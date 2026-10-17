@@ -136,11 +136,25 @@ sibling staging directories. Copy-up and clone retain source access and
 modification times, including directory times after copying children and symlink
 times without changing the target.
 
-Current local Darwin arm64 checks pass on Rust 1.93.0: format, warnings-denied
+For those fixes, local Darwin arm64 checks passed on Rust 1.93.0: format, warnings-denied
 Clippy, 31 tests and release build. Two ignored child entry points run through
 their parent crash tests. Added coverage includes directory and symlink copy-up
 times. These are unmounted trait and process regressions, not a new hosted mount,
 FSKit, performance or Gate 2 result. Known limits below remain open.
+
+### Read-only parent fix on 2026-10-17
+
+Comment `4298776857` identified failed copy-up of a writable base file beneath
+read-only directories. Copy-up now temporarily grants owner access to its private
+parents while holding the state mutex, then restores their intended modes before
+returning, including on error. Ordinary new-file creation still observes the
+read-only parent mode.
+
+The focused regression failed on `76952fe` and passes with this fix. It covers
+nested `0555` parents, a successful edit, an unreadable-source error, mode reporting
+and reopen, unchanged base bytes, and rejection of new-file creation. The prior
+timestamp fix from comment `4292228021` remains in the copy-up and clone paths.
+No hosted or mounted result is claimed for this change.
 
 The first run's stale handles came from a rename bookkeeping bug that stored the
 renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.
@@ -274,6 +288,9 @@ locked `nfsserve` 0.11.0 source. They are not new hosted runtime proofs.
 - Killing a clone can leave a `.javelin-clone-*` sibling staging directory.
   Ordinary copy failures remove staging; automatic collection after process kill
   is unimplemented. An incomplete staged clone is not published as its destination.
+- Killing copy-up while private parent permissions are temporarily widened can
+  leave those host modes widened. Recovery of that permission window remains
+  open and is not covered by the retained kill fixture.
 - Product integration, automatic checkpoints, native storage and the CLI are absent.
 - The NFS client and server are on one host. Remote NFS, sleep and network loss are untested.
 - The selected process-kill and trait-level crash fixtures cover only their
