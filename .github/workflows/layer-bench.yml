@@ -1,0 +1,84 @@
+name: Layer bench
+
+# Measurement only: no threshold gates the job. Hosted runners are shared VMs, so
+# numbers show relative cost between strategies on one filesystem, not absolute speed.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/layer-bench/**"
+      - ".github/workflows/layer-bench.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    name: Bench / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+
+      - name: Build
+        working-directory: tools/layer-bench
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo build --locked --release
+          { echo "## ${{ matrix.os }}"; uname -a; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Linux ext4, XFS and btrfs
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq xfsprogs btrfs-progs > /dev/null
+          bench=$PWD/tools/layer-bench/target/release/layer-bench
+          $bench --dir "$RUNNER_TEMP/ext4" --label "ext4 (runner disk)" | tee -a "$GITHUB_STEP_SUMMARY"
+          for fs in xfs btrfs; do
+            truncate -s 12G "$RUNNER_TEMP/$fs.img"
+            sudo mkfs.$fs -q "$RUNNER_TEMP/$fs.img" > /dev/null
+            sudo mkdir -p /mnt/$fs && sudo mount -o loop "$RUNNER_TEMP/$fs.img" /mnt/$fs
+            sudo chown "$(id -u):$(id -g)" /mnt/$fs
+            extra=$([[ $fs == btrfs ]] && echo --btrfs || true)
+            # Runs unprivileged: only image setup above used sudo.
+            $bench --dir /mnt/$fs/bench --label "$fs (loop image)" $extra | tail -n +3 | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: macOS APFS
+        if: runner.os == 'macOS'
+        run: tools/layer-bench/target/release/layer-bench --dir "$RUNNER_TEMP/apfs" --label "APFS" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Windows NTFS
+        if: runner.os == 'Windows'
+        run: tools/layer-bench/target/release/layer-bench --dir "$RUNNER_TEMP/ntfs" --label "NTFS (runner disk)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Create a ReFS Dev Drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vhd = "$env:RUNNER_TEMP\devdrive.vhdx"
+          "create vdisk file=`"$vhd`" maximum=20480 type=expandable`nattach vdisk`ncreate partition primary`nassign letter=R" | Set-Content "$env:RUNNER_TEMP\dp.txt"
+          diskpart /s "$env:RUNNER_TEMP\dp.txt" | Out-Null
+          try { Format-Volume -DriveLetter R -DevDrive -Confirm:$false -Force | Out-Null; "devdrive=yes" }
+          catch { Format-Volume -DriveLetter R -FileSystem ReFS -Confirm:$false -Force | Out-Null; "devdrive=no ($_)" }
+          fsutil fsinfo volumeinfo R: | Select-String "File System Name|Block Refcounting|Supports Block"
+
+      - name: Windows ReFS
+        if: runner.os == 'Windows'
+        run: tools/layer-bench/target/release/layer-bench --dir R:/bench --label "ReFS (Dev Drive VHD)" | tail -n +3 | tee -a "$GITHUB_STEP_SUMMARY"
