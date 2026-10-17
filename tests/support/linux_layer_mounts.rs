@@ -1301,7 +1301,7 @@ fn rebind_refuses_edits_writers_mappings_and_wrong_heads() {
     fs::write(s.view.join("README.txt"), b"shared base text\n").unwrap();
     assert_eq!(tree(&s.view), before);
     let mut command = Command::new("python3");
-    command.args(["-I", "-c", "import mmap,sys\nf=open('README.txt','r+b')\nm=mmap.mmap(f.fileno(),0)\nf.close()\nprint('ready',flush=True)\nsys.stdin.readline()\nm[0:1]=b'S'\nm.flush()\nprint('RESULT written',flush=True)"]).current_dir(&s.view);
+    command.args(["-I", "-c", "import mmap,sys\nf=open('README.txt','r+b')\nm=mmap.mmap(f.fileno(),0)\nf.close()\nprint('ready',flush=True)\nsys.stdin.buffer.read(1)\nm[0:1]=b'S'\nm.flush()\nprint('RESULT written',flush=True)"]).current_dir(&s.view);
     let mut mapper = Actor::start(command);
     mapper.marker("ready");
     let result = s.rt.rebind(&mut s.repo, &old, &desired);
