@@ -18,3 +18,10 @@ measurements and their source labels remain unchanged.
 - [x] Reject missing/duplicate/unapplied ordinary capture rounds after summary recomputation, and check the big capture separately.
 - [x] Use fixed retained stale records in verifier tests; live smoke runs may legitimately have no stale outcome.
 - [x] Run focused regressions, formatting and warnings-denied clippy; debug/release each pass 15 unit + 22 CLI tests. All 17 retained runs pass 34 checks with unchanged raw files/source labels; push the same PR16.
+
+## Clone timings and scheduled history reads
+
+- [x] Read discussion 4298830796 and the configured measurement schedule.
+- [x] Require each configured clone timing and every scheduled history read exactly once.
+- [x] Add matched-summary missing/repeated-measurement regressions: 2 focused tests cover 12 cases; formatting and warnings-denied clippy pass. All 17 retained runs pass 35 checks with unchanged file hashes; no benchmarks rerun.
+- [x] Push the same PR16 with root TASKS and original raw evidence unchanged.

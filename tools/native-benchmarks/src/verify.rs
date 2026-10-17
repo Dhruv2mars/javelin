@@ -429,6 +429,44 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         ),
     ));
 
+    let versions = run["params"]["history"].as_u64().unwrap_or(0);
+    let marks: BTreeSet<_> = [1, versions / 4, versions / 2, versions]
+        .into_iter()
+        .filter(|m| *m >= 1 && *m <= versions)
+        .collect();
+    let read_ops = ["open", "history", "version", "read_manifest", "check"];
+    let mut expected_reads = BTreeSet::new();
+    for mark in marks {
+        for rep in 0..3 {
+            for &op in &read_ops {
+                expected_reads.insert((op, Some(mark), rep));
+            }
+        }
+    }
+    let reads: Vec<_> = samples
+        .iter()
+        .copied()
+        .filter(|s| s.scenario == "history" && read_ops.contains(&s.op.as_str()))
+        .collect();
+    let read_coordinates: BTreeSet<_> = reads
+        .iter()
+        .map(|s| (s.op.as_str(), s.param, s.index))
+        .collect();
+    out.push(check(
+        "history_reads_complete",
+        versions > 0
+            && reads.len() == expected_reads.len()
+            && read_coordinates == expected_reads
+            && reads
+                .iter()
+                .all(|s| s.outcome == "ok" && s.attempt == 0 && s.start_unix_ns.is_some()),
+        format!(
+            "{} read measurements, {} scheduled operation/version/repetition coordinates",
+            reads.len(),
+            expected_reads.len()
+        ),
+    ));
+
     // Layers: every capture applied; clone storage is not proportional to the shared payload.
     let mut captures: Vec<_> = samples
         .iter()
@@ -879,6 +917,22 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         mismatches == 0,
         format!("{mismatches} mismatch samples"),
     ));
+    let configured_clones = run["params"]["clones"].as_u64().unwrap_or(0);
+    let mut clone_measurements: Vec<_> = samples
+        .iter()
+        .copied()
+        .filter(|s| s.scenario == "layers" && s.op == "clone_layer")
+        .collect();
+    clone_measurements.sort_by_key(|s| s.index);
+    let clone_timings_complete = configured_clones > 0
+        && clone_measurements.len() as u64 == configured_clones
+        && clone_measurements.iter().enumerate().all(|(i, s)| {
+            s.index == i as u64 + 1
+                && s.param == Some(s.index)
+                && s.outcome == "ok"
+                && s.attempt == 0
+                && s.start_unix_ns.is_some()
+        });
     let clone_checks = samples
         .iter()
         .filter(|s| s.op == "clone_state_check")
@@ -889,9 +943,11 @@ pub fn verify(dir: &Path, allow_debug: bool) -> R<Vec<Check>> {
         .count();
     out.push(check(
         "clone_heads_and_layer_count_checked",
-        clone_checks as u64 == run["params"]["clones"].as_u64().unwrap_or(u64::MAX)
-            && layer_count == 1,
-        format!("{clone_checks} clone checks, {layer_count} layer count checks"),
+        clone_checks as u64 == configured_clones && layer_count == 1 && clone_timings_complete,
+        format!(
+            "{} clone timings, {clone_checks} clone checks, {layer_count} layer count checks",
+            clone_measurements.len()
+        ),
     ));
     Ok(out)
 }
@@ -944,6 +1000,65 @@ mod tests {
             checks.iter().any(|c| c.name == name && !c.ok),
             "missing failure: {name}"
         );
+    }
+
+    #[test]
+    fn clone_timings_are_required_after_summary_recomputation() {
+        for tamper in ["all", "one", "duplicate", "repeated_index"] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let positions: Vec<_> = records.iter().enumerate().filter_map(|(i, r)| {
+                matches!(r, Record::Sample(s) if s.scenario == "layers" && s.op == "clone_layer").then_some(i)
+            }).collect();
+            match tamper {
+                "all" => records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "layers" && s.op == "clone_layer")),
+                "one" => { records.remove(positions[0]); }
+                "duplicate" => { records.insert(positions[0], records[positions[0]].clone()); }
+                "repeated_index" => { let Record::Sample(s) = &mut records[*positions.last().unwrap()] else { unreachable!() }; s.index = 1; }
+                _ => unreachable!()
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "clone_heads_and_layer_count_checked");
+        }
+    }
+
+    #[test]
+    fn scheduled_history_reads_are_required_after_summary_recomputation() {
+        let ops = ["open", "history", "version", "read_manifest", "check"];
+        for tamper in [
+            "open",
+            "history",
+            "version",
+            "read_manifest",
+            "check",
+            "all",
+            "one",
+            "repeated_coordinate",
+        ] {
+            let tmp = copied_run("ci-run-1");
+            let mut records = read_records(&tmp.path().join("samples.jsonl")).unwrap();
+            let is_read = |r: &Record| matches!(r, Record::Sample(s) if s.scenario == "history" && ops.contains(&s.op.as_str()));
+            if tamper == "one" {
+                let i = records.iter().position(is_read).unwrap();
+                records.remove(i);
+            } else if tamper == "repeated_coordinate" {
+                let mut reads = records.iter_mut().filter(|r| is_read(r));
+                let Record::Sample(first) = reads.next().unwrap() else {
+                    unreachable!()
+                };
+                let (op, index, param) = (first.op.clone(), first.index, first.param);
+                let Record::Sample(next) = reads.next().unwrap() else {
+                    unreachable!()
+                };
+                next.op = op;
+                next.index = index;
+                next.param = param;
+            } else {
+                records.retain(|r| !matches!(r, Record::Sample(s) if s.scenario == "history" && (if tamper == "all" { ops.contains(&s.op.as_str()) } else { s.op == tamper })));
+            }
+            save(tmp.path(), &records);
+            assert_rejected(tmp.path(), "history_reads_complete");
+        }
     }
 
     #[test]
