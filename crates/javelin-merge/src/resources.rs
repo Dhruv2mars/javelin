@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// Fixed admission limits. Work units bound loop iterations and compared bytes,
-/// not elapsed time or machine instructions. See docs/bounded-mechanical-merge.md.
+/// not elapsed time or machine instructions. See docs/architecture.md.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Resource {
     Entries,
