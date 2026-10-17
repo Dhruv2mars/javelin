@@ -350,9 +350,11 @@ let receipt = runtime.publish(&mut repo, &layer, &operation,
 The guard has the native `FnOnce(&WorldVersion, &Manifest) -> Result<()>` signature.
 No extra policy is imposed. Before native acceptance, the runtime freezes the
 view's own superblock, reads it using the existing helper listing/epoch protocol,
-and requires exact agreement with its bound immutable checkpoint. Uncaptured
-changes refuse with `invalid_input` and a checkpoint-required message. Empty
-directories must be removed because native checkpoints cannot represent them.
+and requires exact agreement of the effective capture tree with its bound
+immutable checkpoint. Uncaptured tracked/nonignored changes refuse with
+`invalid_input` and a checkpoint-required message. Nonignored empty directories
+must be removed because native checkpoints cannot represent them. Ignored
+untracked artifacts remain private, as described under ignore-aware discovery.
 Refusal retains the private bytes and restores a writable Active view. Successful
 publication leaves the view read-only and keeps its upper and binding; it never
 replaces private bytes with the composed World or removes recoverable state.

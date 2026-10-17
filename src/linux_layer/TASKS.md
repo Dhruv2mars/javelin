@@ -10,5 +10,6 @@ then one regular PR is opened and linked for hub integration.
 - [x] Implement bounded literal root-relative rules and current-head discovery.
 - [x] Add matcher/capture and hosted watch race/dedup, preservation, Publish/rebind regressions.
 - [x] Document syntax and runtime behavior.
-- [ ] Run fmt, Clippy, tests, release and hosted mount/binary proof with Git control.
-- [ ] Open and immediately T3-link one regular PR; report results without merging.
+- [x] Pass local fmt, Clippy, 166 tests and workspace release build.
+- [x] Run hosted mount/binary proof with Git control (inspect retained results before reporting VERIFIED).
+- [x] Open and immediately T3-link regular PR #36 for hub integration; no owner merge.

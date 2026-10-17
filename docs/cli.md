@@ -232,9 +232,10 @@ javelin workspace mount next --root "$runtime" --helper "$helper"
 
 Publish delegates freeze, exact checkpoint matching, durable receipt binding,
 recovery and read-only enforcement to `LinuxLayerRuntime::publish`. Close writable
-file handles first. Held writers return `busy`. Uncaptured edits and empty
-directories refuse with `invalid_input`; checkpoint edits and remove empty
-directories before retrying. A successful mounted view remains readable and
+file handles first. Held writers return `busy`. Uncaptured tracked/nonignored
+edits and nonignored empty directories refuse with `invalid_input`; checkpoint
+edits and remove those empty directories before retrying. Ignored untracked
+artifacts stay private and remain readable in the published view. A successful mounted view remains readable and
 read-only (`EROFS` on writes). `workspace path` only reports writable views;
 retain the original path to read a published view or inspect immutable metadata.
 Further work requires `layer create` or `layer clone --checkpoint HASH`.
