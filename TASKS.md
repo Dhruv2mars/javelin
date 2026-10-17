@@ -93,7 +93,7 @@ workflow may invoke or interpret Git.
 - [x] Choose the Layer workspace approach with fresh measurements on all three
   OSes: plain directories cloned from an immutable World base, daemonless capture
   (`docs/workspace-approach.md`, gate 2 amended 2026-10-17).
-- [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, reflink
+- [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, per-file clone
   (XFS, ReFS) and a reported copy fallback, with deferred discard.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
