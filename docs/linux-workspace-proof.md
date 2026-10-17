@@ -4,11 +4,22 @@ This is a bounded development proof, dependent on PR #5's ordinary-path probe.
 It implements actual Linux OverlayFS mounts for a small owned fixture. It does
 not integrate the native database or complete product Gate 2 or GA.
 
-The bounded sparse filesystem proof is **VERIFIED** in a real disposable hosted
+The historical bounded sparse filesystem proof is **VERIFIED** in a disposable hosted
 run at `89d76df34bf85daee9852ffc9350109bd13b2daf`. All eight backend phases passed.
 The common probe verified ten ordinary-path checks and kept its caller-path clone
 check INCONCLUSIVE; independent actual-backend evidence verified cloning.
 No privileged operation ran on the laptop. Product Gate 2 and GA remain open.
+
+Run [38461947427](https://github.com/Dhruv2mars/javelin/actions/runs/38461947427)
+at `19224ef` subsequently failed the unchanged probe's watch notification check
+with `no watch event for watch-create`. The fixture still unmounted and removed
+its owned root. The workflow now pins Bun 1.4.3 instead of 1.3.13. Bun's
+[upstream issue](https://github.com/oven-sh/bun/issues/36328) records Linux event
+loss in the earlier watcher and its fix in the 1.4.x backend rewrite.
+[Bun 1.4.3](https://github.com/oven-sh/bun/releases/tag/bun-v1.4.3) is the current
+stable release checked on 2026-10-16. A new hosted run must pass the same probe
+and backend assertions before the current PR is ready. No retry or relaxed watch
+assertion substitutes for that run.
 
 ## Observed cloud result
 
@@ -54,7 +65,7 @@ evidence/documentation commits do not change the exact SHA that was cloud-tested
 
 Push changes to this draft PR. The `Linux sparse Layer proof` pull-request
 workflow checks out the exact head commit, records its SHA in a separate
-development metadata step, installs pinned Bun 1.3.13 and executes:
+development metadata step, installs pinned Bun 1.4.3 and executes:
 
 ```sh
 timeout --signal=TERM --kill-after=45s 240s bash tools/overlayfs-proof/run.sh

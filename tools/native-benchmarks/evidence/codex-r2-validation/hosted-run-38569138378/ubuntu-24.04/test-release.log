@@ -1,0 +1,87 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.14
+   Compiling cc v1.8.0
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling serde_core v1.0.229
+   Compiling vcpkg v0.2.15
+   Compiling pkg-config v0.3.34
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling libsqlite3-sys v0.38.2
+   Compiling libc v0.2.190
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.10.2
+   Compiling cfg-if v1.0.5
+   Compiling foldhash v0.2.0
+   Compiling bitflags v2.13.2
+   Compiling hashbrown v0.17.1
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling thiserror v2.0.21
+   Compiling serde v1.0.229
+   Compiling cpufeatures v0.3.1
+   Compiling sha2 v0.11.1
+   Compiling hashlink v0.12.2
+   Compiling thiserror-impl v2.0.21
+   Compiling serde_derive v1.0.229
+   Compiling smallvec v1.16.3
+   Compiling getrandom v0.4.3
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling rustix v1.1.5
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling fallible-iterator v0.3.0
+   Compiling javelin-native-benchmarks v0.1.0 (/home/runner/work/javelin/javelin/tools/native-benchmarks)
+   Compiling linux-raw-sys v0.12.1
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling rusqlite v0.40.2
+   Compiling javelin v0.1.0 (/home/runner/work/javelin/javelin)
+    Finished `release` profile [optimized] target(s) in 45.05s
+     Running unittests src/main.rs (target/release/deps/native_bench-285f36165c5a4127)
+
+running 7 tests
+test record::tests::nearest_rank_percentiles ... ok
+test record::tests::summary_flags_small_p95_and_counts_errors ... ok
+test host::tests::disk_probe_reports_missing_or_incomplete_traversal ... ok
+test verify::tests::parent_resolution_requires_exhausted_chain_and_its_successful_reopen ... ok
+test verify::tests::disk_evidence_rejects_zero_shrink_and_missing_clones_with_matching_summary ... ok
+test verify::tests::every_worker_action_requires_its_own_ordered_retry_chain_and_final_input ... ok
+test verify::tests::retained_busy_setup_chains_reject_erased_failures_gaps_and_wrong_reopens ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/cli.rs (target/release/deps/cli-c61651cc24c9bee6)
+
+running 22 tests
+test derived_validation_cost_cap_rejects_quadratic_fixtures ... ok
+test prefill_without_files_is_rejected_not_a_panic ... ok
+test hard_caps_and_existing_evidence_are_rejected ... ok
+test provenance_names_the_exact_executable_sources_and_host ... ok
+test debug_builds_are_not_release_evidence_and_huge_values_do_not_panic ... ok
+test smoke_run_passes_every_check_with_real_processes ... ok
+test prefilled_world_is_part_of_the_verified_ordered_history ... ok
+test clone_storage_check_passes_for_references_and_fails_for_copied_payload ... ok
+test verifier_accepts_an_injected_busy_retry_of_the_exact_same_input ... ok
+test verifier_detects_erased_retry_attempts_and_missing_reopens ... ok
+test verifier_detects_dropped_or_rewritten_world_history ... ok
+test verifier_detects_missing_process_evidence_and_summary_and_provenance_edits ... ok
+test verifier_detects_failed_retry_reuse_blob_and_integrity_evidence ... ok
+test verifier_detects_non_busy_errors_head_misuse_and_real_time_violations ... ok
+test verifier_detects_object_count_replay_worker_truncation_and_clone_evidence ... ok
+test verifier_detects_stale_that_could_not_be_stale ... ok
+test verifier_detects_two_winners_for_one_version ... ok
+test verifier_detects_single_process_scenario_regressions ... ok
+test verifier_rejects_unresolved_and_non_uncertain_retries ... ok
+test verifier_detects_unacknowledged_blobs_and_identity_swaps ... ok
+test tool_never_invokes_git ... ok
+test same_seed_reproduces_fixture_and_different_seed_changes_it ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.66s
+

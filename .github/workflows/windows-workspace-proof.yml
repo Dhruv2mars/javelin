@@ -10,6 +10,8 @@ on:
       - tools/windows-workspace-proof/backend.ps1
       - tools/windows-workspace-proof/user-run.ps1
       - tools/windows-workspace-proof/checks.mjs
+      - tools/workspace-probe/probe.mjs
+      - tools/workspace-probe/atomic-writer.mjs
       - .github/workflows/windows-workspace-proof.yml
   workflow_dispatch:
 
