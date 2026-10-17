@@ -2,8 +2,10 @@
 
 This covers the merged, from-source local CLI. Repository and Layer metadata work
 on macOS, Linux, and Windows. Writable ordinary filesystem paths currently require
-Linux OverlayFS and an administrator-configured helper. Checkpoints are explicit;
-watch/autosave is not available. There is no GA release or complete hosting workflow.
+Linux OverlayFS and an administrator-configured helper. The flow below uses explicit
+checkpoints. Optional foreground [`workspace watch`](cli.md#foreground-automatic-checkpoints-on-linux)
+is available on Linux; it does not start automatically or run as a background autosave
+daemon. There is no GA release or complete hosting workflow.
 
 A **World** is the repository's accepted immutable version: initialization starts
 at empty World 0. A **Layer** holds isolated work over a World. A **checkpoint** is
@@ -154,4 +156,4 @@ storage. Ordinary paths provide isolation, not a security sandbox.
 
 Linux mounts were not rerun for this documentation change. This walkthrough does
 not establish release packaging/signing, minimum OS support, writable macOS/Windows
-workspaces, automatic checkpoints, project adoption, or complete hosting.
+workspaces, a background autosave daemon, project adoption, or complete hosting.
