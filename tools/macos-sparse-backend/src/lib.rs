@@ -421,6 +421,14 @@ fn apply_sattr(path: &Path, a: &sattr3) -> io::Result<()> {
         f.set_len(n)?;
         f.sync_all()?;
     }
+    apply_times(path, a)?;
+    if let set_mode3::mode(m) = a.mode {
+        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
+    }
+    Ok(())
+}
+
+fn apply_times(path: &Path, a: &sattr3) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     let mut atime = FileTime::from_last_access_time(&meta);
     let mut mtime = FileTime::from_last_modification_time(&meta);
@@ -449,9 +457,6 @@ fn apply_sattr(path: &Path, a: &sattr3) -> io::Result<()> {
     }
     if touched {
         filetime::set_symlink_file_times(path, atime, mtime)?;
-    }
-    if let set_mode3::mode(m) = a.mode {
-        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
     }
     Ok(())
 }
@@ -557,22 +562,32 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
         symlink(fs::read_link(from)?, to)?;
-        preserve_times(to, &meta)
-    } else if meta.is_dir() {
-        fs::create_dir(to)?;
-        for e in fs::read_dir(from)? {
-            let e = e?;
-            copy_tree(&e.path(), &to.join(e.file_name()))?;
+        return preserve_times(to, &meta);
+    }
+    let mode = meta.mode() & 0o7777;
+    let readable = mode | if meta.is_dir() { 0o500 } else { 0o400 };
+    if readable != mode {
+        fs::set_permissions(from, fs::Permissions::from_mode(readable))?;
+    }
+    let copied = (|| {
+        if meta.is_dir() {
+            fs::create_dir(to)?;
+            for e in fs::read_dir(from)? {
+                let e = e?;
+                copy_tree(&e.path(), &to.join(e.file_name()))?;
+            }
+        } else {
+            fs::copy(from, to)?;
         }
-        let dir = File::open(to)?;
+        let handle = File::open(to)?;
         preserve_times(to, &meta)?;
         fs::set_permissions(to, meta.permissions())?;
-        dir.sync_all()
-    } else {
-        fs::copy(from, to)?;
-        preserve_times(to, &meta)?;
-        File::open(to)?.sync_all()
+        handle.sync_all()
+    })();
+    if readable != mode {
+        fs::set_permissions(from, meta.permissions())?;
     }
+    copied
 }
 
 #[async_trait]
@@ -623,6 +638,7 @@ impl NFSFileSystem for Overlay {
             .file_type()
             .is_symlink()
         {
+            apply_times(&up, &setattr).map_err(io_err)?;
             return self.attr(&mut st, &rel);
         }
         apply_sattr(&up, &setattr).map_err(io_err)?;
@@ -862,7 +878,7 @@ impl NFSFileSystem for Overlay {
         dirid: fileid3,
         linkname: &filename3,
         target: &nfspath3,
-        _attr: &sattr3,
+        attr: &sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let mut st = self.lock();
         let rel = self.dir_rel(&st, dirid)?.join(name(linkname)?);
@@ -872,6 +888,7 @@ impl NFSFileSystem for Overlay {
         self.ensure_upper_dir(&st, rel.parent().unwrap())?;
         let up = self.tree(&rel);
         symlink(std::ffi::OsStr::from_bytes(&target.0), &up).map_err(io_err)?;
+        apply_times(&up, attr).map_err(io_err)?;
         sync_dir(up.parent().unwrap()).map_err(io_err)?;
         let a = self.attr(&mut st, &rel)?;
         Ok((a.fileid, a))

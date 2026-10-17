@@ -1,0 +1,87 @@
+[
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/fresh-ci-ebd3083",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/macos-15/run-1",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/macos-15/run-2",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/macos-15/run-3",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/ubuntu-24.04/run-1",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/ubuntu-24.04/run-2",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/codex-r2-validation/hosted-run-38569138378/ubuntu-24.04/run-3",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/macos-15/run-1",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/macos-15/run-2",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/macos-15/run-3",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/ubuntu-24.04/run-1",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/ubuntu-24.04/run-2",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/hosted-run-38507388389/ubuntu-24.04/run-3",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/macos-4149da9/ci-run-1",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/macos-4149da9/ci-run-2",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/macos-4149da9/ci-run-3",
+    "exit": 0,
+    "checks": 33
+  },
+  {
+    "run": "tools/native-benchmarks/evidence/macos-4149da9/local-run-1",
+    "exit": 0,
+    "checks": 33
+  }
+]
