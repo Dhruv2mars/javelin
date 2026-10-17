@@ -17,7 +17,7 @@ def load(name):
 log = (evidence / "mount-tests.log").read_text() if (evidence / "mount-tests.log").exists() else ""
 totals = re.findall(r"test result: (\w+)\. (\d+) passed; (\d+) failed", log)
 checks = {name: (load(f"{name}.json") or {}).get("verdict", "NOT VERIFIED")
-          for name in ["flow", "recovery", "probe", "stale", "race", "replay", "init-names", "foreign", "reused", "sameid", "orphanfreeze", "transient", "misconfig", "thawedcommit", "unlistable", "publication", "publication-refusals", "publication-recovery", "publication-external", "publication-terminal", "publication-unmounted", "rebind-flow", "rebind-refusals", "rebind-recovery", "rebind-races", "watch-flow", "watch-race", "watch-recovery"]}
+          for name in ["flow", "recovery", "probe", "stale", "race", "replay", "init-names", "foreign", "reused", "sameid", "orphanfreeze", "transient", "misconfig", "thawedcommit", "unlistable", "publication", "publication-refusals", "publication-recovery", "publication-external", "publication-terminal", "publication-unmounted", "rebind-flow", "rebind-refusals", "rebind-recovery", "rebind-races", "watch-flow", "watch-race", "watch-recovery", "ignore-flow", "ignore-race"]}
 cleanup = load("cleanup.json") or {}
 initial = load("initial.json") or {}
 verified = (cleanup.get("exitCode") == 0 and cleanup.get("allUnmountedAndRemoved") is True

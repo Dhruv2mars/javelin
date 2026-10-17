@@ -480,7 +480,7 @@ privileges, automatic refresh, power loss and GA remain outside this proof.
 for setup, timing, retry, terminal-stop and cleanup behavior. Existing commands do
 not start a controller or daemon.
 
-The controller hashes every file's actual bytes and symlink target without storing
+The controller hashes each discovered/tracked file's actual bytes and symlink target without storing
 observation objects. Samples are separated by a 250ms sleep after each scan; equal
 samples must span the quiet window (1000ms default, minimum 250ms). A view equal to
 its bound immutable checkpoint is a no-op. It acquires the existing runtime lock
@@ -502,4 +502,35 @@ killed after the pending write resolves that same capture and receipt first.
 Published/Discarded stop; a stale external binding requires explicit rebind.
 Watch does not change World or recover interrupted Publish/discard/rebind on the
 user's behalf. Performance and large-tree bounds beyond existing limits remain
-unverified. Ignore rules remain unimplemented, and all files are considered.
+unverified. Discovery uses the root ignore rules described below.
+
+## Ignore-aware discovery
+
+Linux workspace checkpoint, foreground watch and Publish read the root
+`.javelinignore` from the workspace view. Each nonempty line is a literal,
+case-sensitive root-relative native path, for example `build/`, `packages/ui/dist/`
+or `private.env`. A path matches itself and all descendants; the optional trailing
+slash has the same meaning. Blank lines and lines beginning with `#` are ignored.
+Use LF or CRLF. Leading/trailing whitespace, absolute paths, `.`/`..` components,
+globs (`*`, `?`, brackets), negation (`!`) and backslash escapes are errors.
+There are no nested rule files, automatic imports or external VCS semantics.
+The file must be regular UTF-8, at most 64 KiB with at most 256 rules; missing
+means no rules. Symlinked rule files are refused, including dangling symlinks.
+Malformed rules and read failures abort the operation visibly and preserve bytes.
+`.javelinignore` itself is always eligible for capture, even if named in a rule.
+
+Rules exclude only paths absent from the **current bound checkpoint**, including
+files added since the original mount. Tracked contents, executable bits, symlink
+targets and deletions still enter the next checkpoint. Editing rules cannot
+silently untrack an entry. Removing a rule discovers the still-present private
+files. Watch compares the effective capture tree and revalidates it after freeze;
+ignored-only edits do not create checkpoints. Checkpoint and clone snapshots
+contain tracked state only.
+
+Publish allows ignored untracked private artifacts (including empty ignored
+directories), retains their bytes in the private workspace and leaves the whole
+view read-only on success. Uncaptured tracked and nonignored changes still refuse.
+Rebind deliberately checks the full tree and refuses ignored private artifacts
+rather than deleting them. Capture, refusal and recovery never remove ignored
+bytes. Discard retains its explicit destructive behavior. Existing helper listing
+and filesystem limits still apply; ignore rules do not expand them.
