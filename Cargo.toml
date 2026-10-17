@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/javelin-cli"]
-default-members = [".", "crates/javelin-cli"]
+members = [".", "crates/javelin-cli", "crates/javelin-merge", "crates/javelin-stack"]
+default-members = [".", "crates/javelin-cli", "crates/javelin-merge", "crates/javelin-stack"]
 resolver = "3"
 
 [package]

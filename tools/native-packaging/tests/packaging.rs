@@ -965,6 +965,8 @@ fn copy_build_sources(dest: &Path) {
     for file in walk(&root_dir.join("src"))
         .into_iter()
         .chain(walk(&root_dir.join("crates/javelin-cli")))
+        .chain(walk(&root_dir.join("crates/javelin-merge")))
+        .chain(walk(&root_dir.join("crates/javelin-stack")))
     {
         let rel = file.strip_prefix(&root_dir).unwrap();
         let target = dest.join(rel);
@@ -1051,6 +1053,14 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         "crates/javelin-cli/src/main.rs",
         "crates/javelin-cli/src/cli.rs",
         "crates/javelin-cli/src/cli_linux.rs",
+        "crates/javelin-merge/Cargo.toml",
+        "crates/javelin-merge/LICENSE",
+        "crates/javelin-merge/src/lib.rs",
+        "crates/javelin-merge/src/matching.rs",
+        "crates/javelin-merge/src/resources.rs",
+        "crates/javelin-stack/Cargo.toml",
+        "crates/javelin-stack/LICENSE",
+        "crates/javelin-stack/src/lib.rs",
         "src/lib.rs",
     ] {
         let path = copy.path().join(input);

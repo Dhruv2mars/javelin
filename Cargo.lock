@@ -185,9 +185,27 @@ name = "javelin-cli"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "javelin-stack",
  "libc",
  "rusqlite",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "javelin-merge"
+version = "0.1.0"
+dependencies = [
+ "javelin",
+ "tempfile",
+]
+
+[[package]]
+name = "javelin-stack"
+version = "0.1.0"
+dependencies = [
+ "javelin",
+ "javelin-merge",
  "tempfile",
 ]
 

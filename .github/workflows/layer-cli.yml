@@ -5,6 +5,8 @@ on:
     paths:
       - src/**
       - crates/javelin-cli/**
+      - crates/javelin-stack/**
+      - crates/javelin-merge/**
       - Cargo.toml
       - Cargo.lock
       - .github/workflows/layer-cli.yml
@@ -78,6 +80,7 @@ jobs:
           rm "$JAVELIN_GIT_MARKER"
           export PATH="$evidence/guard:$PATH"
           uname -a
+          cargo test --locked --test cli_layers binary_stack -- --nocapture
           timeout --signal=TERM --kill-after=15s 240s cargo test --locked --test cli_layers linux_cli_ -- --ignored --nocapture
           [[ ! -e "$JAVELIN_GIT_MARKER" ]]
       - name: Upload bounded smoke logs

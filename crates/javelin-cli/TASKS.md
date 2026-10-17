@@ -54,3 +54,47 @@ continuation in a disposable hosted Linux run. Root TASKS remains main's file.
   observed on remount; no out-of-band backing-path guarantee is claimed.
 
 Delivery: one regular T3-linked PR against main; merge belongs to the hub.
+
+
+## Native Stack CLI and explicit Linux workspace rebind
+
+Done: separate actual CLI actions Stack a frozen source into an exact target and
+rebind its clean view through the public adapters, then tools/checkpoint/Publish
+work in disposable Linux. Exact retries preserve original inputs and outcomes.
+Root TASKS stays identical to main; no native or adapter algorithm/API changes.
+
+- [x] Read contracts and verify merged main includes PRs 26–29 and format 4.
+- [x] Implement separate Stack/rebind commands, explicit tokens and outcomes.
+- [x] Add actual-binary merge/conflict/retry/frozen-source/error coverage.
+- [x] Extend existing disposable Linux smoke through rebind/tools/Publish.
+- [x] Document checkpoint/unmount safety and explicit retry boundaries.
+- [x] Run fmt, Clippy, tests/release and inspect hosted Linux smoke.
+- [x] Prepare checked implementation for one regular T3-linked PR against main;
+  delivery URL is reported in this thread and integration belongs to the hub.
+
+- [x] Authorized integration: make merge/Stack default root members, remove
+  unused local locks, hash root lock in mechanical CI, and fingerprint both
+  adapters in the existing packager list and regression.
+- [x] Linux cross-target all-target/all-feature Clippy passes with Zig; no mounts
+  were attempted on the laptop. Mutation tests run in an isolated source copy.
+
+- [x] Copy root MIT LICENSE byte for byte into both compiled adapters; include
+  these inputs in the packager fingerprint and regression without collector changes.
+
+Verification: macOS Rust 1.93.0 default workspace tests passed 160 tests with one
+inherited ignore (including 13 actual-binary CLI tests). Workspace/package fmt,
+warnings-denied Clippy, Linux cross-target CLI Clippy, release build and CLI install
+passed. The 29 real packager tests passed, including archive install, changed-input
+refusal and reproducibility. An isolated mechanical run killed 29/29 compiling
+mutations and restored all source hashes. An initial overlapping mutation/check
+run was invalidated; these results are from stable restored source and isolated
+mutations.
+
+Disposable Linux run [39013214105](https://github.com/Dhruv2mars/javelin/actions/runs/39013214105)
+at CLI source `e2556be` passed three Stack binary cases and all three mount cases,
+including Stack/rebind/tools/checkpoint/Publish. Raw job/artifact logs were inspected:
+Git positive control/absence checks passed, no mounts remained, cleanup `exit=0`.
+Final integration adds only license files/fingerprint regression and this checklist
+after that CLI source. No laptop mounts, daemon, autosave, refresh, restore or
+project adoption were added. Linux helper setup and macOS/Windows workspace support
+remain outside this unit.

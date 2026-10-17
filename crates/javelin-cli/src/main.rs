@@ -32,24 +32,67 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("javelin: {error}");
             }
-            ExitCode::from(if matches!(error, Error::InvalidInput(_)) {
-                2
-            } else {
-                1
-            })
+            ExitCode::from(
+                if matches!(error, CliError::Native(Error::InvalidInput(_))) {
+                    2
+                } else {
+                    1
+                },
+            )
         }
     }
 }
 
-fn run(args: Vec<OsString>) -> Result<cli::Output> {
+#[derive(Debug)]
+enum CliError {
+    Native(Error),
+    Stack(javelin_stack::StackError),
+}
+
+impl From<Error> for CliError {
+    fn from(error: Error) -> Self {
+        Self::Native(error)
+    }
+}
+impl From<javelin_stack::StackError> for CliError {
+    fn from(error: javelin_stack::StackError) -> Self {
+        match error {
+            javelin_stack::StackError::Storage(error) => Self::Native(error),
+            error => Self::Stack(error),
+        }
+    }
+}
+impl CliError {
+    fn code(&self) -> &str {
+        match self {
+            Self::Native(error) => error.code(),
+            Self::Stack(_) => "stack_merge_error",
+        }
+    }
+}
+impl std::fmt::Display for CliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native(error) => error.fmt(f),
+            Self::Stack(error) => error.fmt(f),
+        }
+    }
+}
+
+fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     let args: Vec<_> = args.into_iter().filter(|a| a != "--json").collect();
+    if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "stack") {
+        return cli::stack(args.into_iter().skip(2).collect());
+    }
     if args
         .first()
         .is_some_and(|a| a == "layer" || a == "workspace")
     {
-        return cli::run(args);
+        return cli::run(args).map_err(Into::into);
     }
-    run_repository(args).map(|(value, text)| (value, text, 0))
+    run_repository(args)
+        .map(|(value, text)| (value, text, 0))
+        .map_err(Into::into)
 }
 
 fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
