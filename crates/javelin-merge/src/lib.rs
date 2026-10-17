@@ -4,7 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use javelin::{FileEntry, Manifest, ObjectId, RepoPath};
-use similar::{Algorithm, DiffOp, capture_diff_slices};
+
+mod matching;
+mod resources;
+use matching::matches;
+pub use resources::{MergeError, Resource, ResourceLimit, Usage};
 
 /// A resolved path. New bytes have no object ID until the caller stores them.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +51,7 @@ pub struct Conflict {
 pub struct MergeOutcome {
     pub merged: BTreeMap<RepoPath, Merged>,
     pub conflicts: Vec<Conflict>,
+    pub usage: Usage,
 }
 
 impl MergeOutcome {
@@ -68,13 +73,27 @@ pub fn merge<E>(
     ours: &Manifest,
     theirs: &Manifest,
     mut load: impl FnMut(ObjectId) -> Result<Vec<u8>, E>,
-) -> Result<MergeOutcome, E> {
+) -> Result<MergeOutcome, MergeError<E>> {
     let (b, o, t) = (base.entries(), ours.entries(), theirs.entries());
+    Resource::Entries.check((b.len() + o.len() + t.len()) as u64)?;
+    let mut usage = Usage::default();
+    let mut path_bytes = 0;
+    let mut metadata_work = 0;
+    for path in b.keys().chain(o.keys()).chain(t.keys()) {
+        let len = path.as_str().len() as u64;
+        Resource::PathBytes.check(len)?;
+        path_bytes += len;
+        Resource::TotalPathBytes.check(path_bytes)?;
+        // Covers path comparisons/clones and scanning/parsing every slash prefix
+        // in the structural pass, including bounded BTree lookups.
+        metadata_work += 64 * (len + 1) * (len + 1);
+    }
+    usage.reserve(metadata_work)?;
     let paths: BTreeSet<&RepoPath> = b.keys().chain(o.keys()).chain(t.keys()).collect();
     let mut results = BTreeMap::new();
     for path in paths {
         let sides = (b.get(path), o.get(path), t.get(path));
-        let result = merge_path(sides, &mut load)?;
+        let result = merge_path(sides, &mut load, &mut usage)?;
         results.insert(path.clone(), (result, sides));
     }
 
@@ -102,7 +121,10 @@ pub fn merge<E>(
         }
     }
 
-    let mut outcome = MergeOutcome::default();
+    let mut outcome = MergeOutcome {
+        usage,
+        ..MergeOutcome::default()
+    };
     for (path, (result, (b, o, t))) in results {
         let conflict = |kind, with| Conflict {
             path: path.clone(),
@@ -140,7 +162,8 @@ type Sides<'a> = (
 fn merge_path<E>(
     (base, ours, theirs): Sides<'_>,
     load: &mut impl FnMut(ObjectId) -> Result<Vec<u8>, E>,
-) -> Result<Path, E> {
+    usage: &mut Usage,
+) -> Result<Path, MergeError<E>> {
     let take = |entry: Option<&FileEntry>| match entry {
         Some(entry) => Path::Resolved(Merged::Retained(entry.clone())),
         None => Path::Deleted,
@@ -182,11 +205,17 @@ fn merge_path<E>(
     } else if o == b {
         *t
     } else {
-        let (b, o, t) = (load(*b)?, load(*o)?, load(*t)?);
+        let mut bounded_load = |id| {
+            let bytes = load(id).map_err(MergeError::Load)?;
+            usage.loaded(bytes.len())?;
+            Ok::<_, MergeError<E>>(bytes)
+        };
+        // Check each returned allocation before invoking the next loader.
+        let (b, o, t) = (bounded_load(*b)?, bounded_load(*o)?, bounded_load(*t)?);
         if [&b, &o, &t].iter().any(|bytes| bytes.contains(&0)) {
             return Ok(Path::Unresolved(ConflictKind::Binary));
         }
-        return Ok(match merge_lines(&b, &o, &t) {
+        return Ok(match merge_lines(&b, &o, &t, usage)? {
             Some(bytes) => Path::Resolved(Merged::Content { bytes, executable }),
             None => Path::Unresolved(ConflictKind::Content),
         });
@@ -197,8 +226,34 @@ fn merge_path<E>(
     })))
 }
 
-fn merge_lines(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
-    diff3(&lines(base), &lines(ours), &lines(theirs)).map(|merged| merged.concat())
+fn merge_lines(
+    base: &[u8],
+    ours: &[u8],
+    theirs: &[u8],
+    usage: &mut Usage,
+) -> Result<Option<Vec<u8>>, ResourceLimit> {
+    let bytes = [base, ours, theirs];
+    let mut counts = [0u64; 3];
+    for (count, bytes) in counts.iter_mut().zip(bytes) {
+        *count = bytes.iter().filter(|b| **b == b'\n').count() as u64
+            + u64::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
+        Resource::Lines.check(*count)?;
+    }
+    let [n, m, k] = counts;
+    let [b, o, t] = bytes.map(|b| b.len() as u64);
+    let mut work = 0;
+    for (side_lines, side_bytes) in [(m, o), (k, t)] {
+        let cells = (n + 1) * (side_lines + 1);
+        Resource::TableCells.check(cells)?;
+        // Prefix, suffix, omission scan, zeroing, traceback; byte equality is
+        // bounded by all-pair shorter-line lengths, conservatively summed here.
+        work += 5 * cells + 3 * (n * side_bytes).min(side_lines * b) + 4 * (n + side_lines + 1);
+    }
+    // At most n uniqueness scans of all lines/bytes. Regions and output are
+    // linear in the admitted text, including vector growth and byte copies.
+    work += n * (n + m + k + b + o + t) + 16 * (n + m + k + b + o + t + 1);
+    usage.reserve(work)?;
+    Ok(diff3(&lines(base), &lines(ours), &lines(theirs)).map(|merged| merged.concat()))
 }
 
 /// A region's changing side (true is ours), its merged lines, and the anchor after it.
@@ -214,7 +269,8 @@ type Step<'a, 'r> = (Option<bool>, &'r [&'a [u8]], Option<usize>);
 /// side's edit could equally sit on the other side, through repeated lines or moved
 /// blocks, and merging could drop, duplicate, or reorder an edit.
 fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Option<Vec<&'a [u8]>> {
-    let (in_ours, in_theirs) = (matches(base, ours), matches(base, theirs));
+    let (in_ours, ours_kept) = matches(base, ours);
+    let (in_theirs, theirs_kept) = matches(base, theirs);
     let mut steps: Vec<Step> = Vec::new();
     let (mut b, mut o, mut t) = (0, 0, 0);
     loop {
@@ -241,12 +297,7 @@ fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Optio
             .iter()
             .all(|lines| lines.iter().filter(|l| **l == line).count() == 1)
     };
-    let (ours_lcs, theirs_lcs) = (lcs(base, ours), lcs(base, theirs));
-    // Every minimal diff keeps base line `i` iff dropping it shortens the LCS.
-    let kept = |i: usize| {
-        let without: Vec<&[u8]> = [&base[..i], &base[i + 1..]].concat();
-        lcs(&without, ours) < ours_lcs && lcs(&without, theirs) < theirs_lcs
-    };
+    let kept = |i: usize| ours_kept[i] && theirs_kept[i];
     let (mut last, mut separated) = (None, false);
     let mut out = Vec::new();
     for (side, taken, line) in steps {
@@ -268,34 +319,4 @@ fn diff3<'a>(base: &[&'a [u8]], ours: &[&'a [u8]], theirs: &[&'a [u8]]) -> Optio
 /// Lines keep their exact terminator; a final line may have none.
 fn lines(bytes: &[u8]) -> Vec<&[u8]> {
     bytes.split_inclusive(|byte| *byte == b'\n').collect()
-}
-
-/// Length of the longest common subsequence, from an exact minimal diff.
-fn lcs(base: &[&[u8]], other: &[&[u8]]) -> usize {
-    capture_diff_slices(Algorithm::RawMyers, base, other)
-        .iter()
-        .map(|op| match op {
-            DiffOp::Equal { len, .. } => *len,
-            _ => 0,
-        })
-        .sum()
-}
-
-/// For each base line, the index of the line it is matched to as unchanged, from an
-/// exact minimal diff. No deadline is passed, so the result never depends on time.
-fn matches(base: &[&[u8]], other: &[&[u8]]) -> Vec<Option<usize>> {
-    let mut matched = vec![None; base.len()];
-    for op in capture_diff_slices(Algorithm::RawMyers, base, other) {
-        if let DiffOp::Equal {
-            old_index,
-            new_index,
-            len,
-        } = op
-        {
-            for i in 0..len {
-                matched[old_index + i] = Some(new_index + i);
-            }
-        }
-    }
-    matched
 }
