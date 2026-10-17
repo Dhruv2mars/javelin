@@ -61,7 +61,7 @@ jobs:
             rustc --version --verbose
             cargo --version
             bun --version
-            bun -e 'for (const f of process.argv.slice(1)) console.log(new Bun.CryptoHasher("sha256").update(await Bun.file(f).bytes()).digest("hex"), f)' Cargo.toml Cargo.lock src/lib.rs src/matching.rs src/resources.rs tests/repository_merge.rs tests/repeated_lines.rs tests/resources.rs examples/stack_preview.rs scripts/mutation-check.ts
+            bun -e 'for (const f of process.argv.slice(1)) console.log(new Bun.CryptoHasher("sha256").update(await Bun.file(f).bytes()).digest("hex"), f)' Cargo.toml ../../Cargo.lock src/lib.rs src/matching.rs src/resources.rs tests/repository_merge.rs tests/repeated_lines.rs tests/resources.rs examples/stack_preview.rs scripts/mutation-check.ts
           } 2>&1 | tee ci-logs/environment.log
 
       - name: Check formatting
