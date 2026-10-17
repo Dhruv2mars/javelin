@@ -15,7 +15,9 @@ assert.equal(initial.runId, String(run.runId)); assert.ok(initial.uid > 0);
 const sourceNames = ['run.sh', 'inventory.py', 'check.mjs', '../workspace-probe/probe.mjs', '../workspace-probe/atomic-writer.mjs'];
 assert.deepEqual(Object.keys(initial.sources), sourceNames);
 for (const name of sourceNames) assert.equal(hash(await readFile(new URL(name, import.meta.url))), initial.sources[name], `${name} differs from cloud source`);
-assert.equal(summary.checks.length, 8);
+assert.deepEqual(summary.checks.map(check => check.id), [
+  'initial', 'probe', 'clone', 'before-kill', 'before-remount', 'after-kill', 'after-remount', 'final',
+], 'required evidence phase IDs');
 for (const check of summary.checks) {
   assert.equal(check.verdict, 'VERIFIED');
   const phase = await read(`${check.id}.json`); assert.equal(phase.verdict, 'VERIFIED');

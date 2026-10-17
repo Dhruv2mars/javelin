@@ -6,7 +6,7 @@ use javelin::{
     FileEntry, LayerId, LayerState, LayerUpdate, Manifest, ObjectId, OperationId, RepoPath,
     Repository, SparseChanges, VersionNumber,
 };
-use javelin_merge::{Conflict, ConflictKind, MergeOutcome, Merged, merge};
+use javelin_merge::{Conflict, ConflictKind, MergeError, MergeOutcome, Merged, merge};
 use tempfile::TempDir;
 
 #[derive(Clone, Copy)]
@@ -617,6 +617,6 @@ fn loader_errors_propagate_unchanged() {
     let result = merge(&fx.base, &ours, &theirs, Err::<Vec<u8>, _>);
     assert_eq!(
         result.unwrap_err(),
-        fx.entry_of(&fx.base, "f").unwrap().content()
+        MergeError::Load(fx.entry_of(&fx.base, "f").unwrap().content())
     );
 }

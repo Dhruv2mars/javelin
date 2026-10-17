@@ -15,7 +15,9 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 use super::*;
-use crate::{PathDiff, VersionNumber};
+use crate::{
+    PathDiff, PublicationReceipt, PublishAttribution, PublishOutcome, VersionNumber, WorldVersion,
+};
 
 struct Env {
     helper: PathBuf,
@@ -664,6 +666,23 @@ fn runtime_actor() {
             rt.capture(&mut repo, &layer, &operation).map(|o| o.update)
         ),
         "discard" => format!("{:?}", rt.discard(&mut repo, &layer, &operation)),
+        "publish" => format!(
+            "{:?}",
+            rt.publish(
+                &mut repo,
+                &layer,
+                &operation,
+                &PublishAttribution::Human,
+                |_, _| Ok(()),
+            )
+        ),
+        "native_publish" => {
+            let head = active(&repo, &layer);
+            format!(
+                "{:?}",
+                repo.publish_layer(&operation, &head, &PublishAttribution::Human, |_, _| Ok(()))
+            )
+        }
         "mount" => format!("{:?}", rt.mount(&mut repo, &layer)),
         other => panic!("unknown actor mode {other}"),
     };
@@ -1054,6 +1073,403 @@ fn setup(env: &Env, name: &str) -> Setup {
         layer,
         view,
     }
+}
+
+fn published(receipt: &PublicationReceipt) -> &WorldVersion {
+    match &receipt.outcome {
+        PublishOutcome::Published { version } => version,
+        other => panic!("expected successful publication, got {other:?}"),
+    }
+}
+
+/// A separate ordinary process holds a writable descriptor across the call.
+fn publication_writer(view: &Path) -> Actor {
+    let mut command = Command::new("sh");
+    command
+        .args([
+            "-c",
+            "exec 3>>README.txt; echo READY; head -c 1 >/dev/null; printf 'writer bytes\\n' >&3; exec 3>&-; echo RESULT written",
+        ])
+        .current_dir(view);
+    let mut writer = Actor::start(command);
+    writer.marker("READY");
+    writer
+}
+
+/// Check actual filesystem refusals, including namespace changes and truncation.
+fn publication_read_only(view: &Path) -> Value {
+    let before = tree(view);
+    let errors = [
+        (
+            "write",
+            os_error(
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open(view.join("README.txt"))
+                    .and_then(|mut file| file.write_all(b"overwrite")),
+            ),
+        ),
+        (
+            "create",
+            os_error(fs::write(view.join("publication-forbidden.txt"), b"new")),
+        ),
+        (
+            "truncate",
+            os_error(
+                fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(view.join("README.txt"))
+                    .map(|_| ()),
+            ),
+        ),
+        (
+            "rename",
+            os_error(fs::rename(
+                view.join("README.txt"),
+                view.join("publication-renamed.txt"),
+            )),
+        ),
+        ("unlink", os_error(fs::remove_file(view.join("README.txt")))),
+    ];
+    for (operation, errno) in errors {
+        assert_eq!(errno, libc::EROFS, "published view allowed {operation}");
+    }
+    assert_eq!(tree(view), before, "read-only attempts changed bytes");
+    json!(errors.into_iter().collect::<BTreeMap<_, _>>())
+}
+
+fn publication_settled(rt: &LinuxLayerRuntime, repo: &Repository, layer: &LayerId) {
+    let status = rt.status(repo, layer).unwrap();
+    assert!(status.mounted && status.frozen && status.pending.is_none());
+    assert!(matches!(status.current, LayerState::Published { .. }));
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn publication_refuses_busy_writer_and_requires_exact_checkpoint() {
+    let env = env();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        _source,
+        repo_dir: _repo_dir,
+    } = setup(&env, "publication-refusals");
+    let history = repo.history().unwrap();
+    let head = active(&repo, &layer);
+    let writer = publication_writer(&view);
+    let busy_op = op("publish-busy");
+    let busy = rt.publish(
+        &mut repo,
+        &layer,
+        &busy_op,
+        &PublishAttribution::Human,
+        |_, _| panic!("busy writer reached native guard"),
+    );
+    assert!(matches!(busy, Err(Error::Busy(_))), "{busy:?}");
+    let status = rt.status(&repo, &layer).unwrap();
+    assert!(!status.frozen && status.pending.is_none());
+    assert!(repo.publication(&busy_op).unwrap().is_none());
+    assert_eq!(active(&repo, &layer), head);
+    assert_eq!(writer.release(), "written");
+    assert_eq!(
+        fs::read(view.join("README.txt")).unwrap(),
+        b"shared base text\nwriter bytes\n"
+    );
+    let head = applied(
+        &rt.capture(&mut repo, &layer, &op("writer-checkpoint"))
+            .unwrap()
+            .update,
+    );
+    let checkpoint_bytes = tree(&view);
+
+    // Changes to content, additions, deletions and modes must all be checkpointed.
+    let mut refusals = Vec::new();
+    for (index, edit) in [
+        "printf 'uncaptured\\n' > README.txt",
+        "printf 'uncaptured\\n' > added.txt",
+        "rm delete.txt",
+        "chmod +x value.h",
+        "mkdir uncaptured-empty",
+        "ln -s README.txt uncaptured-link",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut log = Vec::new();
+        sh(&view, edit, &mut log);
+        let bytes = tree(&view);
+        let operation = op(&format!("publish-uncaptured-{index}"));
+        let result = rt.publish(
+            &mut repo,
+            &layer,
+            &operation,
+            &PublishAttribution::Human,
+            |_, _| panic!("uncaptured view reached native guard"),
+        );
+        assert!(
+            matches!(&result, Err(Error::InvalidInput(message)) if message.to_lowercase().contains("checkpoint")),
+            "{result:?}"
+        );
+        assert!(repo.publication(&operation).unwrap().is_none());
+        let status = rt.status(&repo, &layer).unwrap();
+        assert!(!status.frozen && status.pending.is_none());
+        assert_eq!(tree(&view), bytes, "uncaptured edits were overwritten");
+        refusals.push(
+            json!({"operation": operation, "result": format!("{result:?}"), "commands": log}),
+        );
+        match index {
+            0 => fs::write(view.join("README.txt"), "shared base text\nwriter bytes\n").unwrap(),
+            1 => fs::remove_file(view.join("added.txt")).unwrap(),
+            2 => fs::write(view.join("delete.txt"), "delete only in A\n").unwrap(),
+            3 => fs::set_permissions(view.join("value.h"), fs::Permissions::from_mode(0o644))
+                .unwrap(),
+            4 => fs::remove_dir(view.join("uncaptured-empty")).unwrap(),
+            5 => fs::remove_file(view.join("uncaptured-link")).unwrap(),
+            _ => unreachable!(),
+        }
+        assert_eq!(tree(&view), checkpoint_bytes);
+    }
+    fs::write(view.join("still-writable.txt"), "kept\n").unwrap();
+    assert_eq!(active(&repo, &layer), head);
+    assert_eq!(repo.history().unwrap(), history);
+    assert_eq!(repo.layer_history(&layer).unwrap().len(), 2);
+    let captured = applied(
+        &rt.capture(&mut repo, &layer, &op("checkpoint-before-publish"))
+            .unwrap()
+            .update,
+    );
+    let bytes = tree(&view);
+    let refused_op = op("publish-guard-refused");
+    let refused = rt.publish(
+        &mut repo,
+        &layer,
+        &refused_op,
+        &PublishAttribution::Human,
+        |_, _| Err(Error::InvalidInput("optional guard refused".into())),
+    );
+    assert!(matches!(refused, Err(Error::InvalidInput(_))));
+    assert!(repo.publication(&refused_op).unwrap().is_none());
+    let status = rt.status(&repo, &layer).unwrap();
+    assert!(!status.frozen && status.pending.is_none());
+    assert_eq!(tree(&view), bytes);
+    // The optional guard must not bypass the existing helper epoch boundary.
+    let epoch_op = op("publish-guard-thaw");
+    let raced = rt.publish(
+        &mut repo,
+        &layer,
+        &epoch_op,
+        &PublishAttribution::Human,
+        |_, _| {
+            assert!(
+                direct(
+                    &env,
+                    &["thaw", root.to_str().unwrap(), "view", &slot(&layer)]
+                )
+                .status
+                .success()
+            );
+            fs::write(view.join("guard-race.txt"), b"preserved\n").unwrap();
+            assert!(
+                direct(
+                    &env,
+                    &["freeze", root.to_str().unwrap(), "view", &slot(&layer)]
+                )
+                .status
+                .success()
+            );
+            Ok(())
+        },
+    );
+    assert!(matches!(raced, Err(Error::Busy(_))));
+    assert!(repo.publication(&epoch_op).unwrap().is_none());
+    let status = rt.status(&repo, &layer).unwrap();
+    assert!(!status.frozen && status.pending.is_none());
+    assert_eq!(
+        fs::read(view.join("guard-race.txt")).unwrap(),
+        b"preserved\n"
+    );
+    fs::remove_file(view.join("guard-race.txt")).unwrap();
+    let receipt = rt
+        .publish(
+            &mut repo,
+            &layer,
+            &busy_op,
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(receipt.expected, captured);
+    assert_eq!(published(&receipt).number.get(), 2);
+    assert_eq!(repo.history().unwrap().len(), history.len() + 1);
+    publication_settled(&rt, &repo, &layer);
+    save(
+        &env,
+        "publication-refusals",
+        &json!({"verdict": "VERIFIED", "busy": format!("{busy:?}"),
+            "uncaptured": refusals, "receipt": receipt, "tree": bytes,
+            "readOnly": publication_read_only(&view), "integrity": repo.check().unwrap()}),
+    );
+    inventory(&env, &root, "publication-refusals-inventory");
+    rt.unmount(&layer).unwrap();
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn published_view_replays_receipt_and_keeps_private_checkpoint_clone() {
+    let env = env();
+    let Setup {
+        mut repo,
+        mut rt,
+        layer,
+        view,
+        root,
+        _source,
+        repo_dir,
+    } = setup(&env, "publication");
+    let initial = active(&repo, &layer);
+    fs::write(view.join("README.txt"), "published bytes\n").unwrap();
+    let captured = applied(
+        &rt.capture(&mut repo, &layer, &op("published-capture"))
+            .unwrap()
+            .update,
+    );
+    let stale_discard = repo
+        .discard_layer(&op("historical-stale-discard"), &initial)
+        .unwrap();
+    assert!(matches!(stale_discard, LayerUpdate::Stale { .. }));
+    let bytes = tree(&view);
+    let before = inventory(&env, &root, "publication-inventory-before");
+    assert!(upper_entries(&before, &slot(&layer)) > 0);
+    let attribution = PublishAttribution::Agent {
+        context: Some(repo.put_blob(b"supplied publication context").unwrap()),
+        allow_missing_trace: false,
+    };
+    let operation = op("publish-mounted");
+    let manifest = repo.read_checkpoint(captured.checkpoint()).unwrap();
+    let mut guard_calls = 0;
+    let receipt = rt
+        .publish(
+            &mut repo,
+            &layer,
+            &operation,
+            &attribution,
+            |world, candidate| {
+                guard_calls += 1;
+                assert_eq!(world.number.get(), 1);
+                assert_eq!(candidate, manifest.manifest());
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(guard_calls, 1);
+    assert_eq!(receipt.expected, captured);
+    assert_eq!(receipt.attribution, attribution);
+    let version = published(&receipt).clone();
+    assert_eq!(version.number.get(), 2);
+    assert_eq!(
+        repo.read_manifest(version.manifest).unwrap(),
+        *manifest.manifest()
+    );
+    assert_eq!(repo.publication(&operation).unwrap(), Some(receipt.clone()));
+    publication_settled(&rt, &repo, &layer);
+    let errors = publication_read_only(&view);
+
+    // Later World advancement cannot change the original receipt or rerun policy.
+    repo.compare_and_advance(&op("after-publication"), version.number, version.manifest)
+        .unwrap();
+    drop(rt);
+    drop(repo);
+    let mut repo = Repository::open(repo_dir.path()).unwrap();
+    let mut rt = LinuxLayerRuntime::open(&repo, &root, helper(&env)).unwrap();
+    assert_eq!(rt.mount(&mut repo, &layer).unwrap(), view);
+    assert_eq!(
+        rt.publish(&mut repo, &layer, &operation, &attribution, |_, _| {
+            panic!("durable publication replay reran guard")
+        })
+        .unwrap(),
+        receipt
+    );
+    let mismatched = rt.publish(
+        &mut repo,
+        &layer,
+        &operation,
+        &PublishAttribution::Human,
+        |_, _| panic!("attribution mismatch reached guard"),
+    );
+    assert!(matches!(mismatched, Err(Error::OperationIdReused(_))));
+
+    // Terminal refusals reserve no new attempt and must never thaw Published views.
+    for capture in [true, false] {
+        let operation = op(if capture {
+            "capture-published"
+        } else {
+            "discard-published"
+        });
+        let result = if capture {
+            rt.capture(&mut repo, &layer, &operation).map(|_| ())
+        } else {
+            rt.discard(&mut repo, &layer, &operation).map(|_| ())
+        };
+        assert!(
+            matches!(result, Err(Error::LayerPublished { .. })),
+            "{result:?}"
+        );
+        assert!(repo.layer_operation(&operation).unwrap().is_none());
+        publication_settled(&rt, &repo, &layer);
+        publication_read_only(&view);
+    }
+    let replayed_capture = rt
+        .capture(&mut repo, &layer, &op("published-capture"))
+        .unwrap();
+    assert!(replayed_capture.replayed);
+    assert_eq!(applied(&replayed_capture.update), captured);
+    assert_eq!(
+        rt.discard(&mut repo, &layer, &op("historical-stale-discard"))
+            .unwrap(),
+        stale_discard
+    );
+    publication_settled(&rt, &repo, &layer);
+    let recovery = rt.recover(&mut repo).unwrap();
+    assert!(recovery.failures.is_empty() && recovery.pending_resolved == 0);
+    publication_settled(&rt, &repo, &layer);
+    let after = inventory(&env, &root, "publication-inventory-after");
+    assert_eq!(
+        before["uppers"][slot(&layer)],
+        after["uppers"][slot(&layer)]
+    );
+    assert_eq!(tree(&view), bytes);
+
+    let clone = id("published-clone");
+    repo.clone_layer(&clone, captured.checkpoint()).unwrap();
+    let cloned = rt.mount(&mut repo, &clone).unwrap();
+    assert_eq!(tree(&cloned), bytes);
+    let clone_inventory = inventory(&env, &root, "publication-inventory-clone");
+    assert_eq!(upper_entries(&clone_inventory, &slot(&clone)), 0);
+    fs::write(cloned.join("README.txt"), "private clone bytes\n").unwrap();
+    fs::write(cloned.join("clone-only.txt"), "private\n").unwrap();
+    assert_eq!(tree(&view), bytes);
+    publication_read_only(&view);
+    let clone_head = applied(
+        &rt.capture(&mut repo, &clone, &op("capture-published-clone"))
+            .unwrap()
+            .update,
+    );
+    assert_ne!(clone_head.checkpoint(), captured.checkpoint());
+    assert_eq!(repo.history().unwrap().len(), 4);
+    assert_eq!(repo.layer_history(&layer).unwrap().len(), 3);
+    save(
+        &env,
+        "publication",
+        &json!({"verdict": "VERIFIED", "receipt": receipt, "readOnly": errors,
+            "recovery": recovery, "publishedTree": bytes, "cloneTree": tree(&cloned),
+            "history": repo.history().unwrap(), "integrity": repo.check().unwrap()}),
+    );
+    rt.unmount(&clone).unwrap();
+    rt.unmount(&layer).unwrap();
 }
 
 /// Invokes the root helper directly, as any process of the same user could.
@@ -1718,5 +2134,405 @@ fn foreign_same_id_commit_with_unlistable_upper_thaws() {
         &env,
         "unlistable",
         &json!({"verdict": "VERIFIED", "commands": log}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn publication_process_loss_recovers_native_receipts_without_advancing_twice() {
+    let env = env();
+    let mut cases = Vec::new();
+    for (index, boundary) in [
+        "workspace_publish_frozen",
+        "workspace_publish_prepared",
+        "publish_before_commit",
+        "publish_after_commit",
+        "workspace_publish_committed",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut s = setup(&env, &format!("publication-kill-{index}"));
+        fs::write(s.view.join("private.txt"), b"recoverable bytes\n").unwrap();
+        let head = applied(
+            &s.rt
+                .capture(&mut s.repo, &s.layer, &op("capture-for-publish"))
+                .unwrap()
+                .update,
+        );
+        let bytes = tree(&s.view);
+        let operation = op("killed-publication");
+        let mut actor = Actor::spawn(
+            &env,
+            s.repo_dir.path(),
+            &s.root,
+            "publish",
+            "A",
+            operation.as_str(),
+            boundary,
+        );
+        actor.marker(&format!("BOUNDARY {boundary}"));
+        // The freeze precedes both transaction acceptance and the runtime reply.
+        publication_read_only(&s.view);
+        actor.kill();
+        let committed = index >= 3;
+        let original = s.repo.publication(&operation).unwrap();
+        assert_eq!(original.is_some(), committed);
+        let report = s.rt.recover(&mut s.repo).unwrap();
+        assert!(report.failures.is_empty(), "{report:?}");
+        assert_eq!(report.pending_resolved, 1);
+        assert_eq!(tree(&s.view), bytes);
+        let status = s.rt.status(&s.repo, &s.layer).unwrap();
+        assert!(status.pending.is_none());
+        assert_eq!(status.frozen, committed);
+        assert_eq!(
+            s.repo.history().unwrap().len(),
+            if committed { 3 } else { 2 }
+        );
+        assert_eq!(s.repo.publication(&operation).unwrap(), original);
+        let mut guard_calls = 0;
+        let receipt =
+            s.rt.publish(
+                &mut s.repo,
+                &s.layer,
+                &operation,
+                &PublishAttribution::Human,
+                |_, _| {
+                    guard_calls += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(guard_calls, if committed { 0 } else { 1 });
+        if let Some(original) = original {
+            assert_eq!(receipt, original);
+        }
+        assert_eq!(receipt.expected, head);
+        assert_eq!(published(&receipt).number.get(), 2);
+        publication_settled(&s.rt, &s.repo, &s.layer);
+        let again = s.rt.recover(&mut s.repo).unwrap();
+        assert!(again.failures.is_empty() && again.pending_resolved == 0);
+        assert_eq!(s.repo.history().unwrap().len(), 3);
+        assert_eq!(s.repo.layer_history(&s.layer).unwrap().len(), 3);
+        cases.push(
+            json!({"boundary": boundary, "committedBeforeRecovery": committed,
+            "recovery": report, "receipt": receipt, "guardCallsOnRetry": guard_calls,
+            "integrity": s.repo.check().unwrap()}),
+        );
+        s.rt.unmount(&s.layer).unwrap();
+    }
+    save(
+        &env,
+        "publication-recovery",
+        &json!({"verdict": "VERIFIED", "cases": cases}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn external_native_publication_is_enforced_when_runtime_observes_it() {
+    let env = env();
+    let mut cases = Vec::new();
+    for observe in ["mount", "open", "status", "recover"] {
+        let mut s = setup(&env, &format!("publication-external-{observe}"));
+        let head = active(&s.repo, &s.layer);
+        let writer = publication_writer(&s.view);
+        // This independent process deliberately bypasses the workspace freeze.
+        // There is no continuous reconciler for an already-mounted Active view.
+        let mut native = Actor::spawn(
+            &env,
+            s.repo_dir.path(),
+            &s.root,
+            "native_publish",
+            "A",
+            "external-publish",
+            "",
+        );
+        assert!(native.marker("RESULT ").starts_with("Ok("));
+        assert!(native.child.wait().unwrap().success());
+        let receipt = s
+            .repo
+            .publication(&op("external-publish"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.expected, head);
+        published(&receipt);
+        assert_eq!(mount_state(&s.view).unwrap(), Some(false));
+        fs::write(
+            s.view.join("after-native.txt"),
+            b"uncaptured after publication\n",
+        )
+        .unwrap();
+        let blocked = match observe {
+            "mount" => matches!(s.rt.mount(&mut s.repo, &s.layer), Err(Error::Busy(_))),
+            "open" => matches!(
+                LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)),
+                Err(Error::Busy(_))
+            ),
+            "status" => matches!(s.rt.status(&s.repo, &s.layer), Err(Error::Busy(_))),
+            "recover" => s.rt.recover(&mut s.repo).unwrap().failures.len() == 1,
+            _ => unreachable!(),
+        };
+        assert!(blocked, "{observe} did not report a held writer");
+        assert_eq!(writer.release(), "written");
+        let bytes = tree(&s.view);
+        match observe {
+            "mount" => {
+                s.rt.mount(&mut s.repo, &s.layer).unwrap();
+            }
+            "open" => {
+                s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            }
+            "status" => {
+                assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+            }
+            "recover" => {
+                assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+            }
+            _ => unreachable!(),
+        }
+        publication_settled(&s.rt, &s.repo, &s.layer);
+        assert_eq!(tree(&s.view), bytes);
+        publication_read_only(&s.view);
+        let accepted = s.repo.read_checkpoint(head.checkpoint()).unwrap();
+        assert!(
+            !accepted
+                .manifest()
+                .entries()
+                .contains_key(&RepoPath::parse("after-native.txt").unwrap())
+        );
+        assert_eq!(
+            fs::read(s.view.join("after-native.txt")).unwrap(),
+            b"uncaptured after publication\n"
+        );
+        cases.push(json!({"observer": observe, "busyWriterReported": blocked,
+            "privateTreeRetained": bytes, "receipt": receipt}));
+        s.rt.unmount(&s.layer).unwrap();
+    }
+    // A first mount after native publication also creates a read-only view.
+    let mut s = setup(&env, "publication-fresh-mount");
+    let layer = id("never-mounted");
+    let base = s.repo.layer_base(VersionNumber::new(1).unwrap()).unwrap();
+    let head = s.repo.create_layer(&layer, &base).unwrap();
+    s.repo
+        .publish_layer(
+            &op("never-mounted-publish"),
+            &head,
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    let view = s.rt.mount(&mut s.repo, &layer).unwrap();
+    publication_settled(&s.rt, &s.repo, &layer);
+    publication_read_only(&view);
+    s.rt.unmount(&layer).unwrap();
+    s.rt.unmount(&s.layer).unwrap();
+    save(
+        &env,
+        "publication-external",
+        &json!({"verdict": "VERIFIED", "cases": cases,
+        "continuousReconciler": false}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn terminal_publication_resolves_pending_capture_and_discard() {
+    let env = env();
+    let mut cases = Vec::new();
+    for (mode, boundary) in [
+        ("capture", "capture_frozen"),
+        ("discard", "discard_unmounted"),
+    ] {
+        let mut s = setup(&env, &format!("publication-pending-{mode}"));
+        fs::write(s.view.join("private.txt"), b"uncaptured private bytes\n").unwrap();
+        let bytes = tree(&s.view);
+        let head = active(&s.repo, &s.layer);
+        let mut actor = Actor::spawn(
+            &env,
+            s.repo_dir.path(),
+            &s.root,
+            mode,
+            "A",
+            "interrupted-edit",
+            boundary,
+        );
+        actor.marker(&format!("BOUNDARY {boundary}"));
+        actor.kill();
+        let receipt = s
+            .repo
+            .publish_layer(
+                &op("external-terminal"),
+                &head,
+                &PublishAttribution::Human,
+                |_, _| Ok(()),
+            )
+            .unwrap();
+        let recovery = s.rt.recover(&mut s.repo).unwrap();
+        assert!(recovery.failures.is_empty(), "{recovery:?}");
+        assert_eq!(recovery.pending_resolved, 1);
+        assert!(
+            s.repo
+                .layer_operation(&op("interrupted-edit"))
+                .unwrap()
+                .is_none()
+        );
+        publication_settled(&s.rt, &s.repo, &s.layer);
+        assert_eq!(tree(&s.view), bytes);
+        publication_read_only(&s.view);
+        cases.push(json!({"pending": mode, "recovery": recovery,
+            "receipt": receipt, "privateTreeRetained": bytes}));
+        s.rt.unmount(&s.layer).unwrap();
+    }
+    save(
+        &env,
+        "publication-terminal",
+        &json!({"verdict": "VERIFIED", "cases": cases}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn published_observation_preserves_explicitly_unmounted_views() {
+    let env = env();
+    let mut s = setup(&env, "publication-unmounted");
+    fs::write(s.view.join("private.txt"), b"published private upper\n").unwrap();
+    s.rt.capture(&mut s.repo, &s.layer, &op("unmounted-capture"))
+        .unwrap();
+    s.rt.publish(
+        &mut s.repo,
+        &s.layer,
+        &op("unmounted-publish"),
+        &PublishAttribution::Human,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    let bytes = tree(&s.view);
+    let mut cases = Vec::new();
+    for observer in ["status", "open", "recover"] {
+        publication_settled(&s.rt, &s.repo, &s.layer);
+        s.rt.unmount(&s.layer).unwrap();
+        assert_eq!(mount_state(&s.view).unwrap(), None);
+        match observer {
+            "status" => {
+                let status = s.rt.status(&s.repo, &s.layer).unwrap();
+                assert!(
+                    !status.mounted && !status.frozen && status.pending.is_none(),
+                    "status recreated an explicitly unmounted Published view"
+                );
+                assert!(matches!(status.current, LayerState::Published { .. }));
+            }
+            "open" => {
+                s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            }
+            "recover" => {
+                let report = s.rt.recover(&mut s.repo).unwrap();
+                assert!(report.failures.is_empty());
+                assert_eq!(
+                    report.views_published, 0,
+                    "unmounted view counted as frozen"
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            mount_state(&s.view).unwrap(),
+            None,
+            "{observer} recreated an explicitly unmounted Published view"
+        );
+        let status = s.rt.status(&s.repo, &s.layer).unwrap();
+        assert!(!status.mounted && !status.frozen && status.pending.is_none());
+        assert_eq!(s.rt.mount(&mut s.repo, &s.layer).unwrap(), s.view);
+        assert_eq!(tree(&s.view), bytes, "explicit remount lost private bytes");
+        publication_read_only(&s.view);
+
+        // Observation must still freeze a mount made writable through the helper.
+        assert!(
+            direct(
+                &env,
+                &["thaw", s.root.to_str().unwrap(), "view", &slot(&s.layer)]
+            )
+            .status
+            .success()
+        );
+        assert_eq!(mount_state(&s.view).unwrap(), Some(false));
+        match observer {
+            "status" => {
+                assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+            }
+            "open" => {
+                s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+            }
+            "recover" => {
+                assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(mount_state(&s.view).unwrap(), Some(true));
+        publication_read_only(&s.view);
+        cases.push(json!({"observer": observer, "absentMountPreserved": true,
+            "existingMountFrozen": true}));
+    }
+    // Damaged unrelated metadata must not prevent partial recovery from opening,
+    // or prevent a healthy Published mount from being frozen on that open.
+    let broken = s.root.join("state/broken.json");
+    fs::write(&broken, b"{}").unwrap();
+    assert!(
+        direct(
+            &env,
+            &["thaw", s.root.to_str().unwrap(), "view", &slot(&s.layer)]
+        )
+        .status
+        .success()
+    );
+    s.rt = LinuxLayerRuntime::open(&s.repo, &s.root, helper(&env)).unwrap();
+    assert_eq!(mount_state(&s.view).unwrap(), Some(true));
+    let partial = s.rt.recover(&mut s.repo).unwrap();
+    assert_eq!(partial.failures.len(), 1);
+    assert!(partial.failures[0].contains("invalid view record"));
+    publication_read_only(&s.view);
+    fs::remove_file(broken).unwrap();
+    s.rt.unmount(&s.layer).unwrap();
+
+    // A lost publication reply is pending work, so recovery may restore its view.
+    let mut pending = setup(&env, "publication-unmounted-pending");
+    let mut actor = Actor::spawn(
+        &env,
+        pending.repo_dir.path(),
+        &pending.root,
+        "publish",
+        "A",
+        "unmounted-pending",
+        "workspace_publish_committed",
+    );
+    actor.marker("BOUNDARY workspace_publish_committed");
+    actor.kill();
+    let receipt = pending
+        .repo
+        .publication(&op("unmounted-pending"))
+        .unwrap()
+        .unwrap();
+    pending.rt.unmount(&pending.layer).unwrap();
+    let status = pending.rt.status(&pending.repo, &pending.layer).unwrap();
+    assert!(!status.mounted && status.pending.as_deref() == Some("unmounted-pending"));
+    pending.rt = LinuxLayerRuntime::open(&pending.repo, &pending.root, helper(&env)).unwrap();
+    assert_eq!(mount_state(&pending.view).unwrap(), None);
+    let recovery = pending.rt.recover(&mut pending.repo).unwrap();
+    assert!(recovery.failures.is_empty());
+    assert_eq!(recovery.pending_resolved, 1);
+    publication_settled(&pending.rt, &pending.repo, &pending.layer);
+    publication_read_only(&pending.view);
+    assert_eq!(
+        pending.repo.publication(&op("unmounted-pending")).unwrap(),
+        Some(receipt)
+    );
+    assert_eq!(pending.repo.history().unwrap().len(), 3);
+    pending.rt.unmount(&pending.layer).unwrap();
+    save(
+        &env,
+        "publication-unmounted",
+        &json!({"verdict": "VERIFIED", "cases": cases,
+            "pendingRecovery": recovery, "pendingReceiptRetained": true,
+            "partialRecovery": partial}),
     );
 }

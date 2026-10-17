@@ -3,7 +3,9 @@ use std::{ffi::OsString, path::PathBuf, process::ExitCode};
 use javelin::{Error, Repository, Result, VersionNumber};
 use serde_json::{Value, json};
 
-const HELP: &str = "Javelin native repository foundation\n\nUsage: javelin <init|history|check> [project-directory] [--json]\n\ninit     Create an empty immutable World 0; existing files stay untouched\nhistory  Read accepted World versions in ascending order\ncheck    Verify stored objects, manifests, history, and operation outcomes\n\nLayers and the complete Layer Publish workflow are not implemented yet.";
+mod cli;
+
+const HELP: &str = cli::HELP;
 
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -13,13 +15,13 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     match run(args) {
-        Ok((value, text)) => {
+        Ok((value, text, code)) => {
             if structured {
                 println!("{value}");
             } else {
                 println!("{text}");
             }
-            ExitCode::SUCCESS
+            ExitCode::from(code)
         }
         Err(error) => {
             if structured {
@@ -39,14 +41,25 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: Vec<OsString>) -> Result<(Value, String)> {
-    let mut args = args.into_iter().filter(|a| a != "--json");
+fn run(args: Vec<OsString>) -> Result<cli::Output> {
+    let args: Vec<_> = args.into_iter().filter(|a| a != "--json").collect();
+    if args
+        .first()
+        .is_some_and(|a| a == "layer" || a == "workspace")
+    {
+        return cli::run(args);
+    }
+    run_repository(args).map(|(value, text)| (value, text, 0))
+}
+
+fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
+    let mut args = args.into_iter();
     let command = args
         .next()
         .ok_or_else(|| Error::InvalidInput(HELP.into()))?;
     if command != "init" && command != "history" && command != "check" {
         return Err(Error::InvalidInput(format!(
-            "unknown command {:?}; expected init, history, or check",
+            "unknown command {:?}; expected init, history, check, layer, or workspace",
             command
         )));
     }

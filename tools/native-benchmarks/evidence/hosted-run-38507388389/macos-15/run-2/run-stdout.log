@@ -1,0 +1,31 @@
+PASS summary_matches_raw: summary.json recomputed from samples.jsonl
+PASS provenance_present: executable/source hashes, host, rustc, command and params consistent
+PASS release_build_only: build_profile "release"; debug-build evidence needs --allow-debug-build
+PASS scenarios_exited_cleanly: ingest, history, layers, contention exited 0
+PASS no_errors_outside_contention: 0 error samples
+PASS ingest_ids_stable_and_inventoried: 300 contents, 270 unique objects
+PASS history_advances_sequential: 30 advances
+PASS layer_captures_applied: capture outcomes
+PASS clone_storage_not_payload_proportional: 24 clones grew stored bytes by 0 in total; shared payload 1048576
+PASS contention_used_distinct_processes: 4 workers, 4 distinct pids
+PASS retries_repeat_exact_input_after_uncertain_errors: 118 operations
+PASS every_retry_followed_a_recorded_reopen: 0 retry attempts, 0 reopen samples
+PASS every_operation_has_durable_outcome: 0 unresolved
+PASS one_ordered_winner_per_version: 78 history entries, 77 accepted operations
+PASS history_matches_acknowledged_accepts: every accept present once with its operation and manifest; no unexplained winner
+PASS stale_outcomes_never_create_versions: stale actual head > expected and operation absent from history
+PASS integrity_matches_history_and_attempts: check(): {"attempts":118,"layers":0,"objects":467,"versions":78}
+PASS same_operation_retry_returns_identical_outcome: 118 retried operations
+PASS operation_id_reuse_rejected: same ID with different manifest
+PASS every_blob_put_has_durable_outcome: 80 blob puts with a final outcome; 0 not acknowledged
+PASS acknowledged_blobs_read_back_exactly: 80 acknowledged puts, 80 read back, 50 distinct contents
+PASS contention_errors_are_only_busy: 0 error samples; any non-busy storage error or reused operation ID fails the run
+PASS advance_expected_matches_observed_head: each first attempt used the head its worker had just read
+PASS stale_actual_respects_real_time_order: stale actual is at least every version acknowledged before that attempt started
+PASS integrity_objects_match_recorded_puts: 466 distinct recorded objects plus the World 0 manifest vs check() 467
+PASS replay_left_repository_files_unchanged: repository file hash before and after replaying every operation
+PASS workers_completed_and_all_operations_recorded: 4 worker_end markers; 100 executed vs 100 recorded operations
+PASS not_truncated_by_budget: a truncated run is incomplete evidence
+PASS no_mismatch_outcomes: 0 mismatch samples
+PASS clone_heads_and_layer_count_checked: 24 clone checks, 1 layer count checks
+VERIFY: all recorded invariants hold

@@ -233,8 +233,8 @@ nor the common probe.
 
 ## Rerun and audit
 
-The workflow runs on pull requests that change the owned Windows executable files
-or workflow. Its `workflow_dispatch` entry permits another bounded run on a selected
+The workflow runs on pull requests that change the owned Windows executable files,
+the workflow, or the shared `probe.mjs` and `atomic-writer.mjs` it copies. Its `workflow_dispatch` entry permits another bounded run on a selected
 source ref. Setup is confined to a `windows-2022` GitHub-hosted job with an eight-minute
 limit. Each external command has a 30- or 60-second bound. No native runtime Git
 command or repository metadata is involved; checkout is a development action pinned
@@ -265,6 +265,13 @@ After retaining a completed archive and its provenance, audit it offline with:
 ```sh
 rtk proxy bun tools/windows-workspace-proof/verify-evidence.mjs
 ```
+
+After the final run, two Greptile P2 fixes changed `backend.ps1` (copy completed
+user results in `finally` when the wrapper times out) and the workflow path filter.
+The retained `21b2dda` sources remain the executed proof. The audit names exactly
+those two files as changed after evidence, and requires every other current
+executable to match the retained bytes. Automatic runs on later heads are not
+counted as evidence in this document.
 
 The audit checks original archive digest, raw file hashes, source hashes, exact run
 and artifact identity, job label, prerequisite command outcomes, identity,

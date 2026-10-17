@@ -1,0 +1,62 @@
+[
+  {
+    "host": "ubuntu-24.04",
+    "run": 2,
+    "measure": "layers/clone_layer/ok/p50",
+    "raw_ms": 494.479794,
+    "doc_ms": 495,
+    "nearest_integer_ms": 494,
+    "corrected_ms": 494,
+    "raw_ns": 494479794
+  },
+  {
+    "host": "ubuntu-24.04",
+    "run": 3,
+    "measure": "contention/compare_and_advance/accepted/p95",
+    "raw_ms": 30.450166,
+    "doc_ms": 31,
+    "nearest_integer_ms": 30,
+    "corrected_ms": 30,
+    "raw_ns": 30450166
+  },
+  {
+    "host": "macos-15",
+    "run": 2,
+    "measure": "contention/compare_and_advance/accepted/p95",
+    "raw_ms": 48.466041,
+    "doc_ms": 49,
+    "nearest_integer_ms": 48,
+    "corrected_ms": 48,
+    "raw_ns": 48466041
+  },
+  {
+    "host": "ubuntu-24.04",
+    "run": 2,
+    "measure": "contention/compare_and_advance/stale/p50",
+    "raw_ms": 20.494329,
+    "doc_ms": 21,
+    "nearest_integer_ms": 20,
+    "corrected_ms": 20,
+    "raw_ns": 20494329
+  },
+  {
+    "host": "ubuntu-24.04",
+    "run": 2,
+    "measure": "contention/compare_and_advance/stale/p100",
+    "raw_ms": 745.749528,
+    "doc_ms": 745,
+    "nearest_integer_ms": 746,
+    "corrected_ms": 746,
+    "raw_ns": 745749528
+  },
+  {
+    "host": "macos-15",
+    "run": 1,
+    "measure": "contention/compare_and_advance/stale/p50",
+    "raw_ms": 29.499708,
+    "doc_ms": 30,
+    "nearest_integer_ms": 29,
+    "corrected_ms": 29,
+    "raw_ns": 29499708
+  }
+]

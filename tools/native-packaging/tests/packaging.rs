@@ -155,6 +155,11 @@ fn package_installs_into_a_fresh_path_and_works_through_path() {
         deps.iter()
             .any(|d| d["name"] == "rusqlite" && d["checksum"].as_str().is_some())
     );
+    assert!(
+        deps.iter()
+            .any(|d| d["name"] == "javelin" && d["source"].is_null())
+    );
+    assert!(!deps.iter().any(|d| d["name"] == "tempfile"));
     // Every listed dependency ships its license text.
     for d in deps {
         let dir = dest.join("licenses").join(format!(
@@ -952,20 +957,80 @@ fn valid_looking_package_with_a_wrong_binary_hash_leaves_no_temp_directory() {
     );
 }
 
+fn copy_build_sources(dest: &Path) {
+    let root_dir = source_root();
+    for file in ["Cargo.toml", "Cargo.lock", "LICENSE"] {
+        fs::copy(root_dir.join(file), dest.join(file)).unwrap();
+    }
+    for file in walk(&root_dir.join("src"))
+        .into_iter()
+        .chain(walk(&root_dir.join("crates/javelin-cli")))
+    {
+        let rel = file.strip_prefix(&root_dir).unwrap();
+        let target = dest.join(rel);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(&file, target).unwrap();
+    }
+}
+
+// Wrap real Cargo to make a save after compilation deterministic, without timing
+// a background writer or changing the developer checkout.
+#[cfg(unix)]
+#[test]
+fn build_refuses_sources_changed_during_cargo_and_removes_stale_record() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir(&source).unwrap();
+    copy_build_sources(&source);
+    let wrappers = temp.path().join("wrappers");
+    fs::create_dir(&wrappers).unwrap();
+    let wrapper = wrappers.join("cargo");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\nset -eu\n\"$JAVELIN_TEST_REAL_CARGO\" \"$@\"\nif [ \"$1\" = build ]; then\n  printf '\\n// saved during build\\n' >> \"$JAVELIN_TEST_EDIT\"\nfi\n",
+    ).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = temp.path().join("build");
+    fs::create_dir(&out).unwrap();
+    fs::write(out.join("build-record.json"), b"stale record").unwrap();
+    let mut paths = vec![wrappers];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let output = Command::new(env!("CARGO_BIN_EXE_javelin-pack"))
+        .args([
+            "build",
+            "--source",
+            s(&source),
+            "--out",
+            s(&out),
+            "--source-date-epoch",
+            EPOCH,
+        ])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env(
+            "JAVELIN_TEST_REAL_CARGO",
+            std::env::var_os("CARGO").unwrap(),
+        )
+        .env(
+            "JAVELIN_TEST_EDIT",
+            source.join("crates/javelin-cli/src/main.rs"),
+        )
+        .output()
+        .unwrap();
+    assert!(fail(&output).contains("source changed during cargo build"));
+    assert!(
+        out.join("target/release/javelin").is_file(),
+        "real Cargo must have built the CLI"
+    );
+    assert!(!out.join("build-record.json").exists());
+}
+
 #[test]
 fn package_rejects_sources_that_differ_from_what_was_built() {
     let b = shared();
     let copy = tempfile::tempdir().unwrap();
-    let root_dir = source_root();
-    for file in ["Cargo.toml", "Cargo.lock", "LICENSE"] {
-        fs::copy(root_dir.join(file), copy.path().join(file)).unwrap();
-    }
-    for file in walk(&root_dir.join("src")) {
-        let rel = file.strip_prefix(root_dir.join("src")).unwrap();
-        let target = copy.path().join("src").join(rel);
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::copy(&file, target).unwrap();
-    }
+    copy_build_sources(copy.path());
     let out = tempfile::tempdir().unwrap();
     let args = |source: &Path| {
         pack(&[
@@ -981,10 +1046,28 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         ])
     };
     ok(&args(copy.path()));
-    let mut main = fs::read(copy.path().join("src/main.rs")).unwrap();
-    main.extend_from_slice(b"\n// edited after the build\n");
-    fs::write(copy.path().join("src/main.rs"), main).unwrap();
-    assert!(fail(&args(copy.path())).contains("does not match the sources"));
+    for input in [
+        "crates/javelin-cli/Cargo.toml",
+        "crates/javelin-cli/src/main.rs",
+        "crates/javelin-cli/src/cli.rs",
+        "crates/javelin-cli/src/cli_linux.rs",
+        "src/lib.rs",
+    ] {
+        let path = copy.path().join(input);
+        let original = fs::read(&path).unwrap();
+        let mut edited = original.clone();
+        edited.extend_from_slice(if input.ends_with(".toml") {
+            b"\n# edited after the build\n"
+        } else {
+            b"\n// edited after the build\n"
+        });
+        fs::write(&path, edited).unwrap();
+        assert!(
+            fail(&args(copy.path())).contains("does not match the sources"),
+            "unfingerprinted input: {input}"
+        );
+        fs::write(path, original).unwrap();
+    }
 }
 
 #[test]
