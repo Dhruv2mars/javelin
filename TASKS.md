@@ -90,7 +90,16 @@ workflow may invoke or interpret Git.
 
 - [ ] Define native objects, World versions, Layers, checkpoints, and atomic Publish.
 - [ ] Implement initialization, durable immutable snapshots, history, and restore.
-- [ ] Prove ordinary filesystem behavior for sparse isolated Layers.
+- [x] Choose the Layer workspace approach with fresh measurements on all three
+  OSes: plain directories cloned from an immutable World base, daemonless capture
+  (`docs/workspace-approach.md`, gate 2 amended 2026-10-17).
+- [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, reflink
+  (XFS, ReFS) and a reported copy fallback, with deferred discard.
+- [ ] Capture automatically at every Javelin command and supplied agent lifecycle
+  event, with generated operation IDs and the stat-cache racy-entry rule.
+- [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
+- [ ] Retire the OverlayFS helper and the macOS/Windows sparse-backend proof tracks
+  once clone-backed Layers reach parity.
 - [x] Independently verify committed filesystem-probe controls and negative cases
   at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
 - [x] Rerun final probe source `bce352e`, including termination of a stalled external

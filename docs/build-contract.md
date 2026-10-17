@@ -22,8 +22,9 @@ is the starting point. Reuse earlier work only after verifying it against this c
 - A World is the repository. Each accepted World version is immutable.
 - Accepted versions form one ordered sequence with one publication authority.
 - All human and agent edits happen in isolated Layers over a specific version.
-- Layers share immutable content and store sparse changes. Full repository copies
-  are not the production Layer model.
+- Layers share immutable content and record changes as changesets. Where the
+  filesystem supports copy-on-write clones, a Layer never duplicates unchanged
+  file data. Elsewhere the copy fallback is reported, never silent.
 - A Layer exposes ordinary filesystem paths usable by external tools.
 - One parent agent owns its Layer, and its subagents can share it. The parent chooses
   when a child needs isolation.
@@ -58,10 +59,13 @@ is the starting point. Reuse earlier work only after verifying it against this c
 - Optional prepared environments can share immutable dependencies and give each
   Layer its own writable changes. They do not turn Javelin into an orchestrator.
 
-FSKit on macOS, OverlayFS on Linux, and ProjFS on Windows are provisional starting
-choices. Ordinary filesystem behavior, host prerequisites, crash recovery, and
-concurrency must be verified. A successful internal overlay API benchmark is not
-proof that an ordinary editor or compiler can use a Layer.
+A Layer is a plain directory cloned from an immutable World base with the kernel's
+copy-on-write primitive, and changes are captured without a daemon at Javelin
+commands and supplied agent lifecycle events. No mount, file provider, extension,
+root helper or background process is required. `workspace-approach.md` records the
+decision, measurements and limits; it superseded the provisional FSKit, OverlayFS
+and ProjFS choices on 2026-10-17. Ordinary filesystem behavior, crash recovery, and
+concurrency must be verified on each platform.
 
 SQLite is allowed. A custom database, a daemon, a worker API, or a new framework
 is not a settled requirement. Choose the smallest design that meets the contract.
@@ -134,13 +138,13 @@ the local and hosted development workflows.
 
 1. Prove native immutable objects, initialization, World ordering, restart behavior,
    and rejection of invalid or missing objects with a runnable verification suite.
-2. Prove a sparse Layer backend that shares immutable base content through normal
-   filesystem paths. Read, write, atomic-save rename, delete, traversal, symlinks,
-   file watching, a compiler or test run, cross-Layer isolation, and interrupted
-   operation recovery must pass. Full-copy directories and clonefile controls can
-   validate the probe but cannot pass this gate. A backend recommendation remains
-   unconfirmed until the sparse backend passes. Unsupported capabilities and required
-   host setup remain open work, not a successful gate.
+2. Prove the Layer backend on APFS, btrfs or XFS, and ReFS, with an unprivileged
+   user and no running Javelin process between commands. Read, write, atomic-save
+   rename, delete, traversal, symlinks, file watching, a compiler or test run,
+   cross-Layer isolation, automatic capture of every edit, and interrupted-operation
+   recovery must pass. Unchanged file data must stay shared with the base, verified
+   by disk-usage measurement. The copy fallback must pass the same behavior checks
+   on ext4 and NTFS and report itself as a copy.
 3. Complete a real local project with externally managed parallel agents. Exercise
    checkpoints, Layer clone, Stack, conflicts, Publish, discard, history, restore,
    ignore discovery and supplied traces. Pass through a rerunnable acceptance
@@ -166,7 +170,7 @@ the local and hosted development workflows.
    numeric latency/throughput/resource/error limits and cost budget. A missing
    threshold or exceeded limit fails acceptance. Changes to criteria require a
    recorded rationale and a new run; do not relax them retroactively to pass the
-   same result. Numerical criteria remain open engineering work. Measure mounted
+   same result. Numerical criteria remain open engineering work. Measure Layer
    filesystem paths separately from API throughput.
 7. Verify public release artifacts and documentation as a new developer. Publish
    reproducible evidence, known limits, and supported versions before declaring GA.
