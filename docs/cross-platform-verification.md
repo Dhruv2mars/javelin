@@ -36,9 +36,10 @@ cargo build --locked --release --all-features
 ```
 
 Cargo uses the committed `Cargo.lock` and rejects dependency resolution changes.
-The release step builds the root binary. Tests and lint include all current Cargo
-targets and features. This gate does not run filesystem probes outside the root
-package. Workflow checkout is developer setup. Javelin runtime and tests do not
+The release step builds the root helper and CLI workspace binary. Default workspace
+members include the root library and `crates/javelin-cli`; tests and lint include
+both packages’ targets and features. This gate does not run filesystem probes
+outside the root package. Workflow checkout is developer setup. Javelin runtime and tests do not
 invoke or interpret Git.
 
 ## Evidence and limits

@@ -1,0 +1,18 @@
+[package]
+name = "javelin-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "javelin"
+
+[[bin]]
+name = "javelin"
+path = "src/main.rs"
+
+[dependencies]
+javelin = { path = "../.." }
+serde_json = "1.0.154"
+
+[dev-dependencies]
+rusqlite = "0.40.2"
+tempfile = "3.27.0"
