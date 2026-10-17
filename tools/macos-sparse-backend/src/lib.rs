@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -549,6 +549,7 @@ fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
 
 /// Copies a quiescent Layer's private state into a new upper directory.
 /// Only private changes are copied; the base stays shared.
+/// The upper root is owner-only from staging through publication.
 pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
     let from = from.canonicalize()?;
     let parent = match to.parent().ok_or(io::ErrorKind::InvalidInput)? {
@@ -572,7 +573,9 @@ pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
             std::process::id(),
             NEXT_CLONE.fetch_add(1, Ordering::Relaxed)
         ));
-        match fs::create_dir(&path) {
+        // Restrict access atomically: copied entries can have public modes even
+        // when the source upper root is private.
+        match fs::DirBuilder::new().mode(0o700).create(&path) {
             Ok(()) => break path,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
