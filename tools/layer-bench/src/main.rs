@@ -193,6 +193,19 @@ fn main() {
             "clone-files",
             Box::new(|s, d| tree(s, d, &|a, b| reflink_copy::reflink(a, b))),
         ),
+        // Hybrid: copy small files (a few clusters each), clone the ones that hold most bytes.
+        (
+            "clone-large",
+            Box::new(|s, d| {
+                tree(s, d, &|a, b| {
+                    if fs::metadata(a)?.len() >= 16 * 1024 {
+                        reflink_copy::reflink(a, b)
+                    } else {
+                        copy_bytes(a, b)
+                    }
+                })
+            }),
+        ),
     ];
     #[cfg(target_os = "macos")]
     strategies.push(("clone-dir", Box::new(clone_dir)));
