@@ -1,0 +1,343 @@
+[
+  {
+    "name": "identity",
+    "executable": "C:\\Windows\\System32\\whoami.exe",
+    "argv": [
+      "/all"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7300,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "\r\nUSER INFORMATION\r\n----------------\r\n\r\nUser Name                 SID                                          \r\n========================= =============================================\r\nrunnervmtn0fv\\runneradmin S-1-5-21-1000861503-3182281758-1041194900-500\r\n\r\n\r\nGROUP INFORMATION\r\n-----------------\r\n\r\nGroup Name                                                    Type             SID          Attributes                                                     \r\n============================================================= ================ ============ ===============================================================\r\nEveryone                                                      Well-known group S-1-1-0      Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\Local account and member of Administrators group Well-known group S-1-5-114    Mandatory group, Enabled by default, Enabled group             \r\nBUILTIN\\Administrators                                        Alias            S-1-5-32-544 Mandatory group, Enabled by default, Enabled group, Group owner\r\nBUILTIN\\Users                                                 Alias            S-1-5-32-545 Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\INTERACTIVE                                      Well-known group S-1-5-4      Mandatory group, Enabled by default, Enabled group             \r\nCONSOLE LOGON                                                 Well-known group S-1-2-1      Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\Authenticated Users                              Well-known group S-1-5-11     Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\This Organization                                Well-known group S-1-5-15     Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\Local account                                    Well-known group S-1-5-113    Mandatory group, Enabled by default, Enabled group             \r\nLOCAL                                                         Well-known group S-1-2-0      Mandatory group, Enabled by default, Enabled group             \r\nNT AUTHORITY\\NTLM Authentication                              Well-known group S-1-5-64-10  Mandatory group, Enabled by default, Enabled group             \r\nMandatory Label\\High Mandatory Level                          Label            S-1-16-12288                                                                \r\n\r\n\r\nPRIVILEGES INFORMATION\r\n----------------------\r\n\r\nPrivilege Name                            Description                                                        State   \r\n========================================= ================================================================== ========\r\nSeIncreaseQuotaPrivilege                  Adjust memory quotas for a process                                 Disabled\r\nSeSecurityPrivilege                       Manage auditing and security log                                   Disabled\r\nSeTakeOwnershipPrivilege                  Take ownership of files or other objects                           Disabled\r\nSeLoadDriverPrivilege                     Load and unload device drivers                                     Disabled\r\nSeSystemProfilePrivilege                  Profile system performance                                         Disabled\r\nSeSystemtimePrivilege                     Change the system time                                             Disabled\r\nSeProfileSingleProcessPrivilege           Profile single process                                             Disabled\r\nSeIncreaseBasePriorityPrivilege           Increase scheduling priority                                       Disabled\r\nSeCreatePagefilePrivilege                 Create a pagefile                                                  Disabled\r\nSeBackupPrivilege                         Back up files and directories                                      Disabled\r\nSeRestorePrivilege                        Restore files and directories                                      Disabled\r\nSeShutdownPrivilege                       Shut down the system                                               Disabled\r\nSeDebugPrivilege                          Debug programs                                                     Enabled \r\nSeSystemEnvironmentPrivilege              Modify firmware environment values                                 Disabled\r\nSeChangeNotifyPrivilege                   Bypass traverse checking                                           Enabled \r\nSeRemoteShutdownPrivilege                 Force shutdown from a remote system                                Disabled\r\nSeUndockPrivilege                         Remove computer from docking station                               Disabled\r\nSeManageVolumePrivilege                   Perform volume maintenance tasks                                   Disabled\r\nSeImpersonatePrivilege                    Impersonate a client after authentication                          Enabled \r\nSeCreateGlobalPrivilege                   Create global objects                                              Enabled \r\nSeIncreaseWorkingSetPrivilege             Increase a process working set                                     Disabled\r\nSeTimeZonePrivilege                       Change the time zone                                               Disabled\r\nSeCreateSymbolicLinkPrivilege             Create symbolic links                                              Disabled\r\nSeDelegateSessionUserImpersonatePrivilege Obtain an impersonation token for another user in the same session Disabled\r\n\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-cat",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\cat.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 1388,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "cat (GNU coreutils) 8.32\nCopyright (C) 2020 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Torbjorn Granlund and Richard M. Stallman.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-cp",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\cp.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 1760,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "cp (GNU coreutils) 8.32\nCopyright (C) 2020 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Torbjorn Granlund, David MacKenzie, and Jim Meyering.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-mv",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\mv.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 2392,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "mv (GNU coreutils) 8.32\nCopyright (C) 2020 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Mike Parker, David MacKenzie, and Jim Meyering.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-rm",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\rm.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7900,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "rm (GNU coreutils) 8.32\nCopyright (C) 2020 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Paul Rubin, David MacKenzie, Richard M. Stallman,\nand Jim Meyering.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-cmp",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\cmp.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 6472,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "cmp (GNU diffutils) 3.12\nCopyright (C) 2025 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\nThis is free software: you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n\nWritten by Torbjorn Granlund and David MacKenzie.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-sh",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\sh.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 6100,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "GNU bash, version 5.3.15(2)-release (x86_64-pc-cygwin)\nCopyright (C) 2025 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>\n\nThis is free software; you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-bash",
+    "executable": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7844,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "GNU bash, version 5.3.15(2)-release (x86_64-pc-cygwin)\nCopyright (C) 2025 Free Software Foundation, Inc.\nLicense GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>\n\nThis is free software; you are free to change and redistribute it.\nThere is NO WARRANTY, to the extent permitted by law.\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-cc",
+    "executable": "C:\\mingw64\\bin\\cc.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7468,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "cc.exe (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0\r\nCopyright (C) 2024 Free Software Foundation, Inc.\r\nThis is free software; see the source for copying conditions.  There is NO\r\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\r\n\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-gcc",
+    "executable": "C:\\mingw64\\bin\\gcc.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 792,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "gcc.exe (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0\r\nCopyright (C) 2024 Free Software Foundation, Inc.\r\nThis is free software; see the source for copying conditions.  There is NO\r\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\r\n\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-node",
+    "executable": "C:\\Program Files\\nodejs\\node.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 4992,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "v22.23.3\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "utility-bun",
+    "executable": "C:\\Users\\runneradmin\\.bun\\bin\\bun.exe",
+    "argv": [
+      "--version"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7992,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "1.3.13\n",
+    "stderr": ""
+  },
+  {
+    "name": "feature-command",
+    "executable": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+    "argv": [
+      "-NoProfile",
+      "-File",
+      "D:\\a\\javelin\\javelin\\tools\\windows-workspace-proof\\feature.ps1"
+    ],
+    "timeoutMs": 60000,
+    "pid": 5980,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "\r\n\u001b[32;1mDisplayName      : \u001b[0mWindows Projected File System\r\n\u001b[32;1mDescription      : \u001b[0mEnables Windows Projected File System\r\n\u001b[32;1mRestartRequired  : \u001b[0mPossible\r\n\u001b[32;1mCustomProperties : \u001b[0m{}\r\n\u001b[32;1mFeatureName      : \u001b[0mClient-ProjFS\r\n\u001b[32;1mState            : \u001b[0mEnabled\r\n\u001b[32;1mPath             : \u001b[0m\r\n\u001b[32;1mOnline           : \u001b[0mTrue\r\n\u001b[32;1mWinPath          : \u001b[0m\r\n\u001b[32;1mSysDrivePath     : \u001b[0m\r\n\u001b[32;1mRestartNeeded    : \u001b[0mFalse\r\n\u001b[32;1mLogPath          : \u001b[0mC:\\Windows\\Logs\\DISM\\dism.log\r\n\u001b[32;1mScratchDirectory : \u001b[0m\r\n\u001b[32;1mLogLevel         : \u001b[0mWarningsInfo\r\n\r\n\r\n\u001b[32;1mDisplayName      : \u001b[0mWindows Projected File System\r\n\u001b[32;1mDescription      : \u001b[0mEnables Windows Projected File System\r\n\u001b[32;1mRestartRequired  : \u001b[0mPossible\r\n\u001b[32;1mCustomProperties : \u001b[0m{}\r\n\u001b[32;1mFeatureName      : \u001b[0mClient-ProjFS\r\n\u001b[32;1mState            : \u001b[0mEnabled\r\n\u001b[32;1mPath             : \u001b[0m\r\n\u001b[32;1mOnline           : \u001b[0mTrue\r\n\u001b[32;1mWinPath          : \u001b[0m\r\n\u001b[32;1mSysDrivePath     : \u001b[0m\r\n\u001b[32;1mRestartNeeded    : \u001b[0mFalse\r\n\u001b[32;1mLogPath          : \u001b[0mC:\\Windows\\Logs\\DISM\\dism.log\r\n\u001b[32;1mScratchDirectory : \u001b[0m\r\n\u001b[32;1mLogLevel         : \u001b[0mWarningsInfo\r\n\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compiler-discovery",
+    "executable": "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe",
+    "argv": [
+      "-latest",
+      "-products",
+      "*",
+      "-requires",
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "-property",
+      "installationPath"
+    ],
+    "timeoutMs": 30000,
+    "pid": 556,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compiler",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\build.cmd"
+    ],
+    "timeoutMs": 60000,
+    "pid": 5276,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "api-probe.cpp\r\n",
+    "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+  },
+  {
+    "name": "api",
+    "executable": "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\api-probe.exe",
+    "argv": [],
+    "timeoutMs": 30000,
+    "pid": 916,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "SDK PRJ_CALLBACKS=64 PRJ_PLACEHOLDER_INFO=344\r\nexport PrjMarkDirectoryAsPlaceholder=present\r\nexport PrjStartVirtualizing=present\r\nexport PrjStopVirtualizing=present\r\nexport PrjWritePlaceholderInfo=present\r\nexport PrjWriteFileData=present\r\nexport PrjGetOnDiskFileState=present\r\nexport PrjFileNameCompare=present\r\nexport PrjFileNameMatch=present\r\nexport PrjFillDirEntryBuffer=present\r\nexport PrjAllocateAlignedBuffer=present\r\nexport PrjFreeAlignedBuffer=present\r\nexport PrjWritePlaceholderInfo2=present\r\nexport PrjFillDirEntryBuffer2=present\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "compiler-provider",
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "argv": [
+      "/d",
+      "/c",
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\build-provider.cmd"
+    ],
+    "timeoutMs": 60000,
+    "pid": 4564,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "provider.cpp\r\n",
+    "stderr": "Compiler Passes:\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\cl.exe:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c2.dll:        Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\c1xx.dll:      Version 19.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe:      Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\mspdb140.dll:  Version 14.44.35229.0\r\n C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\1033\\clui.dll: Version 19.44.35229.0\r\n\r\n"
+  },
+  {
+    "name": "fixture-seed",
+    "executable": "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\user-tools\\bun.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\user-tools\\probe.mjs",
+      "--seed",
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base"
+    ],
+    "timeoutMs": 30000,
+    "pid": 7080,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "Seeded D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\n",
+    "stderr": ""
+  },
+  {
+    "name": "owned-user-acl",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4",
+      "/grant",
+      "jvp591361ac8f72:(OI)(CI)F"
+    ],
+    "timeoutMs": 30000,
+    "pid": 840,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "processed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  },
+  {
+    "name": "base-readonly-acl",
+    "executable": "C:\\Windows\\System32\\icacls.exe",
+    "argv": [
+      "D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base",
+      "/inheritance:r",
+      "/grant:r",
+      "jvp591361ac8f72:(OI)(CI)RX",
+      "*S-1-5-32-544:(OI)(CI)F",
+      "*S-1-5-18:(OI)(CI)F",
+      "/T",
+      "/L"
+    ],
+    "timeoutMs": 30000,
+    "pid": 2184,
+    "exitCode": 0,
+    "timedOut": false,
+    "error": null,
+    "exitConfirmed": true,
+    "treeTermination": "not needed",
+    "stdout": "processed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\\base\\dir\\nested.txt\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,185 @@
+{
+  "schema": 1,
+  "sourceSHA": "21b2ddaa9798d0b1bf81cd1b00467c29125d52f5",
+  "runId": "38469723137",
+  "runAttempt": "1",
+  "backend": "INCONCLUSIVE",
+  "available": true,
+  "blockers": [],
+  "sources": {
+    "tools/windows-workspace-proof/run.ps1": "4f34031579a2da7e90734a90495fe2db79075d89b7056483761967e0e63d8685",
+    "tools/windows-workspace-proof/feature.ps1": "df10a105cb74b8cd101a8c9baa75262d67fda4979c3f972dc587edbd0f03c6af",
+    "tools/windows-workspace-proof/api-probe.cpp": "7a011a5ea773afab4b1ff49bb5ac886778b60d80eca76b80ee8fa0212aabbf53",
+    ".github/workflows/windows-workspace-proof.yml": "6d68ad01b575f5f71f45996038804291d25a73434bad6f5b5be9e0fd560f1811",
+    "tools/windows-workspace-proof/provider.cpp": "e4cfe2be25a061c973d76f3ae282f93d3dc26b9abff4e6fb92aed584151527e3",
+    "tools/windows-workspace-proof/backend.ps1": "2f5c9d8f6a8f64f03f692124eeb144449110a0725e788edef81c4f93973c70be",
+    "tools/windows-workspace-proof/user-run.ps1": "21148a9ff2d099867350f508403df66adde7deadc4f5903105f32ba63ee09421",
+    "tools/windows-workspace-proof/checks.mjs": "7b17d507e5f0007942442ad7d7b63e3539e7f44c47445c9a9f0ee2ba9095bce6",
+    "tools/workspace-probe/probe.mjs": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d",
+    "tools/workspace-probe/atomic-writer.mjs": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767"
+  },
+  "rootsCreated": 4,
+  "providerStarted": true,
+  "host": {
+    "powershell": "7.6.6",
+    "build": "20348",
+    "architecture": "64-bit",
+    "imageOS": "win22",
+    "runnerEnvironment": "github-hosted",
+    "version": "10.0.20348",
+    "caption": "Microsoft Windows Server 2022 Datacenter",
+    "imageVersion": "20261004.326.1"
+  },
+  "identity": {
+    "administrator": true,
+    "name": "runnervmtn0fv\\runneradmin",
+    "ordinaryUserVerified": false,
+    "sid": "S-1-5-21-1000861503-3182281758-1041194900-500"
+  },
+  "feature": {
+    "command": "Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS",
+    "before": "Enabled",
+    "enable": null,
+    "after": "Enabled",
+    "ready": true,
+    "error": null
+  },
+  "compilerReady": true,
+  "apiReady": true,
+  "runtime": {
+    "verdict": "INCONCLUSIVE",
+    "error": null,
+    "account": "jvpabfa80caf2ab",
+    "accountRemoved": true,
+    "wrapperPid": 3584,
+    "exitCode": 3,
+    "results": {
+      "verdict": "INCONCLUSIVE",
+      "identity": {
+        "administrator": false,
+        "name": "runnervmtn0fv\\jvpabfa80caf2ab",
+        "sid": "S-1-5-21-1000861503-3182281758-1041194900-1003"
+      },
+      "providerStarted": true,
+      "rootsCreated": 4,
+      "phases": [
+        {
+          "exitCode": 0,
+          "id": "job-termination"
+        },
+        {
+          "exitCode": 0,
+          "id": "base"
+        },
+        {
+          "exitCode": 0,
+          "id": "metadata"
+        },
+        {
+          "exitCode": 0,
+          "id": "hydrate"
+        },
+        {
+          "exitCode": 0,
+          "id": "build"
+        },
+        {
+          "exitCode": 0,
+          "id": "build-clean"
+        },
+        {
+          "exitCode": 3,
+          "id": "directory-rename"
+        },
+        {
+          "exitCode": 0,
+          "id": "mutate"
+        },
+        {
+          "exitCode": 0,
+          "id": "clone-snapshot"
+        },
+        {
+          "exitCode": 0,
+          "id": "clone-verify"
+        },
+        {
+          "exitCode": 0,
+          "id": "recovery-before"
+        },
+        {
+          "exitCode": 0,
+          "id": "recovery-reopen-before"
+        },
+        {
+          "exitCode": 0,
+          "id": "recovery-after"
+        },
+        {
+          "exitCode": 0,
+          "id": "recovery-reopen-after"
+        },
+        {
+          "exitCode": 0,
+          "id": "final"
+        }
+      ],
+      "error": null,
+      "stoppedProviders": true,
+      "tempDirectory": "D:\\a\\_temp\\javelin-windows-proof-abfa80caf2ab474e8955ec046eb1bd54\\user-temp",
+      "commonProbeExit": 1,
+      "directoryRenameError": "Native Windows check directory-rename failed; inspect raw phase result."
+    }
+  },
+  "cleanupVerified": true,
+  "scopes": {
+    "ordinary-path-common-probe": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "read-write-atomic-save-delete": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "traversal-symlinks-watching": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "projected-compiler": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cross-root-isolation": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "sparse-delta-clone": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "provider-kill-restart": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "cache-private-state-cost": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "base-immutability": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "non-admin-provider": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "product-Gate2": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    },
+    "GA": {
+      "reason": "See separate common probe and native phase evidence; no whole-backend acceptance.",
+      "verdict": "INCONCLUSIVE"
+    }
+  }
+}

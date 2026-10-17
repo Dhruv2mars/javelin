@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
+// Developer checkout supplied by the workflow, separate from the current product tree.
+const backendRepo = path.resolve(process.env.SUITABILITY_BACKEND_ROOT || path.join(repo, 'backend-source'));
 const out = path.resolve(process.env.SUITABILITY_OUT || '/tmp/javelin-suitability-evidence');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
@@ -85,7 +87,7 @@ function sourceSnapshot(label) {
   const expected = read(path.join(here, 'backend-source.json'));
   const actual = {};
   for (const p of Object.keys(expected)) {
-    actual[p] = hash(path.join(repo, p));
+    actual[p] = hash(path.join(backendRepo, p));
     if (actual[p] !== expected[p]) throw new Error(`inherited source changed: ${p}`);
   }
   json(path.join(out, `${label}.json`), actual);
@@ -220,7 +222,11 @@ try {
     const actual = sourceSnapshot('backend-before');
     const snapshot = path.join(out, 'source'); fs.mkdirSync(snapshot);
     const files = [...Object.keys(actual), ...fs.readdirSync(here).filter(n => fs.statSync(path.join(here, n)).isFile()).map(n => `tools/macos-backend-validation/${n}`), '.github/workflows/macos-backend-suitability.yml'];
-    for (const p of files) { const dest = path.join(snapshot, p); fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(path.join(repo, p), dest); }
+    for (const p of files) {
+      const dest = path.join(snapshot, p);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(path.join(Object.hasOwn(actual, p) ? backendRepo : repo, p), dest);
+    }
     const identity = { sha: process.env.PROOF_SHA, runId: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT,
       image: process.env.ImageOS, imageVersion: process.env.ImageVersion, arch: process.arch,
       runner: process.env.RUNNER_NAME, backend: '39a065b075f2a55688628eb7b3fd64f75b05334e',
@@ -234,7 +240,7 @@ try {
       ['/usr/sbin/diskutil', 'info', ledger.work], ['/usr/bin/sudo', '-n', 'true']]) requireOK(await run(argv));
   });
   const built = await phase('build', async () => {
-    requireOK(await run(['cargo', 'build', '--locked', '--release', '--manifest-path', 'tools/macos-sparse-backend/Cargo.toml'],
+    requireOK(await run(['cargo', 'build', '--locked', '--release', '--manifest-path', path.join(backendRepo, 'tools/macos-sparse-backend/Cargo.toml')],
       { timeout: 200_000, env: { CARGO_TARGET_DIR: path.join(work(), 'target') }, label: 'cargo-build' }));
     requireOK(await run(['/usr/bin/clang', '-Wall', '-Wextra', '-Wno-deprecated-declarations', path.join(here, 'watch.c'),
       '-framework', 'CoreServices', '-o', path.join(work(), 'watch')], { timeout: 30_000, label: 'build-watch' }));

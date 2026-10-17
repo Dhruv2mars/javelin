@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-owner-hactive",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive",
+    "/setowner",
+    "*S-1-5-32-544",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 6204,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\cold\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\dir2\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\dir3\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\new.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\cold\\sub\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hactive\\dir3\\deep\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

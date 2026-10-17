@@ -1,0 +1,56 @@
+# CLI workspace package
+
+Done means the existing CLI and root library API work with default root Cargo
+commands, `target/release/javelin` and installed `javelin` remain available, and
+development packaging fingerprints the CLI inputs and rejects wrong binaries.
+
+- [x] Read repository guidance and verify merged main base.
+- [x] Move CLI source and actual-binary tests into a small workspace member.
+- [x] Update packaging provenance, dependency closure, workflow paths and docs.
+- [x] Run default workspace, native, actual-binary and package/install checks.
+  macOS / Rust 1.93.0: 103 workspace tests passed, one existing test ignored;
+  all 10 actual-binary CLI tests passed. Packager: 29 tests passed, including
+  concurrent-save refusal, moved-input fingerprints, wrong-binary rejection,
+  archive install/smoke and two-directory repro. Workspace and packager fmt and
+  warnings-denied Clippy passed. Default release build and `cargo install` plus
+  Git-blocking smoke passed; standalone protocol `cargo check --locked` passed.
+  No laptop mounts or cross-platform execution claimed.
+- [x] Prepare checked implementation for one regular PR; leave integration to the hub.
+
+- [x] Fix PR #27 Linux CI compilation: add Linux-only dev `libc` for the moved
+  ignored mount test's `getuid` call. Confirmed raw Native run 38993027564 error.
+  Linux x86_64 cross-target Clippy with all CLI targets/features and warnings
+  denied passes (Zig C compiler, `CRATE_CC_NO_DEFAULTS=1`); this compiles the
+  ignored Linux test without executing mounts. All 10 macOS CLI tests, CLI test
+  check, formatting and locked resolution pass. Root API and TASKS unchanged.
+
+- [x] Merge main `24fb973` into the same PR to include benchmark/profile/runtime
+  dependencies missing from the previous checked head. Raw baseline run
+  38993862206 confirmed the absent benchmark working directory. All 10 CLI tests,
+  Linux cross-target warnings-denied Clippy and formatting pass after the merge.
+  All six standalone lockfiles pass locked offline metadata; refreshed only the
+  profile lockfile's missing root `libc` entry. Native source/tests (with the CLI
+  moves mapped) and root TASKS match main byte for byte. No manual benchmarks.
+
+
+## Whole-Layer Publish CLI
+
+Done means actual CLI commands delegate safe Linux Publish, retain exact receipts
+and opaque attribution, and prove refusal, conflict/retry, read-only success and
+continuation in a disposable hosted Linux run. Root TASKS remains main's file.
+
+- [x] Read rules, build contract and merged CLI/runtime dependencies.
+- [x] Wire workspace Publish and platform-independent receipt inspection.
+- [x] Add grammar/output tests, hosted actual-binary workflow and focused docs.
+- [x] Run fmt, warnings-denied Clippy, workspace/binary tests and release build.
+  macOS: 103 workspace tests passed, one inherited ignored test; 10 actual-binary
+  CLI tests passed. Linux cross-target CLI all-target/all-feature Clippy passed.
+- [x] Verify disposable hosted Linux smoke with a failing Git stand-in.
+  Run 38994939678 passed both actual-binary mount tests and cleanup (`exit=0`).
+  Raw logs downloaded and inspected. PR CI repeats this smoke and the existing
+  native/package checks. Limits: Linux helper must be configured separately;
+  macOS/Windows ordinary paths, autosave and refresh remain unsupported. Raw trace
+  import reads the file into memory. Unmounted physical enforcement is only
+  observed on remount; no out-of-band backing-path guarantee is claimed.
+
+Delivery: one regular T3-linked PR against main; merge belongs to the hub.

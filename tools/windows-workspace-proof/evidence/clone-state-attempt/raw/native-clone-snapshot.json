@@ -1,0 +1,10 @@
+{
+  "id": "clone-snapshot",
+  "verdict": "INCONCLUSIVE",
+  "commands": [],
+  "evidence": {},
+  "error": {
+    "message": "Error: full local symlink snapshot unsupported",
+    "stack": "Error: full local symlink snapshot unsupported\n    at D:\\a\\_temp\\javelin-windows-proof-87be1f66a1184dd291ee71630fb4d56b\\user-tools\\checks.mjs:132:51\n    at asyncModuleEvaluation (native:2)\n    at processTicksAndRejections (native:7:39)"
+  }
+}

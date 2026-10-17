@@ -1,0 +1,3 @@
+started root=D:\a\_temp\javelin-sparse-proof-98dd5c4f1419490ca406055fa11bc7f7\a entries=15
+fetch-data key=notes.txt flags=0 required=0+1280
+transfer-data key=notes.txt bytes=1280 hr=00000000

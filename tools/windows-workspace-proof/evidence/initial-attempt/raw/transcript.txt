@@ -1,0 +1,227 @@
+**********************
+PowerShell transcript start
+Start time: 20261013204544
+Username: runnervmtn0fv\runneradmin
+RunAs User: runnervmtn0fv\runneradmin
+Configuration Name: 
+Machine: runnervmtn0fv (Microsoft Windows NT 10.0.20348.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -command . 'D:\a\_temp\370ea9e9-8453-40d3-b75d-a02db8598c3e.ps1'
+Process ID: 656
+PSVersion: 7.6.6
+PSEdition: Core
+GitCommitId: 7.6.6
+OS: Microsoft Windows 10.0.20348
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+{
+  "architecture": "64-bit",
+  "version": "10.0.20348",
+  "runnerEnvironment": "github-hosted",
+  "powershell": "7.6.6",
+  "imageVersion": "20261004.326.1",
+  "imageOS": "win22",
+  "caption": "Microsoft Windows Server 2022 Datacenter",
+  "build": "20348"
+}
+{
+  "administrator": true,
+  "name": "runnervmtn0fv\\runneradmin",
+  "sid": "S-1-5-21-1000861503-3182281758-1041194900-500",
+  "ordinaryUserVerified": false
+}
+COMMAND identity C:\Windows\System32\whoami.exe /all
+
+USER INFORMATION
+----------------
+
+User Name                 SID                                          
+========================= =============================================
+runnervmtn0fv\runneradmin S-1-5-21-1000861503-3182281758-1041194900-500
+
+
+GROUP INFORMATION
+-----------------
+
+Group Name                                                    Type             SID          Attributes                                                     
+============================================================= ================ ============ ===============================================================
+Everyone                                                      Well-known group S-1-1-0      Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Local account and member of Administrators group Well-known group S-1-5-114    Mandatory group, Enabled by default, Enabled group             
+BUILTIN\Administrators                                        Alias            S-1-5-32-544 Mandatory group, Enabled by default, Enabled group, Group owner
+BUILTIN\Users                                                 Alias            S-1-5-32-545 Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\INTERACTIVE                                      Well-known group S-1-5-4      Mandatory group, Enabled by default, Enabled group             
+CONSOLE LOGON                                                 Well-known group S-1-2-1      Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Authenticated Users                              Well-known group S-1-5-11     Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\This Organization                                Well-known group S-1-5-15     Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Local account                                    Well-known group S-1-5-113    Mandatory group, Enabled by default, Enabled group             
+LOCAL                                                         Well-known group S-1-2-0      Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\NTLM Authentication                              Well-known group S-1-5-64-10  Mandatory group, Enabled by default, Enabled group             
+Mandatory Label\High Mandatory Level                          Label            S-1-16-12288                                                                
+
+
+PRIVILEGES INFORMATION
+----------------------
+
+Privilege Name                            Description                                                        State   
+========================================= ================================================================== ========
+SeIncreaseQuotaPrivilege                  Adjust memory quotas for a process                                 Disabled
+SeSecurityPrivilege                       Manage auditing and security log                                   Disabled
+SeTakeOwnershipPrivilege                  Take ownership of files or other objects                           Disabled
+SeLoadDriverPrivilege                     Load and unload device drivers                                     Disabled
+SeSystemProfilePrivilege                  Profile system performance                                         Disabled
+SeSystemtimePrivilege                     Change the system time                                             Disabled
+SeProfileSingleProcessPrivilege           Profile single process                                             Disabled
+SeIncreaseBasePriorityPrivilege           Increase scheduling priority                                       Disabled
+SeCreatePagefilePrivilege                 Create a pagefile                                                  Disabled
+SeBackupPrivilege                         Back up files and directories                                      Disabled
+SeRestorePrivilege                        Restore files and directories                                      Disabled
+SeShutdownPrivilege                       Shut down the system                                               Disabled
+SeDebugPrivilege                          Debug programs                                                     Enabled 
+SeSystemEnvironmentPrivilege              Modify firmware environment values                                 Disabled
+SeChangeNotifyPrivilege                   Bypass traverse checking                                           Enabled 
+SeRemoteShutdownPrivilege                 Force shutdown from a remote system                                Disabled
+SeUndockPrivilege                         Remove computer from docking station                               Disabled
+SeManageVolumePrivilege                   Perform volume maintenance tasks                                   Disabled
+SeImpersonatePrivilege                    Impersonate a client after authentication                          Enabled 
+SeCreateGlobalPrivilege                   Create global objects                                              Enabled 
+SeIncreaseWorkingSetPrivilege             Increase a process working set                                     Disabled
+SeTimeZonePrivilege                       Change the time zone                                               Disabled
+SeCreateSymbolicLinkPrivilege             Create symbolic links                                              Disabled
+SeDelegateSessionUserImpersonatePrivilege Obtain an impersonation token for another user in the same session Disabled
+
+COMMAND utility-cat C:\Program Files\Git\usr\bin\cat.exe --version
+cat (GNU coreutils) 8.32
+Copyright (C) 2020 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Torbjorn Granlund and Richard M. Stallman.
+
+COMMAND utility-cp C:\Program Files\Git\usr\bin\cp.exe --version
+cp (GNU coreutils) 8.32
+Copyright (C) 2020 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Torbjorn Granlund, David MacKenzie, and Jim Meyering.
+
+COMMAND utility-mv C:\Program Files\Git\usr\bin\mv.exe --version
+mv (GNU coreutils) 8.32
+Copyright (C) 2020 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Mike Parker, David MacKenzie, and Jim Meyering.
+
+COMMAND utility-rm C:\Program Files\Git\usr\bin\rm.exe --version
+rm (GNU coreutils) 8.32
+Copyright (C) 2020 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Paul Rubin, David MacKenzie, Richard M. Stallman,
+and Jim Meyering.
+
+COMMAND utility-cmp C:\Program Files\Git\usr\bin\cmp.exe --version
+cmp (GNU diffutils) 3.12
+Copyright (C) 2025 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Torbjorn Granlund and David MacKenzie.
+
+COMMAND utility-sh C:\Program Files\Git\usr\bin\sh.exe --version
+GNU bash, version 5.3.15(2)-release (x86_64-pc-cygwin)
+Copyright (C) 2025 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+
+This is free software; you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+COMMAND utility-bash C:\Program Files\Git\usr\bin\bash.exe --version
+GNU bash, version 5.3.15(2)-release (x86_64-pc-cygwin)
+Copyright (C) 2025 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+
+This is free software; you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+COMMAND utility-cc C:\mingw64\bin\cc.exe --version
+cc.exe (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0
+Copyright (C) 2024 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+COMMAND utility-gcc C:\mingw64\bin\gcc.exe --version
+gcc.exe (x86_64-posix-seh-rev2, Built by MinGW-Builds project) 14.2.0
+Copyright (C) 2024 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+COMMAND utility-node C:\Program Files\nodejs\node.exe --version
+v22.23.3
+
+COMMAND utility-bun C:\Users\runneradmin\.bun\bin\bun.exe --version
+1.3.13
+
+COMMAND feature-command C:\Program Files\PowerShell\7\pwsh.EXE -NoProfile -File D:\a\javelin\javelin\tools\windows-workspace-proof\feature.ps1
+
+DisplayName      : Windows Projected File System
+Description      : Enables Windows Projected File System
+RestartRequired  : Possible
+CustomProperties : {}
+FeatureName      : Client-ProjFS
+State            : Enabled
+Path             : 
+Online           : True
+WinPath          : 
+SysDrivePath     : 
+RestartNeeded    : False
+LogPath          : C:\Windows\Logs\DISM\dism.log
+ScratchDirectory : 
+LogLevel         : WarningsInfo
+
+
+DisplayName      : Windows Projected File System
+Description      : Enables Windows Projected File System
+RestartRequired  : Possible
+CustomProperties : {}
+FeatureName      : Client-ProjFS
+State            : Enabled
+Path             : 
+Online           : True
+WinPath          : 
+SysDrivePath     : 
+RestartNeeded    : False
+LogPath          : C:\Windows\Logs\DISM\dism.log
+ScratchDirectory : 
+LogLevel         : WarningsInfo
+
+COMMAND compiler-discovery C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+C:\Program Files\Microsoft Visual Studio\2022\Enterprise
+
+COMMAND compiler C:\Windows\System32\cmd.exe /d /c D:\a\_temp\javelin-windows-proof-83d4cdec5eea4fe69fe80e5c661f6556\build.cmd
+api-probe.cpp
+D:\a\javelin\javelin\tools\windows-workspace-proof\api-probe.cpp(17): error C2039: 'wprintf': is not a member of 'std'
+C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\cstdio(29): note: see declaration of 'std'
+Compiler Passes:
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\cl.exe:        Version 19.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c1.dll:        Version 19.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c1xx.dll:      Version 19.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c2.dll:        Version 19.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\c1xx.dll:      Version 19.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe:      Version 14.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\mspdb140.dll:  Version 14.44.35229.0
+ C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\1033\clui.dll: Version 19.44.35229.0
+**********************
+PowerShell transcript end
+End time: 20261013204621
+**********************

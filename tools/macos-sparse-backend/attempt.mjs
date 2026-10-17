@@ -208,7 +208,9 @@ sys.exit(0 if got else 1)`;
     const storage = {};
     for (const n of ['a', 'b', 'c', 'd']) {
       const rows = tree(join(upper(n), 'tree'));
-      const whiteouts = fs.existsSync(join(upper(n), 'whiteouts')) ? fs.readFileSync(join(upper(n), 'whiteouts'), 'utf8').split('\n').filter(Boolean) : [];
+      const body = fs.existsSync(join(upper(n), 'whiteouts')) ? fs.readFileSync(join(upper(n), 'whiteouts'), 'utf8') : '';
+      const header = 'JAVELIN_WHITEOUTS_V1\0';
+      const whiteouts = body.startsWith(header) ? body.slice(header.length).split('\0').filter(Boolean) : body.split('\n').filter(Boolean);
       storage[n] = { rows, whiteouts, fileBytes: rows.filter(r => r[1] === 'file').reduce((s, r) => s + r[2], 0) };
     }
     summary.storage = storage;

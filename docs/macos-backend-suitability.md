@@ -1,8 +1,9 @@
 # macOS mounted backend suitability
 
-This unit measures the unchanged PR #11 feasibility backend. It does not authorize
-native binding or accept a product gate. The backend source is `39a065b`, inherited
-through docs-only `61aae6f`. PR #20 targets `test/macos-sparse-backend`.
+This unit retains measurements of historical backend `39a065b`, originally inherited
+through docs-only `61aae6f`. PR #20 now targets main after PR #11 merged. It is ready
+as verification tooling only. Main includes later permission and whiteout repairs;
+the old measurements do not establish their behavior or accept a product gate.
 
 ## Fixture design comparison
 
@@ -33,9 +34,10 @@ fixture uses a separate mount after the small cases. Controls and staged copies
 consume additional scratch space; the 1 GiB bound describes fixture payload. Larger tiers stop when time or byte budgets expire and remain INCONCLUSIVE.
 Ordinary APFS and direct clonefile controls are controls only. They are not Layer proof.
 
-## Observed suitability
+## Historical observed suitability
 
-Native binding should wait for a hardened or replacement NFS layer. The hosted
+For measured backend `39a065b`, native binding should wait for a hardened or
+replacement NFS layer. The hosted
 collector succeeds when it preserves valid evidence, including backend failures.
 It does not accept the backend, macOS product support, Gate 2 or GA.
 
@@ -60,8 +62,11 @@ Its raw phase results show:
 - An ordinary disposable process at UID 1500 received EACCES reading the owner's
   mode-0600 sentinel directly. Its credentialed raw NFS READ returned the secret.
   Loopback binding therefore does not isolate the Layer owner from local users.
-- All 32, 512 and 2,048-file compile/read/delete tiers completed with zero recorded
-  command errors. At 2,048 files, NFS read/syntax-check/delete took 12.75/44.14/24.26
+- The producer labelled the 32, 512 and 2,048-file tiers VERIFIED and recorded zero
+  command errors. Those raw labels remain unchanged. The stronger verifier narrows
+  all three tiers to INCONCLUSIVE because visible count and content inventories
+  were not captured. These timings describe requested workloads, not independently
+  established file counts. At the requested 2,048 tier, NFS read/syntax-check/delete took 12.75/44.14/24.26
   seconds, versus 0.21/16.34/0.09 on ordinary APFS and 0.23/21.52/0.24 on the
   direct clonefile control. One source also produced a real object through each
   measured path. These are one ordered fixture, not stable benchmark estimates.
@@ -81,11 +86,51 @@ manifest check correctly fails. The hosted pre-upload audit passed before that f
 was omitted. Preserve the archive unchanged rather than restoring the missing file.
 Also, unavailable Python xattr bindings aborted the optional capability phase, which
 is INCONCLUSIVE. The runner now uses the ordinary macOS `xattr` tool and uploads
-hidden source files. The corrected run must be inspected before PR readiness.
+hidden source files. The corrected run was inspected before tooling readiness.
+
+## Completed corrected run and integration
+
+[Run 38869992611](https://github.com/Dhruv2mars/javelin/actions/runs/38869992611)
+tested tooling source `1a1f315` and the same historical backend `39a065b`. Its
+[raw artifact](https://github.com/Dhruv2mars/javelin/actions/runs/38869992611/artifacts/12033082355)
+contains the previously omitted workflow source. The strengthened offline verifier
+confirms archive integrity and cleanup, the same alias/restart/cookie/access
+failures, and suitability NOT VERIFIED. Raw records and producer verdicts have not
+been rewritten. Only the derived cost-tier verdicts narrow to INCONCLUSIVE because
+those old records lack visible-file inventories. This run also records hard-link
+errno 76 and successful xattr read/write through `._capability` AppleDouble.
+
+The old producer recorded read/syntax-check/delete times of 7.81/44.98/32.63 seconds
+for its requested 2,048-file NFS tier, compared with 0.30/26.34/0.12 on ordinary APFS.
+These are observations with unconfirmed fixture completeness, not scale acceptance.
+The populated 1 GiB truncate took 1.61 seconds and the stage diagnostic retained
+a source-hash-matching 1 GiB copy. No new benchmark or mounted run was performed
+for the integration and verifier corrections.
+
+The workflow now obtains `39a065b` through a separate pinned developer checkout.
+Hash checks, source snapshots and the Cargo manifest all refer to that checkout,
+not main's repaired backend. PR events run syntax and offline regression checks;
+only an explicit workflow dispatch can reproduce the disposable hosted measurement.
+For local offline self-tests, point `SUITABILITY_BACKEND_ROOT` to a developer checkout
+of `39a065b`. To apply the stronger auditor to an old archive, pass its independently
+obtained producer tool directory as the fourth argument after archive, source SHA
+and run ID. This compares the archived old producer bytes while using the stronger
+current verdict rules. It does not pretend that the current runner produced old data.
+
+Pagination verification now requires successful delete and rename setup, successful
+traversal and an empty successful final scan. Local-access verification requires
+explicit permission denial, not unrelated NFS failures; any returned protected bytes
+fail. Future cost checks require matching visible/base inventories, the deterministic
+requested fixture, full read contents and complete compiler inputs. Every command
+must retain both referenced logs even when a checksum inventory is regenerated.
+Focused offline regressions cover these cases. No backend repair is included here.
+
+The unit checklist is in [the scoped TASKS file](../tools/macos-backend-validation/TASKS.md).
+Root `TASKS.md` remains byte-identical to the integrated main base.
 
 ## Next smallest engineering step
 
-First enforce the serving owner's authorization at the NFS boundary, with an actual
+The historical result recommends enforcing the serving owner's authorization at the NFS boundary, with an actual
 second-UID denial regression. Then resolve case and Unicode identity, restart-safe
 handles and deletion-stable directory cookies before native binding. Reconsider the
 NFS approach if those guarantees cannot be provided simply. Whole-file copy-up and

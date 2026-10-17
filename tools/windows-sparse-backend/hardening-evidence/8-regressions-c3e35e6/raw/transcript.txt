@@ -1,0 +1,240 @@
+**********************
+PowerShell transcript start
+Start time: 20261016125829
+Username: runnervmgnbhw\runneradmin
+RunAs User: runnervmgnbhw\runneradmin
+Configuration Name: 
+Machine: runnervmgnbhw (Microsoft Windows NT 10.0.20348.0)
+Host Application: C:\Program Files\PowerShell\7\pwsh.dll -command . 'D:\a\_temp\628d8383-912b-4505-942a-c7e303c3481c.ps1'
+Process ID: 512
+PSVersion: 7.6.6
+PSEdition: Core
+GitCommitId: 7.6.6
+OS: Microsoft Windows 10.0.20348
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+COMMAND cldflt-query exit=0 timedOut=False
+COMMAND cldflt-config exit=0 timedOut=False
+COMMAND filters exit=0 timedOut=False
+COMMAND developer-mode exit=0 timedOut=False
+COMMAND compiler-discovery exit=0 timedOut=False
+COMMAND cmd-echo-sparse exit=0 timedOut=False
+COMMAND cmd-echo-owned-sparse exit=0 timedOut=False
+COMMAND compile-sparse exit=0 timedOut=False
+COMMAND cmd-echo-hardening-control exit=0 timedOut=False
+COMMAND cmd-echo-owned-hardening-control exit=0 timedOut=False
+COMMAND compile-hardening-control exit=0 timedOut=False
+COMMAND cmd-echo-projfs-provider exit=0 timedOut=False
+COMMAND cmd-echo-owned-projfs-provider exit=0 timedOut=False
+COMMAND compile-projfs-provider exit=0 timedOut=False
+COMMAND fixture-seed-native exit=0 timedOut=False
+COMMAND fixture-seed-common exit=0 timedOut=False
+COMMAND owned-user-acl exit=0 timedOut=False
+COMMAND frozen-owner exit=0 timedOut=False
+COMMAND frozen-acl exit=0 timedOut=False
+COMMAND frozen-children-inherit exit=0 timedOut=False
+COMMAND frozen-acl-readback exit=0 timedOut=False
+COMMAND bindings-owner exit=0 timedOut=False
+COMMAND bind-cr exit=0 timedOut=False
+COMMAND binding-owner-cr exit=0 timedOut=False
+COMMAND bind-a exit=0 timedOut=False
+COMMAND binding-owner-a exit=0 timedOut=False
+COMMAND bind-b exit=0 timedOut=False
+COMMAND binding-owner-b exit=0 timedOut=False
+COMMAND seal-a exit=0 timedOut=False
+COMMAND unseal-a exit=0 timedOut=False
+COMMAND snapshot-owner exit=0 timedOut=False
+COMMAND snapshot-acl exit=0 timedOut=False
+COMMAND snapshot-children-inherit exit=0 timedOut=False
+COMMAND snapshot-readonly exit=0 timedOut=False
+COMMAND snapshot-acl-readback exit=0 timedOut=False
+COMMAND snapshot-tree exit=0 timedOut=False
+COMMAND bind-d exit=0 timedOut=False
+COMMAND binding-owner-d exit=0 timedOut=False
+COMMAND bind-e exit=0 timedOut=False
+COMMAND binding-owner-e exit=0 timedOut=False
+COMMAND bind-hpartial-zero exit=0 timedOut=False
+COMMAND binding-owner-hpartial-zero exit=0 timedOut=False
+COMMAND seal-hpartial-zero exit=0 timedOut=False
+COMMAND unseal-hpartial-zero exit=0 timedOut=False
+COMMAND bind-hpartial-resident exit=0 timedOut=False
+COMMAND binding-owner-hpartial-resident exit=0 timedOut=False
+COMMAND seal-hpartial-resident exit=0 timedOut=False
+COMMAND unseal-hpartial-resident exit=0 timedOut=False
+COMMAND bind-hjunction exit=0 timedOut=False
+COMMAND binding-owner-hjunction exit=0 timedOut=False
+COMMAND seal-hjunction exit=0 timedOut=False
+COMMAND unseal-hjunction exit=0 timedOut=False
+COMMAND seal-hjunction exit=0 timedOut=False
+COMMAND unseal-hjunction exit=0 timedOut=False
+COMMAND bind-hmarker exit=0 timedOut=False
+COMMAND binding-owner-hmarker exit=0 timedOut=False
+COMMAND seal-hmarker exit=0 timedOut=False
+COMMAND unseal-hmarker exit=0 timedOut=False
+COMMAND bind-hactive exit=0 timedOut=False
+COMMAND binding-owner-hactive exit=0 timedOut=False
+COMMAND seal-hactive exit=0 timedOut=False
+COMMAND unseal-hactive exit=0 timedOut=False
+COMMAND seal-hactive exit=0 timedOut=False
+COMMAND unseal-hactive exit=0 timedOut=False
+COMMAND seal-hactive exit=0 timedOut=False
+COMMAND unseal-hactive exit=0 timedOut=False
+COMMAND seal-hactive exit=0 timedOut=False
+COMMAND unseal-hactive exit=0 timedOut=False
+COMMAND bind-hbudget exit=0 timedOut=False
+COMMAND binding-owner-hbudget exit=0 timedOut=False
+COMMAND bind-hmanifest-escape exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-escape exit=0 timedOut=False
+COMMAND bind-hmanifest-absolute exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-absolute exit=0 timedOut=False
+COMMAND bind-hmanifest-ads exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-ads exit=0 timedOut=False
+COMMAND bind-hmanifest-missing exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-missing exit=0 timedOut=False
+COMMAND bind-hmanifest-mismatch exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-mismatch exit=0 timedOut=False
+COMMAND bind-hmanifest-duplicate exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-duplicate exit=0 timedOut=False
+COMMAND bind-hmanifest-prefix exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-prefix exit=0 timedOut=False
+COMMAND bind-hmanifest-malformed exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-malformed exit=0 timedOut=False
+COMMAND bind-hmanifest-base exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-base exit=0 timedOut=False
+COMMAND bind-hmanifest-link exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-link exit=0 timedOut=False
+COMMAND bind-hmanifest-truncated exit=0 timedOut=False
+COMMAND binding-owner-hmanifest-truncated exit=0 timedOut=False
+COMMAND bind-htamper exit=0 timedOut=False
+COMMAND binding-owner-htamper exit=0 timedOut=False
+COMMAND bind-hwriter exit=0 timedOut=False
+COMMAND binding-owner-hwriter exit=0 timedOut=False
+COMMAND seal-hwriter exit=0 timedOut=False
+COMMAND unseal-hwriter exit=0 timedOut=False
+COMMAND unseal-hwriter exit=0 timedOut=False
+COMMAND bind-pa exit=0 timedOut=False
+COMMAND binding-owner-pa exit=0 timedOut=False
+COMMAND bind-pb exit=0 timedOut=False
+COMMAND binding-owner-pb exit=0 timedOut=False
+COMMAND bind-pc exit=0 timedOut=False
+COMMAND binding-owner-pc exit=0 timedOut=False
+COMMAND cleanup-owner-a exit=0 timedOut=False
+COMMAND cleanup-acl-a exit=0 timedOut=False
+COMMAND cleanup-attributes-a exit=0 timedOut=False
+
+COMMAND cleanup-owner-b exit=0 timedOut=False
+COMMAND cleanup-acl-b exit=0 timedOut=False
+COMMAND cleanup-attributes-b exit=0 timedOut=False
+
+COMMAND cleanup-owner-d exit=0 timedOut=False
+COMMAND cleanup-acl-d exit=0 timedOut=False
+COMMAND cleanup-attributes-d exit=0 timedOut=False
+
+COMMAND cleanup-owner-e exit=0 timedOut=False
+COMMAND cleanup-acl-e exit=0 timedOut=False
+COMMAND cleanup-attributes-e exit=0 timedOut=False
+
+COMMAND cleanup-owner-cr exit=0 timedOut=False
+COMMAND cleanup-acl-cr exit=0 timedOut=False
+COMMAND cleanup-attributes-cr exit=0 timedOut=False
+
+COMMAND cleanup-owner-pa exit=0 timedOut=False
+COMMAND cleanup-acl-pa exit=0 timedOut=False
+COMMAND cleanup-attributes-pa exit=0 timedOut=False
+
+COMMAND cleanup-owner-pb exit=0 timedOut=False
+COMMAND cleanup-acl-pb exit=0 timedOut=False
+COMMAND cleanup-attributes-pb exit=0 timedOut=False
+
+COMMAND cleanup-owner-pc exit=0 timedOut=False
+COMMAND cleanup-acl-pc exit=0 timedOut=False
+COMMAND cleanup-attributes-pc exit=0 timedOut=False
+
+COMMAND cleanup-owner-pr exit=0 timedOut=False
+COMMAND cleanup-acl-pr exit=0 timedOut=False
+COMMAND cleanup-attributes-pr exit=0 timedOut=False
+
+COMMAND cleanup-owner-hactive exit=0 timedOut=False
+COMMAND cleanup-acl-hactive exit=0 timedOut=False
+COMMAND cleanup-attributes-hactive exit=0 timedOut=False
+
+COMMAND cleanup-owner-hbudget exit=0 timedOut=False
+COMMAND cleanup-acl-hbudget exit=0 timedOut=False
+COMMAND cleanup-attributes-hbudget exit=0 timedOut=False
+
+COMMAND cleanup-owner-hjunction exit=0 timedOut=False
+COMMAND cleanup-acl-hjunction exit=0 timedOut=False
+COMMAND cleanup-attributes-hjunction exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-absolute exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-absolute exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-absolute exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-ads exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-ads exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-ads exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-base exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-base exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-base exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-duplicate exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-duplicate exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-duplicate exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-escape exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-escape exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-escape exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-link exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-link exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-link exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-malformed exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-malformed exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-malformed exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-mismatch exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-mismatch exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-mismatch exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-missing exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-missing exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-missing exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-prefix exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-prefix exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-prefix exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmanifest-truncated exit=0 timedOut=False
+COMMAND cleanup-acl-hmanifest-truncated exit=0 timedOut=False
+COMMAND cleanup-attributes-hmanifest-truncated exit=0 timedOut=False
+
+COMMAND cleanup-owner-hmarker exit=0 timedOut=False
+COMMAND cleanup-acl-hmarker exit=0 timedOut=False
+COMMAND cleanup-attributes-hmarker exit=0 timedOut=False
+
+COMMAND cleanup-owner-hpartial-resident exit=0 timedOut=False
+COMMAND cleanup-acl-hpartial-resident exit=0 timedOut=False
+COMMAND cleanup-attributes-hpartial-resident exit=0 timedOut=False
+
+COMMAND cleanup-owner-hpartial-zero exit=0 timedOut=False
+COMMAND cleanup-acl-hpartial-zero exit=0 timedOut=False
+COMMAND cleanup-attributes-hpartial-zero exit=0 timedOut=False
+
+COMMAND cleanup-owner-htamper exit=0 timedOut=False
+COMMAND cleanup-acl-htamper exit=0 timedOut=False
+COMMAND cleanup-attributes-htamper exit=0 timedOut=False
+
+COMMAND cleanup-owner-hwriter exit=0 timedOut=False
+COMMAND cleanup-acl-hwriter exit=0 timedOut=False
+COMMAND cleanup-attributes-hwriter exit=0 timedOut=False
+
+**********************
+PowerShell transcript end
+End time: 20261016125945
+**********************

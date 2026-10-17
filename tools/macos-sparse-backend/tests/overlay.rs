@@ -1,12 +1,15 @@
-use std::fs;
+use std::fs::{self, FileTimes};
 use std::io::{BufRead, BufReader};
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use macos_sparse_backend::{CRASH_AT_ENV, Overlay, clone_upper};
-use nfsserve::nfs::{fileid3, nfsstat3, sattr3};
+use nfsserve::nfs::{
+    fileid3, nfsstat3, nfstime3, sattr3, set_atime, set_mode3, set_mtime, set_size3,
+};
 use nfsserve::vfs::NFSFileSystem;
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -142,6 +145,88 @@ async fn layers_over_one_base_are_isolated() {
         names(&b, "").await,
         ["README.txt", "dir", "inside-link", "keep.txt"]
     );
+}
+
+#[tokio::test]
+async fn writable_base_files_copy_up_beneath_readonly_directories() {
+    let fx = Fixture::new();
+    let dir = fx.base().join("dir");
+    fs::create_dir(dir.join("nested")).unwrap();
+    fs::write(dir.join("nested/editable"), b"base bytes").unwrap();
+    fs::set_permissions(
+        dir.join("nested/editable"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    fs::write(dir.join("nested/blocked"), b"unreadable").unwrap();
+    for path in [&dir, &dir.join("nested")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    let a = fx.open("a");
+    // Inject a read failure after preflight; production bases stay immutable.
+    fs::set_permissions(
+        dir.join("nested/blocked"),
+        fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    let fid = id(&a, "dir/nested/editable").await.unwrap();
+    let written = a.write(fid, 0, b"EDIT").await;
+    let blocked = a
+        .write(id(&a, "dir/nested/blocked").await.unwrap(), 0, b"X")
+        .await;
+    // Restore base access before assertions so fixture cleanup works on failure.
+    for path in [&dir, &dir.join("nested")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::set_permissions(
+        dir.join("nested/blocked"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    written.unwrap();
+    assert_eq!(a.getattr(fid).await.unwrap().mode, 0o644);
+    assert_eq!(blocked.unwrap_err() as u32, nfsstat3::NFS3ERR_ACCES as u32);
+    assert_eq!(read(&a, "dir/nested/editable").await, b"EDIT bytes");
+    assert_eq!(
+        fs::read(dir.join("nested/editable")).unwrap(),
+        b"base bytes"
+    );
+    let nested = id(&a, "dir/nested").await.unwrap();
+    assert_eq!(
+        a.create(nested, &b"new-file".as_slice().into(), sattr3::default())
+            .await
+            .unwrap_err() as u32,
+        nfsstat3::NFS3ERR_ACCES as u32,
+        "copy-up access must not permit creating new entries in a read-only directory"
+    );
+    for path in ["dir", "dir/nested"] {
+        let attr = a.getattr(id(&a, path).await.unwrap()).await.unwrap();
+        assert_eq!(attr.mode, 0o555, "reported mode: {path}");
+        assert_eq!(
+            fs::metadata(fx.upper("a").join("tree").join(path))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o555
+        );
+    }
+    let reopened = fx.open("a");
+    assert_eq!(
+        reopened
+            .getattr(id(&reopened, "dir/nested").await.unwrap())
+            .await
+            .unwrap()
+            .mode,
+        0o555
+    );
+    for path in ["dir", "dir/nested"] {
+        fs::set_permissions(
+            fx.upper("a").join("tree").join(path),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -522,6 +607,522 @@ async fn getattr_reports_actual_mode_bits() {
     };
     assert_eq!(a.setattr(fid, mode).await.unwrap().mode, 0o444);
     assert_eq!(a.getattr(fid).await.unwrap().mode, 0o444);
+}
+
+#[tokio::test]
+async fn readonly_create_applies_size_and_times_before_restricting_mode() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let time = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let (_, attr) = a
+        .create(
+            a.root_dir(),
+            &b"readonly".as_slice().into(),
+            sattr3 {
+                mode: set_mode3::mode(0o444),
+                size: set_size3::size(0),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(time),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(attr.mode, 0o444);
+    assert_eq!(attr.size, 0);
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (time.seconds, time.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn owner_can_change_times_on_mode_zero_file() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let (fid, _) = a
+        .create(
+            a.root_dir(),
+            &b"no-access".as_slice().into(),
+            sattr3 {
+                mode: set_mode3::mode(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let atime = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let mtime = nfstime3 {
+        seconds: 234567890,
+        nseconds: 234567890,
+    };
+    let result = a
+        .setattr(
+            fid,
+            sattr3 {
+                atime: set_atime::SET_TO_CLIENT_TIME(atime),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(mtime),
+                ..Default::default()
+            },
+        )
+        .await;
+    fs::set_permissions(
+        fx.upper("a").join("tree/no-access"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let attr = result.unwrap();
+    assert_eq!(attr.mode, 0);
+    assert_eq!(
+        (attr.atime.seconds, attr.atime.nseconds),
+        (atime.seconds, atime.nseconds)
+    );
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (mtime.seconds, mtime.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn combined_setattr_grants_and_restricts_write_with_truncation() {
+    for (before, after) in [
+        (0o444, 0o644),
+        (0o644, 0o444),
+        (0o000, 0o600),
+        (0o644, 0o000),
+    ] {
+        let fx = Fixture::new();
+        let a = fx.open("a");
+        write_new(&a, "", "private", b"old bytes").await;
+        let fid = id(&a, "private").await.unwrap();
+        a.setattr(
+            fid,
+            sattr3 {
+                mode: set_mode3::mode(before),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let result = a
+            .setattr(
+                fid,
+                sattr3 {
+                    mode: set_mode3::mode(after),
+                    size: set_size3::size(0),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let path = fx.upper("a").join("tree/private");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let attr = result.unwrap();
+        assert_eq!(attr.mode, after);
+        assert_eq!(attr.size, 0);
+        assert!(fs::read(path).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn write_only_base_is_refused_without_changing_permissions() {
+    let fx = Fixture::new();
+    let file = fx.base().join("dir/nested.txt");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o200)).unwrap();
+    let result = Overlay::open(&fx.base(), &fx.upper("a"));
+    let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(mode, 0o200, "preflight must not relax base permissions");
+    assert_eq!(fs::read(file).unwrap(), b"nested\n");
+    let error = result
+        .err()
+        .expect("unreadable base must be refused before serving");
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert!(
+        error.to_string().contains("unsupported base layout"),
+        "{error}"
+    );
+    assert!(
+        !fx.upper("a").exists(),
+        "base preflight must precede private state creation"
+    );
+}
+
+#[tokio::test]
+async fn newline_names_roundtrip_whiteouts_and_legacy_state() {
+    let fx = Fixture::new();
+    for name in ["line\nname", "gone\nentry", "gone", "entry"] {
+        fs::write(fx.base().join(name), name).unwrap();
+    }
+    drop(fx.open("a"));
+    fs::write(fx.upper("a").join("whiteouts"), b"keep.txt\n").unwrap();
+    let a = fx.open("a");
+    assert!(id(&a, "keep.txt").await.is_err());
+    assert!(names(&a, "").await.contains(&"line\nname".to_string()));
+    assert_eq!(read(&a, "line\nname").await, b"line\nname");
+    let root = a.root_dir();
+    a.rename(
+        root,
+        &b"line\nname".as_slice().into(),
+        root,
+        &b"moved\nname".as_slice().into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read(&a, "moved\nname").await, b"line\nname");
+    a.remove(root, &b"moved\nname".as_slice().into())
+        .await
+        .unwrap();
+    a.remove(root, &b"gone\nentry".as_slice().into())
+        .await
+        .unwrap();
+    drop(a);
+    clone_upper(&fx.upper("a"), &fx.upper("c")).unwrap();
+    for name in ["a", "c"] {
+        let a = fx.open(name);
+        for hidden in ["keep.txt", "line\nname", "moved\nname", "gone\nentry"] {
+            assert!(id(&a, hidden).await.is_err(), "{name}: {hidden:?}");
+        }
+        assert_eq!(read(&a, "gone").await, b"gone");
+        assert_eq!(read(&a, "entry").await, b"entry");
+    }
+}
+
+#[tokio::test]
+async fn mode_only_copy_up_preserves_mtime() {
+    let fx = Fixture::new();
+    let path = fx.base().join("README.txt");
+    fs::File::open(&path)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::new(123456789, 123456789)))
+        .unwrap();
+    let before = fs::metadata(&path).unwrap().modified().unwrap();
+    let a = fx.open("a");
+    let fid = id(&a, "README.txt").await.unwrap();
+    a.setattr(
+        fid,
+        sattr3 {
+            mode: set_mode3::mode(0o444),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs::metadata(fx.upper("a").join("tree/README.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        before
+    );
+    assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), before);
+}
+
+#[tokio::test]
+async fn clone_preserves_private_entry_times() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    a.mkdir(a.root_dir(), &b"private".as_slice().into())
+        .await
+        .unwrap();
+    write_new(&a, "private", "file", b"private bytes").await;
+    drop(a);
+    let tree = fx.upper("a").join("tree");
+    symlink("file", tree.join("private/link")).unwrap();
+    let paths = ["private/file", "private/link", "private", ""];
+    let time = UNIX_EPOCH + Duration::new(123456789, 123456789);
+    for p in paths {
+        filetime::set_symlink_file_times(tree.join(p), time.into(), time.into()).unwrap();
+    }
+    clone_upper(&fx.upper("a"), &fx.upper("c")).unwrap();
+    for p in paths {
+        let meta = fs::symlink_metadata(fx.upper("c").join("tree").join(p)).unwrap();
+        assert_eq!(meta.modified().unwrap(), time, "mtime: {p}");
+        assert_eq!(meta.accessed().unwrap(), time, "atime: {p}");
+    }
+}
+
+#[tokio::test]
+async fn restricted_private_entries_clone_and_restore_modes_on_error() {
+    for fail in [false, true] {
+        let fx = Fixture::new();
+        let a = fx.open("a");
+        let (dir, _) = a
+            .mkdir(a.root_dir(), &b"private".as_slice().into())
+            .await
+            .unwrap();
+        write_new(&a, "private", "file", b"private bytes").await;
+        let file = id(&a, "private/file").await.unwrap();
+        let no_access = || sattr3 {
+            mode: set_mode3::mode(0),
+            ..Default::default()
+        };
+        a.setattr(file, no_access()).await.unwrap();
+        let _socket = fail.then(|| {
+            std::os::unix::net::UnixListener::bind(fx.upper("a").join("tree/private/socket"))
+                .unwrap()
+        });
+        a.setattr(dir, no_access()).await.unwrap();
+        drop(a);
+        let result = clone_upper(&fx.upper("a"), &fx.upper("c"));
+        let mut observed = Vec::new();
+        for name in ["a", "c"] {
+            let dir = fx.upper(name).join("tree/private");
+            if !dir.exists() {
+                continue;
+            }
+            let dir_mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o7777;
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+            let file = dir.join("file");
+            let file_mode = fs::metadata(&file).unwrap().permissions().mode() & 0o7777;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+            observed.push((name, dir_mode, file_mode, fs::read(&file).unwrap()));
+        }
+        assert_eq!(
+            observed[0],
+            ("a", 0, 0, b"private bytes".to_vec()),
+            "source modes must be restored, fail={fail}"
+        );
+        if fail {
+            assert!(result.is_err());
+            assert!(
+                !fx.upper("c").exists(),
+                "failed clone must remain unpublished"
+            );
+        } else {
+            result.unwrap();
+            assert_eq!(observed[1], ("c", 0, 0, b"private bytes".to_vec()));
+        }
+    }
+}
+
+#[tokio::test]
+async fn symlink_creation_applies_times_without_touching_target() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let target = fx.base().join("README.txt");
+    let before = fs::metadata(&target).unwrap();
+    let atime = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let mtime = nfstime3 {
+        seconds: 234567890,
+        nseconds: 234567890,
+    };
+    let (_, attr) = a
+        .symlink(
+            a.root_dir(),
+            &b"timed-link".as_slice().into(),
+            &target.as_os_str().as_encoded_bytes().into(),
+            &sattr3 {
+                atime: set_atime::SET_TO_CLIENT_TIME(atime),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(mtime),
+                mode: set_mode3::mode(0),
+                size: set_size3::size(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let after = fs::metadata(&target).unwrap();
+    assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    assert_eq!(after.accessed().unwrap(), before.accessed().unwrap());
+    assert_eq!(after.permissions().mode(), before.permissions().mode());
+    assert_eq!(fs::read(target).unwrap(), b"base text\n");
+    assert_eq!(
+        (attr.atime.seconds, attr.atime.nseconds),
+        (atime.seconds, atime.nseconds)
+    );
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (mtime.seconds, mtime.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn symlink_setattr_applies_times_without_touching_target() {
+    let fx = Fixture::new();
+    let a = fx.open("a");
+    let target = fx.base().join("README.txt");
+    let before = fs::metadata(&target).unwrap();
+    let base_link = fs::symlink_metadata(fx.base().join("inside-link")).unwrap();
+    let atime = nfstime3 {
+        seconds: 123456789,
+        nseconds: 123456789,
+    };
+    let mtime = nfstime3 {
+        seconds: 234567890,
+        nseconds: 234567890,
+    };
+    let attr = a
+        .setattr(
+            id(&a, "inside-link").await.unwrap(),
+            sattr3 {
+                atime: set_atime::SET_TO_CLIENT_TIME(atime),
+                mtime: set_mtime::SET_TO_CLIENT_TIME(mtime),
+                mode: set_mode3::mode(0),
+                size: set_size3::size(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let after = fs::metadata(&target).unwrap();
+    assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    assert_eq!(after.accessed().unwrap(), before.accessed().unwrap());
+    assert_eq!(after.permissions().mode(), before.permissions().mode());
+    assert_eq!(fs::read(target).unwrap(), b"base text\n");
+    assert_eq!(
+        fs::symlink_metadata(fx.base().join("inside-link"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        base_link.modified().unwrap()
+    );
+    assert_eq!(
+        (attr.atime.seconds, attr.atime.nseconds),
+        (atime.seconds, atime.nseconds)
+    );
+    assert_eq!(
+        (attr.mtime.seconds, attr.mtime.nseconds),
+        (mtime.seconds, mtime.nseconds)
+    );
+}
+
+#[tokio::test]
+async fn directory_and_symlink_copy_up_preserve_source_times() {
+    let fx = Fixture::new();
+    let paths = ["dir/nested.txt", "dir", "inside-link"];
+    let time = UNIX_EPOCH + Duration::new(123456789, 123456789);
+    for p in paths {
+        filetime::set_symlink_file_times(fx.base().join(p), time.into(), time.into()).unwrap();
+    }
+    let target_time = fs::metadata(fx.base().join("README.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let a = fx.open("a");
+    let root = a.root_dir();
+    for (from, to) in [("dir", "moved"), ("inside-link", "moved-link")] {
+        a.rename(root, &from.as_bytes().into(), root, &to.as_bytes().into())
+            .await
+            .unwrap();
+    }
+    for p in ["moved/nested.txt", "moved", "moved-link"] {
+        let meta = fs::symlink_metadata(fx.upper("a").join("tree").join(p)).unwrap();
+        assert_eq!(meta.modified().unwrap(), time, "mtime: {p}");
+        assert_eq!(meta.accessed().unwrap(), time, "atime: {p}");
+    }
+    assert_eq!(
+        fs::metadata(fx.base().join("README.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        target_time
+    );
+}
+
+#[test]
+fn incomplete_clone_stays_unpublished_and_rollback_keeps_competing_layer() {
+    let fx = Fixture::new();
+    drop(fx.open("a"));
+    let fifo = fx.upper("a").join("tree/blocked");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let bin = env!("CARGO_BIN_EXE_macos-sparse-backend");
+    let mut clone = Command::new(bin)
+        .args(["clone", "--from"])
+        .arg(fx.upper("a"))
+        .arg("--to")
+        .arg(fx.upper("c"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut copying = false;
+    while Instant::now() < deadline && clone.try_wait().unwrap().is_none() {
+        copying = fs::read_dir(&fx.root).unwrap().any(|e| {
+            let p = e.unwrap().path();
+            p != fx.base() && p != fx.upper("a") && p.join("tree").is_dir()
+        });
+        if copying {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let exposed = fx.upper("c").exists();
+    let mut server = Command::new(bin)
+        .args(["serve", "--base"])
+        .arg(fx.base())
+        .arg("--upper")
+        .arg(fx.upper("c"))
+        .args(["--port", "0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(server.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let ready = line.starts_with("listening 127.0.0.1:");
+    let sentinel = fx.upper("c").join("tree/competitor");
+    if ready {
+        fs::write(&sentinel, b"must survive clone rollback").unwrap();
+    }
+    // Opening the FIFO writer releases the clone's blocked reader. fs::copy then
+    // rejects the non-regular source, so this also exercises failed-clone cleanup.
+    let release = Command::new("python3")
+        .args([
+            "-I",
+            "-c",
+            r#"import os, sys, time
+for _ in range(200):
+    try:
+        fd = os.open(sys.argv[1], os.O_WRONLY | os.O_NONBLOCK)
+        os.close(fd)
+        break
+    except OSError:
+        time.sleep(.01)
+else:
+    sys.exit(1)
+"#,
+        ])
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    if !release.success() {
+        let _ = clone.kill();
+    }
+    let status = clone.wait().unwrap();
+    let _ = server.kill();
+    server.wait().unwrap();
+    assert!(copying, "clone must reach the copy phase");
+    assert!(
+        !exposed,
+        "incomplete clone was published before copying finished"
+    );
+    assert!(
+        ready,
+        "a competing new Layer should start while the clone is staged"
+    );
+    assert!(
+        release.success(),
+        "clone must be blocked on its source FIFO"
+    );
+    assert!(!status.success());
+    assert_eq!(fs::read(sentinel).unwrap(), b"must survive clone rollback");
 }
 
 #[tokio::test]

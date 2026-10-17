@@ -1,0 +1,17 @@
+
+[32;1mPSMessageDetails      : [0m
+[32;1mException             : [0mSystem.Management.Automation.RuntimeException: Native Windows check base failed; inspect raw 
+                        phase result.
+[32;1mTargetObject          : [0mNative Windows check base failed; inspect raw phase result.
+[32;1mCategoryInfo          : [0mOperationStopped: (Native Windows chec.t raw phase result.:String) [], RuntimeException
+[32;1mFullyQualifiedErrorId : [0mNative Windows check base failed; inspect raw phase result.
+[32;1mErrorDetails          : [0m
+[32;1mInvocationInfo        : [0mSystem.Management.Automation.InvocationInfo
+[32;1mScriptStackTrace      : [0mat Check, 
+                        D:\a\_temp\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\user-tools\user-run.ps1: 
+                        line 55
+                        at <ScriptBlock>, 
+                        D:\a\_temp\javelin-windows-proof-591361ac8f72415ebf4b28db052da5b4\user-tools\user-run.ps1: 
+                        line 60
+[32;1mPipelineIterationInfo : [0m{}
+

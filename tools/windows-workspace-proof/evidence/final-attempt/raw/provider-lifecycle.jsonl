@@ -1,0 +1,105 @@
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 5788,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "b",
+  "killed": false,
+  "pid": 4344,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "c",
+  "killed": false,
+  "pid": 5488,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 6728,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 5884,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 7332,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 7500,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "b",
+  "killed": false,
+  "pid": 5224,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "c",
+  "killed": false,
+  "pid": 5512,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 1096,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "d",
+  "killed": false,
+  "pid": 6708,
+  "exited": true
+}
+{
+  "exitCode": -1,
+  "name": "a",
+  "killed": true,
+  "pid": 5444,
+  "exited": true
+}
+{
+  "exitCode": -1,
+  "name": "a",
+  "killed": true,
+  "pid": 2816,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "a",
+  "killed": false,
+  "pid": 4776,
+  "exited": true
+}
+{
+  "exitCode": 0,
+  "name": "b",
+  "killed": false,
+  "pid": 7544,
+  "exited": true
+}

@@ -1,0 +1,23 @@
+{
+  "name": "base-readonly-acl",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base",
+    "/inheritance:r",
+    "/grant:r",
+    "jvpfe91893a1f93:RX",
+    "*S-1-5-32-544:F",
+    "*S-1-5-18:F",
+    "/T",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "pid": 3216,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "exitConfirmed": true,
+  "treeTermination": "not needed",
+  "stdout": "processed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\delete.txt\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\dir\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-windows-proof-fe91893a1f934ecead874ed7cab89544\\base\\dir\\nested.txt\r\nSuccessfully processed 9 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

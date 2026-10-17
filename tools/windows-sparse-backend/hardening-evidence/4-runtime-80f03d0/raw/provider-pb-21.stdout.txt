@@ -1,0 +1,16 @@
+registered root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\pb rootPlaceholders=6
+started root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\pb entries=8
+fetch-data key=README.txt source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\README.txt flags=0 required=0+17
+transfer-data key=README.txt bytes=17 hr=00000000
+fetch-data key=bytes.bin source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\bytes.bin flags=0 required=0+8192
+transfer-data key=bytes.bin bytes=8192 hr=00000000
+fetch-data key=delete.txt source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\delete.txt flags=0 required=0+17
+transfer-data key=delete.txt bytes=17 hr=00000000
+transfer-placeholders key=dir path=\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\pb\dir count=1 status=00000000 hr=00000000 processed=1
+fetch-data key=dir\nested.txt source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\dir\nested.txt flags=0 required=0+7
+transfer-data key=dir\nested.txt bytes=7 hr=00000000
+fetch-data key=main.c source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\main.c flags=0 required=0+90
+transfer-data key=main.c bytes=90 hr=00000000
+fetch-data key=value.h source=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\frozen\base-common\value.h flags=0 required=0+16
+transfer-data key=value.h bytes=16 hr=00000000
+stopped root=D:\a\_temp\javelin-sparse-proof-55fc5fb9c2f84c74ac81fc28b0dd205d\pb

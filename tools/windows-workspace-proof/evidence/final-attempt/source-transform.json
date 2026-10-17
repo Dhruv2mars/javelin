@@ -1,0 +1,52 @@
+{
+  "tools/windows-workspace-proof/run.ps1": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "113e6b28f6c9c94360d9291bde0c43d662ec7f21ab5b921c4782820d05ff53ee",
+    "cloudHash": "4f34031579a2da7e90734a90495fe2db79075d89b7056483761967e0e63d8685"
+  },
+  "tools/windows-workspace-proof/feature.ps1": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "4f2b0918b707e2505e36a8486a512e16dedc517d7d7eb6c44ad3df6bd41d1be1",
+    "cloudHash": "df10a105cb74b8cd101a8c9baa75262d67fda4979c3f972dc587edbd0f03c6af"
+  },
+  "tools/windows-workspace-proof/api-probe.cpp": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "19dedf10c0c0ccbdb15a3dc3efd3dfb5eeeb55c07b30a7049bf4be4d55a2ec94",
+    "cloudHash": "7a011a5ea773afab4b1ff49bb5ac886778b60d80eca76b80ee8fa0212aabbf53"
+  },
+  ".github/workflows/windows-workspace-proof.yml": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "eb0245bd76c66465af662696efd609769536546cf047b7f5e1bbcfb722c2eda6",
+    "cloudHash": "6d68ad01b575f5f71f45996038804291d25a73434bad6f5b5be9e0fd560f1811"
+  },
+  "tools/windows-workspace-proof/provider.cpp": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "3fdb4dc04ca8795bda954f3e3b581b5b528878977998cd0a55e59c13feddad5e",
+    "cloudHash": "e4cfe2be25a061c973d76f3ae282f93d3dc26b9abff4e6fb92aed584151527e3"
+  },
+  "tools/windows-workspace-proof/backend.ps1": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "70ebc43a6086ebb5119ec379d60f332b28070d3c79cba13dcf5cb1a35f73e79f",
+    "cloudHash": "2f5c9d8f6a8f64f03f692124eeb144449110a0725e788edef81c4f93973c70be"
+  },
+  "tools/windows-workspace-proof/user-run.ps1": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "75d96e0e1c7d917a015a676d2cdc997942631e3135fa7070089668f181e9c8d1",
+    "cloudHash": "21148a9ff2d099867350f508403df66adde7deadc4f5903105f32ba63ee09421"
+  },
+  "tools/windows-workspace-proof/checks.mjs": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "2e0584627c7d45261af231a3640375077a2c6c4ed88a21e84adbf066b2cf9c77",
+    "cloudHash": "7b17d507e5f0007942442ad7d7b63e3539e7f44c47445c9a9f0ee2ba9095bce6"
+  },
+  "tools/workspace-probe/probe.mjs": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "617f009e1686dddfd5bacd4de007731d71e309d5a4075365235124ae7dfa0b49",
+    "cloudHash": "490e17ce298989b422d828e693135c4e58a00c24a7cc1186249444cfd85cfd5d"
+  },
+  "tools/workspace-probe/atomic-writer.mjs": {
+    "checkoutEOL": "CRLF",
+    "canonicalLFHash": "14d6eb4e35bc8aef0914c1e79004c6c6b41a53dc774127007603b42a1b77ec22",
+    "cloudHash": "5d2b541177bfb358c08682d0d293bb3a43075f7e2c7b78d64cd54b9cba4d5767"
+  }
+}

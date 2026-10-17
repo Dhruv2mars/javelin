@@ -1,0 +1,16 @@
+{
+  "name": "snapshot-readonly",
+  "executable": "C:\\Windows\\System32\\attrib.exe",
+  "argv": [
+    "+R",
+    "D:\\a\\_temp\\javelin-sparse-proof-98dd5c4f1419490ca406055fa11bc7f7\\frozen\\snap\\*",
+    "/S"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 1392,
+  "stdout": "",
+  "stderr": ""
+}

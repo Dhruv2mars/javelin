@@ -7,7 +7,7 @@
 //! The base is never opened for writing.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{self, File, FileTimes, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use filetime::FileTime;
 use nfsserve::fs_util::metadata_to_fattr3;
 use nfsserve::nfs::{
     fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, sattr3, set_atime, set_mode3,
@@ -25,6 +26,8 @@ use nfsserve::nfs::{
 use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult, VFSCapabilities};
 
 const ROOT: fileid3 = 1;
+const WHITEOUTS_HEADER: &[u8] = b"JAVELIN_WHITEOUTS_V1\0";
+static NEXT_CLONE: AtomicU64 = AtomicU64::new(0);
 
 /// Test-only fault injection: abort the process at a named point. `stage`
 /// aborts after a copy-up is staged but before it is published; `rename`
@@ -78,7 +81,7 @@ fn io_err(e: io::Error) -> nfsstat3 {
 
 fn name(n: &filename3) -> Result<PathBuf, nfsstat3> {
     let bytes = &n.0;
-    if bytes.is_empty() || bytes.contains(&b'/') || bytes.contains(&0) || bytes.contains(&b'\n') {
+    if bytes.is_empty() || bytes.contains(&b'/') || bytes.contains(&0) {
         return Err(nfsstat3::NFS3ERR_INVAL);
     }
     let p = PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
@@ -92,11 +95,42 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
+fn check_readable_base(dir: &Path) -> io::Result<()> {
+    let entries = fs::read_dir(dir).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "unsupported base layout: cannot enumerate {}: {e}",
+                dir.display()
+            ),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            check_readable_base(&entry.path())?;
+        } else if kind.is_file() {
+            File::open(entry.path()).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "unsupported base layout: file {} is not readable by the server: {e}",
+                        entry.path().display()
+                    ),
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 impl Overlay {
     /// Opens a Layer. `upper` is created if missing; stale staging files from an
     /// interrupted copy-up are discarded.
     pub fn open(base: &Path, upper: &Path) -> io::Result<Overlay> {
         let base = base.canonicalize()?;
+        check_readable_base(&base)?;
         fs::create_dir_all(upper)?;
         let upper = upper.canonicalize()?;
         if upper.starts_with(&base) || base.starts_with(&upper) {
@@ -230,10 +264,10 @@ impl Overlay {
         if next.len() == st.whiteouts.len() {
             return Ok(());
         }
-        let mut body = Vec::new();
+        let mut body = WHITEOUTS_HEADER.to_vec();
         for w in &next {
             body.extend_from_slice(w.as_os_str().as_bytes());
-            body.push(b'\n');
+            body.push(0);
         }
         let tmp = self.upper.join("tmp").join("whiteouts");
         let mut f = File::create(&tmp).map_err(io_err)?;
@@ -247,31 +281,58 @@ impl Overlay {
 
     /// Creates upper directories for every ancestor, copying base modes.
     fn ensure_upper_dir(&self, st: &State, rel: &Path) -> Result<(), nfsstat3> {
-        let mut prefix = PathBuf::new();
-        for c in rel.components() {
-            prefix.push(c);
-            let up = self.tree(&prefix);
-            match fs::symlink_metadata(&up) {
-                Ok(m) if m.is_dir() => continue,
-                Ok(_) => return Err(nfsstat3::NFS3ERR_NOTDIR),
-                Err(_) => {}
-            }
-            let mode = match self.locate(st, &prefix) {
-                Some(Loc::Base(b)) => {
-                    let m = fs::metadata(&b).map_err(io_err)?;
-                    if !m.is_dir() {
-                        return Err(nfsstat3::NFS3ERR_NOTDIR);
+        self.with_upper_dir(st, rel, || Ok(()))
+    }
+
+    /// Copy-up may need to populate a private parent that is logically read-only.
+    /// The state mutex hides temporary access; restore modes on success and error.
+    fn with_upper_dir<T>(
+        &self,
+        st: &State,
+        rel: &Path,
+        copy: impl FnOnce() -> Result<T, nfsstat3>,
+    ) -> Result<T, nfsstat3> {
+        let mut restore = Vec::new();
+        let result = (|| {
+            for prefix in rel.ancestors().collect::<Vec<_>>().into_iter().rev() {
+                let up = self.tree(prefix);
+                let (mode, created) = match fs::symlink_metadata(&up) {
+                    Ok(m) if m.is_dir() => (m.mode() & 0o7777, false),
+                    Ok(_) => return Err(nfsstat3::NFS3ERR_NOTDIR),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        let loc = self.locate(st, prefix).ok_or(nfsstat3::NFS3ERR_NOENT)?;
+                        let m = fs::symlink_metadata(loc.path()).map_err(io_err)?;
+                        if !m.is_dir() {
+                            return Err(nfsstat3::NFS3ERR_NOTDIR);
+                        }
+                        fs::create_dir(&up).map_err(io_err)?;
+                        (m.mode() & 0o7777, true)
                     }
-                    m.mode() & 0o7777
+                    Err(e) => return Err(io_err(e)),
+                };
+                if mode & 0o700 != 0o700 {
+                    restore.push((up.clone(), fs::Permissions::from_mode(mode)));
                 }
-                Some(Loc::Upper(_)) => unreachable!(),
-                None => return Err(nfsstat3::NFS3ERR_NOENT),
-            };
-            fs::create_dir(&up).map_err(io_err)?;
-            fs::set_permissions(&up, fs::Permissions::from_mode(mode)).map_err(io_err)?;
-            sync_dir(up.parent().unwrap()).map_err(io_err)?;
+                if created || mode & 0o700 != 0o700 {
+                    fs::set_permissions(&up, fs::Permissions::from_mode(mode | 0o700))
+                        .map_err(io_err)?;
+                }
+                if created {
+                    sync_dir(up.parent().unwrap()).map_err(io_err)?;
+                }
+            }
+            copy()
+        })();
+        let mut restore_error = None;
+        for (path, mode) in restore.into_iter().rev() {
+            if let Err(e) = fs::set_permissions(path, mode) {
+                restore_error = Some(io_err(e));
+            }
         }
-        Ok(())
+        match restore_error {
+            Some(e) => Err(e),
+            None => result,
+        }
     }
 
     /// Copies one visible base entry into the upper tree through staging.
@@ -280,49 +341,55 @@ impl Overlay {
             Loc::Upper(p) => return Ok(p),
             Loc::Base(p) => p,
         };
-        if let Some(parent) = rel.parent() {
-            self.ensure_upper_dir(st, parent)?;
-        }
-        let meta = fs::symlink_metadata(&src).map_err(io_err)?;
-        let dst = self.tree(rel);
-        if meta.is_dir() {
-            fs::create_dir(&dst).map_err(io_err)?;
-            fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
-                .map_err(io_err)?;
+        self.with_upper_dir(st, rel.parent().unwrap_or(Path::new("")), || {
+            let meta = fs::symlink_metadata(&src).map_err(io_err)?;
+            let dst = self.tree(rel);
+            if meta.is_dir() {
+                fs::create_dir(&dst).map_err(io_err)?;
+                fs::set_permissions(&dst, fs::Permissions::from_mode(meta.mode() & 0o7777))
+                    .map_err(io_err)?;
+                preserve_times(&dst, &meta).map_err(io_err)?;
+                sync_dir(dst.parent().unwrap()).map_err(io_err)?;
+                return Ok(dst);
+            }
+            let stage = self.upper.join("tmp").join(format!(
+                "copy-{}",
+                self.staged.fetch_add(1, Ordering::SeqCst)
+            ));
+            if meta.file_type().is_symlink() {
+                symlink(fs::read_link(&src).map_err(io_err)?, &stage).map_err(io_err)?;
+                preserve_times(&stage, &meta).map_err(io_err)?;
+            } else {
+                let mut from = File::open(&src).map_err(io_err)?;
+                let mut to = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&stage)
+                    .map_err(io_err)?;
+                io::copy(&mut from, &mut to).map_err(io_err)?;
+                to.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o7777))
+                    .map_err(io_err)?;
+                preserve_times(&stage, &meta).map_err(io_err)?;
+                to.sync_all().map_err(io_err)?;
+            }
+            crash_at("stage");
+            fs::rename(&stage, &dst).map_err(io_err)?;
             sync_dir(dst.parent().unwrap()).map_err(io_err)?;
-            return Ok(dst);
-        }
-        let stage = self.upper.join("tmp").join(format!(
-            "copy-{}",
-            self.staged.fetch_add(1, Ordering::SeqCst)
-        ));
-        if meta.file_type().is_symlink() {
-            symlink(fs::read_link(&src).map_err(io_err)?, &stage).map_err(io_err)?;
-        } else {
-            let mut from = File::open(&src).map_err(io_err)?;
-            let mut to = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&stage)
-                .map_err(io_err)?;
-            io::copy(&mut from, &mut to).map_err(io_err)?;
-            to.set_permissions(fs::Permissions::from_mode(meta.mode() & 0o7777))
-                .map_err(io_err)?;
-            to.sync_all().map_err(io_err)?;
-        }
-        crash_at("stage");
-        fs::rename(&stage, &dst).map_err(io_err)?;
-        sync_dir(dst.parent().unwrap()).map_err(io_err)?;
-        Ok(dst)
+            Ok(dst)
+        })
     }
 
     /// Copies a whole visible subtree into the upper tree.
     fn copy_up_tree(&self, st: &State, rel: &Path) -> Result<(), nfsstat3> {
+        let meta =
+            fs::symlink_metadata(self.locate(st, rel).ok_or(nfsstat3::NFS3ERR_NOENT)?.path())
+                .map_err(io_err)?;
         let up = self.copy_up(st, rel)?;
         if fs::symlink_metadata(&up).map_err(io_err)?.is_dir() {
             for child in self.children(st, rel)?.into_keys() {
                 self.copy_up_tree(st, &rel.join(child))?;
             }
+            preserve_times(&up, &meta).map_err(io_err)?;
         }
         Ok(())
     }
@@ -381,42 +448,70 @@ fn to_time(t: nfstime3) -> SystemTime {
 /// Applies NFS mode, size and time changes to an upper entry. Ownership changes
 /// are ignored because every Layer entry belongs to the serving user.
 fn apply_sattr(path: &Path, a: &sattr3) -> io::Result<()> {
-    if let set_mode3::mode(m) = a.mode {
-        fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
+    let original = fs::symlink_metadata(path)?.permissions();
+    let grant_write = matches!(a.size, set_size3::size(_))
+        && matches!(a.mode, set_mode3::mode(m) if m & 0o200 != 0)
+        && original.mode() & 0o200 == 0;
+    if grant_write {
+        fs::set_permissions(path, fs::Permissions::from_mode(original.mode() | 0o200))?;
     }
-    if let set_size3::size(n) = a.size {
-        let f = OpenOptions::new().write(true).open(path)?;
-        f.set_len(n)?;
-        f.sync_all()?;
+    let result = (|| {
+        if let set_size3::size(n) = a.size {
+            let f = OpenOptions::new().write(true).open(path)?;
+            f.set_len(n)?;
+            f.sync_all()?;
+        }
+        apply_times(path, a)?;
+        if let set_mode3::mode(m) = a.mode {
+            fs::set_permissions(path, fs::Permissions::from_mode(m & 0o7777))?;
+        }
+        Ok(())
+    })();
+    if result.is_err() && grant_write {
+        fs::set_permissions(path, original)?;
     }
-    let mut times = FileTimes::new();
+    result
+}
+
+fn apply_times(path: &Path, a: &sattr3) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    let mut atime = FileTime::from_last_access_time(&meta);
+    let mut mtime = FileTime::from_last_modification_time(&meta);
     let mut touched = false;
     match a.atime {
         set_atime::SET_TO_CLIENT_TIME(t) => {
-            times = times.set_accessed(to_time(t));
+            atime = FileTime::from_system_time(to_time(t));
             touched = true
         }
         set_atime::SET_TO_SERVER_TIME => {
-            times = times.set_accessed(SystemTime::now());
+            atime = FileTime::now();
             touched = true
         }
         set_atime::DONT_CHANGE => {}
     }
     match a.mtime {
         set_mtime::SET_TO_CLIENT_TIME(t) => {
-            times = times.set_modified(to_time(t));
+            mtime = FileTime::from_system_time(to_time(t));
             touched = true
         }
         set_mtime::SET_TO_SERVER_TIME => {
-            times = times.set_modified(SystemTime::now());
+            mtime = FileTime::now();
             touched = true
         }
         set_mtime::DONT_CHANGE => {}
     }
     if touched {
-        File::open(path)?.set_times(times)?;
+        filetime::set_symlink_file_times(path, atime, mtime)?;
     }
     Ok(())
+}
+
+fn preserve_times(path: &Path, meta: &fs::Metadata) -> io::Result<()> {
+    filetime::set_symlink_file_times(
+        path,
+        FileTime::from_last_access_time(meta),
+        FileTime::from_last_modification_time(meta),
+    )
 }
 
 fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
@@ -428,8 +523,25 @@ fn read_whiteouts(upper: &Path) -> io::Result<BTreeSet<PathBuf>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
         Err(e) => return Err(e),
     }
-    Ok(body
-        .split(|b| *b == b'\n')
+    let (paths, separator) = if let Some(paths) = body.strip_prefix(WHITEOUTS_HEADER) {
+        if !paths.is_empty() && !paths.ends_with(&[0]) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated whiteouts",
+            ));
+        }
+        (paths, 0)
+    } else {
+        if body.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported whiteout encoding",
+            ));
+        }
+        (body.as_slice(), b'\n')
+    };
+    Ok(paths
+        .split(|b| *b == separator)
         .filter(|l| !l.is_empty())
         .map(|l| PathBuf::from(std::ffi::OsStr::from_bytes(l)))
         .collect())
@@ -451,22 +563,44 @@ pub fn clone_upper(from: &Path, to: &Path) -> io::Result<()> {
             "clone destination must not nest with its source",
         ));
     }
-    fs::create_dir(&to)?;
-    let copied = (|| {
-        copy_tree(&from.join("tree"), &to.join("tree"))?;
-        if from.join("whiteouts").exists() {
-            fs::copy(from.join("whiteouts"), to.join("whiteouts"))?;
-            File::open(to.join("whiteouts"))?.sync_all()?;
+    if to.symlink_metadata().is_ok() {
+        return Err(io::ErrorKind::AlreadyExists.into());
+    }
+    let stage = loop {
+        let path = parent.join(format!(
+            ".javelin-clone-{}-{}",
+            std::process::id(),
+            NEXT_CLONE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => break path,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
         }
-        File::open(&to)?.sync_all()?;
+    };
+    let mut held = None;
+    let mut published = false;
+    let copied = (|| {
+        let lock = File::create(stage.join("lock"))?;
+        lock.try_lock().map_err(io::Error::from)?;
+        held = Some(lock);
+        copy_tree(&from.join("tree"), &stage.join("tree"))?;
+        if from.join("whiteouts").exists() {
+            fs::copy(from.join("whiteouts"), stage.join("whiteouts"))?;
+            File::open(stage.join("whiteouts"))?.sync_all()?;
+        }
+        File::open(&stage)?.sync_all()?;
+        fs::rename(&stage, &to)?;
+        published = true;
         File::open(&parent)?.sync_all()
     })();
     if let Err(e) = copied {
-        return Err(match force_remove(&to) {
+        return Err(match force_remove(if published { &to } else { &stage }) {
             Ok(()) => e,
             Err(c) => io::Error::other(format!("{e}; partial clone not removed: {c}")),
         });
     }
+    drop(held);
     Ok(())
 }
 
@@ -489,19 +623,33 @@ fn force_remove(path: &Path) -> io::Result<()> {
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(from)?;
     if meta.file_type().is_symlink() {
-        symlink(fs::read_link(from)?, to)
-    } else if meta.is_dir() {
-        fs::create_dir(to)?;
-        for e in fs::read_dir(from)? {
-            let e = e?;
-            copy_tree(&e.path(), &to.join(e.file_name()))?;
-        }
-        fs::set_permissions(to, meta.permissions())?;
-        File::open(to)?.sync_all()
-    } else {
-        fs::copy(from, to)?;
-        File::open(to)?.sync_all()
+        symlink(fs::read_link(from)?, to)?;
+        return preserve_times(to, &meta);
     }
+    let mode = meta.mode() & 0o7777;
+    let readable = mode | if meta.is_dir() { 0o500 } else { 0o400 };
+    if readable != mode {
+        fs::set_permissions(from, fs::Permissions::from_mode(readable))?;
+    }
+    let copied = (|| {
+        if meta.is_dir() {
+            fs::create_dir(to)?;
+            for e in fs::read_dir(from)? {
+                let e = e?;
+                copy_tree(&e.path(), &to.join(e.file_name()))?;
+            }
+        } else {
+            fs::copy(from, to)?;
+        }
+        let handle = File::open(to)?;
+        preserve_times(to, &meta)?;
+        fs::set_permissions(to, meta.permissions())?;
+        handle.sync_all()
+    })();
+    if readable != mode {
+        fs::set_permissions(from, meta.permissions())?;
+    }
+    copied
 }
 
 #[async_trait]
@@ -552,6 +700,7 @@ impl NFSFileSystem for Overlay {
             .file_type()
             .is_symlink()
         {
+            apply_times(&up, &setattr).map_err(io_err)?;
             return self.attr(&mut st, &rel);
         }
         apply_sattr(&up, &setattr).map_err(io_err)?;
@@ -791,7 +940,7 @@ impl NFSFileSystem for Overlay {
         dirid: fileid3,
         linkname: &filename3,
         target: &nfspath3,
-        _attr: &sattr3,
+        attr: &sattr3,
     ) -> Result<(fileid3, fattr3), nfsstat3> {
         let mut st = self.lock();
         let rel = self.dir_rel(&st, dirid)?.join(name(linkname)?);
@@ -801,6 +950,7 @@ impl NFSFileSystem for Overlay {
         self.ensure_upper_dir(&st, rel.parent().unwrap())?;
         let up = self.tree(&rel);
         symlink(std::ffi::OsStr::from_bytes(&target.0), &up).map_err(io_err)?;
+        apply_times(&up, attr).map_err(io_err)?;
         sync_dir(up.parent().unwrap()).map_err(io_err)?;
         let a = self.attr(&mut st, &rel)?;
         Ok((a.fileid, a))

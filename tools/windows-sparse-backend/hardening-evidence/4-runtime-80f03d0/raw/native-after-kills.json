@@ -1,0 +1,21 @@
+{
+  "id": "after-kills",
+  "verdict": "VERIFIED",
+  "commands": [],
+  "evidence": {
+    "readerDuringKill": {
+      "ok": false,
+      "code": "EUNKNOWN",
+      "message": "EUNKNOWN: unknown error, read"
+    },
+    "slowAfterRestartMatchesBase": true,
+    "completedClosedWrite": "completed and closed\n",
+    "inPlaceMidWrite": {
+      "startsWithPartial": true,
+      "length": 1280,
+      "tailIsOriginal": true
+    },
+    "atomicTargetAfterKill": "private A text\n",
+    "temporaryAfterKill": "NEW CONTENT PARTIAL"
+  }
+}

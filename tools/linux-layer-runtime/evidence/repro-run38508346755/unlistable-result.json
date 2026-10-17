@@ -1,0 +1,14 @@
+{
+  "bound": 0,
+  "frozen": true,
+  "pending": "unlistable",
+  "recovery": {
+    "failures": [
+      "7b637cbe7158b923cc03ccffa5b741290b1795d9670357e415e5f1343c872564: filesystem error: mount helper list failed: javelin-linux-layer-helper: upper listing exceeds entry limit"
+    ],
+    "pending_resolved": 0,
+    "stages_aborted": 0,
+    "views_removed": 0,
+    "views_thawed": 0
+  }
+}

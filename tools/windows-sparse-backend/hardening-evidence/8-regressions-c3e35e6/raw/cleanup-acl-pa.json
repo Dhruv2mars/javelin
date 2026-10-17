@@ -1,0 +1,19 @@
+{
+  "name": "cleanup-acl-pa",
+  "executable": "C:\\Windows\\System32\\icacls.exe",
+  "argv": [
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa",
+    "/grant",
+    "*S-1-5-32-544:(OI)(CI)F",
+    "/T",
+    "/C",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 1220,
+  "stdout": "processed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\bytes.bin\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\concurrent.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\created.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\inside-link\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\main.c\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\probe-app.exe\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\README.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\recovery.txt\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\renamed-dir\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\value.h\r\nprocessed file: D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\pa\\renamed-dir\\nested.txt\r\nSuccessfully processed 12 files; Failed processing 0 files\r\n",
+  "stderr": ""
+}

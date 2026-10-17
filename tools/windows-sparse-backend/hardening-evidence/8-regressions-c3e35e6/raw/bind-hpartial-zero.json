@@ -1,0 +1,17 @@
+{
+  "name": "bind-hpartial-zero",
+  "executable": "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\sparse.exe",
+  "argv": [
+    "bind",
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\frozen\\base-native",
+    "-",
+    "D:\\a\\_temp\\javelin-sparse-proof-6c5ec701315e478bacce9019a182af92\\hpartial-zero"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 7884,
+  "stdout": "",
+  "stderr": ""
+}

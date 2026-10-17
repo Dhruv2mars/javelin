@@ -1,0 +1,18 @@
+{
+  "name": "cleanup-attributes-hbudget",
+  "executable": "C:\\Windows\\System32\\attrib.exe",
+  "argv": [
+    "-R",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget\\*",
+    "/S",
+    "/D",
+    "/L"
+  ],
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "error": null,
+  "pid": 7616,
+  "stdout": "",
+  "stderr": ""
+}

@@ -260,6 +260,15 @@ def handles(port, old=""):
 
 
 def cost(root, upper, count, kind, original):
+    def inventory(folder):
+        return [{'name': p.name, 'size': p.stat().st_size, 'sha256': filehash(p)}
+                if p.is_file() and not p.is_symlink() else {'name': p.name, 'kind': 'not-regular-file'}
+                for p in sorted(folder.iterdir())]
+    base_fixture, visible_fixture = inventory(original), inventory(root)
+    emit({'costFixture': {'kind': kind, 'entries': count, 'baseFixture': base_fixture,
+                          'visibleFixture': visible_fixture}})
+    if len(base_fixture) != count or visible_fixture != base_fixture:
+        raise ValueError('visible cost fixture does not match the requested base fixture')
     before = usage(upper) if upper else usage(root)
     start = time.monotonic()
     read = tool(["/usr/bin/find", str(root), "-type", "f", "-exec", "/bin/cat", "{}", "+"], timeout=35)
@@ -273,7 +282,8 @@ def cost(root, upper, count, kind, original):
     before_delete = usage(upper) if upper else usage(root)
     deletion = tool(["/usr/bin/find", str(root), "-type", "f", "-delete"], timeout=45)
     after = usage(upper) if upper else usage(root)
-    emit({"cost": {"kind": kind, "entries": count, "before": before, "afterRead": after_read,
+    emit({"cost": {"kind": kind, "entries": count, "baseFixture": base_fixture,
+                   "visibleFixture": visible_fixture, "before": before, "afterRead": after_read,
                    "beforeDelete": before_delete, "after": after, "read": read,
                    "compile": compile_result, "objectCompile": object_result, "delete": deletion,
                    "elapsedSeconds": time.monotonic() - start,

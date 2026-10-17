@@ -1,0 +1,76 @@
+{
+  "identity": {
+    "administrator": false,
+    "name": "runnervmgnbhw\\jvsde9e3c3e9af8",
+    "sid": "S-1-5-21-3213014087-2684668049-2838998412-1003"
+  },
+  "phases": {
+    "job-termination": 0,
+    "protect-base": 0,
+    "rename-projfs": 0,
+    "rename-cfapi": 0,
+    "native-ops": 0,
+    "audit-before-hydration-kill-a": 0,
+    "audit-after-hydration-kill-a": 0,
+    "closed-write": 0,
+    "audit-after-write-kill-a": 0,
+    "after-kills": 0,
+    "audit-before-capture-a": 0,
+    "audit-final-b": 0,
+    "capture": 0,
+    "protect-snapshot": 0,
+    "tree-a": 0,
+    "clones": 0,
+    "audit-final-d": 0,
+    "audit-final-e": 0,
+    "audit-final-a": 0,
+    "hardening-checks": 3,
+    "common-probe": 1,
+    "audit-final-pa": 0,
+    "audit-final-pb": 0,
+    "audit-final-pc": 0
+  },
+  "errors": [],
+  "providersStopped": true,
+  "registeredRoots": [
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc"
+  ],
+  "readerExitAfterProviderKill": 0,
+  "holdersAliveBeforeKill": [
+    true,
+    true
+  ],
+  "holderExitCodes": [
+    -1,
+    -1
+  ],
+  "unregister": {
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\cr": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\a": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\b": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\d": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\e": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-zero": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hpartial-resident": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hjunction": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hmarker": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hactive": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\hbudget": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pa": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pb": "{\"unregister\":\"00000000\"}",
+    "D:\\a\\_temp\\javelin-sparse-proof-de9e3c3e9af84ac580beddd7928fa26d\\pc": "{\"unregister\":\"00000000\"}"
+  }
+}

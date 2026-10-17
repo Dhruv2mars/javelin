@@ -1,6 +1,7 @@
 """Offline integrity and semantic audit. No mount, backend execution or Git."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -31,7 +32,56 @@ def seal(root):
     (root / 'manifest.json').write_text(json.dumps(values, indent=2) + '\n')
 
 
-def audit(root, sha, run):
+def pagination_verdict(p):
+    operations = [p[k] for k in ('delete', 'rename', 'traversal', 'remaining')]
+    if any(c.get('timeout') for c in operations) or not p['mutationThreadFinished']:
+        return 'INCONCLUSIVE'
+    if p['delete']['exit'] != 0 or p['rename']['exit'] != 0 or p['remaining']['exit'] != 0:
+        return 'INCONCLUSIVE'
+    bad = p['afterDelete']['status'] != 0 or p['afterRename']['status'] != 0 or \
+        p['traversal']['exit'] != 0 or bool(p['remaining']['stdout'])
+    return 'NOT VERIFIED' if bad else 'VERIFIED'
+
+
+def local_access_verdict(v, owner_uid):
+    if v['uid'] in (0, owner_uid) or v['directRead']['ok'] or v['directRead'].get('errno') not in (1, 13):
+        return 'INCONCLUSIVE'
+    # Any bytes from the protected file are a disclosure, including a partial read.
+    if v['nfsData']:
+        return 'NOT VERIFIED'
+    return 'VERIFIED' if v['nfsStatus'] in (1, 13) else 'INCONCLUSIVE'
+
+
+def expected_fixture(count):
+    return [{'name': f'unit{n:05}.c', 'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
+            for n in range(count) for body in [f'int value_{n}(void) {{ return {n}; }}\n'.encode()]]
+
+
+def cost_verdict(costs, count):
+    if len(costs) != 3 or {v['kind'] for v in costs} != {'ordinary-apfs', 'direct-clonefile', 'nfs'}:
+        return 'INCONCLUSIVE'
+    expected = expected_fixture(count)
+    expected_lines = sorted(f'int value_{n}(void) {{ return {n}; }}\n' for n in range(count))
+    missing = False
+    for c in costs:
+        if c['entries'] != count or c.get('baseFixture') != expected:
+            missing = True
+            continue
+        if 'visibleFixture' not in c:
+            missing = True
+            continue
+        if c['visibleFixture'] != expected:
+            return 'NOT VERIFIED'
+        if any(c[k].get('timeout') for k in ('read', 'compile', 'objectCompile', 'delete')):
+            return 'INCONCLUSIVE'
+        if c['errorCount'] or sorted(c['read']['stdout'].splitlines(keepends=True)) != expected_lines:
+            return 'NOT VERIFIED'
+        if sorted(Path(p).name for p in c['compile']['argv'][2:]) != [v['name'] for v in expected]:
+            return 'NOT VERIFIED'
+    return 'INCONCLUSIVE' if missing else 'VERIFIED'
+
+
+def audit(root, sha, run, producer_source=None):
     manifest = load(root / 'manifest.json')
     actual_files = {str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()
                     and p.name not in ('manifest.json', 'audit.json')}
@@ -46,8 +96,11 @@ def audit(root, sha, run):
     pin = load(Path(__file__).with_name('backend-source.json'))
     for name, expected in pin.items():
         if digest(root / 'source' / name) != expected: raise ValueError(f'changed backend source: {name}')
-    # Compare archived proof source against the independently checked out auditor's source.
-    for p in Path(__file__).parent.iterdir():
+    # Historical producers may be checked by a newer auditor without changing their bytes.
+    source = Path(producer_source) if producer_source else Path(__file__).parent
+    if not all((source / name).is_file() for name in ('audit.py', 'worker.py', 'runner.mjs', 'watch.c', 'backend-source.json')):
+        raise ValueError('incomplete external producer source')
+    for p in source.iterdir():
         if p.is_file() and p.suffix in ('.json', '.mjs', '.py', '.c'):
             if digest(root / 'source/tools/macos-backend-validation' / p.name) != digest(p):
                 raise ValueError(f'proof source differs: {p.name}')
@@ -71,6 +124,13 @@ def audit(root, sha, run):
             commands[c['id']] = c
         else: raise ValueError('unknown command state')
     if set(started) != set(commands): raise ValueError('unfinished command groups')
+    for c in [*started.values(), *commands.values()]:
+        for stream in ('stdout', 'stderr'):
+            name = c[stream]
+            if name not in manifest or not (root / name).is_file():
+                raise ValueError(f'missing referenced {stream}: {c["id"]}')
+        if c['state'] == 'finished' and any(c[k] != started[c['id']][k] for k in ('stdout', 'stderr')):
+            raise ValueError('command log identity changed')
     def contents(c, stream='stdout'):
         return (root / c[stream]).read_text(errors='replace')
     def command(ident): return commands[ident]
@@ -119,9 +179,7 @@ def audit(root, sha, run):
         p = pages[-1]
         crossed = p['first']['status'] == p['second']['status'] == 0 and not p['first']['eof'] and bool(p['second']['entries'])
         if not crossed: raise ValueError('pagination claim without multiple successful READDIRPLUS responses')
-        bad = p['afterDelete']['status'] != 0 or p['afterRename']['status'] != 0 or p['traversal']['exit'] != 0
-        if p['traversal'].get('timeout') or not p['mutationThreadFinished']: verdict = 'INCONCLUSIVE'
-        else: verdict = 'NOT VERIFIED' if bad else 'VERIFIED'
+        verdict = pagination_verdict(p)
         outcome('pagination', verdict, {'firstEntries': len(p['first']['entries']), 'secondEntries': len(p['second']['entries']),
                 'afterDeleteStatus': p['afterDelete']['status'], 'afterRenameStatus': p['afterRename']['status'],
                 'traversalExit': p['traversal']['exit'], 'remaining': p['remaining'], 'mutations': p['mutations']})
@@ -150,20 +208,17 @@ def audit(root, sha, run):
     local = values('local-access', 'secondUser')
     if local:
         v = local[-1]
-        bypass = v['nfsStatus'] == 0 and v['nfsData'] == 'owner-only-secret\n'
-        if bypass != v['ownerBypass']: raise ValueError('false owner-bypass result')
-        if v['uid'] == identity['uid'] or v['uid'] == 0 or v['directRead']['ok']: raise ValueError('invalid second-user control')
-        outcome('local-access', 'NOT VERIFIED' if bypass else 'VERIFIED', v)
+        outcome('local-access', local_access_verdict(v, identity['uid']), v)
     for n in [32, 512, 2048]:
         name = f'cost-{n}'; costs = values(name, 'cost')
         if costs:
             for c in costs:
                 error_count = sum(c[k]['exit'] != 0 for k in ['read', 'compile', 'objectCompile', 'delete'])
                 if error_count != c['errorCount']: raise ValueError('false cost error count')
-            complete = {v['kind'] for v in costs} == {'ordinary-apfs', 'direct-clonefile', 'nfs'}
-            timeout = any(v[k].get('timeout') for v in costs for k in ['read', 'compile', 'objectCompile', 'delete'])
-            verdict = 'INCONCLUSIVE' if not complete or timeout else 'NOT VERIFIED' if any(v['errorCount'] for v in costs) else 'VERIFIED'
-            outcome(name, verdict, costs)
+            outcome(name, cost_verdict(costs, n), costs)
+        fixtures = values(name, 'costFixture')
+        if any(v['baseFixture'] == expected_fixture(n) and v['visibleFixture'] != v['baseFixture'] for v in fixtures):
+            outcome(name, 'NOT VERIFIED', fixtures)
     for name in ['watch-apfs', 'watch-nfs']:
         watches = [v for v in records(name) if 'fseventsStarted' in v]
         if watches:
@@ -201,10 +256,11 @@ def audit(root, sha, run):
 
 def selftest():
     here = Path(__file__).parent; repo = here.parents[1]
+    backend_repo = Path(os.environ.get('SUITABILITY_BACKEND_ROOT', str(repo / 'backend-source')))
     with tempfile.TemporaryDirectory(prefix='javelin-audit-test-') as tmp:
         baseline = Path(tmp) / 'baseline'; baseline.mkdir()
         for name in load(here / 'backend-source.json'):
-            dest = baseline / 'source' / name; dest.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(repo / name, dest)
+            dest = baseline / 'source' / name; dest.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(backend_repo / name, dest)
         for p in here.iterdir():
             if p.is_file():
                 dest = baseline / 'source/tools/macos-backend-validation' / p.name
@@ -214,9 +270,9 @@ def selftest():
         for name in PHASES: put(baseline, f'phase-{name}.json', {'name': name, 'state': 'inconclusive', 'finishedAt': 'z'})
         put(baseline, 'ledger.json', {'groups': [], 'mounts': ['/owned/mount'], 'work': '/owned', 'account': None})
         commands = []
-        for name, code in [('mount', 0), ('ps', 0), ('port', 1), ('root', 0)]:
+        for name, code in [('mount', 0), ('ps', 0), ('port', 1), ('root', 0), ('build', 0)]:
             (baseline / f'{name}.stdout').write_text(''); (baseline / f'{name}.stderr').write_text('')
-            c = {'id': name, 'argv': [name], 'phase': 'cleanup', 'stdout': f'{name}.stdout', 'stderr': f'{name}.stderr', 'state': 'started'}
+            c = {'id': name, 'argv': [name], 'phase': 'build' if name == 'build' else 'cleanup', 'stdout': f'{name}.stdout', 'stderr': f'{name}.stderr', 'state': 'started'}
             commands += [dict(c), dict(c, state='finished', exit=code, finishedAt='z')]
         (baseline / 'commands.jsonl').write_text(''.join(json.dumps(c) + '\n' for c in commands))
         put(baseline, 'cleanup.json', {'mountTable': 'mount', 'processTable': 'ps', 'portCommand': 'port', 'rootCommand': 'root', 'verified': True})
@@ -224,6 +280,8 @@ def selftest():
         mutations = {
             'changed-bytes': lambda r: (r / 'mount.stdout').write_text('changed'),
             'missing-log': lambda r: (r / 'mount.stdout').unlink(),
+            'missing-build-stdout-resealed': lambda r: (r / 'build.stdout').unlink(),
+            'missing-build-stderr-resealed': lambda r: (r / 'build.stderr').unlink(),
             'missing-phase': lambda r: (r / 'phase-aliases.json').unlink(),
             'unfinished-phase': lambda r: put(r, 'phase-aliases.json', {'name': 'aliases', 'state': 'started'}),
             'duplicate-phase': lambda r: shutil.copyfile(r / 'phase-aliases.json', r / 'phase-duplicate.json'),
@@ -251,6 +309,6 @@ def selftest():
 if __name__ == '__main__':
     if sys.argv[1:] == ['--selftest']: selftest()
     else:
-        root, sha, run = sys.argv[1:]
-        result = audit(Path(root), sha, run)
+        root, sha, run, *producer = sys.argv[1:]
+        result = audit(Path(root), sha, run, producer[0] if producer else None)
         print(json.dumps(result, indent=2))

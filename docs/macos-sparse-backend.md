@@ -12,8 +12,9 @@ capabilities are listed separately. CLI, native database binding, autosave and G
   macOS. Those controls validate a probe and never count as sparse proof.
 - The hosted workflow checks out PR #5's probe at
   `0e7ed045774b18819ac12f62f44ba0fdfdc641a4` as developer setup and verifies
-  `probe.mjs` SHA-256 `617f009e…0b49`. PR #5 and PR #7 remain unmerged dependencies;
-  using the probe is not acceptance of either PR. No product command invokes Git.
+  `probe.mjs` SHA-256 `617f009e…0b49`. The original attempts used unmerged PR #5
+  and PR #7 dependencies; using the probe was not acceptance of either PR.
+  No product command invokes Git.
 - The root crate at the starting commit is a scaffold. No native Layer API is used.
 - PR #5 laptop record (macOS 26.6.2, SDK 27): the FSKit sample build exited 69
   because the Xcode license was unaccepted, and zero signing identities existed.
@@ -75,18 +76,33 @@ Layer gives independent kill and remount, and a lock file per Layer.
 
 - Unchanged entries are read from the shared base. The server never opens it for writing.
 - `upper/tree/` holds created and copied-up entries. A write copies up only that file.
-- `upper/whiteouts` lists hidden base paths and is replaced atomically. A whiteout
+- `upper/whiteouts` lists hidden base paths and is replaced atomically. New writes
+  use the `JAVELIN_WHITEOUTS_V1` header followed by a NUL byte and NUL-terminated
+  raw relative paths, so newline names are unambiguous. Legacy newline-separated
+  metadata remains readable; the next whiteout write uses the new encoding.
+  Archived raw evidence remains unchanged. A whiteout
   also hides the base subtree beneath it, so a recreated directory starts empty.
 - Copy-ups are staged in `upper/tmp/` and renamed into place; staging is cleared on open.
 - A directory rename copies the visible subtree into `upper/tree/`. That subtree
   is no longer sparse; this matches OverlayFS-style limits and is recorded.
 - `clone --from UPPER --to UPPER` copies only private state and refuses a Layer
-  whose server holds its lock. Hard links are unsupported by `nfsserve`.
+  whose server holds its lock. It copies into a sibling staging directory, holds
+  that directory's Layer lock through publication, and renames the completed
+  directory into place. A competing server's destination is not removed on copy
+  failure. Hard links are unsupported by `nfsserve`.
 
 On the hosted runner, the base is owned by `root:wheel`, so the server user cannot
 write it. Mounting requires `sudo -n /sbin/mount_nfs`; this is not a non-admin setup proof.
 Layers mount with `vers=3,tcp,locallocks,noac,nonegnamecache,soft,rdirplus`.
 `rdirplus` is required: `nfsserve` 0.11.0 ignores the cookie for plain READDIR.
+
+The current fixture requires every regular base file to be readable by the server
+and every base directory to be enumerable. `Overlay::open` checks this before
+creating private state, and the CLI refuses an unsupported layout before listening.
+A protected write-only base file that the server cannot read is unsupported.
+Preflight only opens files read-only and enumerates directories; it never relaxes
+base modes or ACLs. Base mutation after preflight is outside the immutable-base
+assumption. This scan adds startup work that the old `39a065b` measurements did not include.
 
 ## Run
 
@@ -104,7 +120,10 @@ and runs the pinned probe plus clone, kill-recovery and storage checks.
 
 ## Results
 
-Tested executable source is `39a065b075f2a55688628eb7b3fd64f75b05334e`. Every run
+The retained hosted runs below tested old executable source through
+`39a065b075f2a55688628eb7b3fd64f75b05334e`. They do not validate the subsequent
+PR comment fixes. PR #20 also measures old `39a065b`, not the revised source.
+Every retained run
 used `macos-26` image `20260907.0351.1`, macOS 26.6.2 (25G83) on arm64, Xcode 26.6
 (17F113), MacOSX 26.5 SDK, Rust 1.99.0 and Bun 1.3.13. Archives expire 2026-10-28.
 
@@ -114,6 +133,50 @@ used `macos-26` image `20260907.0351.1`, macOS 26.6.2 (25G83) on arm64, Xcode 26
 | [38505779476](https://github.com/Dhruv2mars/javelin/actions/runs/38505779476) | `4847a18` | `11866888720` (`53d01202…6c40`) | VERIFIED, before review fixes |
 | [38506206609](https://github.com/Dhruv2mars/javelin/actions/runs/38506206609) | `1c503a2` | `11867809729` (`3a22fa6a…632b`) | VERIFIED after review r1 fixes |
 | [38507420049](https://github.com/Dhruv2mars/javelin/actions/runs/38507420049) | `39a065b` | `11868946498` (`f456a51d…f0cf`) | VERIFIED on the tested source |
+
+### PR comment fixes on 2026-10-16
+
+Comments `4292227991`, `4292228003` and `4292228021` identified attribute ordering,
+clone publication and timestamp defects. Five regressions failed on the previous
+implementation: read-only CREATE, mode-000 time updates, mode-only copy-up mtime,
+clone entry mtimes, and exposure of an incomplete clone destination. The FIFO
+clone fixture also checks that failed-copy rollback preserves a competing Layer.
+
+The fixes apply size and time changes before restrictive chmod, use an
+owner-permitted path operation for timestamps, and publish clones from locked
+sibling staging directories. Copy-up and clone retain source access and
+modification times, including directory times after copying children and symlink
+times without changing the target.
+
+For those fixes, local Darwin arm64 checks passed on Rust 1.93.0: format, warnings-denied
+Clippy, 31 tests and release build. Two ignored child entry points run through
+their parent crash tests. Added coverage includes directory and symlink copy-up
+times. These are unmounted trait and process regressions, not a new hosted mount,
+FSKit, performance or Gate 2 result. Known limits below remain open.
+
+### Read-only parent fix on 2026-10-17
+
+Comment `4298776857` identified failed copy-up of a writable base file beneath
+read-only directories. Copy-up now temporarily grants owner access to its private
+parents while holding the state mutex, then restores their intended modes before
+returning, including on error. Ordinary new-file creation still observes the
+read-only parent mode.
+
+The focused regression failed on `76952fe` and passes with this fix. It covers
+nested `0555` parents, a successful edit, an unreadable-source error, mode reporting
+and reopen, unchanged base bytes, and rejection of new-file creation. The prior
+timestamp fix from comment `4292228021` remains in the copy-up and clone paths.
+No hosted or mounted result is claimed for this change.
+
+### Combined attributes and newline names
+
+Comments `4300860233`, `4300860237` and `4300860243` have focused regressions.
+Combined mode and size requests support granting owner-write access before the
+size operation and applying restrictive modes afterwards. Unreadable base files
+are refused at startup under the bounded layout requirement above. Newline names
+work through lookup, rename, delete, reopen and clone, with both old and new
+whiteout metadata. These fixes have local trait/process validation only; retained
+hosted evidence and PR #20 measurements still refer to the old source.
 
 The first run's stale handles came from a rename bookkeeping bug that stored the
 renamed file as `README.txt/`. `4847a18` fixed it with a no-reopen regression.
@@ -192,14 +255,16 @@ The hub's independent audit of `39a065b`, staged at
 `/tmp/javelin-hub-audit-pr11`, found evidence overclaims and correctness/setup gaps.
 This docs-only correction checks the raw `nfs/summary.json`, `nfs/probe-paths.json`,
 `nfs/commands.jsonl`, `environment.log` and `cargo.log` in artifact `11868946498`
-against the source. All seven component file hashes in `environment.log` match
-the unchanged local component. The audit recommends bounded feasibility after
+against the source. At the time of the October 14 docs-only correction, all seven
+component hashes in `environment.log` matched `39a065b`. The component has since
+changed; those hashes are historical provenance. The audit recommends bounded feasibility after
 these corrections; the hub still owns acceptance.
 
 ## Limits and next units
 
-These gaps remain open in the tested source. This correction changes no backend
-code and runs no new mounted attempt. Source findings below come from
+These gaps remain open in the revised implementation. The October 14 audit
+correction changed documentation only; the October 16 fixes above do not close
+these gaps. Source findings below come from
 `tools/macos-sparse-backend/src/lib.rs`, `src/main.rs`, `attempt.mjs`, and the
 locked `nfsserve` 0.11.0 source. They are not new hosted runtime proofs.
 
@@ -242,10 +307,15 @@ locked `nfsserve` 0.11.0 source. They are not new hosted runtime proofs.
 - `nfsserve` returns RPC procedure-unavailable for LINK and COMMIT. Directory
   rename copies the visible subtree. Hard links are unsupported; xattrs, ACLs
   and FSEvents compatibility are unverified.
+- Killing a clone can leave a `.javelin-clone-*` sibling staging directory.
+  Ordinary copy failures remove staging; automatic collection after process kill
+  is unimplemented. An incomplete staged clone is not published as its destination.
+- Killing copy-up while private parent permissions are temporarily widened can
+  leave those host modes widened. Recovery of that permission window remains
+  open and is not covered by the retained kill fixture.
 - Product integration, automatic checkpoints, native storage and the CLI are absent.
 - The NFS client and server are on one host. Remote NFS, sleep and network loss are untested.
 - The selected process-kill and trait-level crash fixtures cover only their
   recorded operations. Power loss and mounted I/O failure injection are untested.
 
-The hub commissions the next disposable-host unit after this handoff. These
-correctness and setup gaps are work to scope and verify, not fixes made by this PR head.
+These correctness and setup gaps need separate scoped work and verification.
