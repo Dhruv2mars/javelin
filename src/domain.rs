@@ -1,14 +1,11 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-};
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
 use crate::{Error, Result};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ObjectId([u8; 32]);
 
 impl ObjectId {
@@ -89,6 +86,7 @@ pub(crate) enum ObjectKind {
     Blob = 1,
     Manifest = 2,
     Checkpoint = 3,
+    Tree = 4,
 }
 
 impl ObjectKind {
@@ -97,12 +95,13 @@ impl ObjectKind {
             1 => Ok(Self::Blob),
             2 => Ok(Self::Manifest),
             3 => Ok(Self::Checkpoint),
+            4 => Ok(Self::Tree),
             _ => Err(Error::CorruptRepository("unknown object kind".into())),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct VersionNumber(u64);
 
@@ -135,17 +134,31 @@ impl fmt::Display for VersionNumber {
     }
 }
 
+/// Longest repository path in bytes, and most components in one path. Trees
+/// encode a name's length as `u16` and recurse once per component. Both equal the
+/// protocol's wire limits.
+pub const MAX_PATH: usize = 4096;
+pub const MAX_DEPTH: usize = 256;
+
+/// One path component: a file or directory name inside its parent.
+pub(crate) fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.eq_ignore_ascii_case(".javelin")
+        && !name.contains(['\\', ':', '\0', '/'])
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(transparent)]
-pub struct RepoPath(String);
+pub struct RepoPath(pub(crate) String);
 
 impl RepoPath {
     pub fn parse(value: &str) -> Result<Self> {
         if value.is_empty()
-            || value.contains(['\\', ':', '\0'])
-            || value.split('/').any(|p| {
-                p.is_empty() || p == "." || p == ".." || p.eq_ignore_ascii_case(".javelin")
-            })
+            || value.len() > MAX_PATH
+            || value.split('/').count() > MAX_DEPTH
+            || !value.split('/').all(valid_name)
         {
             return Err(Error::InvalidInput(format!(
                 "invalid repository-relative path {value:?}"
@@ -323,85 +336,43 @@ impl SparseChanges {
     }
 }
 
-/// World version identity is a hash chain over changesets, computed in O(change):
-/// `id(V) = H(id(V-1) || canonical changeset(V))`, with 32 zero bytes before World 0.
-pub(crate) fn version_id(parent: Option<ObjectId>, changes: &SparseChanges) -> ObjectId {
+/// World version identity is a hash chain over derived roots and changesets,
+/// computed in O(change): `id(V) = H(id(V-1) || root(V) || canonical changeset(V))`,
+/// with 32 zero bytes before World 0. One comparison verifies a version's content.
+pub(crate) fn version_id(
+    parent: Option<ObjectId>,
+    tree: ObjectId,
+    changes: &SparseChanges,
+) -> ObjectId {
     let mut hash = Sha256::new();
-    hash.update(b"javelin-version-v1\0");
+    hash.update(b"javelin-version-v2\0");
     hash.update(parent.map_or([0; 32], |p| p.0));
+    hash.update(tree.0);
     hash.update(changes.canonical_bytes());
     ObjectId(hash.finalize().into())
 }
 
-/// Indexed point reads over immutable World history. The storage engine supplies
-/// it; composition and normalization below stay engine-neutral.
+/// Point reads over one immutable World snapshot. The storage engine supplies it
+/// (derived trees); normalization below stays engine-neutral.
 pub(crate) trait WorldIndex {
-    /// The entry at `path` in the snapshot of `version`.
+    /// The file entry at `path` in the snapshot of `version`.
     fn entry_at(&self, path: &RepoPath, version: VersionNumber) -> Result<Option<FileEntry>>;
-    /// Distinct paths strictly below `dir` with any change in versions `(after, upto]`
-    /// (from World 0 when `after` is None). A superset of paths live at `upto`.
-    fn changed_under(
-        &self,
-        dir: &RepoPath,
-        after: Option<VersionNumber>,
-        upto: VersionNumber,
-    ) -> Result<Vec<RepoPath>>;
+    /// Whether `path` is a directory, that is, has live descendants, at `version`.
+    fn is_dir(&self, path: &RepoPath, version: VersionNumber) -> Result<bool>;
+    /// Every file strictly below `dir` at `version`.
+    fn files_under(&self, dir: &RepoPath, version: VersionNumber) -> Result<Vec<RepoPath>>;
     /// Validates a new entry's referenced content.
     fn check_entry(&self, entry: &FileEntry) -> Result<()>;
 }
 
-/// Sorted endpoints of every exact or ancestor/descendant intersection between the
-/// changeset's paths and paths whose entry differs end-to-end between `base` and
-/// `head`. Work is O(changed paths x depth) indexed lookups plus descendant ranges.
-pub(crate) fn intersections(
-    index: &impl WorldIndex,
-    changes: &SparseChanges,
-    base: VersionNumber,
-    head: VersionNumber,
-) -> Result<BTreeSet<RepoPath>> {
-    let mut found = BTreeSet::new();
-    if base == head {
-        return Ok(found);
-    }
-    let mut memo = BTreeMap::<RepoPath, bool>::new();
-    let mut changed = |path: RepoPath| -> Result<Option<RepoPath>> {
-        if let Some(hit) = memo.get(&path) {
-            return Ok(hit.then_some(path));
-        }
-        let hit = index.entry_at(&path, base)? != index.entry_at(&path, head)?;
-        memo.insert(path.clone(), hit);
-        Ok(hit.then_some(path))
-    };
-    for path in changes.0.keys() {
-        let candidates = std::iter::once(path.clone())
-            .chain(path.ancestors())
-            .chain(index.changed_under(path, Some(base), head)?);
-        for candidate in candidates {
-            if let Some(hit) = changed(candidate)? {
-                found.insert(path.clone());
-                found.insert(hit);
-            }
-        }
-    }
-    Ok(found)
-}
-
 /// Validates a delta against the snapshot of `base` and drops no-op entries. The
 /// result is a canonical changeset whose application keeps file paths and their
-/// descendants disjoint. Work is O(changed paths x depth) plus descendant ranges.
+/// descendants disjoint. Work is O(changed paths x depth) tree lookups.
 pub(crate) fn normalize(
     index: &impl WorldIndex,
     base: VersionNumber,
     changes: &SparseChanges,
 ) -> Result<SparseChanges> {
-    let live_under = |dir: &RepoPath| -> Result<bool> {
-        for path in index.changed_under(dir, None, base)? {
-            if index.entry_at(&path, base)?.is_some() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    };
     let mut delta = BTreeMap::new();
     for (path, after) in &changes.0 {
         if let Some(entry) = after {
@@ -417,7 +388,7 @@ pub(crate) fn normalize(
                     std::ops::Bound::Excluded(end.as_str()),
                 ))
                 .any(|(_, e)| e.is_some());
-            if added_child || live_under(path)? {
+            if added_child || index.is_dir(path, base)? {
                 return Err(Error::InvalidInput(
                     "directory-prefix tombstone is ambiguous; delete exact entries".into(),
                 ));
@@ -454,45 +425,14 @@ pub(crate) fn normalize(
         {
             return Err(collide());
         }
-        // A file in the base snapshot has no descendants there.
-        if index.entry_at(path, base)?.is_none() {
-            for child in index.changed_under(path, None, base)? {
-                if !delta.contains_key(&child) && index.entry_at(&child, base)?.is_some() {
+        // A file replacing a directory must delete every file below it.
+        if index.is_dir(path, base)? {
+            for child in index.files_under(path, base)? {
+                if !delta.contains_key(&child) {
                     return Err(collide());
                 }
             }
         }
     }
     Ok(SparseChanges(delta))
-}
-
-/// A complete snapshot used as a WorldIndex, for derived checks over one version.
-pub(crate) struct SnapshotIndex<'a, F> {
-    pub(crate) entries: &'a BTreeMap<RepoPath, FileEntry>,
-    pub(crate) check: F,
-}
-
-impl<F: Fn(&FileEntry) -> Result<()>> WorldIndex for SnapshotIndex<'_, F> {
-    fn entry_at(&self, path: &RepoPath, _: VersionNumber) -> Result<Option<FileEntry>> {
-        Ok(self.entries.get(path).cloned())
-    }
-    fn changed_under(
-        &self,
-        dir: &RepoPath,
-        _: Option<VersionNumber>,
-        _: VersionNumber,
-    ) -> Result<Vec<RepoPath>> {
-        let (start, end) = dir.descendant_range();
-        Ok(self
-            .entries
-            .range::<str, _>((
-                std::ops::Bound::Included(start.as_str()),
-                std::ops::Bound::Excluded(end.as_str()),
-            ))
-            .map(|(p, _)| p.clone())
-            .collect())
-    }
-    fn check_entry(&self, entry: &FileEntry) -> Result<()> {
-        (self.check)(entry)
-    }
 }

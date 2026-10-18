@@ -9,11 +9,13 @@ mod layer;
 mod publish;
 mod repository;
 mod stack;
+pub mod tree;
 mod workspace;
 
 pub use capture::Capture;
 pub use domain::{
-    FileEntry, Manifest, ObjectId, OperationId, RepoPath, SparseChanges, VersionNumber,
+    FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath, SparseChanges,
+    VersionNumber,
 };
 pub use ignore::IgnoreRules;
 pub use layer::{

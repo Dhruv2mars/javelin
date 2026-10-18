@@ -35,7 +35,7 @@ fn fresh_cli_init_history_and_integrity_are_useful_and_restart_safe() {
     let check = cli(&root, &["check", "--json"]);
     assert!(check.status.success());
     let check: Value = serde_json::from_slice(&check.stdout).unwrap();
-    assert_eq!(check["integrity"]["objects"], 0);
+    assert_eq!(check["integrity"]["objects"], 1); // the empty World tree
     let plain = cli(&root, &["history"]);
     assert!(
         String::from_utf8(plain.stdout)

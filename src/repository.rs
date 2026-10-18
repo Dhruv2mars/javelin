@@ -7,45 +7,46 @@ use sha2::Digest;
 use crate::{
     Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Result, SparseChanges,
     VersionNumber,
-    domain::{ObjectKind, SnapshotIndex, WorldIndex, normalize, version_id},
+    domain::{ObjectKind, WorldIndex, normalize, version_id},
+    tree::{self, Node, Trees},
 };
 
-const FORMAT: i64 = 6;
+const FORMAT: i64 = 7;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 // A World version's primary record is its changeset: one `changes` row per changed
-// path, NULL kind for deletion. Snapshots are derived. The primary key serves
-// per-path point reads at any version; `changes_by_version` reads one changeset.
+// path, NULL kind for deletion. Its derived tree root is stored with the version,
+// computed from the parent root plus the changeset (`src/tree.rs`).
 const SCHEMA: &str = "
 CREATE TABLE objects (
     id TEXT PRIMARY KEY CHECK(length(id)=64),
-    kind INTEGER NOT NULL CHECK(kind IN (1,2,3)),
+    kind INTEGER NOT NULL CHECK(kind IN (1,2,3,4)),
     bytes BLOB NOT NULL
 ) STRICT;
 CREATE TABLE attempts (
     id TEXT PRIMARY KEY,
     expected INTEGER NOT NULL REFERENCES versions(number),
-    manifest TEXT REFERENCES objects(id),
+    tree TEXT REFERENCES objects(id),
     accepted INTEGER NOT NULL CHECK(accepted IN (0,1)),
     result INTEGER NOT NULL REFERENCES versions(number) DEFERRABLE INITIALLY DEFERRED,
     CHECK(accepted=0 OR result=expected+1),
-    CHECK(manifest IS NOT NULL OR accepted=1)
+    CHECK(tree IS NOT NULL OR accepted=1)
 ) STRICT;
 CREATE TABLE versions (
     number INTEGER PRIMARY KEY CHECK(number>=0),
     id TEXT NOT NULL CHECK(length(id)=64),
+    tree TEXT NOT NULL REFERENCES objects(id),
     operation TEXT UNIQUE REFERENCES attempts(id),
     CHECK((number=0 AND operation IS NULL) OR (number>0 AND operation IS NOT NULL))
 ) STRICT;
 CREATE TABLE changes (
-    path TEXT NOT NULL,
     version INTEGER NOT NULL REFERENCES versions(number),
+    path TEXT NOT NULL,
     kind INTEGER CHECK(kind IN (1,2,3)),
     content TEXT REFERENCES objects(id),
-    PRIMARY KEY(path,version),
+    PRIMARY KEY(version,path),
     CHECK((kind IS NULL)=(content IS NULL))
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX changes_by_version ON changes(version);
 CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
@@ -53,14 +54,16 @@ BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 -- this index SQLite scans every attempt inside the Publish write transaction.
 CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=6;
+PRAGMA user_version=7;
 ";
 
-/// One World version. `id` is its hash-chain identity over all changesets so far.
+/// One World version. `tree` is the root of its derived snapshot tree; `id` is its
+/// hash-chain identity over every root and changeset so far.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorldVersion {
     pub number: VersionNumber,
     pub id: ObjectId,
+    pub tree: ObjectId,
     pub operation: Option<OperationId>,
 }
 
@@ -146,9 +149,13 @@ impl Repository {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
                 }
             }
+            let empty = insert_object(&tx, ObjectKind::Tree, &[0])?;
             tx.execute(
-                "INSERT INTO versions(number,id) VALUES(0,?1)",
-                [version_id(None, &SparseChanges::default()).to_string()],
+                "INSERT INTO versions(number,id,tree) VALUES(0,?1,?2)",
+                params![
+                    version_id(None, empty, &SparseChanges::default()).to_string(),
+                    empty.to_string()
+                ],
             )?;
         } else {
             validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
@@ -274,12 +281,12 @@ impl Repository {
         Ok(manifest)
     }
 
-    /// Derives the complete snapshot of a World version from its changesets.
-    /// Work is O(change rows up to `version`); never used on the Publish path.
+    /// The complete snapshot of a World version, read from its derived tree.
+    /// Work is O(snapshot), independent of history length.
     pub fn manifest_at(&self, version: VersionNumber) -> Result<Manifest> {
         let tx = self.conn.unchecked_transaction()?;
-        version_in(&tx, version)?;
-        let manifest = Manifest::new(snapshot_in(&tx, version)?)?;
+        let root = version_in(&tx, version)?.tree;
+        let manifest = Manifest::new(Trees::new(Sql::read(&tx)).entries(root)?)?;
         tx.commit()?;
         Ok(manifest)
     }
@@ -322,7 +329,8 @@ impl Repository {
     /// Publishes metadata only. The caller will later supply Layer, permission and
     /// policy validation. Keep the same operation ID and input after any uncertain error.
     /// Accepted and stale outcomes are durable and returned unchanged on retry.
-    /// Accepting a full manifest derives the head snapshot to compute its changeset.
+    /// The manifest's tree is built in O(manifest); its changeset is the tree diff
+    /// against the head, which skips shared subtrees.
     pub fn compare_and_advance(
         &mut self,
         operation: &OperationId,
@@ -337,11 +345,14 @@ impl Repository {
         if crate::publish::operation_exists_in(&tx, operation)? {
             return Err(Error::OperationIdReused(operation.clone()));
         }
+        // Revalidate the entire candidate graph inside the publication transaction.
+        let candidate = manifest_in(&tx, manifest)?;
+        let trees = Trees::new(Sql::write(&tx));
+        let root = trees.build(candidate.entries())?;
         if let Some(attempt) = attempt_in(&tx, operation)? {
-            if attempt.expected != expected || attempt.manifest != Some(manifest) {
+            if attempt.expected != expected || attempt.tree != Some(root) {
                 return Err(Error::OperationIdReused(operation.clone()));
             }
-            manifest_in(&tx, manifest)?;
             let outcome = attempt.outcome(&tx)?;
             tx.commit()?;
             return Ok(outcome);
@@ -349,8 +360,6 @@ impl Repository {
         if expected > head.number {
             return Err(Error::MissingVersion(expected));
         }
-        // Revalidate the entire candidate graph inside the publication transaction.
-        let candidate = manifest_in(&tx, manifest)?;
         let accepted = expected == head.number;
         let result = if accepted {
             next_number(head.number)?
@@ -358,28 +367,19 @@ impl Repository {
             head.number
         };
         tx.execute(
-            "INSERT INTO attempts(id,expected,manifest,accepted,result) VALUES(?1,?2,?3,?4,?5)",
+            "INSERT INTO attempts(id,expected,tree,accepted,result) VALUES(?1,?2,?3,?4,?5)",
             params![
                 operation.as_str(),
                 expected.sql(),
-                manifest.to_string(),
+                root.to_string(),
                 accepted,
                 result.sql()
             ],
         )?;
         let outcome = if accepted {
-            let current = snapshot_in(&tx, head.number)?;
-            let changes = SparseChanges::new(
-                current
-                    .keys()
-                    .chain(candidate.entries().keys())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .filter(|p| current.get(*p) != candidate.entries().get(*p))
-                    .map(|p| (p.clone(), candidate.entries().get(p).cloned())),
-            )?;
+            let changes = trees.diff(head.tree, root)?;
             AdvanceOutcome::Accepted {
-                version: append_version_in(&tx, &head, operation, &changes)?,
+                version: append_version_in(&tx, &head, operation, &changes, root)?,
             }
         } else {
             AdvanceOutcome::Stale { actual: result }
@@ -426,6 +426,10 @@ impl Repository {
                 }
                 ObjectKind::Checkpoint => {
                     checkpoints.read(id)?;
+                }
+                ObjectKind::Tree => {
+                    tree::Chunk::decode(&read_object(&tx, id, ObjectKind::Tree)?)
+                        .map_err(|_| Error::CorruptObject(id))?;
                 }
             }
         }
@@ -657,11 +661,13 @@ pub(crate) fn next_number(number: VersionNumber) -> Result<VersionNumber> {
     )
 }
 
-fn version_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, Option<String>)> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+type VersionRow = (i64, String, String, Option<String>);
+
+fn version_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<VersionRow> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
 }
 
-fn decode_version((number, id, operation): (i64, String, Option<String>)) -> Result<WorldVersion> {
+fn decode_version((number, id, tree, operation): VersionRow) -> Result<WorldVersion> {
     let number = VersionNumber::decode(number)?;
     let operation = operation.as_deref().map(decode_operation).transpose()?;
     if (number.get() == 0) != operation.is_none() {
@@ -670,6 +676,7 @@ fn decode_version((number, id, operation): (i64, String, Option<String>)) -> Res
     Ok(WorldVersion {
         number,
         id: decode_id(&id)?,
+        tree: decode_id(&tree)?,
         operation,
     })
 }
@@ -678,7 +685,7 @@ fn decode_version((number, id, operation): (i64, String, Option<String>)) -> Res
 /// Its hash-chain link is verified by `history_in`.
 pub(crate) fn version_in(conn: &Connection, number: VersionNumber) -> Result<WorldVersion> {
     let version = conn
-        .prepare_cached("SELECT number,id,operation FROM versions WHERE number=?1")?
+        .prepare_cached("SELECT number,id,tree,operation FROM versions WHERE number=?1")?
         .query_row([number.sql()], version_row)
         .optional()?
         .map(decode_version)
@@ -691,7 +698,9 @@ pub(crate) fn version_in(conn: &Connection, number: VersionNumber) -> Result<Wor
 /// The latest World, found by primary key. Contiguity is enforced on insert.
 pub(crate) fn head_in(conn: &Connection) -> Result<WorldVersion> {
     let version = conn
-        .prepare_cached("SELECT number,id,operation FROM versions ORDER BY number DESC LIMIT 1")?
+        .prepare_cached(
+            "SELECT number,id,tree,operation FROM versions ORDER BY number DESC LIMIT 1",
+        )?
         .query_row([], version_row)
         .optional()?
         .map(decode_version)
@@ -759,47 +768,26 @@ pub(crate) fn changeset_in(conn: &Connection, version: VersionNumber) -> Result<
     )
 }
 
-/// Derives a full snapshot: the latest change row per path at or before `version`.
-pub(crate) fn snapshot_in(
-    conn: &Connection,
-    version: VersionNumber,
-) -> Result<std::collections::BTreeMap<RepoPath, FileEntry>> {
-    let mut statement = conn.prepare_cached(
-        "SELECT path,kind,content FROM changes WHERE version<=?1 ORDER BY path,version",
-    )?;
-    let mut rows = statement.query([version.sql()])?;
-    let mut entries = std::collections::BTreeMap::new();
-    let mut last: Option<(String, Option<FileEntry>)> = None;
-    while let Some(row) = rows.next()? {
-        let path: String = row.get(0)?;
-        let entry = decode_entry(row.get(1)?, row.get(2)?)?;
-        if let Some((previous, Some(entry))) = last.take().filter(|(p, _)| *p != path) {
-            entries.insert(decode_path(&previous)?, entry);
-        }
-        last = Some((path, entry));
-    }
-    if let Some((path, Some(entry))) = last {
-        entries.insert(decode_path(&path)?, entry);
-    }
-    Ok(entries)
-}
-
-/// Appends version `head + 1` with its changeset rows. O(change).
+/// Appends version `head + 1` with its changeset rows and derived root, whose
+/// chunks are already stored. O(change).
 pub(crate) fn append_version_in(
     conn: &Connection,
     head: &WorldVersion,
     operation: &OperationId,
     changes: &SparseChanges,
+    tree: ObjectId,
 ) -> Result<WorldVersion> {
     let version = WorldVersion {
         number: next_number(head.number)?,
-        id: version_id(Some(head.id), changes),
+        id: version_id(Some(head.id), tree, changes),
+        tree,
         operation: Some(operation.clone()),
     };
-    conn.prepare_cached("INSERT INTO versions(number,id,operation) VALUES(?1,?2,?3)")?
+    conn.prepare_cached("INSERT INTO versions(number,id,tree,operation) VALUES(?1,?2,?3,?4)")?
         .execute(params![
             version.number.sql(),
             version.id.to_string(),
+            tree.to_string(),
             operation.as_str()
         ])?;
     let mut insert =
@@ -811,53 +799,145 @@ pub(crate) fn append_version_in(
     Ok(version)
 }
 
-/// Indexed point reads over the `changes` table.
-pub(crate) struct Index<'a>(pub(crate) &'a Connection);
+/// Where derived tree chunks go: written in the current transaction, buffered for
+/// a later write transaction (Publish prepares outside the lock), or only checked
+/// for presence (`check` recomputes every root without writing).
+enum Sink {
+    Write,
+    Buffer(std::cell::RefCell<Vec<(ObjectId, Vec<u8>)>>),
+    Verify,
+}
 
-impl WorldIndex for Index<'_> {
-    fn entry_at(&self, path: &RepoPath, version: VersionNumber) -> Result<Option<FileEntry>> {
-        let row: Option<(Option<i64>, Option<String>)> = self
-            .0
-            .prepare_cached(
-                "SELECT kind,content FROM changes WHERE path=?1 AND version<=?2 ORDER BY version DESC LIMIT 1",
-            )?
-            .query_row(params![path.as_str(), version.sql()], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .optional()?;
-        row.map_or(Ok(None), |(kind, content)| decode_entry(kind, content))
+/// Tree objects in the `objects` table.
+pub(crate) struct Sql<'a> {
+    conn: &'a Connection,
+    sink: Sink,
+}
+
+impl<'a> Sql<'a> {
+    pub(crate) fn write(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            sink: Sink::Write,
+        }
     }
-
-    fn changed_under(
-        &self,
-        dir: &RepoPath,
-        after: Option<VersionNumber>,
-        upto: VersionNumber,
-    ) -> Result<Vec<RepoPath>> {
-        let (start, end) = dir.descendant_range();
-        let after = after.map_or(-1, VersionNumber::sql);
-        self.0
-            .prepare_cached(
-                "SELECT DISTINCT path FROM changes WHERE path>=?1 AND path<?2 AND version>?3 AND version<=?4 ORDER BY path",
-            )?
-            .query_map(params![start, end, after, upto.sql()], |r| {
-                r.get::<_, String>(0)
-            })?
-            .map(|path| decode_path(&path?))
-            .collect()
+    pub(crate) fn buffer(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            sink: Sink::Buffer(Default::default()),
+        }
     }
-
-    fn check_entry(&self, entry: &FileEntry) -> Result<()> {
-        validate_entry(self.0, entry)
+    /// Reads only; a derived chunk must already be stored.
+    pub(crate) fn read(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            sink: Sink::Verify,
+        }
+    }
+    /// Chunks recorded by a buffering store, in creation order.
+    pub(crate) fn buffered(self) -> Vec<(ObjectId, Vec<u8>)> {
+        match self.sink {
+            Sink::Buffer(chunks) => chunks.into_inner(),
+            _ => Vec::new(),
+        }
     }
 }
 
-/// Verifies every version row, its hash-chain link and its changeset against the
-/// parent snapshot, then every World attempt. Work is O(total change rows) plus
-/// each attempted manifest; the running snapshot is the only O(repo) state.
+impl tree::Store for Sql<'_> {
+    fn load(&self, id: ObjectId) -> Result<Vec<u8>> {
+        read_object(self.conn, id, ObjectKind::Tree)
+    }
+    fn save(&self, id: ObjectId, bytes: &[u8]) -> Result<()> {
+        match &self.sink {
+            Sink::Write => insert_object(self.conn, ObjectKind::Tree, bytes).map(drop),
+            Sink::Buffer(chunks) => {
+                chunks.borrow_mut().push((id, bytes.to_vec()));
+                Ok(())
+            }
+            // Reading verifies the stored chunk's hash and kind.
+            Sink::Verify => match read_object(self.conn, id, ObjectKind::Tree) {
+                Ok(stored) if stored == bytes => Ok(()),
+                Ok(_) | Err(Error::MissingObject(_)) => Err(Error::CorruptRepository(format!(
+                    "derived tree chunk {id} is not stored"
+                ))),
+                Err(e) => Err(e),
+            },
+        }
+    }
+}
+
+/// The stored root of a World version, by primary key.
+pub(crate) fn tree_in(conn: &Connection, version: VersionNumber) -> Result<ObjectId> {
+    let tree: String = conn
+        .prepare_cached("SELECT tree FROM versions WHERE number=?1")?
+        .query_row([version.sql()], |r| r.get(0))
+        .optional()?
+        .ok_or(Error::MissingVersion(version))?;
+    decode_id(&tree)
+}
+
+/// Point reads over World snapshots through their derived trees: O(depth) chunk
+/// reads per lookup, independent of history length.
+pub(crate) struct Index<'a> {
+    pub(crate) trees: Trees<Sql<'a>>,
+    roots: std::cell::RefCell<std::collections::HashMap<VersionNumber, ObjectId>>,
+}
+
+impl<'a> Index<'a> {
+    pub(crate) fn new(conn: &'a Connection) -> Self {
+        Self::over(Sql::read(conn))
+    }
+    pub(crate) fn over(store: Sql<'a>) -> Self {
+        Self {
+            trees: Trees::new(store),
+            roots: Default::default(),
+        }
+    }
+    pub(crate) fn root(&self, version: VersionNumber) -> Result<ObjectId> {
+        if let Some(root) = self.roots.borrow().get(&version) {
+            return Ok(*root);
+        }
+        let root = tree_in(self.trees.store().conn, version)?;
+        self.roots.borrow_mut().insert(version, root);
+        Ok(root)
+    }
+    /// Uses `root` for `version` instead of the stored root.
+    fn pin(&self, version: VersionNumber, root: ObjectId) {
+        self.roots.borrow_mut().insert(version, root);
+    }
+    pub(crate) fn node(&self, path: &RepoPath, version: VersionNumber) -> Result<Option<Node>> {
+        self.trees.lookup(self.root(version)?, path)
+    }
+}
+
+impl WorldIndex for Index<'_> {
+    fn entry_at(&self, path: &RepoPath, version: VersionNumber) -> Result<Option<FileEntry>> {
+        Ok(match self.node(path, version)? {
+            Some(Node::File(entry)) => Some(entry),
+            _ => None,
+        })
+    }
+
+    fn is_dir(&self, path: &RepoPath, version: VersionNumber) -> Result<bool> {
+        Ok(matches!(self.node(path, version)?, Some(Node::Dir(_))))
+    }
+
+    fn files_under(&self, dir: &RepoPath, version: VersionNumber) -> Result<Vec<RepoPath>> {
+        self.trees.files_under(self.root(version)?, dir)
+    }
+
+    fn check_entry(&self, entry: &FileEntry) -> Result<()> {
+        validate_entry(self.trees.store().conn, entry)
+    }
+}
+
+/// Verifies every version row, its changeset against the parent tree, its derived
+/// root recomputed from the parent root plus the changeset (every chunk must be
+/// stored), and its hash-chain link; then every World attempt. Work is O(total
+/// change x depth) plus each stale candidate tree; no full snapshot is held.
 pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
     let rows = conn
-        .prepare("SELECT number,id,operation FROM versions ORDER BY number")?
+        .prepare("SELECT number,id,tree,operation FROM versions ORDER BY number")?
         .query_map([], version_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     if rows.is_empty() {
@@ -869,35 +949,43 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
     if orphans {
         return Err(Error::CorruptRepository("orphan World change".into()));
     }
+    let index = Index::new(conn);
     let mut history: Vec<WorldVersion> = Vec::new();
-    let mut snapshot = std::collections::BTreeMap::new();
-    for (index, row) in rows.into_iter().enumerate() {
+    for (index_number, row) in rows.into_iter().enumerate() {
         let version = decode_version(row)?;
-        if version.number.get() != index as u64 {
+        if version.number.get() != index_number as u64 {
             return Err(Error::CorruptRepository(
                 "World history is not contiguous".into(),
             ));
         }
         let changes = changeset_in(conn, version.number)?;
-        if version.id != version_id(history.last().map(|v| v.id), &changes) {
+        let root = match history.last() {
+            None if changes.entries().is_empty() => index.trees.apply(tree::empty(), &changes)?,
+            None => return Err(Error::CorruptRepository("invalid initial World".into())),
+            Some(parent) => {
+                match normalize(&index, parent.number, &changes) {
+                    Ok(normalized) if normalized == changes => {}
+                    Ok(_) | Err(Error::InvalidInput(_)) => {
+                        return Err(Error::CorruptRepository(
+                            "World changeset is not canonical against its parent".into(),
+                        ));
+                    }
+                    Err(e) => return Err(e),
+                }
+                index.trees.apply(parent.tree, &changes)?
+            }
+        };
+        if root != version.tree {
+            return Err(Error::CorruptRepository(
+                "World tree disagrees with its derivation".into(),
+            ));
+        }
+        index.pin(version.number, root);
+        if version.id != version_id(history.last().map(|v| v.id), root, &changes) {
             return Err(Error::CorruptRepository(
                 "World version identity disagrees with its changeset".into(),
             ));
         }
-        let parent = SnapshotIndex {
-            entries: &snapshot,
-            check: |entry: &FileEntry| validate_entry(conn, entry),
-        };
-        match normalize(&parent, version.number, &changes) {
-            Ok(normalized) if normalized == changes => {}
-            Ok(_) | Err(Error::InvalidInput(_)) => {
-                return Err(Error::CorruptRepository(
-                    "World changeset is not canonical against its parent".into(),
-                ));
-            }
-            Err(e) => return Err(e),
-        }
-        changes.apply(&mut snapshot);
         if let Some(op) = &version.operation {
             let attempt = attempt_in(conn, op)?
                 .ok_or_else(|| Error::CorruptRepository("missing accepted attempt".into()))?;
@@ -909,14 +997,12 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
                     "version and operation disagree".into(),
                 ));
             }
-            if let Some(manifest) = attempt.manifest
-                && manifest_in(conn, manifest)?.entries() != &snapshot
-            {
+            if attempt.tree.is_some_and(|tree| tree != root) {
                 return Err(Error::CorruptRepository(
-                    "accepted manifest disagrees with derived World".into(),
+                    "accepted tree disagrees with derived World".into(),
                 ));
             }
-        } else if index != 0 || !changes.entries().is_empty() {
+        } else if index_number != 0 {
             return Err(Error::CorruptRepository("invalid initial World".into()));
         }
         history.push(version);
@@ -929,9 +1015,13 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
         let operation = decode_operation(&id)?;
         let attempt = attempt_in(conn, &operation)?
             .ok_or_else(|| Error::CorruptRepository("missing attempt".into()))?;
-        match attempt.manifest {
-            Some(manifest) => {
-                manifest_in(conn, manifest)?;
+        match attempt.tree {
+            // Accepted candidates equal a verified World root.
+            Some(_) if attempt.accepted => {}
+            Some(tree) => {
+                for entry in index.trees.entries(tree)?.values() {
+                    validate_entry(conn, entry)?;
+                }
             }
             // Layer publications record their candidate through the publication row.
             None if crate::publish::operation_exists_in(conn, &operation)? => {}
@@ -949,7 +1039,7 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
 struct Attempt {
     operation: OperationId,
     expected: VersionNumber,
-    manifest: Option<ObjectId>,
+    tree: Option<ObjectId>,
     accepted: bool,
     result: VersionNumber,
 }
@@ -981,7 +1071,7 @@ impl Attempt {
 
 fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attempt>> {
     let row = conn
-        .prepare_cached("SELECT expected,manifest,accepted,result FROM attempts WHERE id=?1")?
+        .prepare_cached("SELECT expected,tree,accepted,result FROM attempts WHERE id=?1")?
         .query_row([operation.as_str()], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -991,14 +1081,14 @@ fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attem
             ))
         })
         .optional()?;
-    row.map(|(expected, manifest, accepted, result)| {
+    row.map(|(expected, tree, accepted, result)| {
         if accepted != 0 && accepted != 1 {
             return Err(Error::CorruptRepository("invalid attempt outcome".into()));
         }
         Ok(Attempt {
             operation: operation.clone(),
             expected: VersionNumber::decode(expected)?,
-            manifest: manifest.as_deref().map(decode_id).transpose()?,
+            tree: tree.as_deref().map(decode_id).transpose()?,
             accepted: accepted == 1,
             result: VersionNumber::decode(result)?,
         })

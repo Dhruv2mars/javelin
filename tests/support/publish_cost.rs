@@ -6,11 +6,12 @@ use tempfile::TempDir;
 
 use super::lock_probe::LAST;
 use crate::{
-    FileEntry, LayerId, LayerState, LayerUpdate, Manifest, OperationId, RepoPath, Repository,
-    SparseChanges, VersionNumber,
+    FileEntry, LayerId, LayerState, LayerUpdate, OperationId, RepoPath, Repository, SparseChanges,
+    VersionNumber,
     domain::ObjectKind,
     publish::{PublishAttribution, PublishOutcome},
-    repository::{append_version_in, head_in, insert_object},
+    repository::{Sql, append_version_in, head_in, insert_object},
+    tree::Trees,
 };
 
 struct Cost {
@@ -31,22 +32,23 @@ fn publish_after(prior: u64) -> Cost {
             executable: false,
         };
         let path = RepoPath::parse("counter").unwrap();
-        let manifest = Manifest::new([(path.clone(), entry.clone())]).unwrap();
-        let manifest =
-            insert_object(&tx, ObjectKind::Manifest, &manifest.canonical_bytes()).unwrap();
-        let operation = format!("world-{n}");
-        tx.execute(
-            "INSERT INTO attempts(id,expected,manifest,accepted,result) VALUES(?1,?2,?3,1,?4)",
-            params![operation, n as i64 - 1, manifest.to_string(), n as i64],
-        )
-        .unwrap();
         let changes = SparseChanges::new([(path, Some(entry))]).unwrap();
         let head = head_in(&tx).unwrap();
+        let tree = Trees::new(Sql::write(&tx))
+            .apply(head.tree, &changes)
+            .unwrap();
+        let operation = format!("world-{n}");
+        tx.execute(
+            "INSERT INTO attempts(id,expected,tree,accepted,result) VALUES(?1,?2,?3,1,?4)",
+            params![operation, n as i64 - 1, tree.to_string(), n as i64],
+        )
+        .unwrap();
         append_version_in(
             &tx,
             &head,
             &OperationId::parse(&operation).unwrap(),
             &changes,
+            tree,
         )
         .unwrap();
     }

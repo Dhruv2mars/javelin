@@ -73,7 +73,8 @@ fn aggregate_work_is_not_reset_per_path() {
 fn deeply_nested_paths_and_long_common_prefixes_are_bounded() {
     let empty = Manifest::new([]).unwrap();
     let parent = manifest(0, &["a".into()]);
-    let child_path = "a/".repeat(511) + "zz";
+    // 256 components, the native depth limit, and 1,024 bytes.
+    let child_path = "a".to_owned() + &"/aaa".repeat(254) + "/zzzzzz";
     assert_eq!(child_path.len(), Resource::PathBytes.limit() as usize);
     let child = manifest(1, std::slice::from_ref(&child_path));
     let no_load = |_| -> Result<Vec<u8>, ()> { panic!("metadata only") };
