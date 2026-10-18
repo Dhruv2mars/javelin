@@ -120,8 +120,8 @@ Capture runs at these triggers:
 - At the start of every `layer` and `workspace` command that names the Layer.
 - On agent lifecycle events (turn end, tool-call end). The contract already says
   Javelin accepts these from agent tools; the hook is simply `javelin checkpoint`.
-- In the optional foreground `javelin workspace watch`, for humans who want capture while
-  they edit. It is a command the user runs, not a service.
+- A foreground watch command, for humans who want capture while they edit, is not
+  built. If added, it is a command the user runs, not a service.
 
 Because the Layer is the real directory, an edit is durable on disk the moment the
 editor writes it. Capture only decides when that edit becomes a recoverable
@@ -225,9 +225,9 @@ out.
   XFS on Linux and a Dev Drive on Windows.
 - **Windows creates are slow at 100k files either way,** 11–19 s for a copy. Sparse
   Layers are the main lever there. Creating a Dev Drive needs one-time
-  administrator setup; using it does not. The existing OverlayFS helper is
-  retired once the clone backend reaches parity. Fast ext4 support is not worth a
-  root helper.
+  administrator setup; using it does not. The OverlayFS helper was retired on
+  2026-10-18, after the clone backend reached gate-2 parity. Fast ext4 support is
+  not worth a root helper.
 - **Discard is deferred.** Removing 100k files takes about 4 s. Discard renames
   the Layer into the store's trash, and later commands delete it.
 - **Layers never see base edits.** A directory clone briefly blocks writers to its
@@ -251,8 +251,8 @@ out.
 ## Implementation
 
 `src/workspace.rs` and `src/workspace/clone.rs` implement this decision. The CLI
-exposes it as `javelin workspace create|open|path|discard|recover` without
-`--helper`; the OverlayFS commands keep `--helper` until they are retired.
+exposes it as `javelin workspace create|open|path|discard|publish|recover`. It is
+the only Layer runtime.
 
 **Store layout (current code).** Everything lives under `.javelin/`, on the
 repository's volume: `bases/<N>` holds World N, `layers/<id>` holds each Layer, `tmp/` holds staging, and

@@ -65,9 +65,9 @@ Code: src/domain.rs, src/repository.rs, src/lib.rs
 - Each mutating call goes through `update_in`, which records its operation id in `layer_attempts`. `attempt_outcome_in` returns the recorded outcome when an id is replayed.
 - Recorded outcomes include accepted, stale, conflict, and `LayerStale`. ID reuse surfaces as the error code `operation_id_reused`.
 - CLI: `javelin layer` has subcommands create, state, history, publication, diff, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
-- Linux-only workspace commands (mount, path, unmount, checkpoint, watch, publish, discard, rebind, recover) are compiled only on Linux (`src/linux_layer.rs`, `crates/javelin-cli/src/cli_linux.rs`).
+- There is one Layer runtime on every platform: a plain directory cloned from the Layer's World base, captured without a daemon. No mount, helper or background process is involved.
 
-- Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. `capture_workspace` captures `.javelin/layers/<id>` and runs first in every `layer` and clone-backed `workspace` command that names a Layer. A head produced by Stack is never captured over (`Capture::behind`), because the directory lacks the stacked work. The CLI hook is `javelin checkpoint ID [--path DIR]`.
+- Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. `capture_workspace` captures `.javelin/layers/<id>` and runs first in every `layer` and `workspace` command that names a Layer. A head produced by Stack is never captured over (`Capture::behind`), because the directory lacks the stacked work. The CLI hook is `javelin checkpoint ID [--path DIR]`.
 
 Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
 directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
@@ -76,8 +76,10 @@ directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-c
 - `CloneStrategy` is the strategy that worked: `DirectoryClone`, `Snapshot`, `FileClone` or `Copy`. `CloneReport` adds the fallback reason and copied bytes.
 - Bases derive from the nearest cached base plus the changeset between derived snapshots. The cache keeps two bases and pins the World head.
 - `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
+- CLI `workspace` has subcommands create, open, path, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_layer` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. A published Layer's directory stays in place and is no longer captured.
+- Root `.javelinignore` rules (`IgnoreRules`, `src/ignore.rs`) hide untracked paths from capture; tracked paths are always visited.
 
-Code: src/layer.rs, src/capture.rs, src/linux_layer.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_linux.rs
+Code: src/layer.rs, src/capture.rs, src/ignore.rs, src/workspace.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_workspace.rs
 
 ## Stack and mechanical merge
 
@@ -183,14 +185,14 @@ Code: crates/javelin-collaboration/src/lib.rs, crates/javelin-collaboration/exam
 
 ## Known limits
 
-- OverlayFS workspace commands (mount, checkpoint, watch, and related) are compiled only on Linux. Clone-backed workspace commands run on every platform.
+- A Stack-produced head cannot be published from its workspace until directory refresh exists.
 - Capture and base materialization derive full snapshots (`manifest_at`, `checkpoint_manifest`), which scan every change row up to the base. They already walk the whole tree, so this is not their dominant cost. Commands no longer re-validate full state.
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.
 - Protocol frames and item counts are capped by the `limits` constants. Only protocol version 1 exists.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
 
-Code: src/linux_layer.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs
+Code: src/capture.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs
 
 ## Unverified
 

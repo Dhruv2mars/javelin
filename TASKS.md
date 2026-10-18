@@ -114,9 +114,14 @@ workflow may invoke or interpret Git.
   `39127272473` at `c0865c6`. NTFS and ReFS pass 33/34: Windows capture misses a
   same-size rewrite that restores mtime (no ChangeTime in the stat cache), listed in
   `gate2-known-failures.json`. Check this item when that list is empty. Worlds are seeded
-  through the library because clone-backed workspaces have no Publish yet.
+  through the library; `workspace publish` now exists, so the probe may switch to it.
 - [x] Retire the macOS and Windows sparse-backend proof tracks (2026-10-17).
-- [ ] Retire the OverlayFS helper once clone-backed Layers reach parity.
+- [x] Retire the OverlayFS helper once clone-backed Layers reach parity (2026-10-18,
+  PR `refactor/retire-overlayfs`). Clone-backed Layers are the only runtime.
+- [x] Clone-backed `workspace publish`: capture, then Publish the whole Layer, with
+  exact retries; refuses busy, uncertain or `behind` captures.
+- [ ] Publish from a workspace whose head came from Stack (waits on directory refresh).
+- [ ] Reclaim a published Layer's directory; today it stays until `workspace discard`.
 - [x] Independently verify committed filesystem-probe controls and negative cases
   at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
 - [x] Rerun final probe source `bce352e`, including termination of a stalled external
@@ -178,7 +183,7 @@ collisions are rejected; and CI exercises APFS, btrfs, XFS, ext4, ReFS and NTFS.
   `clonefile` with a root-only seal (`docs/workspace-approach.md`).
 - [x] ReFS rule: always clone where copy-on-write exists, through `CopyFile`
   verified by shared clusters. Docs aligned with the contract.
-- [x] CLI `workspace create|open|path|discard|recover` without `--helper`.
+- [x] CLI `workspace create|open|path|discard|publish|recover`.
 - [x] Tests: tree equality, isolation, derived bases, checkpoint apply, discard and
   recovery, collisions, and exact data sharing (APFS private size, FIEMAP).
 - [x] Local APFS, 100k files: warm clone 1.15–1.21 s, 0 bytes copied.
