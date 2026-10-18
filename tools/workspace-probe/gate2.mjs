@@ -338,8 +338,9 @@ try {
     const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
     const bulkWorld = await S.head(bulkRepo);
     await check('crash', 'interrupted-create-recovers', async () => {
-      const duration = await timed(S.createArgs(bulkRepo, 'time-create', bulkWorld));
-      await S.discard(bulkRepo, 'time-create');
+      // The fastest of three runs, so the kill points fall inside a typical create.
+      let duration = Infinity;
+      for (let t = 0; t < 3; t++) { duration = Math.min(duration, await timed(S.createArgs(bulkRepo, `time-create-${t}`, bulkWorld))); await S.discard(bulkRepo, `time-create-${t}`); }
       let landed = 0;
       for (const [i, delay] of points(duration).entries()) {
         const id = `kill-create-${i}`;
@@ -371,9 +372,12 @@ try {
       return { durationMs: duration, landed };
     });
     await check('crash', 'interrupted-discard-recovers-on-next-command', async () => {
-      const t = await S.create(bulkRepo, 'time-discard');
-      const duration = await timed(S.discardArgs(bulkRepo, 'time-discard'));
-      assert(!fs.existsSync(t.path), 'discarded Layer path still exists');
+      let duration = Infinity;
+      for (let n = 0; n < 3; n++) {
+        const t = await S.create(bulkRepo, `time-discard-${n}`);
+        duration = Math.min(duration, await timed(S.discardArgs(bulkRepo, `time-discard-${n}`)));
+        assert(!fs.existsSync(t.path), 'discarded Layer path still exists');
+      }
       let landed = 0;
       const outcomes = [];
       for (const [i, delay] of points(duration).entries()) {
