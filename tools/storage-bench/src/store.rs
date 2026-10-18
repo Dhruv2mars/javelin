@@ -53,12 +53,27 @@ impl Store {
                 Repository::init(&self.root)?;
             }
             Kind::Tuned => {
-                let c = Connection::open(self.db())?;
+                // Apply the selected durability before schema creation too.
+                let c = self.conn()?;
                 c.execute_batch(&format!(
                     "PRAGMA page_size={}; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL;",
                     self.page
                 ))?;
                 c.execute_batch(SCHEMA)?;
+                for (pragma, expected) in [
+                    ("page_size", self.page as i64),
+                    ("synchronous", if self.durable { 2 } else { 0 }),
+                ] {
+                    let actual = c.pragma_query_value(None, pragma, |r| r.get::<_, i64>(0))?;
+                    if actual != expected {
+                        return Err(format!("{pragma}: expected {expected}, got {actual}").into());
+                    }
+                }
+                let journal =
+                    c.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))?;
+                if journal != "wal" {
+                    return Err(format!("expected WAL, got {journal}").into());
+                }
             }
             Kind::Files => {
                 fs::create_dir(self.root.join("objects"))?;

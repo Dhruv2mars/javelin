@@ -18,7 +18,9 @@ also measures 10-edit store commits with 20 repetitions per variant, and kills
 measurements without rerunning the core matrix. Disk snapshots recreate store/base/Layer allocations for every repetition; every
 materialization also records its allocation delta. `--disk-only` repeats just those
 allocation cases, and `--page-size 4096` (or 16384) fixes the pilot choice for a
-repeat run. SQLite uses a closed byte-identical seed in a temporary directory outside
+repeat run. `--ingest-only` repeats fresh-store ingest with all repetitions,
+skipping materialization, allocation and checkpoint cases. SQLite uses a closed
+byte-identical seed in a temporary directory outside
 the measured scratch directory; B is freshly ingested through its actual write
 path. Seeds are removed on success.
 `--reps` must be at least five. `--stores A-real` (or a comma-separated list of
@@ -76,7 +78,9 @@ WAL, a 64 MiB cache, 2 GiB mmap limit and batches of 1,000. A pilot chooses 4/16
 pages and SELECT/incremental blob reads. Durable means SQLite FULL (fullfsync OFF)
 versus file fsync before rename and one fsync per touched directory per batch.
 None means SQLite OFF versus no file/directory fsync. Files use real Javelin blob
-IDs, 256 fanouts and read-only object files. There is one writer.
+IDs, 256 fanouts and read-only object files. Schema creation uses the selected
+SQLite policy too; the harness checks its effective page size, synchronous mode
+and WAL mode. There is one writer.
 
 Materialization timings include directory creation and writable file permissions,
 but exclude store-handle opening, sync, correctness checks and cleanup. B-copy uses explicit read/write;
@@ -84,9 +88,10 @@ B-clone never falls back. Linux requires FIEMAP shared extents on sampled files;
 APFS requires clone allocation to be less than half the explicit-copy control.
 The early SIGKILL test interrupts one deterministic pre-rename boundary. The
 100k decision supplement also kills actual ingest loops at 20 pseudorandom delays
-for each of B durable and A-tuned durable, verifies every final hash and SQLite
+for each of B durable and A-tuned durable (including 2 MiB payloads), verifies every final hash and SQLite
 integrity, and counts/sweeps leftover temps. Neither is a power-loss test.
-Checkpoint cases read/hash 10 edited files and commit their blobs; additional
+Checkpoint cases use an actual Layer clone of a live base (explicit copy on
+ext4), append/rewrite 10 files, then read/hash and commit their blobs; additional
 variants include a sparse-checkpoint-shaped SQLite row and a real full-manifest
 canonical-byte SQLite row. Both designs retain metadata in SQLite. These isolate
 store cost and exclude scanning, serialization, graph validation, cache saving

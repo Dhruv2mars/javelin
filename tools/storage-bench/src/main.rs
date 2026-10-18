@@ -156,7 +156,7 @@ fn run() -> Result<()> {
     };
     if args.iter().any(|a| a == "--help") {
         println!(
-            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only | --extras-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
+            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only | --extras-only | --ingest-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
         );
         return Ok(());
     }
@@ -173,6 +173,7 @@ fn run() -> Result<()> {
         fs::create_dir_all(p)?;
     }
     let disk_only = args.iter().any(|a| a == "--disk-only");
+    let ingest_only = args.iter().any(|a| a == "--ingest-only");
     let reps: usize = flag("--reps").unwrap_or("5".into()).parse()?;
     if reps < 5 {
         return Err("--reps must be >=5".into());
@@ -335,7 +336,7 @@ fn run() -> Result<()> {
     if real10k.is_some_and(|n| !n.is_finite() || n <= 0.0) {
         return Err("--real10k-ms must be finite and positive".into());
     }
-    let extras = sizes.contains(&100000) && !disk_only;
+    let extras = sizes.contains(&100000) && !disk_only && !ingest_only;
     for n in sizes {
         let blobs = fixture(n, n as u64);
         let bytes = blobs.iter().map(|b| b.bytes.len() as u64).sum();
@@ -483,6 +484,10 @@ fn run() -> Result<()> {
                         .collect::<Vec<_>>(),
                     "",
                 )?;
+            }
+            if ingest_only {
+                remove(&ingest.root)?;
+                continue;
             }
             if ingest_dir.is_some() {
                 // Source handles are closed and WAL is checkpointed. Seed the
