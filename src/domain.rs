@@ -155,6 +155,13 @@ impl RepoPath {
     }
 }
 
+/// Ordering matches `str`, so manifests can be range-searched by path prefix.
+impl std::borrow::Borrow<str> for RepoPath {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct OperationId(String);

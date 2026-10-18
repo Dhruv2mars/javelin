@@ -10,6 +10,7 @@ mod linux_layer;
 mod publish;
 mod repository;
 mod stack;
+mod workspace;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
 pub use ignore::IgnoreRules;
@@ -23,6 +24,10 @@ pub use linux_layer::{
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
+pub use workspace::{
+    BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,
+    WorkspaceRecovery, WorkspaceReport,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
