@@ -279,9 +279,12 @@ try {
     await ok(['workspace', 'recover', '--repo', bulkRepo]);
     // No deletions between readings: ReFS frees deleted space lazily, and a free landing
     // inside a measured step would hide a copy. The byte-copy control therefore runs last.
-    // A one-off free (an earlier deletion or truncation settling) spoils one attempt, so
-    // repeat with fresh Layers, deleting nothing, until free space never rose in a step.
+    // A one-off free (an earlier deletion or truncation settling) spoils one attempt: free
+    // space rises in a step, or the two identical creates disagree. Repeat with fresh
+    // Layers, deleting nothing, until an attempt is clean.
     const mb = n => Math.round(n / 1048576);
+    const spoiled = d => Object.entries(d).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * d.bulkMB).map(([k, v]) => `${k} ${v}`)
+      .concat(Math.abs(d.createMB - d.secondCreateMB) > 0.25 * d.bulkMB ? [`identical creates used ${d.createMB} and ${d.secondCreateMB} MB`] : []);
     const attempts = [];
     let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -301,13 +304,13 @@ try {
       fk = await stableFree();
       deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
       attempts.push(deltas);
-      if (!Object.entries(deltas).some(([k, v]) => k !== 'bulkMB' && v < -0.05 * mb(bulkBytes))) break;
+      if (!spoiled(deltas).length) break;
     }
     report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
     await check('sharing', 'byte-copy-control-is-measurable', () => {
       assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
-      const rose = Object.entries(deltas).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * mb(bulkBytes));
-      assert(rose.length === 0, `free space rose during measured steps in all ${attempts.length} attempts (last: ${rose.map(([k, v]) => `${k} ${v}`).join(', ')}); a concurrent free could hide a copy`);
+      const why = spoiled(deltas);
+      assert(why.length === 0, `every one of ${attempts.length} attempts was spoiled by a concurrent free (last: ${why.join(', ')}); it could hide a copy`);
       return { deltas, attempts: attempts.length };
     });
     await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
