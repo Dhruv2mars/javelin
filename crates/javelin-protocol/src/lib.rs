@@ -1,26 +1,28 @@
 //! Versioned, provider-independent repository protocol over the public native API.
-//! Version 1 covers negotiation, have/want, bounded object batches and Publish.
-//! Transport, authentication and hosting are outside this crate.
+//! Version 2 moves snapshots as derived trees: negotiation, have/want by hash,
+//! bounded object batches, Publish of a tree root, and root-down fetch with an
+//! optional path prefix. Transport, authentication and hosting are outside this crate.
 
 pub mod codec;
+pub mod fetch;
 pub mod receiver;
 pub mod sender;
 
 pub use codec::{Kind, Message, Outcome};
+pub use fetch::{Fetched, fetch};
 pub use receiver::serve;
 pub use sender::push;
 
-/// Fixed version 1 limits. The codec enforces them before allocating protocol
-/// buffers. Capped native reads bound encoded bytes, not parser heap or graph work.
+/// Fixed version 2 limits. The codec enforces them before allocating protocol
+/// buffers. A snapshot has no size limit: it is bounded per object (one blob, one
+/// tree chunk) and per frame, and spans as many frames as it needs.
 pub mod limits {
     pub const MAX_FRAME: usize = 16 << 20;
     pub const MAX_BLOB: usize = 8 << 20;
-    pub const MAX_BLOBS: usize = 1024;
+    /// One tree chunk, the native decoder's bound.
+    pub const MAX_TREE: usize = javelin::tree::MAX_CHUNK;
+    pub const MAX_OBJECTS: usize = 1024;
     pub const MAX_WANT: usize = 4096;
-    pub const MAX_MANIFESTS: usize = 16;
-    pub const MAX_ENTRIES: usize = 65_536;
-    pub const MAX_PATH: usize = 4096;
-    pub const MAX_DEPTH: usize = 256;
     pub const MAX_DETAIL: usize = 1024;
 }
 

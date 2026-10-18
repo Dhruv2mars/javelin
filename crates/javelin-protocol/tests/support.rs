@@ -2,8 +2,8 @@
 
 use std::io::Cursor;
 
-use javelin::{FileEntry, Manifest, ObjectId, RepoPath, Repository};
-use javelin_protocol::{Message, ProtocolError, codec, serve};
+use javelin::{FileEntry, Manifest, ObjectId, RepoPath, Repository, tree::Chunk};
+use javelin_protocol::{Kind, Message, ProtocolError, codec, limits::MAX_TREE, serve};
 use tempfile::TempDir;
 
 pub fn repo() -> (TempDir, Repository) {
@@ -12,7 +12,8 @@ pub fn repo() -> (TempDir, Repository) {
     (dir, repo)
 }
 
-/// A small source tree with a regular file, an executable and a symlink.
+/// A small source tree with a regular file, an executable and a symlink. Returns
+/// its tree root, its blobs and the snapshot.
 pub fn fixture(repo: &mut Repository) -> (ObjectId, Vec<(ObjectId, Vec<u8>)>, Manifest) {
     let files: [(&str, &[u8], u8); 3] = [
         ("bin/tool", b"#!/bin/sh\necho tool\n", 1),
@@ -34,8 +35,44 @@ pub fn fixture(repo: &mut Repository) -> (ObjectId, Vec<(ObjectId, Vec<u8>)>, Ma
         entries.push((RepoPath::parse(path).unwrap(), entry));
     }
     let manifest = Manifest::new(entries).unwrap();
-    let id = repo.put_manifest(&manifest).unwrap();
-    (id, blobs, manifest)
+    let root = repo.put_snapshot(&manifest).unwrap();
+    (root, blobs, manifest)
+}
+
+/// Every chunk of the tree at `root`, children before parents.
+pub fn chunks(repo: &Repository, root: ObjectId) -> Vec<(ObjectId, Vec<u8>)> {
+    fn visit(repo: &Repository, id: ObjectId, out: &mut Vec<(ObjectId, Vec<u8>)>) {
+        if out.iter().any(|(seen, _)| *seen == id) {
+            return;
+        }
+        let bytes = repo.tree_bytes_bounded(id, MAX_TREE).unwrap();
+        let chunk = Chunk::decode(&bytes).unwrap();
+        let below: Vec<_> = chunk
+            .children()
+            .chain(chunk.entries().filter_map(|(_, node)| match node {
+                javelin::tree::Node::Dir(id) => Some(id),
+                javelin::tree::Node::File(_) => None,
+            }))
+            .collect();
+        for child in below {
+            visit(repo, child, out);
+        }
+        out.push((id, bytes));
+    }
+    let mut out = Vec::new();
+    visit(repo, root, &mut out);
+    out
+}
+
+/// An `Objects` message with the blobs first, then the chunks.
+pub fn objects(blobs: &[(ObjectId, Vec<u8>)], chunks: &[(ObjectId, Vec<u8>)]) -> Message {
+    Message::Objects(
+        blobs
+            .iter()
+            .map(|(id, b)| (Kind::Blob, *id, b.clone()))
+            .chain(chunks.iter().map(|(id, b)| (Kind::Tree, *id, b.clone())))
+            .collect(),
+    )
 }
 
 pub fn frame(body: &[u8]) -> Vec<u8> {
@@ -44,8 +81,12 @@ pub fn frame(body: &[u8]) -> Vec<u8> {
     out
 }
 
+pub fn msg(message: &Message) -> Vec<u8> {
+    frame(&codec::encode(message).unwrap())
+}
+
 pub fn hello() -> Vec<u8> {
-    frame(&codec::encode(&Message::Hello { min: 1, max: 1 }).unwrap())
+    msg(&Message::Hello { min: 2, max: 2 })
 }
 
 /// Runs one receiver session over raw bytes and decodes every reply frame.

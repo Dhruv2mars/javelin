@@ -55,15 +55,12 @@ fn script(
     outcome: fn(ObjectId) -> Outcome,
 ) -> impl Fn(&Message) -> Message {
     move |message| match message {
-        Message::Hello { .. } => Message::HelloOk { version: 1 },
+        Message::Hello { .. } => Message::HelloOk { version: 2 },
         Message::Want(items) => Message::Missing(missing(items)),
-        Message::Blobs(b) => Message::Stored {
-            count: b.len() as u32,
+        Message::Objects(o) => Message::Stored {
+            count: o.len() as u32,
         },
-        Message::Manifests(m) => Message::Stored {
-            count: m.len() as u32,
-        },
-        Message::Publish { manifest, .. } => Message::Outcome(outcome(*manifest)),
+        Message::Publish { tree, .. } => Message::Outcome(outcome(*tree)),
         _ => Message::Error {
             code: "unexpected_message".into(),
             detail: String::new(),
@@ -75,10 +72,10 @@ fn v(n: u64) -> VersionNumber {
     VersionNumber::new(n).unwrap()
 }
 
-fn accepted(manifest: ObjectId) -> Outcome {
+fn accepted(tree: ObjectId) -> Outcome {
     Outcome::Accepted {
         number: v(1),
-        manifest,
+        tree,
         operation: OperationId::parse("op-1").unwrap(),
     }
 }
@@ -89,12 +86,9 @@ fn accepts_a_consistent_outcome() {
     assert_eq!(result.unwrap(), accepted(id));
     let blobs: usize = seen
         .iter()
-        .map(|m| {
-            if let Message::Blobs(b) = m {
-                b.len()
-            } else {
-                0
-            }
+        .map(|m| match m {
+            Message::Objects(o) => o.iter().filter(|(k, _, _)| *k == Kind::Blob).count(),
+            _ => 0,
         })
         .sum();
     assert_eq!(blobs, 3);
@@ -103,11 +97,11 @@ fn accepts_a_consistent_outcome() {
 #[test]
 fn refuses_duplicate_missing_items_before_sending_objects() {
     let (result, seen, _) = against(script(
-        |items| std::iter::repeat_n(items[1], 4096).collect(),
+        |items| std::iter::repeat_n(items[0], 2).collect(),
         accepted,
     ));
     assert_eq!(result.unwrap_err().code, "unexpected_message");
-    assert!(!seen.iter().any(|m| matches!(m, Message::Blobs(_))));
+    assert!(!seen.iter().any(|m| matches!(m, Message::Objects(_))));
 }
 
 #[test]
@@ -121,18 +115,18 @@ fn refuses_outcomes_that_do_not_answer_the_publish() {
     let cases: [fn(ObjectId) -> Outcome; 5] = [
         |m| Outcome::Accepted {
             number: v(0),
-            manifest: m,
+            tree: m,
             operation: OperationId::parse("op-1").unwrap(),
         },
         |m| Outcome::Accepted {
             number: v(2),
-            manifest: m,
+            tree: m,
             operation: OperationId::parse("op-1").unwrap(),
         },
         |_| accepted(ObjectId::parse(&"ab".repeat(32)).unwrap()),
         |m| Outcome::Accepted {
             number: v(1),
-            manifest: m,
+            tree: m,
             operation: OperationId::parse("unrelated").unwrap(),
         },
         |_| Outcome::Stale { actual: v(0) },

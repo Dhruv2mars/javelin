@@ -341,55 +341,97 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        let head = head_in(&tx)?;
         if crate::publish::operation_exists_in(&tx, operation)? {
             return Err(Error::OperationIdReused(operation.clone()));
         }
         // Revalidate the entire candidate graph inside the publication transaction.
         let candidate = manifest_in(&tx, manifest)?;
-        let trees = Trees::new(Sql::write(&tx));
-        let root = trees.build(candidate.entries())?;
-        if let Some(attempt) = attempt_in(&tx, operation)? {
-            if attempt.expected != expected || attempt.tree != Some(root) {
-                return Err(Error::OperationIdReused(operation.clone()));
-            }
-            let outcome = attempt.outcome(&tx)?;
-            tx.commit()?;
-            return Ok(outcome);
-        }
-        if expected > head.number {
-            return Err(Error::MissingVersion(expected));
-        }
-        let accepted = expected == head.number;
-        let result = if accepted {
-            next_number(head.number)?
-        } else {
-            head.number
-        };
-        tx.execute(
-            "INSERT INTO attempts(id,expected,tree,accepted,result) VALUES(?1,?2,?3,?4,?5)",
-            params![
-                operation.as_str(),
-                expected.sql(),
-                root.to_string(),
-                accepted,
-                result.sql()
-            ],
-        )?;
-        let outcome = if accepted {
-            let changes = trees.diff(head.tree, root)?;
-            AdvanceOutcome::Accepted {
-                version: append_version_in(&tx, &head, operation, &changes, root)?,
-            }
-        } else {
-            AdvanceOutcome::Stale { actual: result }
-        };
+        let root = Trees::new(Sql::write(&tx)).build(candidate.entries())?;
+        let outcome = advance_in(&tx, operation, expected, root, false)?;
         #[cfg(test)]
         test_boundary("before_commit");
         tx.commit()?;
         #[cfg(test)]
         test_boundary("after_commit");
         Ok(outcome)
+    }
+
+    /// `compare_and_advance` to a received tree. The tree must be stored, its
+    /// changed file contents valid, and it must be canonical: the root derived from
+    /// `expected`'s tree plus the tree diff must equal `tree`. Work is O(change x
+    /// depth); unchanged subtrees are never read.
+    pub fn advance_to_tree(
+        &mut self,
+        operation: &OperationId,
+        expected: VersionNumber,
+        tree: ObjectId,
+    ) -> Result<AdvanceOutcome> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_format(&tx)?;
+        let outcome = advance_in(&tx, operation, expected, tree, true)?;
+        tx.commit()?;
+        Ok(outcome)
+    }
+
+    /// Validates a snapshot's contents and stores its tree; returns the root. This
+    /// is how a client turns a full snapshot into a tree to push. O(snapshot).
+    pub fn put_snapshot(&mut self, manifest: &Manifest) -> Result<ObjectId> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for entry in manifest.entries().values() {
+            validate_entry(&tx, entry)?;
+        }
+        let root = Trees::new(Sql::write(&tx)).build(manifest.entries())?;
+        tx.commit()?;
+        Ok(root)
+    }
+
+    pub fn has_tree(&self, id: ObjectId) -> Result<bool> {
+        self.has_object(id, ObjectKind::Tree)
+    }
+
+    /// Verified, canonical bytes of one tree chunk, refused over `max_bytes`.
+    pub fn tree_bytes_bounded(&self, id: ObjectId, max_bytes: usize) -> Result<Vec<u8>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let bytes = read_object_bounded(&tx, id, ObjectKind::Tree, max_bytes)?;
+        tree::Chunk::decode(&bytes).map_err(|_| Error::CorruptObject(id))?;
+        tx.commit()?;
+        Ok(bytes)
+    }
+
+    /// Stores one received tree chunk. Its encoding must be canonical, and every
+    /// child chunk, subdirectory and file content it names must already be stored
+    /// with the right kind, so a stored tree always has its whole closure and a
+    /// receiver that has a chunk needs nothing below it.
+    pub fn put_tree(&mut self, bytes: &[u8]) -> Result<ObjectId> {
+        let chunk = tree::Chunk::decode(bytes)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let refs = chunk
+            .children()
+            .map(|id| (id, ObjectKind::Tree))
+            .chain(chunk.entries().map(|(_, node)| match node {
+                Node::File(entry) => (entry.content(), ObjectKind::Blob),
+                Node::Dir(id) => (id, ObjectKind::Tree),
+            }));
+        for (id, expected) in refs {
+            let kind: Option<i64> = tx
+                .prepare_cached("SELECT kind FROM objects WHERE id=?1")?
+                .query_row([id.to_string()], |r| r.get(0))
+                .optional()?;
+            match kind.map(ObjectKind::decode).transpose()? {
+                None => return Err(Error::MissingObject(id)),
+                Some(kind) if kind != expected => return Err(Error::WrongObjectKind(id)),
+                _ => {}
+            }
+        }
+        let id = insert_object(&tx, ObjectKind::Tree, bytes)?;
+        tx.commit()?;
+        Ok(id)
     }
 
     /// Checks physical SQLite integrity plus every stored object's native graph,
@@ -929,6 +971,70 @@ impl WorldIndex for Index<'_> {
     fn check_entry(&self, entry: &FileEntry) -> Result<()> {
         validate_entry(self.trees.store().conn, entry)
     }
+}
+
+/// Records a World attempt for candidate root `root`. A `received` root is
+/// verified first: changed contents must be valid and the root canonical.
+fn advance_in(
+    tx: &Connection,
+    operation: &OperationId,
+    expected: VersionNumber,
+    root: ObjectId,
+    received: bool,
+) -> Result<AdvanceOutcome> {
+    let head = head_in(tx)?;
+    if crate::publish::operation_exists_in(tx, operation)? {
+        return Err(Error::OperationIdReused(operation.clone()));
+    }
+    if let Some(attempt) = attempt_in(tx, operation)? {
+        if attempt.expected != expected || attempt.tree != Some(root) {
+            return Err(Error::OperationIdReused(operation.clone()));
+        }
+        return attempt.outcome(tx);
+    }
+    if expected > head.number {
+        return Err(Error::MissingVersion(expected));
+    }
+    let trees = Trees::new(Sql::write(tx));
+    let changes = if received {
+        let base = tree_in(tx, expected)?;
+        let changes = trees.diff(base, root)?;
+        for entry in changes.entries().values().flatten() {
+            validate_entry(tx, entry)?;
+        }
+        if trees.apply(base, &changes)? != root {
+            return Err(Error::InvalidInput("tree is not in canonical form".into()));
+        }
+        Some(changes)
+    } else {
+        None
+    };
+    let accepted = expected == head.number;
+    let result = if accepted {
+        next_number(head.number)?
+    } else {
+        head.number
+    };
+    tx.execute(
+        "INSERT INTO attempts(id,expected,tree,accepted,result) VALUES(?1,?2,?3,?4,?5)",
+        params![
+            operation.as_str(),
+            expected.sql(),
+            root.to_string(),
+            accepted,
+            result.sql()
+        ],
+    )?;
+    if !accepted {
+        return Ok(AdvanceOutcome::Stale { actual: result });
+    }
+    let changes = match changes {
+        Some(changes) => changes,
+        None => trees.diff(head.tree, root)?,
+    };
+    Ok(AdvanceOutcome::Accepted {
+        version: append_version_in(tx, &head, operation, &changes, root)?,
+    })
 }
 
 /// Verifies every version row, its changeset against the parent tree, its derived

@@ -1,6 +1,8 @@
 //! Reference receiver. Objects are stored only through the public native API and
-//! accepted only when their pre-store ID equals the claimed ID. World references are
-//! written only by `compare_and_advance`, which revalidates the whole graph.
+//! accepted only when their computed ID equals the claimed ID. A tree chunk is
+//! stored only after everything it names, so having a tree means having all of it.
+//! World references are written only by `advance_to_tree`, which verifies the
+//! changed part of the candidate tree. Fetch reads any stored object by ID.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -9,7 +11,8 @@ use javelin::Repository;
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{VERSION, read_frame, write_frame},
+    codec::{OBJECT_OVERHEAD, VERSION, read_frame, write_frame},
+    limits::*,
 };
 
 /// Serves one session. Any refusal is reported to the peer and ends the session.
@@ -60,14 +63,12 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
     match message {
         Message::Want(items) => {
             // Streamed probes still hash stored bytes, so repeats amplify work.
-            if items.iter().collect::<BTreeSet<_>>().len() != items.len() {
-                return Err(ProtocolError::new("malformed", "duplicate Want item"));
-            }
+            unique(&items)?;
             let mut missing = Vec::new();
             for (kind, id) in items {
                 let found = match kind {
                     Kind::Blob => repo.has_blob(id),
-                    Kind::Manifest => repo.has_manifest(id),
+                    Kind::Tree => repo.has_tree(id),
                 }?;
                 if !found {
                     missing.push((kind, id));
@@ -75,41 +76,67 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             }
             Ok(Message::Missing(missing))
         }
-        Message::Blobs(blobs) => {
-            for (claimed, bytes) in &blobs {
-                let actual = javelin::ObjectId::for_blob(bytes);
+        Message::Objects(objects) => {
+            for (kind, claimed, bytes) in &objects {
+                let actual = kind.id(bytes);
                 if actual != *claimed {
                     return Err(mismatch(*claimed, actual));
                 }
-                repo.put_blob(bytes)?;
+                match kind {
+                    Kind::Blob => repo.put_blob(bytes)?,
+                    Kind::Tree => repo.put_tree(bytes)?,
+                };
             }
             Ok(Message::Stored {
-                count: blobs.len() as u32,
-            })
-        }
-        Message::Manifests(manifests) => {
-            for (claimed, manifest) in &manifests {
-                let actual = javelin::ObjectId::for_manifest(manifest);
-                if actual != *claimed {
-                    return Err(mismatch(*claimed, actual));
-                }
-                // put_manifest still validates the complete referenced content.
-                repo.put_manifest(manifest)?;
-            }
-            Ok(Message::Stored {
-                count: manifests.len() as u32,
+                count: objects.len() as u32,
             })
         }
         Message::Publish {
             operation,
             expected,
-            manifest,
+            tree,
         } => {
-            let outcome = repo.compare_and_advance(&operation, expected, manifest)?;
-            Ok(Message::Outcome(Outcome::from_native(&outcome, manifest)?))
+            let outcome = repo.advance_to_tree(&operation, expected, tree)?;
+            Ok(Message::Outcome(Outcome::from_native(&outcome)?))
+        }
+        Message::Resolve { version } => {
+            let world = match version {
+                Some(number) => repo.version(number)?,
+                None => repo.head()?,
+            };
+            Ok(Message::Resolved {
+                number: world.number,
+                id: world.id,
+                tree: world.tree,
+            })
+        }
+        // The reply is the longest prefix of the request that fits one frame.
+        Message::Get(items) => {
+            unique(&items)?;
+            let mut objects = Vec::new();
+            let mut size = 5;
+            for (kind, id) in items.into_iter().take(MAX_OBJECTS) {
+                let bytes = match kind {
+                    Kind::Blob => repo.read_blob_bounded(id, MAX_BLOB)?,
+                    Kind::Tree => repo.tree_bytes_bounded(id, MAX_TREE)?,
+                };
+                size += OBJECT_OVERHEAD + bytes.len();
+                if !objects.is_empty() && size > MAX_FRAME {
+                    break;
+                }
+                objects.push((kind, id, bytes));
+            }
+            Ok(Message::Objects(objects))
         }
         _ => Err(unexpected()),
     }
+}
+
+fn unique(items: &[(Kind, javelin::ObjectId)]) -> Result<(), ProtocolError> {
+    if items.iter().collect::<BTreeSet<_>>().len() != items.len() {
+        return Err(ProtocolError::new("malformed", "duplicate object request"));
+    }
+    Ok(())
 }
 
 fn mismatch(claimed: javelin::ObjectId, stored: javelin::ObjectId) -> ProtocolError {
