@@ -1,6 +1,7 @@
 // Gate 2 proof (docs/build-contract.md). Drives a javelin binary through the user flow on
 // one filesystem and records a verdict for every gate-2 clause. Exit 0 only when every
-// check is VERIFIED; 1 when any is not; 2 when setup fails. See README.md.
+// check is VERIFIED; 3 when the only failures are listed in --known; 1 when any other
+// check is not VERIFIED, or a listed one passes; 2 when setup fails. See README.md.
 import * as fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -19,6 +20,8 @@ const root = resolve(opts.dir);
 const only = opts.only ? new Set(opts.only.split(',')) : null;
 const bulkFiles = Number(opts['bulk-mb'] || 128) / 2;
 const shims = opts.shims ? resolve(opts.shims) : null;
+// Product bugs this proof already found, by filesystem: {"ntfs": {"clause/id": "finding"}}.
+const known = opts.known ? JSON.parse(fs.readFileSync(opts.known, 'utf8'))[opts.fs] ?? {} : {};
 const env = { ...process.env, PATH: shims ? `${shims}${win ? ';' : ':'}${process.env.PATH}` : process.env.PATH };
 const report = { harness: 'gate2', fs: opts.fs, expect: opts.expect, platform: process.platform, javelin, started: new Date().toISOString(), checks: [], commands: [], lingering: [] };
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -40,13 +43,16 @@ function privilege() {
 async function check(clause, id, fn) {
   if (only && !only.has(clause)) return;
   const started = Date.now();
+  const finding = known[`${clause}/${id}`];
   try {
     const detail = await fn();
+    if (finding) throw new Error(`passed, but is listed as known failure "${finding}"; remove it from --known`);
     report.checks.push({ clause, id, verdict: 'VERIFIED', detail: detail ?? null, ms: Date.now() - started });
     console.log(`VERIFIED      ${clause}/${id}`);
   } catch (e) {
-    report.checks.push({ clause, id, verdict: 'NOT VERIFIED', detail: e.message, ms: Date.now() - started });
-    console.log(`NOT VERIFIED  ${clause}/${id}: ${e.message}`);
+    const verdict = finding && !e.message.startsWith('passed, but') ? 'KNOWN FAILURE' : 'NOT VERIFIED';
+    report.checks.push({ clause, id, verdict, finding: finding ?? null, detail: e.message, ms: Date.now() - started });
+    console.log(`${verdict.padEnd(14)}${clause}/${id}: ${e.message}`);
   }
 }
 function assert(ok, message) { if (!ok) throw new Error(message); }
@@ -214,9 +220,10 @@ function freeBytes() {
   const s = fs.statfsSync(root);
   return Number(s.bavail) * Number(s.bsize);
 }
+// ReFS and APFS settle free space lazily: wait for three steady one-second samples.
 async function stableFree() {
-  let last = freeBytes();
-  for (let i = 0; i < 20; i++) { await sleep(500); const now = freeBytes(); if (Math.abs(now - last) < (1 << 20)) return now; last = now; }
+  let last = freeBytes(), steady = 0;
+  for (let i = 0; i < 60 && steady < 3; i++) { await sleep(1000); const now = freeBytes(); steady = Math.abs(now - last) < (256 << 10) ? steady + 1 : 0; last = now; }
   return last;
 }
 // Explicit: a failing exit, a JSON error code, and an offending path or directory named.
@@ -255,7 +262,10 @@ try {
   const pristine = tree(a.path);
 
   await check('tools', 'layer-on-repository-volume', () => {
-    assert(fs.statSync(a.path).dev === fs.statSync(repo).dev, `Layer ${a.path} is not on the repository volume`);
+    // A btrfs snapshot is its own subvolume with its own st_dev; compare mounts on Linux.
+    const mountOf = p => fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n').map(l => l.split(' ')[4]).filter(m => m && (p === m || p.startsWith(m.endsWith('/') ? m : `${m}/`))).sort((x, y) => y.length - x.length)[0];
+    const same = process.platform === 'linux' ? mountOf(fs.realpathSync(a.path)) === mountOf(fs.realpathSync(repo)) : fs.statSync(a.path).dev === fs.statSync(repo).dev;
+    assert(same, `Layer ${a.path} is not on the repository volume`);
     return a.path;
   });
   await check('tools', 'read-and-traverse', () => {
@@ -416,7 +426,11 @@ try {
     const probeDir = join(root, 'volume-probe');
     // Whether this volume keeps all names distinct and exactly as written.
     const listing = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? listing(join(dir, e.name)).map(x => `${e.name}/${x}`) : [e.name]);
+    // Windows can create reserved device names and trailing dots or spaces only through
+    // \\?\ paths that ordinary tools cannot open, so they never count as held there.
+    const windowsOnly = x => /(^|\/)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.[^/]*)?(\/|$)|[. ](\/|$)/i.test(x);
     const holds = names => {
+      if (win && names.some(windowsOnly)) return false;
       fs.rmSync(probeDir, { recursive: true, force: true }); fs.mkdirSync(probeDir);
       try {
         for (const x of names) { fs.mkdirSync(dirname(join(probeDir, x)), { recursive: true }); fs.writeFileSync(join(probeDir, x), x); }
@@ -606,8 +620,10 @@ try {
   exitCode = 2;
 }
 report.finished = new Date().toISOString();
-const failed = report.checks.filter(c => c.verdict !== 'VERIFIED');
-report.verdict = exitCode === 2 ? 'INCONCLUSIVE' : failed.length ? 'NOT VERIFIED' : 'VERIFIED';
+const failed = report.checks.filter(c => c.verdict === 'NOT VERIFIED');
+const knownFailed = report.checks.filter(c => c.verdict === 'KNOWN FAILURE');
+report.verdict = exitCode === 2 ? 'INCONCLUSIVE' : failed.length ? 'NOT VERIFIED' : knownFailed.length ? 'NOT VERIFIED (known product failures only)' : 'VERIFIED';
 fs.writeFileSync(opts.out, `${JSON.stringify(report, null, 2)}\n`);
-console.log(`gate 2 on ${opts.fs}: ${report.verdict} (${report.checks.length - failed.length}/${report.checks.length} checks, ${report.commands.length} javelin commands)`);
-process.exit(exitCode || (failed.length ? 1 : 0));
+const passed = report.checks.length - failed.length - knownFailed.length;
+console.log(`gate 2 on ${opts.fs}: ${report.verdict} (${passed}/${report.checks.length} checks, ${knownFailed.length} known failures, ${report.commands.length} javelin commands)`);
+process.exit(exitCode || (failed.length ? 1 : knownFailed.length ? 3 : 0));

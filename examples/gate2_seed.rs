@@ -42,9 +42,17 @@ fn main() {
     }
     let manifest = Manifest::new(entries).expect("valid manifest");
     let manifest = repo.put_manifest(&manifest).expect("store manifest");
-    let head = repo.history().expect("history").last().expect("World 0").number;
+    let head = repo
+        .history()
+        .expect("history")
+        .last()
+        .expect("World 0")
+        .number;
     let operation = OperationId::parse(&format!("gate2-seed-{}", head.get() + 1)).unwrap();
-    match repo.compare_and_advance(&operation, head, manifest).expect("advance") {
+    match repo
+        .compare_and_advance(&operation, head, manifest)
+        .expect("advance")
+    {
         AdvanceOutcome::Accepted { version } => {
             println!("{}", json!({"ok": true, "version": version.number.get()}))
         }

@@ -85,7 +85,7 @@ function walk(root) {
   (function visit(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name), path = relative(root, full).split(sep).join('/');
-      if (e.isSymbolicLink()) out[path] = { type: 'symlink', target: fs.readlinkSync(full).split(sep).join('/'), dir: Boolean(fs.statSync(full, { throwIfNoEntry: false })?.isDirectory()) };
+      if (e.isSymbolicLink()) out[path] = { type: 'symlink', target: fs.readlinkSync(full).split(sep).join('/'), dir: (() => { try { return fs.statSync(full).isDirectory(); } catch { return false; } })() };
       else if (e.isDirectory()) visit(full);
       else if (e.isFile()) out[path] = { type: 'file', full, stat: fs.statSync(full) };
     }
@@ -131,14 +131,15 @@ function changed(a, b) {
   return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(p => JSON.stringify(a[p] ?? null) !== JSON.stringify(b[p] ?? null)).sort();
 }
 
-function materialize(s, m, dir) {
+// `all` is the whole tree, so a symlink to a directory outside `m` still gets its type.
+function materialize(s, m, dir, all = m) {
   fs.mkdirSync(dir, { recursive: true });
   for (const [path, e] of Object.entries(m)) {
     const full = join(dir, ...path.split('/'));
     fs.mkdirSync(join(full, '..'), { recursive: true });
     if (e.type === 'symlink') {
       const resolved = posix.normalize(posix.join(posix.dirname(path), e.target));
-      const isDir = Object.keys(m).some(p => p.startsWith(`${resolved}/`));
+      const isDir = Object.keys(all).some(p => p.startsWith(`${resolved}/`));
       fs.symlinkSync(e.target, full, isDir ? 'dir' : 'file');
     } else { fs.copyFileSync(join(s.dir, 'blobs', e.hash), full); if (e.exec) fs.chmodSync(full, 0o755); }
   }
@@ -218,7 +219,7 @@ function open(s, l) {
   const want = manifest(s, l), base = worlds(s)[l.world];
   const delta = changed(base, want);
   for (const p of delta) fs.rmSync(join(staging, ...p.split('/')), { force: true });
-  materialize(s, Object.fromEntries(delta.filter(p => want[p]).map(p => [p, want[p]])), staging);
+  materialize(s, Object.fromEntries(delta.filter(p => want[p]).map(p => [p, want[p]])), staging, want);
   if (lie !== 'no-refusal') {
     const got = walk(staging);
     const lost = [...new Set([...Object.keys(want), ...Object.keys(got)])].find(p => !want[p] || !got[p]);
