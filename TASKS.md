@@ -106,6 +106,18 @@ workflow may invoke or interpret Git.
   `workspace create`. The clone itself takes about 1.2 s.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
+  - [x] Daemonless capture of plain Layer directories (`src/capture.rs`): stat cache,
+    racy rule with per-entry trust, stable reads, atomic checksummed cache, generated
+    idempotent operation IDs, and the `javelin checkpoint` lifecycle hook.
+  - [x] Measure the real capture path at 100k files (`examples/capture_bench.rs`).
+  - [x] Capture the clone-backed workspace first in every `layer` and `workspace`
+    command that names a Layer; never capture over a Stack-produced head.
+  - [ ] Refresh a clone-backed directory from a Stack-produced head (today capture
+    refuses with `behind` until this exists).
+  - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
+  - [ ] Make repository validation incremental: every call re-reads and re-hashes
+    every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
+    seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
 - [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
 - [x] Retire the macOS and Windows sparse-backend proof tracks (2026-10-17).
 - [ ] Retire the OverlayFS helper once clone-backed Layers reach parity.
@@ -175,8 +187,8 @@ collisions are rejected; and CI exercises APFS, btrfs, XFS, ext4, ReFS and NTFS.
   recovery, collisions, and exact data sharing (APFS private size, FIEMAP).
 - [x] Local APFS, 100k files: warm clone 1.15–1.21 s, 0 bytes copied.
 - [ ] CI green on all six filesystems.
-- [ ] Wire capture into every workspace and layer command, whichever of this PR
-  and daemonless capture merges second.
+- [x] Wire capture into every workspace and layer command, whichever of this PR
+  and daemonless capture merges second (done in daemonless capture).
 
 Detailed per-workstream logs were removed on 2026-10-17; merged PRs hold that
 history. Current state is in `docs/architecture.md` and `docs/workspace-approach.md`.

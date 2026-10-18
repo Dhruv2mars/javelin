@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use javelin::{
-    CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId, OperationId,
-    PublicationReceipt, PublishOutcome, Repository, Result, VersionNumber,
+    Capture, CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId,
+    OperationId, PublicationReceipt, PublishOutcome, Repository, Result, VersionNumber,
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... --root ABS --helper ABS [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  recover                  Finish interrupted steps and reclaim all trash\n\nLinux OverlayFS workspace, with --root ABS --helper ABS (requires configured root-owned mount helper and sudo -n):\n  init                     Initialize runtime layout for this repository\n  mount ID                 Open or resume a writable Layer path\n  path ID                  Print an existing mounted writable path\n  unmount ID               Unmount, retaining private edits\n  checkpoint ID --operation ID\n                           Explicitly freeze, capture, and thaw the view\n  watch ID [--quiet-ms N] [--duration-ms N]\n                           Foreground stable checkpoints (250ms samples; 1000ms quiet)\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Publish the whole explicit checkpoint; keep view read-only\n  discard ID --operation ID Remove a view through the runtime's bound head\n  rebind ID --revision OLD --to-revision NEW\n                           Explicitly select the newer immutable native head\n  recover                  Resolve pending operations and remove discarded views\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nWatch is opt-in. OverlayFS workspace commands require Linux; clone-backed workspaces run everywhere.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... --root ABS --helper ABS [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  recover                  Finish interrupted steps and reclaim all trash\n\nLinux OverlayFS workspace, with --root ABS --helper ABS (requires configured root-owned mount helper and sudo -n):\n  init                     Initialize runtime layout for this repository\n  mount ID                 Open or resume a writable Layer path\n  path ID                  Print an existing mounted writable path\n  unmount ID               Unmount, retaining private edits\n  checkpoint ID --operation ID\n                           Explicitly freeze, capture, and thaw the view\n  watch ID [--quiet-ms N] [--duration-ms N]\n                           Foreground stable checkpoints (250ms samples; 1000ms quiet)\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Publish the whole explicit checkpoint; keep view read-only\n  discard ID --operation ID Remove a view through the runtime's bound head\n  rebind ID --revision OLD --to-revision NEW\n                           Explicitly select the newer immutable native head\n  recover                  Resolve pending operations and remove discarded views\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nWatch is opt-in. OverlayFS workspace commands require Linux; clone-backed workspaces run everywhere.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -33,6 +33,57 @@ pub(super) fn update(command: &str, operation: &OperationId, update: LayerUpdate
         text,
         if applied { 0 } else { 3 },
     )
+}
+
+const BEHIND: &str = "the Layer head came from layer stack, which does not update its \
+     directory; capturing the directory would revert the stacked work, so nothing was captured";
+
+fn capture_detail(capture: &Capture) -> Value {
+    json!({
+        "operation": capture.operation,
+        "update": capture.update,
+        "hashed": capture.hashed,
+        "uncertain": capture.uncertain,
+        "rebuilt": capture.rebuilt,
+        "behind": capture.behind,
+    })
+}
+
+fn uncertain_text(capture: &Capture) -> Option<String> {
+    (!capture.uncertain.is_empty()).then(|| {
+        let paths: Vec<_> = capture.uncertain.iter().map(|p| p.as_str()).collect();
+        format!(
+            "Still changing, kept at their prior state: {}",
+            paths.join(", ")
+        )
+    })
+}
+
+/// Adds the capture that ran before a command, if any, to its output.
+pub(super) fn captured(capture: Option<Capture>, mut output: Output) -> Output {
+    let Some(capture) = capture else {
+        return output;
+    };
+    let mut lines = Vec::new();
+    match (&capture.update, &capture.operation) {
+        (Some(LayerUpdate::Applied { state }), Some(operation)) => lines.push(format!(
+            "Captured workspace edits (operation {}): {}",
+            operation.as_str(),
+            describe(state)
+        )),
+        (Some(LayerUpdate::Stale { .. }), _) => {
+            lines.push("Workspace capture was stale; edits stay in the directory".into())
+        }
+        _ if capture.behind => lines.push(format!("Workspace not captured: {BEHIND}")),
+        _ => {}
+    }
+    lines.extend(uncertain_text(&capture));
+    output.0["capture"] = capture_detail(&capture);
+    if !lines.is_empty() {
+        lines.push(std::mem::take(&mut output.1));
+        output.1 = lines.join("\n");
+    }
+    output
 }
 
 struct Args {
@@ -231,8 +282,9 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
         None
     };
     let mut repo = Repository::open(args.root()?)?;
+    let capture = repo.capture_workspace(&id)?;
     let command = format!("layer {action}");
-    match action {
+    let output = match action {
         "create" | "clone" => {
             let head = if let Some(checkpoint) = checkpoint {
                 repo.clone_layer(&id, checkpoint)?
@@ -250,25 +302,25 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
                 repo.create_layer(&id, &base)?
             };
             let state = LayerState::Active { head };
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "state": state}),
                 describe(&state),
-            ))
+            )
         }
         "state" => {
             let state = repo.layer_state(&id)?;
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "state": state}),
                 describe(&state),
-            ))
+            )
         }
         "history" => {
             let history = repo.layer_history(&id)?;
             let text = history.iter().map(describe).collect::<Vec<_>>().join("\n");
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "history": history}),
                 text,
-            ))
+            )
         }
         "diff" => {
             let head = match revision {
@@ -303,19 +355,20 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
                     .collect::<Vec<_>>()
                     .join("\n")
             };
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "head": head, "changes": changes}),
                 text,
-            ))
+            )
         }
         "discard" => {
             let expected = historical_head(&repo, &id, revision.expect("required revision"))?;
             let operation = operation.expect("required operation");
             let outcome = repo.discard_layer(&operation, &expected)?;
-            Ok(update(&command, &operation, outcome))
+            update(&command, &operation, outcome)
         }
         _ => unreachable!(),
-    }
+    };
+    Ok(captured(capture, output))
 }
 
 fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
@@ -534,6 +587,43 @@ fn publication(command: &str, receipt: PublicationReceipt) -> Output {
     )
 }
 
+/// Daemonless capture: scan the Layer directory and checkpoint any difference.
+pub fn checkpoint(args: Vec<OsString>) -> Result<Output> {
+    let args = Args::parse(args, &["--repo", "--path"], 1)?;
+    let id = args.layer()?;
+    let mut repo = Repository::open(args.root()?)?;
+    // Never default to a subdirectory of the Layer: everything outside it would read
+    // as deleted. A clone-backed Layer captures its own directory.
+    let workspace = repo.workspace_root(&id)?;
+    let path = match args.options.get("--path") {
+        Some(path) => PathBuf::from(path),
+        None if workspace.try_exists()? => workspace,
+        None => std::env::current_dir()?,
+    };
+    let capture = repo.capture_directory(&id, &path)?;
+    if capture.behind {
+        return Err(Error::InvalidInput(BEHIND.into()));
+    }
+    let detail = capture_detail(&capture);
+    let mut output = match (capture.update.clone(), capture.operation.clone()) {
+        (Some(outcome), Some(operation)) => update("checkpoint", &operation, outcome),
+        _ => {
+            let state = LayerState::Active {
+                head: capture.head.clone(),
+            };
+            success(
+                json!({"ok": true, "command": "checkpoint", "unchanged": true, "state": state}),
+                format!("Unchanged; {}", describe(&state)),
+            )
+        }
+    };
+    output.0["capture"] = detail;
+    if let Some(text) = uncertain_text(&capture) {
+        output.1 = format!("{}\n{text}", output.1);
+    }
+    Ok(output)
+}
+
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {
     let args = Args::parse(
         args,
@@ -546,6 +636,7 @@ pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError
     let source = CheckpointId::parse(text(args.required("--source")?)?)?;
     let operation = args.operation()?;
     let mut repo = Repository::open(args.root()?)?;
+    let capture = repo.capture_workspace(&id)?;
     let target = historical_head(&repo, &id, revision)?;
     let outcome = javelin_stack::stack_layer(&mut repo, &operation, &target, source)?;
     let (mut reply, text, code) = match outcome {
@@ -585,5 +676,5 @@ pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError
         target.checkpoint().object(),
         source.object()
     );
-    Ok((reply, text, code))
+    Ok(captured(capture, (reply, text, code)))
 }

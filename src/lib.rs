@@ -3,6 +3,7 @@
 //! plain-directory Layers with daemonless capture are the accepted replacement
 //! (docs/workspace-approach.md).
 
+pub mod capture;
 mod domain;
 mod ignore;
 mod layer;
@@ -13,6 +14,7 @@ mod repository;
 mod stack;
 mod workspace;
 
+pub use capture::Capture;
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
 pub use ignore::IgnoreRules;
 pub use layer::{
