@@ -6,7 +6,7 @@ use javelin::{
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n  javelin workspace <command> ... --root ABS --helper ABS [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  recover                  Finish interrupted steps and reclaim all trash\n\nLinux OverlayFS workspace, with --root ABS --helper ABS (requires configured root-owned mount helper and sudo -n):\n  init                     Initialize runtime layout for this repository\n  mount ID                 Open or resume a writable Layer path\n  path ID                  Print an existing mounted writable path\n  unmount ID               Unmount, retaining private edits\n  checkpoint ID --operation ID\n                           Explicitly freeze, capture, and thaw the view\n  watch ID [--quiet-ms N] [--duration-ms N]\n                           Foreground stable checkpoints (250ms samples; 1000ms quiet)\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Publish the whole explicit checkpoint; keep view read-only\n  discard ID --operation ID Remove a view through the runtime's bound head\n  rebind ID --revision OLD --to-revision NEW\n                           Explicitly select the newer immutable native head\n  recover                  Resolve pending operations and remove discarded views\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nWatch is opt-in. OverlayFS workspace commands require Linux; clone-backed workspaces run everywhere.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -35,7 +35,7 @@ pub(super) fn update(command: &str, operation: &OperationId, update: LayerUpdate
     )
 }
 
-const BEHIND: &str = "the Layer head came from layer stack, which does not update its \
+pub(super) const BEHIND: &str = "the Layer head came from layer stack, which does not update its \
      directory; capturing the directory would revert the stacked work, so nothing was captured";
 
 fn capture_detail(capture: &Capture) -> Value {
@@ -185,7 +185,7 @@ pub fn run(mut args: Vec<OsString>) -> Result<Output> {
     let action = args.remove(0);
     let action = text(&action)?;
     if group == "workspace" {
-        return workspace(action, args);
+        return cli_workspace::run(action, args);
     }
     layer(action, args)
 }
@@ -366,129 +366,10 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
     Ok(captured(capture, output))
 }
 
-fn workspace(action: &str, args: Vec<OsString>) -> Result<Output> {
-    if !args.iter().any(|arg| arg == "--helper") {
-        return cli_workspace::run(action, args);
-    }
-    let count = match action {
-        "init" | "recover" => 0,
-        "mount" | "path" | "unmount" | "checkpoint" | "discard" | "publish" | "rebind"
-        | "watch" => 1,
-        _ => {
-            return Err(Error::InvalidInput(format!(
-                "unknown workspace command {action}; see javelin --help"
-            )));
-        }
-    };
-    let allowed: &[&str] = if action == "publish" {
-        &[
-            "--repo",
-            "--root",
-            "--helper",
-            "--operation",
-            "--actor",
-            "--context",
-            "--trace",
-            "--allow-missing-trace",
-        ]
-    } else if action == "watch" {
-        &[
-            "--repo",
-            "--root",
-            "--helper",
-            "--quiet-ms",
-            "--duration-ms",
-        ]
-    } else if action == "rebind" {
-        &[
-            "--repo",
-            "--root",
-            "--helper",
-            "--revision",
-            "--to-revision",
-        ]
-    } else if action == "checkpoint" || action == "discard" {
-        &["--repo", "--root", "--helper", "--operation"]
-    } else {
-        &["--repo", "--root", "--helper"]
-    };
-    let args = Args::parse(args, allowed, count)?;
-    let root = PathBuf::from(args.required("--root")?);
-    let helper = PathBuf::from(args.required("--helper")?);
-    let layer = if count == 1 {
-        Some(args.layer()?)
-    } else {
-        None
-    };
-    let operation = if ["checkpoint", "discard", "publish"].contains(&action) {
-        Some(args.operation()?)
-    } else {
-        None
-    };
-    let rebind = if action == "rebind" {
-        args.required("--revision")?;
-        args.required("--to-revision")?;
-        Some((
-            args.number("--revision")?.unwrap(),
-            args.number("--to-revision")?.unwrap(),
-        ))
-    } else {
-        None
-    };
-    let watch = if action == "watch" {
-        let quiet = args.number("--quiet-ms")?.unwrap_or(1000);
-        let duration = args.number("--duration-ms")?;
-        if quiet < 250 || duration == Some(0) {
-            return Err(Error::InvalidInput(
-                "--quiet-ms must be >=250 and --duration-ms must be positive".into(),
-            ));
-        }
-        Some((quiet, duration))
-    } else {
-        None
-    };
-    let attribution = AttributionInput::parse(&args)?;
-    if !cfg!(target_os = "linux") {
-        return Err(Error::Unsupported("workspace commands require Linux OverlayFS; macOS and Windows ordinary paths are not supported".into()));
-    }
-    #[cfg(unix)]
-    {
-        cli_linux::run(
-            action,
-            args.root()?,
-            (root, helper),
-            layer,
-            operation,
-            attribution,
-            cli_linux::Options { rebind, watch },
-        )
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (
-            root,
-            helper,
-            layer,
-            operation,
-            attribution.agent,
-            attribution.context,
-            attribution.trace,
-            attribution.allow_missing_trace,
-            rebind,
-            watch,
-        );
-        unreachable!()
-    }
-}
-
-#[cfg(unix)]
-#[path = "cli_linux.rs"]
-mod cli_linux;
-
 #[path = "cli_workspace.rs"]
 mod cli_workspace;
 
-// Parsing is platform independent; only the runtime caller stores raw context.
+/// Publish attribution as typed; `store` saves a trace file as a context Blob.
 struct AttributionInput {
     agent: bool,
     context: Option<ObjectId>,
@@ -526,7 +407,6 @@ impl AttributionInput {
         })
     }
 
-    #[cfg(unix)]
     fn store(self, repo: &mut Repository) -> Result<javelin::PublishAttribution> {
         if !self.agent {
             return Ok(javelin::PublishAttribution::Human);

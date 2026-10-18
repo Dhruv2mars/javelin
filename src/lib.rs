@@ -1,14 +1,11 @@
 //! Native immutable repository storage, Layers, Stack and whole-Layer Publish.
-//! Linux binds Layers to ordinary paths through the OverlayFS helper. Clone-backed
-//! plain-directory Layers with daemonless capture are the accepted replacement
-//! (docs/workspace-approach.md).
+//! Layers are plain directories cloned from an immutable World base and captured
+//! without a daemon (docs/workspace-approach.md).
 
 pub mod capture;
 mod domain;
 mod ignore;
 mod layer;
-#[cfg(unix)]
-mod linux_layer;
 mod publish;
 mod repository;
 mod stack;
@@ -21,10 +18,6 @@ pub use domain::{
 pub use ignore::IgnoreRules;
 pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate, PathDiff,
-};
-#[cfg(unix)]
-pub use linux_layer::{
-    CaptureOutcome, LayerMountHelper, LinuxLayerRuntime, RecoveryReport, ViewStatus,
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};

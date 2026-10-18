@@ -186,7 +186,6 @@ version = "0.1.0"
 dependencies = [
  "javelin",
  "javelin-stack",
- "libc",
  "rusqlite",
  "serde_json",
  "tempfile",

@@ -1,24 +1,35 @@
-//! Clone-backed Layer directories: `javelin workspace <command>` without `--helper`.
+//! Clone-backed Layer directories: `javelin workspace <command>`.
 use std::ffi::OsString;
 
 use javelin::{
-    CloneReport, CloneStrategy, Error, LayerState, Repository, Result, VersionNumber,
-    WorkspaceReport,
+    CloneReport, CloneStrategy, Error, LayerHead, LayerId, LayerState, LayerUpdate, Repository,
+    Result, VersionNumber, WorkspaceReport,
 };
 use serde_json::json;
 
-use super::{Args, Output, captured, success};
+use super::{Args, AttributionInput, BEHIND, Output, captured, publication, success};
 
 pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
     let (allowed, count): (&[&str], usize) = match action {
         "create" => (&["--repo", "--world"], 1),
         "open" | "path" => (&["--repo"], 1),
         "discard" => (&["--repo", "--operation"], 1),
+        "publish" => (
+            &[
+                "--repo",
+                "--operation",
+                "--actor",
+                "--context",
+                "--trace",
+                "--allow-missing-trace",
+            ],
+            1,
+        ),
         "recover" => (&["--repo"], 0),
         _ => {
             return Err(Error::InvalidInput(format!(
                 "unknown workspace command {action}; clone-backed workspaces support \
-                 create, open, path, discard and recover (OverlayFS commands need --helper)"
+                 create, open, path, discard, publish and recover"
             )));
         }
     };
@@ -27,9 +38,10 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         .number("--world")?
         .map(VersionNumber::new)
         .transpose()?;
-    let operation = (action == "discard")
+    let operation = matches!(action, "discard" | "publish")
         .then(|| args.operation())
         .transpose()?;
+    let attribution = AttributionInput::parse(&args)?;
     let mut repo = Repository::open(args.root()?)?;
     let command = format!("workspace {action}");
     if action == "recover" {
@@ -72,15 +84,7 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         }
         "discard" => {
             let operation = operation.expect("required operation");
-            let expected = repo
-                .layer_history(&layer)?
-                .into_iter()
-                .rev()
-                .find_map(|state| match state {
-                    LayerState::Active { head } => Some(head),
-                    _ => None,
-                })
-                .ok_or_else(|| Error::InvalidInput("Layer has no active history".into()))?;
+            let expected = latest_active(&repo, &layer)?;
             let discard = repo.discard_workspace(&operation, &expected)?;
             let (mut reply, text, code) =
                 super::update(&command, &operation, discard.update.clone());
@@ -88,9 +92,53 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
             reply["recovery"] = json!(discard.recovery);
             (reply, text, code)
         }
+        "publish" => {
+            let operation = operation.expect("required operation");
+            let attribution = attribution.store(&mut repo)?;
+            match repo.publication(&operation)? {
+                Some(receipt)
+                    if receipt.expected.layer() != &layer || receipt.attribution != attribution =>
+                {
+                    return Err(Error::OperationIdReused(operation));
+                }
+                Some(receipt) => publication(&command, receipt),
+                None => {
+                    // Publish only what the directory holds, so no edit is silently left out.
+                    if let Some(capture) = &capture {
+                        if capture.behind {
+                            return Err(Error::InvalidInput(BEHIND.into()));
+                        }
+                        if matches!(capture.update, Some(LayerUpdate::Stale { .. }))
+                            || !capture.uncertain.is_empty()
+                        {
+                            return Err(Error::Busy(
+                                "files changed while being captured; nothing was published".into(),
+                            ));
+                        }
+                    }
+                    let expected = latest_active(&repo, &layer)?;
+                    let receipt =
+                        repo.publish_layer(&operation, &expected, &attribution, |_, _| Ok(()))?;
+                    publication(&command, receipt)
+                }
+            }
+        }
         _ => unreachable!(),
     };
     Ok(captured(capture, output))
+}
+
+/// The newest Active head, the CAS token for terminal discard and Publish. A Layer that
+/// already ended keeps its last Active head, so the outcome reports why it is stale.
+fn latest_active(repo: &Repository, layer: &LayerId) -> Result<LayerHead> {
+    repo.layer_history(layer)?
+        .into_iter()
+        .rev()
+        .find_map(|state| match state {
+            LayerState::Active { head } => Some(head),
+            _ => None,
+        })
+        .ok_or_else(|| Error::InvalidInput("Layer has no active history".into()))
 }
 
 fn report_text(report: &WorkspaceReport) -> String {
