@@ -99,7 +99,11 @@ workflow may invoke or interpret Git.
   OSes: plain directories cloned from an immutable World base, daemonless capture
   (`docs/workspace-approach.md`, gate 2 amended 2026-10-17).
 - [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, per-file clone
-  (XFS, ReFS) and a reported copy fallback, with deferred discard.
+  (XFS, ReFS) and a reported copy fallback, with deferred discard. See
+  "Clone-backed Layers" under Current work.
+- [ ] Make per-call state validation incremental. `manifest_in` hashes every blob on
+  each validated call, about 5 s at 100k files and 661 MB, and that dominates
+  `workspace create`. The clone itself takes about 1.2 s.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
 - [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
@@ -153,6 +157,26 @@ workflow may invoke or interpret Git.
 - [ ] Verify the public release as a new developer and record GA evidence.
 
 ## Current work
+
+### Clone-backed Layers (feat/clone-layers)
+
+Done means a Layer is a plain directory cloned from a sealed World base, with
+the strategy found by trial and reported; discard is deferred and crash-safe;
+collisions are rejected; and CI exercises APFS, btrfs, XFS, ext4, ReFS and NTFS.
+
+- [x] `src/workspace.rs` and `src/workspace/clone.rs`: bases, the bounded cache,
+  the lock, recovery, bounded trash, collision checks and per-OS clone primitives.
+- [x] Measure the read-only base → writable Layer path on APFS. Choose directory
+  `clonefile` with a root-only seal (`docs/workspace-approach.md`).
+- [x] ReFS rule: always clone where copy-on-write exists, through `CopyFile`
+  verified by shared clusters. Docs aligned with the contract.
+- [x] CLI `workspace create|open|path|discard|recover` without `--helper`.
+- [x] Tests: tree equality, isolation, derived bases, checkpoint apply, discard and
+  recovery, collisions, and exact data sharing (APFS private size, FIEMAP).
+- [x] Local APFS, 100k files: warm clone 1.15–1.21 s, 0 bytes copied.
+- [ ] CI green on all six filesystems.
+- [ ] Wire capture into every workspace and layer command, whichever of this PR
+  and daemonless capture merges second.
 
 Detailed per-workstream logs were removed on 2026-10-17; merged PRs hold that
 history. Current state is in `docs/architecture.md` and `docs/workspace-approach.md`.

@@ -17,7 +17,7 @@ relative to the parent, plus pointers to content-addressed blobs.
 | APFS (macOS) | one `clonefile(2)` of the base directory | no |
 | btrfs (Linux) | one subvolume snapshot of the base | no |
 | XFS, bcachefs (Linux) | per-file `FICLONE` reflink | no |
-| ReFS / Dev Drive (Windows) | per-file block clone, or copy when create speed matters more | no (clone) |
+| ReFS / Dev Drive (Windows) | per-file block clone through `CopyFile` | no |
 | ext4, NTFS, others | per-file byte copy, reported as `copy` | yes |
 
 No mount, FUSE, file provider, kernel extension, system extension, root helper,
@@ -132,9 +132,11 @@ What the numbers say:
 - **The stat walk is fast enough without a daemon.** Rescanning 100k files takes
   0.25–0.4 s on Linux, Windows and this laptop, and finds exactly the 10 edits
   every time. The hosted macOS runner is slower, at 1.2 s.
-- **Windows block clone saves disk but is 3–5 times slower than copying.** The
-  clone crate issues about eight calls per file; a leaner implementation might
-  narrow the gap (unconfirmed). Windows runner times varied about 2× between the
+- **Windows block clone saves disk but was 3–5 times slower than copying** with the
+  `reflink-copy` crate, which issues about eight calls per file. The product instead
+  calls `CopyFileExW`, which block-clones by itself on ReFS and Dev Drive (Windows 11
+  24H2, Server 2025). The contract rule wins over create speed: where copy-on-write
+  exists, a Layer never duplicates unchanged data. Windows runner times varied about 2× between the
   two runs, so ranges are shown. ReFS free-space deltas were not usable (they were
   negative or below the size of the files written), so that cell is n/a.
 - **A hybrid that copies small files and clones large ones is not worth it.**
@@ -173,11 +175,95 @@ out.
 - **Isolation is per directory.** A process can still write into another Layer's
   path if it chooses to. That matches every surveyed tool and is not enforced.
 - **Unconfirmed:**
+  - Whether `CopyFile` clones files smaller than one cluster; the probe checks one
+    256 KiB file, and the report counts no copied bytes once cloning is verified.
   - Spotlight and Time Machine behavior with many clones. Excluding the store from
     indexing is untested.
   - Whether a standard (non-admin) Windows user can call the block-clone FSCTL on
     a Dev Drive. Hosted runners are admin.
-  - Whether a dedicated Windows block-clone path can approach copy speed.
+  - Whether `CopyFile` block clone approaches plain copy speed at 100k files.
+
+## Implementation
+
+`src/workspace.rs` and `src/workspace/clone.rs` implement this decision. The CLI
+exposes it as `javelin workspace create|open|path|discard|recover` without
+`--helper`; the OverlayFS commands keep `--helper` until they are retired.
+
+**Store layout.** Everything lives under `.javelin/`, on the repository's volume:
+`bases/<N>` holds World N, `layers/<id>` holds each Layer, `tmp/` holds staging, and
+`trash/` holds renamed-away directories. `workspace.lock` serializes workspace
+changes between processes. `Repository::layer_workspace` returns a Layer's root and
+base paths for capture.
+
+**Strategy by trial.** Javelin tries each primitive on the real volume and never
+reads the filesystem name. The order is a one-call tree clone (APFS directory
+`clonefile`, btrfs subvolume snapshot), then a per-file clone (`FICLONE`, per-file
+`clonefile`, `CopyFile` block clone), then a byte copy. On Windows, a 256 KiB probe
+copy must share its first cluster (`FSCTL_GET_RETRIEVAL_POINTERS`) before Javelin
+reports `file_clone`. Every result reports the strategy, the reason each faster
+strategy failed, and the bytes copied. Javelin never hardlinks.
+
+**Bases.** A cold base is written from stored objects, into a btrfs subvolume
+where possible, flushed, published by rename, then sealed. `base(N)` derives from
+the nearest cached base: one clone plus the exact changeset between the two
+manifests. At most two bases are kept, and the World head and the base in use are
+pinned. Others are renamed into trash.
+
+**Sealing measured on this laptop** (M1, APFS, 100k files and 661–697 MB):
+
+| Read-only base → writable Layer | Create | Note |
+| --- | ---: | --- |
+| directory `clonefile`, unsealed base | 1.3–2.0 s | Layer comes out writable |
+| directory `clonefile` + `chmod` walk to unseal 0444/0555 modes | 5.6–6.3 s | the walk un-shares metadata |
+| directory `clonefile` of a base with deny-write ACLs on every entry | 2.5–3.6 s | sealing walk 4.9–6.2 s; clone carries no ACLs without `CLONE_ACL` |
+| `copyfile(COPYFILE_CLONE \| COPYFILE_RECURSIVE)` | 16–18 s | fails outright on a mode-sealed base |
+| per-file `clonefile` walk | 15–17 s | |
+
+The `clonefile(2)` man page discourages directory clones in favour of `copyfile(3)`,
+but `copyfile` was 10 times slower here, so Javelin keeps the directory clone and
+seals only the base root, with mode 000. A clone needs read access to its source
+(mode 000 returns `EACCES`), so Javelin opens the root to 0700 under the lock,
+clones it, and seals it again. The Layer root is then set to 0755, which is O(1)
+per Layer. Recovery reseals any base a crash left open. Windows has no directory
+mode to seal, so base protection there is by convention only.
+
+**Discard and recovery.** Discard records the terminal event in the database
+first, then renames the directory into `trash/`, so a crash between the two steps
+is finished by the next command. Every workspace command first moves abandoned
+staging and discarded Layers into trash. It then deletes at most 4,096 trash
+entries, so a 100k-file discard costs each command a bounded amount of work.
+`workspace recover` reclaims everything. A trash entry for a Layer that is not
+discarded is never deleted. btrfs Layers are deleted by emptying them and calling
+`rmdir`.
+
+**Unrepresentable Worlds.** Base materialization creates every name fresh. If a
+volume folds case (`Foo` and `foo`) or Unicode normalization (NFC and NFD `é`),
+the second name already exists, and Javelin fails with `unsupported`: "this World
+cannot be materialized here". On Windows, reserved device names, trailing dots or
+spaces, and `<>:"|?*` are rejected before writing. Partial staging goes to trash.
+
+**Durability.** Linux flushes the filesystem with one `syncfs` before each publishing
+rename. macOS and Windows sync each file that Javelin writes. A Windows Layer created
+by byte copy (`CopyFile`) is not flushed file by file.
+
+**Product measurements, this laptop (APFS, 100k files, 661 MB):**
+
+- Cold base materialization: 12.8–14.7 s, including a per-file `fsync`.
+- Warm Layer clone: 1.15–1.21 s, with a disk delta of 10–66 MB (a noisy free-space
+  reading) and 0 bytes copied.
+- The exact sharing test reports APFS private size 0 for a cloned 8 MiB file.
+- Deferred discard rename: instant. Reclaiming 100k files takes 5.9–6.1 s, spread over
+  commands.
+- **Not yet within 1–2 s end to end:** each `Repository` call re-validates full
+  state, and `manifest_in` re-reads and hashes every referenced blob. At this size
+  `layer_state` costs about 5 s, `read_checkpoint` 3 s and `history` 5 s, so
+  `open_workspace` takes about 9.4 s, of which the clone is 1.2 s. Recording the
+  Layer (`layer_base` plus `create_layer`) takes another 13 s. This is pre-existing
+  repository behavior and is tracked in `TASKS.md`.
+
+CI (`Workspace / <fs>` in `ci.yml`) runs the workspace tests on APFS, btrfs, XFS and
+ext4 loop or runner volumes, and on ReFS Dev Drive and NTFS. Each job asserts its
+expected strategy and records a 20k-file cold and warm measurement.
 
 ## Sources
 

@@ -66,3 +66,74 @@ jobs:
 
       - name: Build release binary
         run: cargo build --locked --release --workspace --all-features
+
+  # Clone-backed Layers on each filesystem. Only volume setup uses sudo or admin;
+  # the tests run as the ordinary runner user with no mount, helper or daemon.
+  workspace:
+    name: Workspace / ${{ matrix.fs }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, fs: apfs, expect: directory_clone }
+          - { os: ubuntu-24.04, fs: btrfs, expect: snapshot }
+          - { os: ubuntu-24.04, fs: xfs, expect: file_clone }
+          - { os: ubuntu-24.04, fs: ext4, expect: copy }
+          - { os: windows-2025, fs: refs, expect: file_clone }
+          - { os: windows-2025, fs: ntfs, expect: copy }
+    defaults:
+      run:
+        shell: bash
+    env:
+      JAVELIN_WORKSPACE_EXPECT: ${{ matrix.expect }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+
+      - name: Build tests
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo test --release --locked -p javelin --test workspace_layers --no-run
+          cargo test --release --locked -p javelin-cli --test cli_workspace --no-run
+
+      - name: Runner disk
+        if: matrix.fs == 'apfs' || matrix.fs == 'ext4' || matrix.fs == 'ntfs'
+        run: echo "JAVELIN_WORKSPACE_TEST_DIR=$RUNNER_TEMP/workspace" >> "$GITHUB_ENV"
+
+      - name: Linux loop image
+        if: matrix.fs == 'btrfs' || matrix.fs == 'xfs'
+        run: |
+          sudo apt-get install -y -qq xfsprogs btrfs-progs > /dev/null
+          truncate -s 6G "$RUNNER_TEMP/fs.img"
+          sudo mkfs.${{ matrix.fs }} -q "$RUNNER_TEMP/fs.img" > /dev/null
+          sudo mkdir -p /mnt/fs && sudo mount -o loop "$RUNNER_TEMP/fs.img" /mnt/fs
+          sudo chown "$(id -u):$(id -g)" /mnt/fs
+          echo "JAVELIN_WORKSPACE_TEST_DIR=/mnt/fs/workspace" >> "$GITHUB_ENV"
+
+      - name: ReFS Dev Drive
+        if: matrix.fs == 'refs'
+        shell: pwsh
+        run: |
+          $vhd = "$env:RUNNER_TEMP\devdrive.vhdx"
+          "create vdisk file=`"$vhd`" maximum=20480 type=expandable`nattach vdisk`ncreate partition primary`nassign letter=R" | Set-Content "$env:RUNNER_TEMP\dp.txt"
+          diskpart /s "$env:RUNNER_TEMP\dp.txt" | Out-Null
+          try { Format-Volume -DriveLetter R -DevDrive -Confirm:$false -Force | Out-Null; "devdrive=yes" }
+          catch { Format-Volume -DriveLetter R -FileSystem ReFS -Confirm:$false -Force | Out-Null; "devdrive=no ($_)" }
+          fsutil fsinfo volumeinfo R: | Select-String "File System Name|Block Refcounting|Supports Block"
+          "JAVELIN_WORKSPACE_TEST_DIR=R:\workspace" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Test on ${{ matrix.fs }}
+        run: |
+          if [[ $RUNNER_OS == Linux ]]; then mkdir -p "$JAVELIN_WORKSPACE_TEST_DIR" && df -T "$JAVELIN_WORKSPACE_TEST_DIR"; fi
+          [[ $RUNNER_OS == Windows ]] || [[ $(id -u) != 0 ]]
+          cargo test --release --locked -p javelin --test workspace_layers -- --nocapture
+          cargo test --release --locked -p javelin-cli --test cli_workspace
+
+      - name: Measure cold base and warm Layer (20k files)
+        run: |
+          { echo "### ${{ matrix.fs }}"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          JAVELIN_WORKSPACE_BENCH_FILES=20000 cargo test --release --locked -p javelin --test workspace_layers workspace_bench -- --ignored --nocapture 2>&1 | grep -E "built|cold|warm|record|discard|reclaim" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
