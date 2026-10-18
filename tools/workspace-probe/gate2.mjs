@@ -203,7 +203,9 @@ async function seed(name, bulk) {
   writeFixture(fixture, bulk);
   const r = S.seedWorld(repo, specOf(fixture));
   assert(r.code === 0, `seeding World 1 failed: ${r.out}`);
-  fs.rmSync(fixture, { recursive: true });
+  // A bulk fixture stays until the disk measurements end: ReFS frees deleted space
+  // lazily, and a free landing inside a measured step would hide a copy.
+  if (!bulk) fs.rmSync(fixture, { recursive: true });
   return repo;
 }
 let snapshots = 0;
@@ -488,6 +490,8 @@ try {
     // The first Layer of a World also materializes its base, once; measure Layers after it.
     const warm = await S.create(bulkRepo, 'bulk-0');
     const worldTree = tree(warm.path);
+    // Reclaim all trash now, so no deferred reclaim frees space inside a measured create.
+    await ok(['workspace', 'recover', '--repo', bulkRepo]);
     const f0 = await stableFree();
     const l1 = await S.create(bulkRepo, 'bulk-1');
     const f1 = await stableFree();
@@ -601,17 +605,21 @@ try {
           assert(!fs.existsSync(path), `Layer ${id} is discarded but its directory is still at ${path} after the next command`);
           outcomes.push('rolled-forward');
         }
-        await S.path(bulkRepo, id);
+        // Only create, open, discard and recover take the store lock and reclaim trash
+        // (bounded); the next of those, here a fresh Layer, must reclaim this one.
+        await S.create(bulkRepo, `${id}-next`);
+        await S.discard(bulkRepo, `${id}-next`);
         const left = [];
         // Sealed World bases are unreadable (mode 000) and hold only World data.
         const entries = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch (e) { if (e.code === 'EACCES') return []; throw e; } };
         (function search(d) { for (const e of entries(d)) { if (e.name === marker) left.push(join(d, e.name)); else if (e.isDirectory() && !e.isSymbolicLink()) search(join(d, e.name)); } })(root);
-        assert(left.length === 0, `discarded data not reclaimed by the next command: ${left.join(', ')}`);
+        assert(left.length === 0, `discarded data not reclaimed by the next reclaiming workspace command: ${left.join(', ')}`);
       }
       assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms discard`);
       return { durationMs: duration, landed, outcomes };
     });
     await check('crash', 'repository-integrity-after-interruptions', () => S.integrity(bulkRepo).then(() => true));
+    fs.rmSync(join(root, 'bulk-fixture'), { recursive: true });
   }
 
   await check('process', 'no-javelin-process-between-commands', () => {

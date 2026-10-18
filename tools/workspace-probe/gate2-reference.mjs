@@ -243,7 +243,9 @@ function discard(s, id, operation) {
   const out = { command: 'workspace discard', operation, update: { outcome: 'applied', state: { layer: id, state: 'discarded' } } };
   if (l.state === 'discarded') return out;
   if (lie === 'torn-discard') {
-    for (const e of Object.values(walk(l.path))) if (e.full) fs.rmSync(e.full, { force: true });
+    // Delete in place, slowly enough that the harness's kills land mid-way.
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    for (const [i, e] of Object.values(walk(l.path)).entries()) { if (e.full) fs.rmSync(e.full, { force: true }); if (i % 50 === 0) Atomics.wait(pause, 0, 0, 20); }
     fs.rmSync(l.path, { recursive: true, force: true });
     writeJson(layerFile(s, id), { ...l, state: 'discarded' });
   } else {
