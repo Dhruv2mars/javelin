@@ -46,7 +46,13 @@ javelin layer clone ID --checkpoint HASH
 javelin layer stack ID --revision N --source HASH --operation ID
 javelin layer discard ID --revision N --operation ID
 
-javelin workspace init
+javelin workspace create ID [--world N]
+javelin workspace open ID
+javelin workspace path ID
+javelin workspace discard ID --operation ID
+javelin workspace recover
+
+javelin workspace init --root ABS --helper ABS
 javelin workspace mount ID
 javelin workspace path ID
 javelin workspace unmount ID
@@ -60,8 +66,9 @@ javelin workspace recover
 ```
 
 All `layer` and `workspace` commands accept `--repo DIR` and `--json`. The default
-repository is the current directory, with no ancestor search. Every `workspace`
-command requires `--root ABS` and `--helper ABS`. `--allow-missing-trace` is a flag. Other options take separate values
+repository is the current directory, with no ancestor search. Clone-backed
+`workspace` commands take no `--helper`. The Linux OverlayFS `workspace` commands
+require `--root ABS` and `--helper ABS`, and passing `--helper` selects them. `--allow-missing-trace` is a flag. Other options take separate values
 and may appear before or after positional arguments. Unknown, repeated, and
 irrelevant options are errors. Use `./name` for a path that starts with `-`.
 
@@ -90,6 +97,35 @@ Later edits to either Layer cannot change that source checkpoint. Creating or
 cloning again with the same ID and snapshot returns the original revision 0,
 even if the Layer subsequently advanced or was discarded. Read `layer state`
 to find its current state.
+
+## Clone-backed workspaces
+
+A clone-backed workspace is a plain directory, `.javelin/layers/ID`, cloned from
+its World base on the repository's volume. No mount, helper, `sudo` or daemon is
+involved, and it works on macOS, Linux and Windows. See
+[workspace-approach.md](workspace-approach.md) for the design and measurements.
+
+- `create ID [--world N]` creates the Layer, as `layer create` does, and opens its
+  directory. Retrying with the same ID and World is safe.
+- `open ID` materializes the directory of an existing active Layer, including one
+  made by `layer clone`, by cloning its base and applying its checkpoint. An
+  existing directory is returned untouched, with `created: false`.
+- `path ID` prints the directory. JSON adds `exists`, `base_version` and
+  `base_root`.
+- `discard ID --operation ID` discards the latest active revision, then renames the
+  directory into `.javelin/trash`. Retry with the same operation ID.
+- `recover` finishes interrupted steps and reclaims all trash. Every other
+  workspace command reclaims at most 4,096 entries.
+
+JSON reports `clone.strategy` (`directory_clone`, `snapshot`, `file_clone` or
+`copy`), `clone.fallback` (why faster strategies failed), `clone.copied_bytes`,
+the base `source` (`cached`, `derived` or `materialized`) and separate base and
+Layer timings. Plain output prints the strategy, and a copy adds a warning that
+unchanged data was duplicated. A World whose paths collide on the volume (case,
+Unicode normalization, or Windows reserved names) fails with `unsupported`.
+
+Capture of live edits into checkpoints is separate work. Until it lands, `layer
+diff` and Publish see only explicit checkpoints, not edits in the directory.
 
 ## Linux setup
 

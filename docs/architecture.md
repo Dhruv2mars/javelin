@@ -51,7 +51,13 @@ Code: src/domain.rs, src/repository.rs, src/lib.rs
 - CLI: `javelin layer` has subcommands create, state, history, publication, diff, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
 - Linux-only workspace commands (mount, path, unmount, checkpoint, watch, publish, discard, rebind, recover) are compiled only on Linux (`src/linux_layer.rs`, `crates/javelin-cli/src/cli_linux.rs`).
 
-Layer workspaces: see [workspace-approach.md](workspace-approach.md).
+Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
+directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
+
+- `open_workspace` clones `.javelin/bases/<N>` into `.javelin/layers/<id>` and applies the checkpoint changes. `layer_workspace` returns the root and base paths.
+- `CloneStrategy` is the strategy that worked: `DirectoryClone`, `Snapshot`, `FileClone` or `Copy`. `CloneReport` adds the fallback reason and copied bytes.
+- Bases derive from the nearest cached base plus the manifest changeset. The cache keeps two bases and pins the World head.
+- `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
 
 Code: src/layer.rs, src/linux_layer.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_linux.rs
 
@@ -155,7 +161,8 @@ Code: crates/javelin-collaboration/src/lib.rs, crates/javelin-collaboration/exam
 
 ## Known limits
 
-- Workspace commands (mount, checkpoint, watch, and related) are compiled only on Linux.
+- OverlayFS workspace commands (mount, checkpoint, watch, and related) are compiled only on Linux. Clone-backed workspace commands run on every platform.
+- Every `Repository` call re-validates full state, and `manifest_in` hashes every referenced blob. At 100k files and 661 MB this costs about 5 s per validated call, which dominates `workspace create` (the clone itself takes about 1.2 s).
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.
 - Protocol frames and item counts are capped by the `limits` constants. Only protocol version 1 exists.
