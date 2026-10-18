@@ -37,6 +37,8 @@ javelin init [project-directory] [--json]
 javelin history [project-directory] [--json]
 javelin check [project-directory] [--json]
 
+javelin checkpoint ID [--path DIR]
+
 javelin layer create ID [--world N]
 javelin layer state ID
 javelin layer history ID
@@ -65,7 +67,7 @@ javelin workspace rebind ID --revision OLD --to-revision NEW
 javelin workspace recover
 ```
 
-All `layer` and `workspace` commands accept `--repo DIR` and `--json`. The default
+All `checkpoint`, `layer` and `workspace` commands accept `--repo DIR` and `--json`. The default
 repository is the current directory, with no ancestor search. Clone-backed
 `workspace` commands take no `--helper`. The Linux OverlayFS `workspace` commands
 require `--root ABS` and `--helper ABS`, and passing `--helper` selects them. `--allow-missing-trace` is a flag. Other options take separate values
@@ -348,6 +350,37 @@ has already been removed. For that retry, N is the active revision immediately
 before the discarded event in `layer history`. Reuse the original operation ID.
 Native discard does not unmount or remove a view. If used on a Layer with a view,
 stop tools first and run `workspace recover` to remove the private storage.
+
+## Daemonless checkpoint
+
+`javelin checkpoint ID` captures a plain Layer directory, by default the current
+directory (`--path DIR` selects another). It is the agent lifecycle hook: run it at
+turn end or tool-call end. It works on every OS and needs no mount, helper or
+background process.
+
+```sh
+cd my-layer-directory
+javelin checkpoint my-layer --repo /path/to/project --json
+```
+
+A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
+whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
+2 seconds of the scan. When the directory differs from the latest checkpoint, the
+command records a new checkpoint under a generated operation ID derived from the
+expected head and the changes. A retry, or a concurrent identical capture, replays
+that operation instead of adding history. When nothing differs it prints
+`unchanged: true` and records nothing. JSON output adds
+`capture: {hashed, uncertain, rebuilt}`. `uncertain` lists files that kept
+changing during three read attempts; they keep their prior checkpointed state and
+are hashed again next time. A stale head exits 3 like other mutations.
+
+Symlinks are recorded as links, never followed. The executable bit is read on Unix
+and carried over from the prior checkpoint on Windows. Deletes and renames become
+native path changes; a case-only rename is a delete plus an add. Empty directories
+are not represented. FIFOs, sockets and devices, and names outside the native path
+model, are refused with `unsupported`. Entries named `.javelin` are never captured.
+Root `.javelinignore` rules hide untracked paths only; tracked files under an
+ignored path are still captured. An invalid rule file refuses with `invalid_input`.
 
 ## Output and exit status
 

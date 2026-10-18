@@ -106,6 +106,16 @@ workflow may invoke or interpret Git.
   `workspace create`. The clone itself takes about 1.2 s.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
+  - [x] Daemonless capture of plain Layer directories (`src/capture.rs`): stat cache,
+    racy rule with per-entry trust, stable reads, atomic checksummed cache, generated
+    idempotent operation IDs, and the `javelin checkpoint` lifecycle hook.
+  - [x] Measure the real capture path at 100k files (`examples/capture_bench.rs`).
+  - [ ] Wire capture into the start of every `workspace`/`layer` command once
+    clone-backed Layers land (whichever PR merges second).
+  - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
+  - [ ] Make repository validation incremental: every call re-reads and re-hashes
+    every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
+    seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
 - [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
 - [x] Retire the macOS and Windows sparse-backend proof tracks (2026-10-17).
 - [ ] Retire the OverlayFS helper once clone-backed Layers reach parity.

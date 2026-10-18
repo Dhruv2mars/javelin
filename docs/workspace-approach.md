@@ -71,12 +71,42 @@ local-first, with no daemon.
 ## Change capture without a daemon
 
 Javelin keeps a per-Layer stat cache recording path, size, mtime, ctime, inode and
-mode. Before any command reads Layer state, Javelin walks the Layer and compares
-each entry with the cache, hashing only entries that differ. It uses Git's
-racy-entry rule: an entry whose mtime is not older than the cache write is
-re-hashed, so same-second edits are never missed. Changed files become blobs, and
-the changeset becomes a checkpoint. If the cache is missing or corrupt, Javelin
-hashes the whole Layer and rebuilds the cache.
+mode (`src/capture.rs`). Before any command reads Layer state, Javelin walks the
+Layer and compares each entry with the cache, hashing only entries that differ.
+Changed files become blobs, and the changeset becomes a checkpoint under a
+generated operation ID, so a retry replays instead of adding history. If the cache
+is missing or corrupt, Javelin hashes the whole Layer and rebuilds the cache.
+
+The capture boundary is:
+
+- **Stable read.** Each entry is hashed between two `lstat` calls, plus an `fstat`
+  of the open file on Unix. If they differ, the read is retried. After three tries
+  the path is reported uncertain, keeps its prior checkpointed state, and stays out
+  of the cache, so the next scan hashes it again.
+- **Timestamps.** The racy reference is the clock read once before the walk, minus
+  2 seconds to cover coarse kernel clocks and FAT's 2-second timestamps. It is per
+  scan, not the time the cache file was written.
+- **Racy entries** ([Git's rule](https://git-scm.com/docs/racy-git)). An entry
+  whose mtime or ctime is not older than the reference can change again without
+  changing its fingerprint. It is cached as untrusted and re-hashed on every scan
+  until a scan sees old timestamps. Writing a newer cache never makes an entry
+  trusted; only a non-racy re-hash does. This replaces Git's index-size smudging.
+- **Crash safety.** The cache is written to a temporary file, synced and renamed
+  over the old one, and carries a checksum. A torn or damaged cache is discarded.
+  Blobs are committed before the cache, and the cache before the checkpoint. A
+  crash at any point loses nothing: the cache only says "this fingerprint had this
+  content", which stays true.
+
+Tests in `tests/capture.rs` cover same-size rewrites with a restored mtime,
+replace-by-rename, deletes, case-only renames, concurrent identical captures,
+concurrent rewrites (never a mixed version), and cache damage at every byte.
+
+Limits: on Windows, directory enumeration can report stale size and mtime for a
+file still open by its writer; the next scan after the writer closes sees the
+change. A writer that changes bytes in place without changing size, within one
+timestamp tick, during the read, can be captured torn; the next capture corrects
+it. A network filesystem whose clock is more than 2 seconds ahead of this machine
+can defeat the racy rule (unconfirmed; not tested).
 
 Capture runs at these triggers:
 
@@ -124,14 +154,40 @@ and a btrfs snapshot 3 ms. Per-file reflink on XFS takes 0.68 s, an ext4 copy
 On this laptop (M1, APFS, macOS 26.6.2) a 100k-file directory clone took 1.2 s
 and 37 MB; rescan after 10 edits took 0.38 s.
 
+The "Rescan" column is a metadata baseline, not capture latency: layer-bench only
+compares size, mtime and inode after single-byte appends. It does not hash, apply
+the racy rule, or see same-size rewrites.
+
+### Capture latency
+
+`examples/capture_bench.rs` measures the real capture path on the same 100k-file,
+697 MB tree: the stat cache, racy rule, stable reads, SHA-256 hashing, blob storage
+and the checkpoint commit. Edits alternate single-byte appends and same-size
+rewrites. This laptop, medians of 5:
+
+| Step | Time |
+| --- | ---: |
+| Metadata-only walk (layer-bench's rescan, single thread) | 0.27 s |
+| Scan after 10 edits (parallel stat walk, racy rule, hashes 10) | 0.18 s |
+| Clean capture, no edits (scan plus repository reads) | 15 s |
+| Capture after 10 edits, including the checkpoint commit | 51 s |
+| Cold rebuild with no cache (hashes all 100k files) | 28 s |
+
+The scan meets the 0.25–0.4 s budget; it lists directories on up to 8 threads.
+The repository does not: each Layer read and `capture_layer` re-reads and
+re-hashes every blob of every World and checkpoint, so a commit costs seconds at
+this size and grows with each checkpoint. Incremental repository validation is the
+next step (TASKS.md).
+
 What the numbers say:
 
 - **Directory clone and snapshot are the only near-free creates.** APFS and btrfs
   share all unchanged data. XFS reflink shares it too, but costs per file, a
   little more than copying.
-- **The stat walk is fast enough without a daemon.** Rescanning 100k files takes
-  0.25–0.4 s on Linux, Windows and this laptop, and finds exactly the 10 edits
-  every time. The hosted macOS runner is slower, at 1.2 s.
+- **The stat walk is fast enough without a daemon.** A metadata rescan of 100k
+  files takes 0.25–0.4 s on Linux, Windows and this laptop, and finds exactly the
+  10 edits every time. The hosted macOS runner is slower, at 1.2 s. The full
+  capture scan, with hashing, takes 0.18 s here (see "Capture latency").
 - **Windows block clone saves disk but was 3–5 times slower than copying** with the
   `reflink-copy` crate, which issues about eight calls per file. The product instead
   calls `CopyFileExW`, which block-clones by itself on ReFS and Dev Drive (Windows 11

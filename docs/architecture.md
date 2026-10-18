@@ -51,6 +51,8 @@ Code: src/domain.rs, src/repository.rs, src/lib.rs
 - CLI: `javelin layer` has subcommands create, state, history, publication, diff, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
 - Linux-only workspace commands (mount, path, unmount, checkpoint, watch, publish, discard, rebind, recover) are compiled only on Linux (`src/linux_layer.rs`, `crates/javelin-cli/src/cli_linux.rs`).
 
+- Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. The CLI hook is `javelin checkpoint ID [--path DIR]`.
+
 Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
 directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
 
@@ -59,7 +61,7 @@ directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-c
 - Bases derive from the nearest cached base plus the manifest changeset. The cache keeps two bases and pins the World head.
 - `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
 
-Code: src/layer.rs, src/linux_layer.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_linux.rs
+Code: src/layer.rs, src/capture.rs, src/linux_layer.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_linux.rs
 
 ## Stack and mechanical merge
 
