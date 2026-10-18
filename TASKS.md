@@ -110,8 +110,10 @@ workflow may invoke or interpret Git.
     racy rule with per-entry trust, stable reads, atomic checksummed cache, generated
     idempotent operation IDs, and the `javelin checkpoint` lifecycle hook.
   - [x] Measure the real capture path at 100k files (`examples/capture_bench.rs`).
-  - [ ] Wire capture into the start of every `workspace`/`layer` command once
-    clone-backed Layers land (whichever PR merges second).
+  - [x] Capture the clone-backed workspace first in every `layer` and `workspace`
+    command that names a Layer; never capture over a Stack-produced head.
+  - [ ] Refresh a clone-backed directory from a Stack-produced head (today capture
+    refuses with `behind` until this exists).
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
@@ -185,8 +187,8 @@ collisions are rejected; and CI exercises APFS, btrfs, XFS, ext4, ReFS and NTFS.
   recovery, collisions, and exact data sharing (APFS private size, FIEMAP).
 - [x] Local APFS, 100k files: warm clone 1.15–1.21 s, 0 bytes copied.
 - [ ] CI green on all six filesystems.
-- [ ] Wire capture into every workspace and layer command, whichever of this PR
-  and daemonless capture merges second.
+- [x] Wire capture into every workspace and layer command, whichever of this PR
+  and daemonless capture merges second (done in daemonless capture).
 
 Detailed per-workstream logs were removed on 2026-10-17; merged PRs hold that
 history. Current state is in `docs/architecture.md` and `docs/workspace-approach.md`.

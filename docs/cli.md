@@ -80,9 +80,10 @@ current World head unless `--world N` selects an exact version. A Layer ID and
 an operation ID each contain 1 to 128 ASCII letters, digits, `-`, `_`, or `.`.
 Checkpoint hashes come from `layer state`, `layer history`, or checkpoint output.
 
-`layer state` and `history` report durable native revisions, not live filesystem
-changes. `layer diff` compares the latest checkpoint with its exact base World.
-It never captures edits. `--revision N` selects a retained active revision.
+`layer state` and `history` report durable native revisions. `layer diff`
+compares the latest checkpoint with its exact base World. Each first captures the
+Layer's clone-backed workspace, if any (see "Daemonless checkpoint"); edits in a
+Linux OverlayFS view are not captured. `--revision N` selects a retained active revision.
 After discard, the default diff reads the last active revision. Plain output
 uses `A`, `M`, and `D` with JSON-quoted paths. JSON includes exact before and
 after entries, including file mode, kind, and content object IDs. It is a path
@@ -353,15 +354,29 @@ stop tools first and run `workspace recover` to remove the private storage.
 
 ## Daemonless checkpoint
 
-`javelin checkpoint ID` captures a plain Layer directory, by default the current
-directory (`--path DIR` selects another). It is the agent lifecycle hook: run it at
-turn end or tool-call end. It works on every OS and needs no mount, helper or
-background process.
+`javelin checkpoint ID` captures a plain Layer directory: the Layer's clone-backed
+workspace when it exists, otherwise the current directory (`--path DIR` selects
+another). It is the agent lifecycle hook: run it at turn end or tool-call end. It
+works on every OS and needs no mount, helper or background process.
 
 ```sh
-cd my-layer-directory
 javelin checkpoint my-layer --repo /path/to/project --json
 ```
+
+Every `layer` and clone-backed `workspace` command that names a Layer first
+captures that Layer's workspace directory, if it has one, so it reads current
+state. JSON output then includes the same `capture` object, and text output starts
+with a `Captured workspace edits` line when a checkpoint was recorded. Because the
+capture can add a revision, `layer stack` and `layer discard` with an older
+`--revision` return stale (exit 3); read `layer state` and retry with the new
+revision. `workspace discard` uses the latest head, so uncaptured edits are kept in
+history. A capture error, such as a special file in the directory, fails the
+command.
+
+Stack changes only native state, so after `layer stack` the target's directory
+lacks the stacked work. Capture never reverts it: `checkpoint` refuses with
+`invalid_input` and other commands skip the capture with `capture.behind: true`.
+Refreshing the directory from a stacked head is not implemented yet.
 
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
@@ -370,7 +385,7 @@ command records a new checkpoint under a generated operation ID derived from the
 expected head and the changes. A retry, or a concurrent identical capture, replays
 that operation instead of adding history. When nothing differs it prints
 `unchanged: true` and records nothing. JSON output adds
-`capture: {hashed, uncertain, rebuilt}`. `uncertain` lists files that kept
+`capture: {operation, update, hashed, uncertain, rebuilt, behind}`. `uncertain` lists files that kept
 changing during three read attempts; they keep their prior checkpointed state and
 are hashed again next time. A stale head exits 3 like other mutations.
 

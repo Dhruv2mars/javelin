@@ -75,3 +75,104 @@ fn checkpoint_rejects_bad_grammar_without_mutation() {
     let state = ok(root.path(), &["layer", "state", "work", "--json"]);
     assert_eq!(state["state"]["head"]["revision"], 0);
 }
+
+fn fails(cwd: &Path, args: &[&str]) -> Value {
+    let output = invoke(cwd, args);
+    assert_ne!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    serde_json::from_slice(&output.stderr).unwrap()
+}
+
+fn workspace(root: &Path, id: &str) -> std::path::PathBuf {
+    let opened = ok(root, &["workspace", "create", id, "--json"]);
+    opened["workspace"]["root"].as_str().unwrap().into()
+}
+
+#[test]
+fn layer_and_workspace_commands_capture_the_workspace_first() {
+    let root = TempDir::new().unwrap();
+    let repo = root.path().to_str().unwrap();
+    ok(root.path(), &["init", "--json"]);
+    let dir = workspace(root.path(), "work");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/a.txt"), "a\n").unwrap();
+
+    let state = ok(root.path(), &["layer", "state", "work", "--json"]);
+    assert_eq!(state["capture"]["update"]["outcome"], "applied", "{state}");
+    assert_eq!(state["state"]["head"]["revision"], 1);
+    let again = ok(root.path(), &["layer", "state", "work", "--json"]);
+    assert_eq!(again["capture"]["update"], Value::Null);
+    assert_eq!(again["state"]["head"]["revision"], 1);
+
+    // From a subdirectory, checkpoint still captures the whole Layer directory.
+    std::fs::write(dir.join("src/b.txt"), "b\n").unwrap();
+    let hook = ok(
+        &dir.join("src"),
+        &["checkpoint", "work", "--repo", repo, "--json"],
+    );
+    assert_eq!(hook["update"]["outcome"], "applied", "{hook}");
+    let diff = ok(root.path(), &["layer", "diff", "work", "--json"]);
+    let paths: Vec<_> = diff["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["path"].as_str().unwrap(), c["after"].is_null()))
+        .collect();
+    assert_eq!(paths, [("src/a.txt", false), ("src/b.txt", false)]);
+
+    // Discard records uncaptured edits first, so they stay in history.
+    std::fs::write(dir.join("src/c.txt"), "c\n").unwrap();
+    let discard = ok(
+        root.path(),
+        &[
+            "workspace",
+            "discard",
+            "work",
+            "--operation",
+            "drop",
+            "--json",
+        ],
+    );
+    assert_eq!(discard["capture"]["update"]["outcome"], "applied");
+    assert_eq!(discard["update"]["outcome"], "applied");
+    let history = ok(root.path(), &["layer", "history", "work", "--json"]);
+    assert_eq!(history["history"].as_array().unwrap().len(), 5, "{history}");
+}
+
+#[test]
+fn a_stacked_head_is_never_reverted_by_capture() {
+    let root = TempDir::new().unwrap();
+    ok(root.path(), &["init", "--json"]);
+    let target = workspace(root.path(), "target");
+    let source = workspace(root.path(), "source");
+    std::fs::write(source.join("from-source.txt"), "s\n").unwrap();
+    let state = ok(root.path(), &["layer", "state", "source", "--json"]);
+    let hash = state["state"]["head"]["checkpoint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let stack = [
+        "layer",
+        "stack",
+        "target",
+        "--revision",
+        "0",
+        "--source",
+        &hash,
+        "--operation",
+        "s1",
+        "--json",
+    ];
+    let stacked = ok(root.path(), &stack);
+    assert_eq!(stacked["update"]["outcome"], "applied", "{stacked}");
+
+    // The directory lacks the stacked file; capturing it would delete it.
+    assert!(!target.join("from-source.txt").exists());
+    let state = ok(root.path(), &["layer", "state", "target", "--json"]);
+    assert_eq!(state["capture"]["behind"], true, "{state}");
+    assert_eq!(state["state"]["head"]["revision"], 1);
+    let error = fails(root.path(), &["checkpoint", "target", "--json"]);
+    assert_eq!(error["error"]["code"], "invalid_input", "{error}");
+    let diff = ok(root.path(), &["layer", "diff", "target", "--json"]);
+    assert!(diff.to_string().contains("from-source.txt"), "{diff}");
+}

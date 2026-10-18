@@ -653,6 +653,9 @@ pub struct Capture {
     pub hashed: usize,
     pub uncertain: Vec<RepoPath>,
     pub rebuilt: bool,
+    /// Stack produced the head, so the directory lacks the stacked work and nothing was
+    /// scanned: capturing it would revert that work.
+    pub behind: bool,
 }
 
 impl Repository {
@@ -663,15 +666,64 @@ impl Repository {
     /// and concurrent identical captures agree on one revision. Blobs are committed
     /// before the cache is saved, so the cache never references missing content.
     pub fn capture_directory(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
-        let head = match self.layer_state(layer)? {
-            LayerState::Active { head } => head,
-            _ => return Err(Error::InvalidInput("Layer is not active".into())),
-        };
+        match self.layer_state(layer)? {
+            LayerState::Active { head } => self.capture_at(head, root),
+            _ => Err(Error::InvalidInput("Layer is not active".into())),
+        }
+    }
+
+    /// Captures the Layer's clone-backed directory (`.javelin/layers/<id>`) before a
+    /// command reads Layer state. `None` when there is no directory or the Layer is
+    /// no longer active, so there is nothing to capture.
+    pub fn capture_workspace(&mut self, layer: &LayerId) -> Result<Option<Capture>> {
+        let root = self.workspace_root(layer)?;
+        if !root.try_exists()? {
+            return Ok(None);
+        }
+        match self.layer_state(layer)? {
+            LayerState::Active { head } => self.capture_at(head, &root).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// Whether Stack produced the head. Stack changes only native state, so the Layer's
+    /// directory lacks the stacked work until it is refreshed.
+    fn stacked(&self, head: &LayerHead) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT a.stack FROM layer_heads h JOIN layer_attempts a ON a.id=h.operation \
+                 WHERE h.layer=?1 AND h.revision=?2",
+                rusqlite::params![head.layer().as_str(), head.revision() as i64],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            == Some(1))
+    }
+
+    /// The Layer's clone-backed directory, whether or not it exists yet.
+    pub fn workspace_root(&self, layer: &LayerId) -> Result<PathBuf> {
+        Ok(self.store_path()?.join("layers").join(layer.as_str()))
+    }
+
+    fn capture_at(&mut self, head: LayerHead, root: &Path) -> Result<Capture> {
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
         let base = self.read_manifest(checkpoint.base().manifest())?;
-        let cache_path = self.capture_cache(layer)?;
+        let cache_path = self.capture_cache(head.layer())?;
         let mut cache = StatCache::load(&cache_path);
         let rebuilt = cache.rebuilt();
+        if self.stacked(&head)? {
+            return Ok(Capture {
+                update: None,
+                operation: None,
+                head,
+                changes: SparseChanges::new([])?,
+                hashed: 0,
+                uncertain: Vec::new(),
+                rebuilt,
+                behind: true,
+            });
+        }
         let tx = self.conn.unchecked_transaction()?;
         let scan = scan(root, &mut cache, checkpoint.manifest(), &mut |bytes| {
             store_blob(&tx, bytes)
@@ -695,20 +747,22 @@ impl Repository {
             hashed: scan.hashed,
             uncertain: scan.uncertain,
             rebuilt,
+            behind: false,
         })
     }
 
     /// `.javelin/capture/<sha256(layer)>`: fixed-width and case-insensitive safe.
     fn capture_cache(&self, layer: &LayerId) -> Result<PathBuf> {
-        let database = self
-            .conn
-            .path()
-            .ok_or_else(|| Error::CorruptRepository("repository has no path".into()))?;
-        let store = Path::new(database)
-            .parent()
-            .ok_or_else(|| Error::CorruptRepository("repository has no directory".into()))?;
         let name = ObjectId::from_bytes(Sha256::digest(layer.as_str().as_bytes()).into());
-        Ok(store.join("capture").join(name.to_string()))
+        Ok(self.store_path()?.join("capture").join(name.to_string()))
+    }
+
+    fn store_path(&self) -> Result<PathBuf> {
+        self.conn
+            .path()
+            .and_then(|db| Path::new(db).parent())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| Error::CorruptRepository("repository has no directory".into()))
     }
 }
 

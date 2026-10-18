@@ -7,7 +7,7 @@ use javelin::{
 };
 use serde_json::json;
 
-use super::{Args, Output, success};
+use super::{Args, Output, captured, success};
 
 pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
     let (allowed, count): (&[&str], usize) = match action {
@@ -44,7 +44,8 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         ));
     }
     let layer = args.layer()?;
-    match action {
+    let capture = repo.capture_workspace(&layer)?;
+    let output = match action {
         "create" | "open" => {
             if action == "create" {
                 let version = match world {
@@ -56,18 +57,18 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
             }
             let report = repo.open_workspace(&layer)?;
             let text = report_text(&report);
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "workspace": report}),
                 text,
-            ))
+            )
         }
         "path" => {
             let workspace = repo.layer_workspace(&layer)?;
             let text = workspace.root.display().to_string();
-            Ok(success(
+            success(
                 json!({"ok": true, "command": command, "workspace": workspace}),
                 text,
-            ))
+            )
         }
         "discard" => {
             let operation = operation.expect("required operation");
@@ -85,10 +86,11 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
                 super::update(&command, &operation, discard.update.clone());
             reply["trashed"] = json!(discard.trashed);
             reply["recovery"] = json!(discard.recovery);
-            Ok((reply, text, code))
+            (reply, text, code)
         }
         _ => unreachable!(),
-    }
+    };
+    Ok(captured(capture, output))
 }
 
 fn report_text(report: &WorkspaceReport) -> String {

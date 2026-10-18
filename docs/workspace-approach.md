@@ -110,7 +110,7 @@ can defeat the racy rule (unconfirmed; not tested).
 
 Capture runs at these triggers:
 
-- At the start of every `javelin` command in the Layer.
+- At the start of every `layer` and `workspace` command that names the Layer.
 - On agent lifecycle events (turn end, tool-call end). The contract already says
   Javelin accepts these from agent tools; the hook is simply `javelin checkpoint`.
 - In the optional foreground `javelin workspace watch`, for humans who want capture while
