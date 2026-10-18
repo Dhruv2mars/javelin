@@ -279,29 +279,36 @@ try {
     await ok(['workspace', 'recover', '--repo', bulkRepo]);
     // No deletions between readings: ReFS frees deleted space lazily, and a free landing
     // inside a measured step would hide a copy. The byte-copy control therefore runs last.
-    const f0 = await stableFree();
-    const l1 = await S.create(bulkRepo, 'bulk-1');
-    const f1 = await stableFree();
-    const textArgv = argvFor(S.createArgs(bulkRepo, 'bulk-2'));
-    const textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
-    const f2 = await stableFree();
-    fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
-    const fe = await stableFree();
-    await S.capture(bulkRepo, 'bulk-1');
-    const fc = await stableFree();
-    const control = join(root, 'control-copy');
-    fs.mkdirSync(control);
-    for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
-    const fk = await stableFree();
-    fs.rmSync(control, { recursive: true });
+    // A one-off free (an earlier deletion or truncation settling) spoils one attempt, so
+    // repeat with fresh Layers, deleting nothing, until free space never rose in a step.
     const mb = n => Math.round(n / 1048576);
-    const deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
-    report.disk = { strategy: l1.strategy, deltas, base: find(warm.r.json, k => k === 'base', () => true) };
+    const attempts = [];
+    let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      f0 = await stableFree();
+      l1 = await S.create(bulkRepo, `bulk-1-${attempt}`);
+      f1 = await stableFree();
+      const textArgv = argvFor(S.createArgs(bulkRepo, `bulk-2-${attempt}`));
+      textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
+      f2 = await stableFree();
+      fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
+      fe = await stableFree();
+      await S.capture(bulkRepo, `bulk-1-${attempt}`);
+      fc = await stableFree();
+      const control = join(root, `control-copy-${attempt}`);
+      fs.mkdirSync(control);
+      for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
+      fk = await stableFree();
+      deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
+      attempts.push(deltas);
+      if (!Object.entries(deltas).some(([k, v]) => k !== 'bulkMB' && v < -0.05 * mb(bulkBytes))) break;
+    }
+    report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
     await check('sharing', 'byte-copy-control-is-measurable', () => {
       assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
       const rose = Object.entries(deltas).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * mb(bulkBytes));
-      assert(rose.length === 0, `free space rose during measured steps (${rose.map(([k, v]) => `${k} ${v}`).join(', ')}); a concurrent free could hide a copy`);
-      return deltas;
+      assert(rose.length === 0, `free space rose during measured steps in all ${attempts.length} attempts (last: ${rose.map(([k, v]) => `${k} ${v}`).join(', ')}); a concurrent free could hide a copy`);
+      return { deltas, attempts: attempts.length };
     });
     await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
       if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
@@ -412,6 +419,7 @@ try {
     });
     await check('crash', 'repository-integrity-after-interruptions', () => S.integrity(bulkRepo).then(() => true));
     fs.rmSync(join(root, 'bulk-fixture'), { recursive: true });
+    for (let a = 0; a < attempts.length; a++) fs.rmSync(join(root, `control-copy-${a}`), { recursive: true });
   }
 
   const repo = await seed('small', false);
