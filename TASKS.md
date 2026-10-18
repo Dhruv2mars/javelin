@@ -119,6 +119,12 @@ workflow may invoke or interpret Git.
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
     seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
 - [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
+  The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PR #46)
+  passes 34/34 with the real binary on APFS, btrfs, XFS and ext4 (copy fallback) in run
+  `39113744899` at `d455ff2`. NTFS and ReFS pass 33/34: Windows capture misses a
+  same-size rewrite that restores mtime (no ChangeTime in the stat cache), listed in
+  `gate2-known-failures.json`. Check this item when that list is empty. Worlds are seeded
+  through the library because clone-backed workspaces have no Publish yet.
 - [x] Retire the macOS and Windows sparse-backend proof tracks (2026-10-17).
 - [ ] Retire the OverlayFS helper once clone-backed Layers reach parity.
 - [x] Independently verify committed filesystem-probe controls and negative cases
