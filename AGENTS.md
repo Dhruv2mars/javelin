@@ -10,8 +10,6 @@ Start with `docs/architecture.md`; read `docs/build-contract.md` before changing
 - `src/`: the `javelin` library (repository, World, Layers, capture, Stack, Publish).
 - `crates/`: `javelin-cli`, `-collaboration`, `-merge`, `-protocol`, `-stack`.
 - `tests/`: integration tests. `tools/`: benchmarks, probes, native packaging.
-- The OverlayFS runtime (`src/linux_layer*`, `docs/linux-layer-runtime.md`) is being retired
-  for clone-backed Layers. Do not build new work on it.
 
 ## Checks
 

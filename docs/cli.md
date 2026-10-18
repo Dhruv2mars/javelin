@@ -1,10 +1,8 @@
 # Layer CLI
 
-The CLI provides native Layer metadata on macOS, Linux, and Windows. Writable
-ordinary paths use the existing Linux OverlayFS runtime and configured mount
-helper. Workspace commands return `unsupported` on macOS and Windows.
-Checkpoints can be explicit or captured by an opt-in foreground Linux watch command.
-Whole-Layer Publish uses the safe Linux runtime.
+The CLI runs the same way on macOS, Linux and Windows. A Layer's writable
+workspace is a plain directory cloned from its World base, captured into
+checkpoints without a daemon, and published whole onto the World.
 
 ## Build and install
 
@@ -24,8 +22,7 @@ cargo install --locked --path crates/javelin-cli --bin javelin
 
 Default root build, test and lint commands select both the library and CLI.
 The release executable remains `target/release/javelin` (`javelin.exe` on Windows),
-and installation still provides `javelin`. The Linux helper remains in the root
-package. Use `-p javelin` for library-only checks and `-p javelin-cli` for CLI-only
+and installation still provides `javelin`. Use `-p javelin` for library-only checks and `-p javelin-cli` for CLI-only
 checks. Merge and Stack adapters are root workspace members and default check
 targets; they use the root lockfile. Other standalone packages retain their own
 workspaces.
@@ -52,25 +49,14 @@ javelin workspace create ID [--world N]
 javelin workspace open ID
 javelin workspace path ID
 javelin workspace discard ID --operation ID
-javelin workspace recover
-
-javelin workspace init --root ABS --helper ABS
-javelin workspace mount ID
-javelin workspace path ID
-javelin workspace unmount ID
-javelin workspace checkpoint ID --operation ID
-javelin workspace watch ID [--quiet-ms N] [--duration-ms N]
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
-javelin workspace discard ID --operation ID
-javelin workspace rebind ID --revision OLD --to-revision NEW
 javelin workspace recover
 ```
 
 All `checkpoint`, `layer` and `workspace` commands accept `--repo DIR` and `--json`. The default
-repository is the current directory, with no ancestor search. Clone-backed
-`workspace` commands take no `--helper`. The Linux OverlayFS `workspace` commands
-require `--root ABS` and `--helper ABS`, and passing `--helper` selects them. `--allow-missing-trace` is a flag. Other options take separate values
+repository is the current directory, with no ancestor search.
+`--allow-missing-trace` is a flag. Other options take separate values
 and may appear before or after positional arguments. Unknown, repeated, and
 irrelevant options are errors. Use `./name` for a path that starts with `-`.
 
@@ -82,8 +68,8 @@ Checkpoint hashes come from `layer state`, `layer history`, or checkpoint output
 
 `layer state` and `history` report durable native revisions. `layer diff`
 compares the latest checkpoint with its exact base World. Each first captures the
-Layer's clone-backed workspace, if any (see "Daemonless checkpoint"); edits in a
-Linux OverlayFS view are not captured. `--revision N` selects a retained active revision.
+Layer's workspace, if any (see "Daemonless checkpoint"). `--revision N` selects a
+retained active revision.
 After discard, the default diff reads the last active revision. Plain output
 uses `A`, `M`, and `D` with JSON-quoted paths. JSON includes exact before and
 after entries, including file mode, kind, and content object IDs. It is a path
@@ -93,7 +79,8 @@ Format 3 repositories can also contain published Layers. `state` reports the
 published World, operation ID, and final head. `history` retains the active
 revisions followed by the terminal publication record. Diff and clone continue
 to use the final immutable checkpoint. New native discard operations on a
-published Layer return `layer_published`. Further edits require a new Layer.
+published Layer return `layer_published`. Its workspace directory stays in place
+but is no longer captured. Further edits require a new Layer.
 
 `layer clone` starts a separate Layer from the specified immutable checkpoint.
 Later edits to either Layer cannot change that source checkpoint. Creating or
@@ -117,6 +104,8 @@ involved, and it works on macOS, Linux and Windows. See
   `base_root`.
 - `discard ID --operation ID` discards the latest active revision, then renames the
   directory into `.javelin/trash`. Retry with the same operation ID.
+- `publish ID --operation ID` captures the directory, then publishes the whole Layer
+  (see "Whole-Layer Publish").
 - `recover` finishes interrupted steps and reclaims all trash. Every other
   workspace command reclaims at most 4,096 entries.
 
@@ -127,71 +116,7 @@ Layer timings. Plain output prints the strategy, and a copy adds a warning that
 unchanged data was duplicated. A World whose paths collide on the volume (case,
 Unicode normalization, or Windows reserved names) fails with `unsupported`.
 
-Capture of live edits into checkpoints is separate work. Until it lands, `layer
-diff` and Publish see only explicit checkpoints, not edits in the directory.
-
-## Linux setup
-
-The runtime requires Linux OverlayFS, `/usr/bin/sudo`, and the root-owned
-`javelin-linux-layer-helper` binary. The helper and all its ancestors must be
-canonical, root-owned, and not writable by group or others. An administrator
-must configure a root-owned `/etc/javelin/linux-layer-parents` with permitted
-runtime parents. The runtime root must be absolute and canonical under one of
-those parents. Its final name uses letters, digits, `_`, or `-` and begins with
-a letter or digit. The helper runs noninteractively through `sudo -n`.
-
-This CLI does not install the helper or grant privileges. Production installation
-is still open. See [Linux runtime setup and limits](linux-layer-runtime.md) for
-the underlying layout, trust model, and platform evidence. Mount verification
-runs only on disposable hosted Linux, never on the developer laptop.
-
-## Explicit checkpoint flow
-
-After the Linux prerequisites are configured, run the following with the built
-`javelin` binary on `PATH`. Substitute your permitted runtime root and installed
-helper path.
-
-```sh
-mkdir project
-cd project
-javelin init
-javelin layer create work --world 0
-
-runtime=/var/lib/javelin/work
-helper=/usr/libexec/javelin/javelin-linux-layer-helper
-javelin workspace init --root "$runtime" --helper "$helper"
-view=$(javelin workspace mount work --root "$runtime" --helper "$helper")
-printf 'hello\n' > "$view/hello.txt"
-
-javelin workspace checkpoint work --operation work-save-1 --root "$runtime" --helper "$helper"
-javelin layer diff work
-javelin layer history work
-```
-
-`mount` and `path` print only the ordinary path in plain mode. `path` succeeds
-only for an existing mounted, unfrozen, active view without pending work. Use
-`mount` to open or resume a view. Stop tools that hold files open for writing
-before checkpointing. A writer can make checkpoint return `busy`; close it and
-retry the same operation ID. Successful checkpoint output includes its immutable
-checkpoint hash and reports empty directories that native state cannot represent.
-Writers during the frozen window may receive `EROFS`.
-
-Use the checkpoint hash printed above to create a separate view:
-
-```sh
-javelin layer clone copy --checkpoint CHECKPOINT_HASH
-copy_view=$(javelin workspace mount copy --root "$runtime" --helper "$helper")
-cat "$copy_view/hello.txt"
-printf 'private\n' > "$copy_view/hello.txt"
-cat "$view/hello.txt"
-```
-
-The last command still prints `hello`. Uncheckpointed changes exist only in a
-view's private storage. `workspace unmount` retains them, and `mount` resumes
-them. The runtime stores sparse private changes over shared immutable caches.
-There is no full-copy fallback or separate CLI capture implementation.
-
-## Stack and explicit workspace rebind
+## Stack
 
 `layer stack TARGET --revision N --source HASH --operation ID` delegates to
 `javelin_stack::stack_layer`. HASH is an immutable source checkpoint, not a live
@@ -201,41 +126,10 @@ Compatible edits, including separated changes within one text file, combine.
 Structural or overlapping edits return explicit conflicts without changing the
 native Layer or World. The CLI never resolves a conflict for its owner.
 
-Before metadata Stack, stop target tools, checkpoint **both** source and target,
-and unmount the target. Unmount alone retains uncaptured edits; it does not save
-them into native state. Stack only changes native metadata and does not inspect,
-freeze, or select filesystem views. Checkpoint and unmount protect private edits
-and prevent tools from continuing against an old view during this separate action.
-
-For example, after source checkpoint HASH and target revision 1 are saved:
-
-```sh
-javelin workspace unmount target --root "$runtime" --helper "$helper"
-javelin layer stack target --revision 1 --source HASH --operation stack-1
-# Use the resulting revision reported by Stack (2 in this example):
-javelin workspace rebind target --revision 1 --to-revision 2 --root "$runtime" --helper "$helper"
-target_view=$(javelin workspace mount target --root "$runtime" --helper "$helper")
-# Run editor/compiler tools in "$target_view", then:
-javelin workspace checkpoint target --operation target-save-2 --root "$runtime" --helper "$helper"
-javelin workspace publish target --operation target-publish-1 --root "$runtime" --helper "$helper"
-```
-
-Stack and filesystem selection are separate durable actions, with no shared atomic
-transaction. If rebind fails, Stack's native result remains; fix the reported
-workspace condition and retry the same explicit old/new pair. Rebind delegates to
-`LinuxLayerRuntime::rebind(repo, old, desired)`. Both tokens are retained active
-heads of the named Layer; desired must be its current native active head.
-Rebind refuses uncaptured edits, empty directories and held writers without
-deleting them. Checkpoint before Stack; if edits were missed, retain the old view
-and resolve explicitly rather than deleting private storage. An originally
-unmounted view stays unmounted after validation. Mount it explicitly to use tools.
-There is no automatic refresh or automatic head selection. Foreground watch retries
-busy freezes after a new quiet window.
-
-Rebind has no additional operation ID: the runtime's durable selection is keyed
-by the exact old/desired heads. A completed exact retry is a no-op even after new
-private edits, provided desired is still the current native active head. Recovery
-finishes recorded selections, never retargets them to a later native advance.
+Stack changes only native state. The target's workspace directory does not receive
+the stacked work, and capture never reverts it (see "Daemonless checkpoint").
+Refreshing a directory from a stacked head is not implemented yet, so a Layer whose
+head came from Stack cannot be published through `workspace publish` until then.
 
 Stack success and stale retries return the original native outcome even after
 later edits or Publish. Reusing an operation ID with another target revision or
@@ -246,38 +140,34 @@ operation ID. A changed resolution must be checkpointed and supplied explicitly.
 
 JSON Stack output includes `target`, `source`, `operation`, and either the native
 `update` or explicit `conflicts` with path, kind, and base/ours/theirs entries.
-Rebind output includes the exact `expected` and `desired` heads. Plain output
-reports the outcome and immutable selection. Merge admission/load failures use
+Plain output reports the outcome and immutable selection. Merge admission/load failures use
 `stack_merge_error` on stderr with the adapter's resource/limit or loader message;
 native storage failures retain their native error codes. Both return exit 1.
 Conflict and stale Stack outcomes return exit 3 on stdout, with `ok: false`.
 
 ## Whole-Layer Publish
 
-After editing ordinary paths and explicitly checkpointing, Publish the entire
-Layer. There is no implicit checkpoint or path selection:
+`workspace publish` captures the Layer's directory, then publishes the entire Layer
+onto the World. There is no path selection:
 
 ```sh
-javelin workspace publish work --operation work-publish-1 --root "$runtime" --helper "$helper"
+javelin workspace create work
+printf 'hello\n' > .javelin/layers/work/hello.txt
+javelin workspace publish work --operation work-publish-1
 javelin history
 javelin layer state work
 javelin layer publication --operation work-publish-1
 # Retry an uncertain result with exactly the same operation and attribution:
-javelin workspace publish work --operation work-publish-1 --root "$runtime" --helper "$helper"
-# Continue in a new writable Layer from the current World:
-javelin layer create next
-javelin workspace mount next --root "$runtime" --helper "$helper"
+javelin workspace publish work --operation work-publish-1
+# Continue in a new Layer from the current World:
+javelin workspace create next
 ```
 
-Publish delegates freeze, exact checkpoint matching, durable receipt binding,
-recovery and read-only enforcement to `LinuxLayerRuntime::publish`. Close writable
-file handles first. Held writers return `busy`. Uncaptured tracked/nonignored
-edits and nonignored empty directories refuse with `invalid_input`; checkpoint
-edits and remove those empty directories before retrying. Ignored untracked
-artifacts stay private and remain readable in the published view. A successful mounted view remains readable and
-read-only (`EROFS` on writes). `workspace path` only reports writable views;
-retain the original path to read a published view or inspect immutable metadata.
-Further work requires `layer create` or `layer clone --checkpoint HASH`.
+Publish refuses rather than leave edits behind. Files that keep changing during
+capture return `busy`; a Layer whose head came from Stack returns `invalid_input`
+(see "Stack"). Ignored untracked files stay in the directory and are not published.
+Edits made after the capture, while Publish runs, are not part of it. A Layer with
+no workspace directory publishes its latest checkpoint.
 
 The default attribution is human and requires no trace. For agent work use
 `--actor agent --context HASH` to reference an existing native Blob, or
@@ -296,7 +186,7 @@ World or conflict/stale result, exact checkpoint, and warnings. Conflicts and
 stale receipts return exit 3 with `ok: false` on stdout; World and private edits
 are retained. Conflict paths are JSON-quoted in plain output. Compatible World
 advances compose using native rules; intersecting edits never silently clobber.
-No refresh or conflict-resolution command is added in this unit.
+There is no refresh or conflict-resolution command yet.
 
 Reuse the same operation, Layer and attribution after uncertainty. A completed
 retry returns the original receipt, even after later checkpoints or World
@@ -307,50 +197,30 @@ receipt context hash. A refusal without a durable receipt reserves no operation.
 platform; unknown IDs return success with `receipt: null`. Conflict/stale
 inspection retains exit 3. Receipt inspection never publishes.
 
-First Publish requires a mounted runtime view. There is no metadata-only Publish
-command. Unmounting a published view retains the durable publication; a remount
-is read-only. Runtime recovery reconciles published views and reports partial
-failures. An unmounted view can only be observed through runtime metadata until
-remounted: there is no claim of physical enforcement against an independently
-held or out-of-band path. Do not edit hidden runtime storage. Production helper
-installation and macOS/Windows writable workspace support remain open.
+After success the Layer is published: its directory stays readable, later edits
+are not captured, and further work needs a new Layer (`workspace create`, or
+`layer clone --checkpoint HASH` then `workspace open`). Publishing it again under
+a new operation ID records a `layer_stale` receipt.
 
 ## Retry and discard
 
 Reuse the same Layer ID and explicit `--world N`, or the same clone ID and
 checkpoint hash, after an uncertain create or clone. If World advances between
 attempts, an omitted `--world` would select a different snapshot and be refused.
-For checkpoint and discard, choose a unique operation ID before the first attempt
-and reuse it after uncertainty. Changed input with a used ID returns
-`operation_id_reused`. A checkpoint retry returns its original durable outcome
-with `replayed: true`; it does not capture newer live edits. Use a new ID for a
-new checkpoint.
+For Stack, discard and Publish, choose a unique operation ID before the first
+attempt and reuse it after uncertainty. Changed input with a used ID returns
+`operation_id_reused`. Capture generates its own operation IDs (see "Daemonless
+checkpoint").
 
-`workspace recover` resolves pending operations using their recorded IDs, aborts
-interrupted cache staging, thaws abandoned freezes, and removes discarded views.
-It reports individual failures and exits nonzero if any remain. Keep the same
-repository and runtime root when recovering. Do not edit the runtime's hidden
-backing directories or binding records.
-
-For a mounted Layer, close tools and leave its directory before discarding:
-
-```sh
-javelin workspace discard work --operation work-discard-1 --root "$runtime" --helper "$helper"
-javelin workspace recover --root "$runtime" --helper "$helper"
-```
-
-Runtime discard uses the view's bound native head. A busy unmount refuses before
-discard, and a stale head returns `stale` while retaining edits. Discard is
-terminal and removes private view storage, including uncheckpointed edits.
-World history and immutable checkpoints remain inspectable and cloneable.
+`workspace discard` is terminal: the directory moves to `.javelin/trash`, including
+uncheckpointed edits that capture could not record. World history and immutable
+checkpoints remain inspectable and cloneable. `workspace recover` finishes
+interrupted discards and reclaims all trash.
 
 `layer discard ID --revision N --operation ID` performs native discard against
 the exact retained active revision N. It returns `stale` if the head advanced.
-Use it for Layers without views, or to retry a runtime discard after its view
-has already been removed. For that retry, N is the active revision immediately
-before the discarded event in `layer history`. Reuse the original operation ID.
-Native discard does not unmount or remove a view. If used on a Layer with a view,
-stop tools first and run `workspace recover` to remove the private storage.
+Use it for Layers without a workspace. It leaves an existing directory in place;
+`workspace discard` also moves it to trash.
 
 ## Daemonless checkpoint
 
@@ -363,7 +233,7 @@ works on every OS and needs no mount, helper or background process.
 javelin checkpoint my-layer --repo /path/to/project --json
 ```
 
-Every `layer` and clone-backed `workspace` command that names a Layer first
+Every `layer` and `workspace` command that names a Layer first
 captures that Layer's workspace directory, if it has one, so it reads current
 state. JSON output then includes the same `capture` object, and text output starts
 with a `Captured workspace edits` line when a checkpoint was recorded. Because the
@@ -394,8 +264,24 @@ and carried over from the prior checkpoint on Windows. Deletes and renames becom
 native path changes; a case-only rename is a delete plus an add. Empty directories
 are not represented. FIFOs, sockets and devices, and names outside the native path
 model, are refused with `unsupported`. Entries named `.javelin` are never captured.
-Root `.javelinignore` rules hide untracked paths only; tracked files under an
-ignored path are still captured. An invalid rule file refuses with `invalid_input`.
+### Ignore rules
+
+Capture reads the root `.javelinignore` of the Layer directory. Each nonempty line
+is a literal, case-sensitive root-relative native path, for example `build/`,
+`packages/ui/dist/` or `private.env`. A path matches itself and all descendants;
+the optional trailing slash has the same meaning. Blank lines and lines beginning
+with `#` are ignored. Use LF or CRLF. Leading/trailing whitespace, absolute paths,
+`.`/`..` components, globs (`*`, `?`, brackets), negation (`!`) and backslash
+escapes are errors. There are no nested rule files, automatic imports or external
+VCS semantics. The file must be a regular UTF-8 file of at most 64 KiB with at
+most 256 rules; missing means no rules. A symlinked rule file is refused. An
+invalid rule file refuses with `invalid_input` and changes nothing.
+
+Rules hide untracked paths only: tracked files under an ignored path, their
+executable bits, symlink targets and deletions are still captured, so editing
+rules never silently untracks an entry. `.javelinignore` itself is always
+captured. Capture never removes ignored bytes. The same matcher is available to
+library callers as `javelin::IgnoreRules`.
 
 ## Output and exit status
 
@@ -409,54 +295,5 @@ output has `ok: false` and the native `stale` outcome. Partial recovery has
 `ok: false`, exit 1, and the full recovery report on stdout.
 
 The existing `init`, `history`, and `check` syntax and JSON fields are unchanged.
-No command invokes or interprets Git. The disposable hosted Linux actual-binary
-smoke runs with a failing Git stand-in and a checked positive control.
-
-
-## Foreground automatic checkpoints on Linux
-
-After explicitly mounting a Layer, run this in a foreground terminal:
-
-```sh
-javelin workspace watch my-layer --root /configured/runtime --helper /configured/helper
-# Bounded automation: stop scheduling samples after 10 seconds.
-javelin workspace watch my-layer --root /configured/runtime --helper /configured/helper --duration-ms 10000
-```
-
-Nothing starts watch from init, mount or other commands. There is no daemon. Stop
-with Ctrl-C; private edits remain. Output (or `--json`) is a final summary on duration
-expiry, or an error on failure. Individual checkpoints appear in `layer history`
-while watch runs. The summary counts captures completed or recovered by this run.
-
-Watch reads discovered/tracked file bytes, symlink targets and executable bits, then waits 250ms
-after each scan before sampling again. The default quiet window is 1000ms; choose
-`--quiet-ms N` with N >= 250. At least two equal content samples spanning that
-window are required. Renames and deletions appear as normal native path changes.
-Unchanged content, including a rewrite of identical bytes, creates no new history.
-Empty directories are not represented by native checkpoints.
-
-A quiet sample is not an application transaction. Watch still freezes the view;
-held write descriptors and shared writable mappings prevent capture. The frozen
-candidate must match the quiet observation exactly. A busy freeze or a boundary
-change restarts observation and retries later. Locks are released between samples,
-so explicit checkpoint, status and Publish can run. Watch never publishes, Stacks,
-refreshes, discards, changes World or automatically selects an external head.
-
-On interruption after a pending capture was written, rerun the same watch command
-(or use `workspace recover`). Existing runtime pending records and durable native
-receipts preserve the operation ID and recover its outcome before another sample.
-IO and corruption errors stop watch and remain visible; they are not silently
-retried. Resolve the cause and retry. Published stops with `layer_published` and
-preserves the read-only view; Discarded stops with a clear error. An externally
-advanced native head stops and requires explicit rebind. Interrupted Publish,
-discard or rebind must be recovered explicitly.
-
-`--duration-ms N` must be positive. It bounds scheduling, not the time spent in an
-individual scan/helper/storage call; it does not force a final checkpoint of
-nonquiet edits. Sampling can miss edits made and reverted entirely between scans.
-Watch observes the effective tree after root `.javelinignore` discovery filtering.
-Large-tree performance and resource bounds beyond existing capture/storage limits
-remain unverified.
-
-Linux workspace discovery supports root `.javelinignore` literal paths; see
-[syntax and tracked-file guarantees](linux-layer-runtime.md#ignore-aware-discovery).
+No command invokes or interprets Git; CI runs every test with a failing Git
+stand-in first on `PATH`.

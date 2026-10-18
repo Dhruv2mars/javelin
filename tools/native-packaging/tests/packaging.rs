@@ -1054,7 +1054,7 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         "crates/javelin-cli/Cargo.toml",
         "crates/javelin-cli/src/main.rs",
         "crates/javelin-cli/src/cli.rs",
-        "crates/javelin-cli/src/cli_linux.rs",
+        "crates/javelin-cli/src/cli_workspace.rs",
         "crates/javelin-merge/Cargo.toml",
         "crates/javelin-merge/LICENSE",
         "crates/javelin-merge/src/lib.rs",

@@ -52,7 +52,7 @@ is the starting point. Reuse earlier work only after verifying it against this c
 - A published Layer becomes read-only. Further work starts by creating or cloning
   another Layer from the current World. Javelin retains the Layer identity, final
   checkpoint reference, supplied agent context, Stack ancestry, and publication
-  relationship. The workspace, overlay, and derived caches may be discarded when
+  relationship. The workspace directory and derived caches may be discarded when
   convenient. A published Layer remains inspectable through its immutable records.
 - Publish validates VCS correctness and permissions. Tests, builds, reviews, and
   security checks are optional repository policy, not mandatory default Publish behavior.
