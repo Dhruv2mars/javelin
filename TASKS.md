@@ -3,23 +3,13 @@
 This file is the central hub's master checklist. A checked item requires evidence.
 Implementation threads own one PR each and keep their own checklist in their worktree.
 
-## Current working rules, updated 2026-10-16
+## Working rules
 
-These rules supersede the older draft-first and multi-round review instructions
-in the historical workstream sections below.
+Working rules live in `AGENTS.md` (`CLAUDE.md` imports it). They supersede the older
+draft-first and multi-round review instructions in the historical sections below.
 
-- Implement in one owning thread and isolated worktree, run relevant checks,
-  open and link a regular PR when ready, report briefly, then finish.
-- No draft or planning PR requirement, routine extensive review/audit rounds,
-  evidence-only finishing commits or formal handoffs.
-- Keep implementation and coordination simple. Use parallel help only where it
-  materially advances the task. Do not add abstractions or process without need.
-- Keep T3 organized, reuse existing owners, and settle completed threads.
-- Keep meaningful behavior checks and honest limits. Never merge without the
-  user's explicit instruction.
-- The user resumed development on 2026-10-16 and explicitly authorized merging
-  ready PRs so progress is visible in the repository. The hub integrates changes
-  in dependency order; owners finish their existing tasks with relevant checks.
+- [x] Make `AGENTS.md` the single repo rule file for Codex and Claude Code, keeping only
+  Javelin-specific rules that the global instruction files do not already cover.
 
 ## Resumed development and integration on 2026-10-16
 
