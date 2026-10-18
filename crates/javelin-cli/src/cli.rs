@@ -291,12 +291,7 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
             } else {
                 let version = match world {
                     Some(version) => version,
-                    None => {
-                        repo.history()?
-                            .last()
-                            .ok_or_else(|| Error::CorruptRepository("missing World head".into()))?
-                            .number
-                    }
+                    None => repo.head()?.number,
                 };
                 let base = repo.layer_base(version)?;
                 repo.create_layer(&id, &base)?

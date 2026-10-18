@@ -770,15 +770,20 @@ impl LinuxLayerRuntime {
     /// Returns `[c<checkpoint>, b<manifest>]`, or `[b<manifest>]` for an empty delta.
     fn ensure_caches(&self, repo: &Repository, checkpoint: CheckpointId) -> Result<Vec<String>> {
         let frozen = repo.read_checkpoint(checkpoint)?;
-        let manifest = frozen.base().manifest();
-        let base = repo.read_manifest(manifest)?;
-        let base_key = format!("b{manifest}");
+        let base = repo.manifest_at(frozen.base().version())?;
+        let base_key = format!("b{}", frozen.base().world());
         self.ensure_cache(repo, &base_key, None, &Manifest::new([])?, &base)?;
         if frozen.changes().entries().is_empty() {
             return Ok(vec![base_key]);
         }
         let key = format!("c{}", checkpoint.object());
-        self.ensure_cache(repo, &key, Some(&base_key), &base, frozen.manifest())?;
+        self.ensure_cache(
+            repo,
+            &key,
+            Some(&base_key),
+            &base,
+            &repo.checkpoint_manifest(frozen.id())?,
+        )?;
         Ok(vec![key, base_key])
     }
 
@@ -930,11 +935,13 @@ impl LinuxLayerRuntime {
             let snap = snapshot(
                 &self.view_path(layer),
                 &upper,
-                opened.manifest(),
+                &repo.checkpoint_manifest(opened.id())?,
                 &mut hash_only,
             )?;
             let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
-            if snap.entries != *checkpoint.manifest().entries() || !snap.unrepresented.is_empty() {
+            if snap.entries != *repo.checkpoint_manifest(checkpoint.id())?.entries()
+                || !snap.unrepresented.is_empty()
+            {
                 return Err(Error::InvalidInput(
                     "workspace has uncaptured changes; checkpoint before rebinding".into(),
                 ));
@@ -1277,15 +1284,15 @@ impl LinuxLayerRuntime {
             #[cfg(test)]
             crate::repository::test_boundary("capture_listed");
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
-            let base = repo.read_manifest(opened.base().manifest())?;
+            let base = repo.manifest_at(opened.base().version())?;
             let view = self.root.join("views").join(slot);
             let expected = self.head(repo, layer, record)?;
             let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
             let snap = read_snapshot(
                 &view,
                 Some(&upper),
-                opened.manifest(),
-                Some(checkpoint.manifest()),
+                &repo.checkpoint_manifest(opened.id())?,
+                Some(&repo.checkpoint_manifest(checkpoint.id())?),
                 &mut |b| repo.put_blob(b),
             )?;
             // Every mutating helper verb advances the epoch, so equality proves no
@@ -1373,7 +1380,7 @@ impl LinuxLayerRuntime {
         guard: F,
     ) -> Result<PublicationReceipt>
     where
-        F: FnOnce(&WorldVersion, &Manifest) -> Result<()>,
+        F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
     {
         let _lock = self.lock()?;
         let slot = slot(layer);
@@ -1418,11 +1425,13 @@ impl LinuxLayerRuntime {
             let snap = read_snapshot(
                 &view,
                 Some(&upper),
-                opened.manifest(),
-                Some(checkpoint.manifest()),
+                &repo.checkpoint_manifest(opened.id())?,
+                Some(&repo.checkpoint_manifest(checkpoint.id())?),
                 &mut hash_only,
             )?;
-            if snap.entries != *checkpoint.manifest().entries() || !snap.unrepresented.is_empty() {
+            if snap.entries != *repo.checkpoint_manifest(checkpoint.id())?.entries()
+                || !snap.unrepresented.is_empty()
+            {
                 return Err(Error::InvalidInput(
                     "workspace has uncaptured changes; checkpoint first (remove empty directories, which checkpoints cannot represent)".into(),
                 ));
@@ -1636,7 +1645,7 @@ impl LinuxLayerRuntime {
         let _lock = self.lock()?;
         let frozen = repo.read_checkpoint(checkpoint)?;
         let key = if frozen.changes().entries().is_empty() {
-            format!("b{}", frozen.base().manifest())
+            format!("b{}", frozen.base().world())
         } else {
             format!("c{}", checkpoint.object())
         };
@@ -1922,7 +1931,10 @@ mod tests {
         };
         let frozen = repo.read_checkpoint(head.checkpoint()).unwrap();
         assert_eq!(frozen.changes(), &changes);
-        assert_eq!(frozen.manifest().entries(), &snap.entries);
+        assert_eq!(
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries(),
+            &snap.entries
+        );
     }
 
     #[test]

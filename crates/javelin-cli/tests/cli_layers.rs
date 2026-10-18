@@ -1145,8 +1145,10 @@ fn binary_stack_merges_frozen_source_and_replays_original_inputs_and_ancestry() 
         &[javelin::CheckpointId::parse(&source).unwrap()]
     );
     assert_eq!(
-        repo.read_blob(frozen.manifest().entries()[&path("file")].content())
-            .unwrap(),
+        repo.read_blob(
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")].content(),
+        )
+        .unwrap(),
         b"FIRST\nanchor\nLAST\n"
     );
     assert_eq!(ok(root.path(), &args), result);
@@ -1633,16 +1635,10 @@ fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
     else {
         panic!("active")
     };
-    let checkpoint = repo.read_checkpoint(head.checkpoint()).unwrap();
-    assert!(
-        checkpoint
-            .manifest()
-            .entries()
-            .contains_key(&path("main.c"))
-    );
+    let checkpoint = repo.checkpoint_manifest(head.checkpoint()).unwrap();
+    assert!(checkpoint.entries().contains_key(&path("main.c")));
     assert!(
         !checkpoint
-            .manifest()
             .entries()
             .keys()
             .any(|p| p.as_str().starts_with("build/"))

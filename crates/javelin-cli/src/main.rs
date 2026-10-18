@@ -134,7 +134,7 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
         let versions = repo.history()?;
         let text = versions
             .iter()
-            .map(|v| format!("World {}  {}", v.number, v.manifest))
+            .map(|v| format!("World {}  {}", v.number, v.id))
             .collect::<Vec<_>>()
             .join("\n");
         Ok((

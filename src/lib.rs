@@ -15,11 +15,12 @@ mod stack;
 mod workspace;
 
 pub use capture::Capture;
-pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
+pub use domain::{
+    FileEntry, Manifest, ObjectId, OperationId, RepoPath, SparseChanges, VersionNumber,
+};
 pub use ignore::IgnoreRules;
 pub use layer::{
-    CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate,
-    PathDiff, SparseChanges,
+    CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate, PathDiff,
 };
 #[cfg(unix)]
 pub use linux_layer::{

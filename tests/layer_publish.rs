@@ -80,6 +80,7 @@ fn snapshot(db: &Connection) -> Vec<serde_json::Value> {
     [
         "objects",
         "versions",
+        "changes",
         "attempts",
         "layer_heads",
         "layer_attempts",
@@ -88,7 +89,7 @@ fn snapshot(db: &Connection) -> Vec<serde_json::Value> {
     .into_iter()
     .map(|table| {
         let mut q = db
-            .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+            .prepare(&format!("SELECT * FROM {table} ORDER BY 1,2"))
             .unwrap();
         let columns = q.column_count();
         let rows = q
@@ -140,7 +141,7 @@ fn whole_latest_checkpoint_publishes_with_retained_history_clone_and_readonly_st
     assert_eq!(receipt.against.number, v(0));
     assert_eq!(world.number, v(1));
     assert_eq!(
-        repo.read_manifest(world.manifest)
+        repo.manifest_at(world.number)
             .unwrap()
             .entries()
             .get(&path("file")),
@@ -253,10 +254,9 @@ fn advanced_world_composes_complete_delta_and_preserves_immutable_base() {
                 assert_eq!(
                     candidate.entries(),
                     &std::collections::BTreeMap::from([
-                        (path("keep"), keep.clone()),
-                        (path("world"), independent.clone()),
-                        (path("program"), executable.clone()),
-                        (path("link"), link.clone()),
+                        (path("remove"), None),
+                        (path("program"), Some(executable.clone())),
+                        (path("link"), Some(link.clone())),
                     ])
                 );
                 Ok(())
@@ -267,7 +267,7 @@ fn advanced_world_composes_complete_delta_and_preserves_immutable_base() {
     assert_eq!(final_world.number, v(3));
     assert_eq!(repo.read_checkpoint(head.checkpoint()).unwrap(), checkpoint);
     assert_eq!(
-        repo.read_manifest(final_world.manifest)
+        repo.manifest_at(final_world.number)
             .unwrap()
             .entries()
             .len(),
@@ -293,7 +293,7 @@ fn net_revert_to_base_permits_publish_but_identical_new_results_conflict() {
         if revert {
             assert_eq!(
                 repo.read_blob(
-                    repo.read_manifest(published(&receipt).manifest)
+                    repo.manifest_at(published(&receipt).number)
                         .unwrap()
                         .entries()[&path("same")]
                         .content()
@@ -437,7 +437,7 @@ fn separate_children_and_name_prefix_without_slash_compose() {
     advance(&mut repo, "world", [("ab", b.clone()), ("dir/two", b)]);
     let receipt = publish(&mut repo, "publish", &head);
     assert_eq!(
-        repo.read_manifest(published(&receipt).manifest)
+        repo.manifest_at(published(&receipt).number)
             .unwrap()
             .entries()
             .len(),
@@ -489,8 +489,11 @@ fn operation_reuse_binds_complete_input_and_raw_world_namespace_in_both_directio
     let head = capture(&mut repo, "layer", 0, &delta([("a", Some(entry.clone()))]));
     let receipt = publish(&mut repo, "success", &head);
     let world = published(&receipt);
+    let manifest = repo
+        .put_manifest(&repo.manifest_at(world.number).unwrap())
+        .unwrap();
     assert!(matches!(
-        repo.compare_and_advance(&op("success"), receipt.against.number, world.manifest),
+        repo.compare_and_advance(&op("success"), receipt.against.number, manifest),
         Err(Error::OperationIdReused(_))
     ));
     let other = capture(&mut repo, "other", 0, &delta([("a", Some(entry))]));
@@ -500,13 +503,13 @@ fn operation_reuse_binds_complete_input_and_raw_world_namespace_in_both_directio
     assert!(matches!(stale.outcome, PublishOutcome::LayerStale { .. }));
     for name in ["conflict", "terminal"] {
         assert!(matches!(
-            repo.compare_and_advance(&op(name), world.number, world.manifest),
+            repo.compare_and_advance(&op(name), world.number, manifest),
             Err(Error::OperationIdReused(_))
         ));
     }
-    repo.compare_and_advance(&op("raw-success"), world.number, world.manifest)
+    repo.compare_and_advance(&op("raw-success"), world.number, manifest)
         .unwrap();
-    repo.compare_and_advance(&op("raw-stale"), v(0), world.manifest)
+    repo.compare_and_advance(&op("raw-stale"), v(0), manifest)
         .unwrap();
     for name in ["raw-success", "raw-stale"] {
         assert!(matches!(
@@ -625,7 +628,7 @@ fn human_agent_context_override_and_nonreservation_are_enforced() {
     let missing = ObjectId::for_blob(b"absent");
     for context in [
         missing,
-        published(&receipt).manifest,
+        repo.put_manifest(&Manifest::new([]).unwrap()).unwrap(),
         head.checkpoint().object(),
     ] {
         let before = snapshot(&raw(&root));
@@ -679,7 +682,7 @@ fn guard_holds_write_lock_and_refusal_changes_no_rows_or_objects() {
                 assert_eq!(*locked, world);
                 assert_eq!(
                     candidate.entries(),
-                    &std::collections::BTreeMap::from([(path("layer"), a), (path("world"), b)])
+                    &std::collections::BTreeMap::from([(path("layer"), Some(a))])
                 );
                 let error = db.execute_batch("BEGIN IMMEDIATE;").unwrap_err();
                 assert_eq!(
@@ -802,7 +805,7 @@ fn tampered_receipt_relations_composition_and_accepted_graph_never_fall_back() {
         "observed",
         "outcome",
         "context-kind",
-        "world-manifest",
+        "world-changeset",
         "old-blob",
         "world-tail",
         "publication-tail-event",
@@ -814,7 +817,6 @@ fn tampered_receipt_relations_composition_and_accepted_graph_never_fall_back() {
         advance(&mut repo, "base", [("base", a.clone())]);
         let head = capture(&mut repo, "layer", 1, &delta([("file", Some(b.clone()))]));
         let receipt = publish(&mut repo, "pub", &head);
-        let world = published(&receipt);
         let alternate = repo
             .put_manifest(&Manifest::new([(path("other"), b)]).unwrap())
             .unwrap();
@@ -862,19 +864,15 @@ fn tampered_receipt_relations_composition_and_accepted_graph_never_fall_back() {
             "context-kind" => {
                 db.execute(
                     "UPDATE publications SET attribution=1,context=?1 WHERE id='pub'",
-                    [world.manifest.to_string()],
+                    [alternate.to_string()],
                 )
                 .unwrap();
             }
-            "world-manifest" => {
+            "world-changeset" => {
+                db.execute_batch("DROP TRIGGER changes_no_UPDATE;").unwrap();
                 db.execute(
-                    "UPDATE versions SET manifest=?1 WHERE number=2",
-                    [alternate.to_string()],
-                )
-                .unwrap();
-                db.execute(
-                    "UPDATE attempts SET manifest=?1 WHERE id='pub'",
-                    [alternate.to_string()],
+                    "UPDATE changes SET content=?1 WHERE version=2",
+                    [a.content().to_string()],
                 )
                 .unwrap();
             }
@@ -896,26 +894,28 @@ fn tampered_receipt_relations_composition_and_accepted_graph_never_fall_back() {
             _ => unreachable!(),
         }
         let before = snapshot(&db);
-        assert!(repo.publication(&op("pub")).is_err(), "{damage}");
         assert!(repo.history().is_err(), "{damage}");
         assert!(repo.check().is_err(), "{damage}");
-        assert!(repo.layer_state(head.layer()).is_err(), "{damage}");
-        assert!(
-            repo.publish_layer(
-                &op("fresh"),
-                &head,
-                &PublishAttribution::Human,
-                |_, _| panic!("corrupt guard")
-            )
-            .is_err(),
-            "{damage}"
-        );
-        assert!(
-            repo.compare_and_advance(&op("fresh-raw"), world.number, world.manifest)
-                .is_err(),
-            "{damage}"
-        );
         assert!(Repository::init(root.path()).is_err(), "{damage}");
+        // Commands verify the receipt they read, not unrelated World content: a
+        // damaged base blob outside the Layer's change is check()'s to find, as
+        // is a success relabelled as failed, which no longer marks the Layer.
+        if damage != "old-blob" {
+            assert!(repo.publication(&op("pub")).is_err(), "{damage}");
+        }
+        if !["old-blob", "outcome"].contains(&damage) {
+            assert!(repo.layer_state(head.layer()).is_err(), "{damage}");
+            assert!(
+                repo.publish_layer(
+                    &op("fresh"),
+                    &head,
+                    &PublishAttribution::Human,
+                    |_, _| panic!("corrupt guard")
+                )
+                .is_err(),
+                "{damage}"
+            );
+        }
         assert_eq!(snapshot(&db), before, "{damage}");
     }
 }
@@ -1003,15 +1003,7 @@ fn failed_receipt_paths_and_observed_publication_are_bound_to_original_records()
         }
         assert!(repo.publication(&op("failed")).is_err(), "{damage}");
         assert!(repo.check().is_err(), "{damage}");
-        assert!(
-            repo.publish_layer(
-                &op("fresh"),
-                &head,
-                &PublishAttribution::Human,
-                |_, _| panic!("damaged failed receipt")
-            )
-            .is_err(),
-            "{damage}"
-        );
+        assert!(repo.history().is_err(), "{damage}");
+        // A fresh Publish does not read an unrelated failed receipt.
     }
 }

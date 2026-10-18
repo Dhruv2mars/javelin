@@ -70,9 +70,8 @@ fn content(repo: &Repository, layer: &LayerId) -> Vec<(String, Vec<u8>)> {
     let LayerState::Active { head } = repo.layer_state(layer).unwrap() else {
         panic!("inactive")
     };
-    let checkpoint = repo.read_checkpoint(head.checkpoint()).unwrap();
-    checkpoint
-        .manifest()
+    repo.checkpoint_manifest(head.checkpoint())
+        .unwrap()
         .entries()
         .iter()
         .map(|(p, e)| (p.as_str().to_owned(), repo.read_blob(e.content()).unwrap()))

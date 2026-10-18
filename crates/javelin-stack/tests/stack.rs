@@ -94,12 +94,20 @@ fn clean_within_file_and_disjoint_changes_enter_one_checkpoint_and_replay_after_
     );
     assert_eq!(head.revision(), target.revision() + 1);
     assert_eq!(
-        repo.read_blob(frozen.manifest().entries()[&path("file")].content())
-            .unwrap(),
+        repo.read_blob(
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")].content()
+        )
+        .unwrap(),
         b"FIRST\nanchor\nLAST\n"
     );
-    assert_eq!(frozen.manifest().entries()[&path("private")], private);
-    assert_eq!(frozen.manifest().entries()[&path("imported")], imported);
+    assert_eq!(
+        repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("private")],
+        private
+    );
+    assert_eq!(
+        repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("imported")],
+        imported
+    );
     assert_eq!(frozen.stack_sources(), &[source.checkpoint()]);
     assert_eq!(repo.history().unwrap().last().unwrap().number, version(1));
     // Source can advance, then discard; it never changes the imported checkpoint.
@@ -193,17 +201,11 @@ fn conflicts_are_explicit_exact_and_leave_no_partial_checkpoint_or_operation() {
             panic!("{kind:?}: {outcome:?}")
         };
         assert!(conflicts.iter().any(|c| c.kind == kind), "{conflicts:?}");
-        let target_entries = repo.read_checkpoint(target.checkpoint()).unwrap();
-        let source_entries = repo.read_checkpoint(source.checkpoint()).unwrap();
+        let target_entries = repo.checkpoint_manifest(target.checkpoint()).unwrap();
+        let source_entries = repo.checkpoint_manifest(source.checkpoint()).unwrap();
         for c in &conflicts {
-            assert_eq!(
-                c.ours.as_ref(),
-                target_entries.manifest().entries().get(&c.path)
-            );
-            assert_eq!(
-                c.theirs.as_ref(),
-                source_entries.manifest().entries().get(&c.path)
-            );
+            assert_eq!(c.ours.as_ref(), target_entries.entries().get(&c.path));
+            assert_eq!(c.theirs.as_ref(), source_entries.entries().get(&c.path));
         }
         assert_eq!(repo.check().unwrap().objects, before);
         assert_eq!(
@@ -255,10 +257,19 @@ fn different_bases_import_only_source_delta_and_preserve_private_and_accepted_co
         let head =
             stacked(stack_layer(&mut repo, &op("stack"), &target, source.checkpoint()).unwrap());
         let result = repo.read_checkpoint(head.checkpoint()).unwrap();
-        assert_eq!(result.manifest().entries()[&path("file")], change);
-        assert_eq!(result.manifest().entries()[&path("private")], private);
         assert_eq!(
-            result.manifest().entries().get(&path("unrelated")),
+            repo.checkpoint_manifest(result.id()).unwrap().entries()[&path("file")],
+            change
+        );
+        assert_eq!(
+            repo.checkpoint_manifest(result.id()).unwrap().entries()[&path("private")],
+            private
+        );
+        assert_eq!(
+            repo.checkpoint_manifest(result.id())
+                .unwrap()
+                .entries()
+                .get(&path("unrelated")),
             if newer_source { None } else { Some(&unrelated) }
         );
         assert_eq!(
@@ -353,9 +364,18 @@ fn clean_deletions_types_modes_and_published_source_remain_frozen_transitively()
     .unwrap();
     let head = stacked(stack_layer(&mut repo, &op("stack"), &target, source.checkpoint()).unwrap());
     let result = repo.read_checkpoint(head.checkpoint()).unwrap();
-    assert_eq!(result.manifest(), frozen.manifest());
-    assert_eq!(result.manifest().entries()[&path("exe")], entry);
-    assert_eq!(result.manifest().entries()[&path("link")], link);
+    assert_eq!(
+        repo.checkpoint_manifest(result.id()).unwrap(),
+        repo.checkpoint_manifest(frozen.id()).unwrap()
+    );
+    assert_eq!(
+        repo.checkpoint_manifest(result.id()).unwrap().entries()[&path("exe")],
+        entry
+    );
+    assert_eq!(
+        repo.checkpoint_manifest(result.id()).unwrap().entries()[&path("link")],
+        link
+    );
     let third = layer(&mut repo, "third", 1);
     let third =
         stacked(stack_layer(&mut repo, &op("stack-again"), &third, head.checkpoint()).unwrap());

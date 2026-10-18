@@ -4,11 +4,18 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use serde::Serialize;
 use sha2::Digest;
 
-use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
+use crate::{
+    Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Result, SparseChanges,
+    VersionNumber,
+    domain::{ObjectKind, SnapshotIndex, WorldIndex, normalize, version_id},
+};
 
-const FORMAT: i64 = 5;
+const FORMAT: i64 = 6;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
+// A World version's primary record is its changeset: one `changes` row per changed
+// path, NULL kind for deletion. Snapshots are derived. The primary key serves
+// per-path point reads at any version; `changes_by_version` reads one changeset.
 const SCHEMA: &str = "
 CREATE TABLE objects (
     id TEXT PRIMARY KEY CHECK(length(id)=64),
@@ -18,17 +25,27 @@ CREATE TABLE objects (
 CREATE TABLE attempts (
     id TEXT PRIMARY KEY,
     expected INTEGER NOT NULL REFERENCES versions(number),
-    manifest TEXT NOT NULL REFERENCES objects(id),
+    manifest TEXT REFERENCES objects(id),
     accepted INTEGER NOT NULL CHECK(accepted IN (0,1)),
     result INTEGER NOT NULL REFERENCES versions(number) DEFERRABLE INITIALLY DEFERRED,
-    CHECK(accepted=0 OR result=expected+1)
+    CHECK(accepted=0 OR result=expected+1),
+    CHECK(manifest IS NOT NULL OR accepted=1)
 ) STRICT;
 CREATE TABLE versions (
     number INTEGER PRIMARY KEY CHECK(number>=0),
-    manifest TEXT NOT NULL REFERENCES objects(id),
+    id TEXT NOT NULL CHECK(length(id)=64),
     operation TEXT UNIQUE REFERENCES attempts(id),
     CHECK((number=0 AND operation IS NULL) OR (number>0 AND operation IS NOT NULL))
 ) STRICT;
+CREATE TABLE changes (
+    path TEXT NOT NULL,
+    version INTEGER NOT NULL REFERENCES versions(number),
+    kind INTEGER CHECK(kind IN (1,2,3)),
+    content TEXT REFERENCES objects(id),
+    PRIMARY KEY(path,version),
+    CHECK((kind IS NULL)=(content IS NULL))
+) STRICT, WITHOUT ROWID;
+CREATE INDEX changes_by_version ON changes(version);
 CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
@@ -36,13 +53,14 @@ BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 -- this index SQLite scans every attempt inside the Publish write transaction.
 CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=5;
+PRAGMA user_version=6;
 ";
 
+/// One World version. `id` is its hash-chain identity over all changesets so far.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorldVersion {
     pub number: VersionNumber,
-    pub manifest: ObjectId,
+    pub id: ObjectId,
     pub operation: Option<OperationId>,
 }
 
@@ -116,6 +134,7 @@ impl Repository {
             for table in [
                 "objects",
                 "versions",
+                "changes",
                 "attempts",
                 "repository_identity",
                 "layer_heads",
@@ -127,15 +146,12 @@ impl Repository {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
                 }
             }
-            let manifest = Manifest::new([])?;
-            let id = insert_object(&tx, ObjectKind::Manifest, &manifest.canonical_bytes())?;
             tx.execute(
-                "INSERT INTO versions(number,manifest) VALUES(0,?1)",
-                [id.to_string()],
+                "INSERT INTO versions(number,id) VALUES(0,?1)",
+                [version_id(None, &SparseChanges::default()).to_string()],
             )?;
         } else {
-            validate_format(&tx)?;
-            validate_state_in(&tx)?;
+            validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
         }
         #[cfg(test)]
         test_boundary("init_before_commit");
@@ -258,24 +274,55 @@ impl Repository {
         Ok(manifest)
     }
 
+    /// Derives the complete snapshot of a World version from its changesets.
+    /// Work is O(change rows up to `version`); never used on the Publish path.
+    pub fn manifest_at(&self, version: VersionNumber) -> Result<Manifest> {
+        let tx = self.conn.unchecked_transaction()?;
+        version_in(&tx, version)?;
+        let manifest = Manifest::new(snapshot_in(&tx, version)?)?;
+        tx.commit()?;
+        Ok(manifest)
+    }
+
+    /// The exact changeset a World version applied to its parent.
+    pub fn changeset(&self, version: VersionNumber) -> Result<SparseChanges> {
+        let tx = self.conn.unchecked_transaction()?;
+        version_in(&tx, version)?;
+        let changes = changeset_in(&tx, version)?;
+        tx.commit()?;
+        Ok(changes)
+    }
+
     /// Reads the complete ordered sequence and validates all reachable content.
     pub fn history(&self) -> Result<Vec<WorldVersion>> {
         let tx = self.conn.unchecked_transaction()?;
-        let history = validate_state_in(&tx)?;
+        let history =
+            validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
         tx.commit()?;
         Ok(history)
     }
 
+    /// The current World version, read from its single row.
+    pub fn head(&self) -> Result<WorldVersion> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let head = head_in(&tx)?;
+        tx.commit()?;
+        Ok(head)
+    }
+
     pub fn version(&self, number: VersionNumber) -> Result<WorldVersion> {
-        self.history()?
-            .into_iter()
-            .find(|v| v.number == number)
-            .ok_or(Error::MissingVersion(number))
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let version = version_in(&tx, number)?;
+        tx.commit()?;
+        Ok(version)
     }
 
     /// Publishes metadata only. The caller will later supply Layer, permission and
     /// policy validation. Keep the same operation ID and input after any uncertain error.
     /// Accepted and stale outcomes are durable and returned unchanged on retry.
+    /// Accepting a full manifest derives the head snapshot to compute its changeset.
     pub fn compare_and_advance(
         &mut self,
         operation: &OperationId,
@@ -285,19 +332,17 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let history = validate_state_in(&tx)?;
-        let head = history
-            .last()
-            .ok_or_else(|| Error::CorruptRepository("missing initial World".into()))?;
+        validate_format(&tx)?;
+        let head = head_in(&tx)?;
         if crate::publish::operation_exists_in(&tx, operation)? {
             return Err(Error::OperationIdReused(operation.clone()));
         }
         if let Some(attempt) = attempt_in(&tx, operation)? {
-            if attempt.expected != expected || attempt.manifest != manifest {
+            if attempt.expected != expected || attempt.manifest != Some(manifest) {
                 return Err(Error::OperationIdReused(operation.clone()));
             }
             manifest_in(&tx, manifest)?;
-            let outcome = attempt.outcome(&history)?;
+            let outcome = attempt.outcome(&tx)?;
             tx.commit()?;
             return Ok(outcome);
         }
@@ -305,15 +350,10 @@ impl Repository {
             return Err(Error::MissingVersion(expected));
         }
         // Revalidate the entire candidate graph inside the publication transaction.
-        manifest_in(&tx, manifest)?;
+        let candidate = manifest_in(&tx, manifest)?;
         let accepted = expected == head.number;
         let result = if accepted {
-            VersionNumber::new(
-                head.number
-                    .get()
-                    .checked_add(1)
-                    .ok_or_else(|| Error::InvalidInput("World version overflow".into()))?,
-            )?
+            next_number(head.number)?
         } else {
             head.number
         };
@@ -328,16 +368,18 @@ impl Repository {
             ],
         )?;
         let outcome = if accepted {
-            tx.execute(
-                "INSERT INTO versions(number,manifest,operation) VALUES(?1,?2,?3)",
-                params![result.sql(), manifest.to_string(), operation.as_str()],
+            let current = snapshot_in(&tx, head.number)?;
+            let changes = SparseChanges::new(
+                current
+                    .keys()
+                    .chain(candidate.entries().keys())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .filter(|p| current.get(*p) != candidate.entries().get(*p))
+                    .map(|p| (p.clone(), candidate.entries().get(p).cloned())),
             )?;
             AdvanceOutcome::Accepted {
-                version: WorldVersion {
-                    number: result,
-                    manifest,
-                    operation: Some(operation.clone()),
-                },
+                version: append_version_in(&tx, &head, operation, &changes)?,
             }
         } else {
             AdvanceOutcome::Stale { actual: result }
@@ -350,8 +392,10 @@ impl Repository {
         Ok(outcome)
     }
 
-    /// Checks physical SQLite integrity plus every stored object's native graph and
-    /// every accepted/stale operation outcome, within one consistent read snapshot.
+    /// Checks physical SQLite integrity plus every stored object's native graph,
+    /// the World hash chain and every changeset, and every accepted/stale operation
+    /// outcome, within one consistent read snapshot. Commands validate only what
+    /// they touch; this is the full-graph check.
     pub fn check(&self) -> Result<IntegrityReport> {
         let tx = self.conn.unchecked_transaction()?;
         validate_format(&tx)?;
@@ -400,12 +444,8 @@ impl Repository {
     }
 }
 
-/// Full state validation is above the raw World and Layer validators. Checkpoint
-/// base validation uses version_in, so it never recursively validates publications.
-pub(crate) fn validate_state_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
-    validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(conn))
-}
-
+/// Full state validation for explicit integrity reads: World chain, Layers, Stacks,
+/// Publications. Per-command paths never call this.
 fn validate_state_with_checkpoints(
     checkpoints: &mut crate::layer::CheckpointReader<'_>,
 ) -> Result<Vec<WorldVersion>> {
@@ -608,56 +648,278 @@ fn decode_operation(value: &str) -> Result<OperationId> {
         .map_err(|_| Error::CorruptRepository("invalid stored operation ID".into()))
 }
 
+pub(crate) fn next_number(number: VersionNumber) -> Result<VersionNumber> {
+    VersionNumber::new(
+        number
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| Error::InvalidInput("World version overflow".into()))?,
+    )
+}
+
+fn version_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, Option<String>)> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+}
+
+fn decode_version((number, id, operation): (i64, String, Option<String>)) -> Result<WorldVersion> {
+    let number = VersionNumber::decode(number)?;
+    let operation = operation.as_deref().map(decode_operation).transpose()?;
+    if (number.get() == 0) != operation.is_none() {
+        return Err(Error::CorruptRepository("invalid version operation".into()));
+    }
+    Ok(WorldVersion {
+        number,
+        id: decode_id(&id)?,
+        operation,
+    })
+}
+
+/// One version row and its accepted-attempt binding, without walking history.
+/// Its hash-chain link is verified by `history_in`.
+pub(crate) fn version_in(conn: &Connection, number: VersionNumber) -> Result<WorldVersion> {
+    let version = conn
+        .prepare_cached("SELECT number,id,operation FROM versions WHERE number=?1")?
+        .query_row([number.sql()], version_row)
+        .optional()?
+        .map(decode_version)
+        .transpose()?
+        .ok_or(Error::MissingVersion(number))?;
+    bind_attempt(conn, &version)?;
+    Ok(version)
+}
+
+/// The latest World, found by primary key. Contiguity is enforced on insert.
+pub(crate) fn head_in(conn: &Connection) -> Result<WorldVersion> {
+    let version = conn
+        .prepare_cached("SELECT number,id,operation FROM versions ORDER BY number DESC LIMIT 1")?
+        .query_row([], version_row)
+        .optional()?
+        .map(decode_version)
+        .transpose()?
+        .ok_or_else(|| Error::CorruptRepository("missing initial World".into()))?;
+    bind_attempt(conn, &version)?;
+    Ok(version)
+}
+
+fn bind_attempt(conn: &Connection, version: &WorldVersion) -> Result<()> {
+    if let Some(op) = &version.operation {
+        let attempt = attempt_in(conn, op)?
+            .ok_or_else(|| Error::CorruptRepository("missing accepted attempt".into()))?;
+        if !attempt.accepted
+            || attempt.result != version.number
+            || attempt.expected.get() != version.number.get() - 1
+        {
+            return Err(Error::CorruptRepository(
+                "version and operation disagree".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn encode_entry(entry: &Option<FileEntry>) -> (Option<i64>, Option<String>) {
+    match entry {
+        None => (None, None),
+        Some(FileEntry::Regular {
+            content,
+            executable,
+        }) => (Some(1 + i64::from(*executable)), Some(content.to_string())),
+        Some(FileEntry::Symlink { target }) => (Some(3), Some(target.to_string())),
+    }
+}
+
+fn decode_entry(kind: Option<i64>, content: Option<String>) -> Result<Option<FileEntry>> {
+    let content = content.as_deref().map(decode_id).transpose()?;
+    match (kind, content) {
+        (None, None) => Ok(None),
+        (Some(kind @ (1 | 2)), Some(content)) => Ok(Some(FileEntry::Regular {
+            content,
+            executable: kind == 2,
+        })),
+        (Some(3), Some(target)) => Ok(Some(FileEntry::Symlink { target })),
+        _ => Err(Error::CorruptRepository("invalid World change".into())),
+    }
+}
+
+fn decode_path(path: &str) -> Result<RepoPath> {
+    RepoPath::parse(path).map_err(|_| Error::CorruptRepository("invalid World change path".into()))
+}
+
+pub(crate) fn changeset_in(conn: &Connection, version: VersionNumber) -> Result<SparseChanges> {
+    let rows = conn
+        .prepare_cached("SELECT path,kind,content FROM changes WHERE version=?1 ORDER BY path")?
+        .query_map([version.sql()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    SparseChanges::new(
+        rows.into_iter()
+            .map(|(path, kind, content)| Ok((decode_path(&path)?, decode_entry(kind, content)?)))
+            .collect::<Result<Vec<_>>>()?,
+    )
+}
+
+/// Derives a full snapshot: the latest change row per path at or before `version`.
+pub(crate) fn snapshot_in(
+    conn: &Connection,
+    version: VersionNumber,
+) -> Result<std::collections::BTreeMap<RepoPath, FileEntry>> {
+    let mut statement = conn.prepare_cached(
+        "SELECT path,kind,content FROM changes WHERE version<=?1 ORDER BY path,version",
+    )?;
+    let mut rows = statement.query([version.sql()])?;
+    let mut entries = std::collections::BTreeMap::new();
+    let mut last: Option<(String, Option<FileEntry>)> = None;
+    while let Some(row) = rows.next()? {
+        let path: String = row.get(0)?;
+        let entry = decode_entry(row.get(1)?, row.get(2)?)?;
+        if let Some((previous, Some(entry))) = last.take().filter(|(p, _)| *p != path) {
+            entries.insert(decode_path(&previous)?, entry);
+        }
+        last = Some((path, entry));
+    }
+    if let Some((path, Some(entry))) = last {
+        entries.insert(decode_path(&path)?, entry);
+    }
+    Ok(entries)
+}
+
+/// Appends version `head + 1` with its changeset rows. O(change).
+pub(crate) fn append_version_in(
+    conn: &Connection,
+    head: &WorldVersion,
+    operation: &OperationId,
+    changes: &SparseChanges,
+) -> Result<WorldVersion> {
+    let version = WorldVersion {
+        number: next_number(head.number)?,
+        id: version_id(Some(head.id), changes),
+        operation: Some(operation.clone()),
+    };
+    conn.prepare_cached("INSERT INTO versions(number,id,operation) VALUES(?1,?2,?3)")?
+        .execute(params![
+            version.number.sql(),
+            version.id.to_string(),
+            operation.as_str()
+        ])?;
+    let mut insert =
+        conn.prepare_cached("INSERT INTO changes(path,version,kind,content) VALUES(?1,?2,?3,?4)")?;
+    for (path, entry) in changes.entries() {
+        let (kind, content) = encode_entry(entry);
+        insert.execute(params![path.as_str(), version.number.sql(), kind, content])?;
+    }
+    Ok(version)
+}
+
+/// Indexed point reads over the `changes` table.
+pub(crate) struct Index<'a>(pub(crate) &'a Connection);
+
+impl WorldIndex for Index<'_> {
+    fn entry_at(&self, path: &RepoPath, version: VersionNumber) -> Result<Option<FileEntry>> {
+        let row: Option<(Option<i64>, Option<String>)> = self
+            .0
+            .prepare_cached(
+                "SELECT kind,content FROM changes WHERE path=?1 AND version<=?2 ORDER BY version DESC LIMIT 1",
+            )?
+            .query_row(params![path.as_str(), version.sql()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        row.map_or(Ok(None), |(kind, content)| decode_entry(kind, content))
+    }
+
+    fn changed_under(
+        &self,
+        dir: &RepoPath,
+        after: Option<VersionNumber>,
+        upto: VersionNumber,
+    ) -> Result<Vec<RepoPath>> {
+        let (start, end) = dir.descendant_range();
+        let after = after.map_or(-1, VersionNumber::sql);
+        self.0
+            .prepare_cached(
+                "SELECT DISTINCT path FROM changes WHERE path>=?1 AND path<?2 AND version>?3 AND version<=?4 ORDER BY path",
+            )?
+            .query_map(params![start, end, after, upto.sql()], |r| {
+                r.get::<_, String>(0)
+            })?
+            .map(|path| decode_path(&path?))
+            .collect()
+    }
+
+    fn check_entry(&self, entry: &FileEntry) -> Result<()> {
+        validate_entry(self.0, entry)
+    }
+}
+
+/// Verifies every version row, its hash-chain link and its changeset against the
+/// parent snapshot, then every World attempt. Work is O(total change rows) plus
+/// each attempted manifest; the running snapshot is the only O(repo) state.
 pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
     let rows = conn
-        .prepare("SELECT number,manifest,operation FROM versions ORDER BY number")?
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-            ))
-        })?
+        .prepare("SELECT number,id,operation FROM versions ORDER BY number")?
+        .query_map([], version_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     if rows.is_empty() {
         return Err(Error::CorruptRepository("missing initial World".into()));
     }
-    let mut history = Vec::new();
-    for (index, (number, manifest, operation)) in rows.into_iter().enumerate() {
-        let number = VersionNumber::decode(number)?;
-        if number.get() != index as u64 {
+    let orphans = conn
+        .prepare("SELECT 1 FROM changes WHERE version NOT IN (SELECT number FROM versions)")?
+        .exists([])?;
+    if orphans {
+        return Err(Error::CorruptRepository("orphan World change".into()));
+    }
+    let mut history: Vec<WorldVersion> = Vec::new();
+    let mut snapshot = std::collections::BTreeMap::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        let version = decode_version(row)?;
+        if version.number.get() != index as u64 {
             return Err(Error::CorruptRepository(
                 "World history is not contiguous".into(),
             ));
         }
-        let manifest = decode_id(&manifest)?;
-        let content = manifest_in(conn, manifest)?;
-        let operation = operation.as_deref().map(decode_operation).transpose()?;
-        if index == 0 {
-            if operation.is_some() || !content.entries().is_empty() {
-                return Err(Error::CorruptRepository("invalid initial World".into()));
+        let changes = changeset_in(conn, version.number)?;
+        if version.id != version_id(history.last().map(|v| v.id), &changes) {
+            return Err(Error::CorruptRepository(
+                "World version identity disagrees with its changeset".into(),
+            ));
+        }
+        let parent = SnapshotIndex {
+            entries: &snapshot,
+            check: |entry: &FileEntry| validate_entry(conn, entry),
+        };
+        match normalize(&parent, version.number, &changes) {
+            Ok(normalized) if normalized == changes => {}
+            Ok(_) | Err(Error::InvalidInput(_)) => {
+                return Err(Error::CorruptRepository(
+                    "World changeset is not canonical against its parent".into(),
+                ));
             }
-        } else {
-            let op = operation
-                .as_ref()
-                .ok_or_else(|| Error::CorruptRepository("missing version operation".into()))?;
+            Err(e) => return Err(e),
+        }
+        changes.apply(&mut snapshot);
+        if let Some(op) = &version.operation {
             let attempt = attempt_in(conn, op)?
                 .ok_or_else(|| Error::CorruptRepository("missing accepted attempt".into()))?;
             if !attempt.accepted
-                || attempt.result != number
-                || attempt.expected.get() != number.get() - 1
-                || attempt.manifest != manifest
+                || attempt.result != version.number
+                || attempt.expected.get() != version.number.get() - 1
             {
                 return Err(Error::CorruptRepository(
                     "version and operation disagree".into(),
                 ));
             }
+            if let Some(manifest) = attempt.manifest
+                && manifest_in(conn, manifest)?.entries() != &snapshot
+            {
+                return Err(Error::CorruptRepository(
+                    "accepted manifest disagrees with derived World".into(),
+                ));
+            }
+        } else if index != 0 || !changes.entries().is_empty() {
+            return Err(Error::CorruptRepository("invalid initial World".into()));
         }
-        history.push(WorldVersion {
-            number,
-            manifest,
-            operation,
-        });
+        history.push(version);
     }
     let operations = conn
         .prepare("SELECT id FROM attempts ORDER BY id")?
@@ -667,90 +929,45 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
         let operation = decode_operation(&id)?;
         let attempt = attempt_in(conn, &operation)?
             .ok_or_else(|| Error::CorruptRepository("missing attempt".into()))?;
-        manifest_in(conn, attempt.manifest)?;
-        attempt.outcome(&history)?;
-    }
-    Ok(history)
-}
-
-/// One World row and its accepted-attempt binding, without walking history.
-/// Callers that use the manifest validate its graph with manifest_in.
-pub(crate) fn version_in(conn: &Connection, number: VersionNumber) -> Result<Option<WorldVersion>> {
-    let row = conn
-        .query_row(
-            "SELECT manifest,operation FROM versions WHERE number=?1",
-            [number.sql()],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-        )
-        .optional()?;
-    let Some((manifest, operation)) = row else {
-        return Ok(None);
-    };
-    let manifest = decode_id(&manifest)?;
-    let operation = operation.as_deref().map(decode_operation).transpose()?;
-    match &operation {
-        None if number.get() == 0 => {}
-        Some(op) if number.get() > 0 => {
-            let attempt = attempt_in(conn, op)?
-                .ok_or_else(|| Error::CorruptRepository("missing accepted attempt".into()))?;
-            if !attempt.accepted
-                || attempt.result != number
-                || attempt.expected.get() != number.get() - 1
-                || attempt.manifest != manifest
-            {
+        match attempt.manifest {
+            Some(manifest) => {
+                manifest_in(conn, manifest)?;
+            }
+            // Layer publications record their candidate through the publication row.
+            None if crate::publish::operation_exists_in(conn, &operation)? => {}
+            None => {
                 return Err(Error::CorruptRepository(
-                    "version and operation disagree".into(),
+                    "World attempt has no candidate".into(),
                 ));
             }
         }
-        _ => return Err(Error::CorruptRepository("invalid version operation".into())),
+        attempt.outcome(conn)?;
     }
-    Ok(Some(WorldVersion {
-        number,
-        manifest,
-        operation,
-    }))
-}
-
-/// The latest World, found by primary key. Contiguity is enforced on insert.
-pub(crate) fn world_head_in(conn: &Connection) -> Result<WorldVersion> {
-    let number: Option<i64> =
-        conn.query_row("SELECT max(number) FROM versions", [], |r| r.get(0))?;
-    let number = VersionNumber::decode(
-        number.ok_or_else(|| Error::CorruptRepository("missing initial World".into()))?,
-    )?;
-    version_in(conn, number)?
-        .ok_or_else(|| Error::CorruptRepository("missing initial World".into()))
+    Ok(history)
 }
 
 struct Attempt {
     operation: OperationId,
     expected: VersionNumber,
-    manifest: ObjectId,
+    manifest: Option<ObjectId>,
     accepted: bool,
     result: VersionNumber,
 }
 
 impl Attempt {
-    fn outcome(&self, history: &[WorldVersion]) -> Result<AdvanceOutcome> {
-        let actual = history
-            .iter()
-            .find(|v| v.number == self.result)
-            .ok_or_else(|| {
-                Error::CorruptRepository("attempt refers to missing result version".into())
-            })?;
+    fn outcome(&self, conn: &Connection) -> Result<AdvanceOutcome> {
+        let actual = version_in(conn, self.result).map_err(|_| {
+            Error::CorruptRepository("attempt refers to missing result version".into())
+        })?;
         if self.accepted {
             if self.result.get() != self.expected.get() + 1
-                || actual.manifest != self.manifest
                 || actual.operation.as_ref() != Some(&self.operation)
             {
                 return Err(Error::CorruptRepository(
                     "accepted attempt disagrees with World".into(),
                 ));
             }
-            Ok(AdvanceOutcome::Accepted {
-                version: actual.clone(),
-            })
+            Ok(AdvanceOutcome::Accepted { version: actual })
         } else {
             if self.result <= self.expected {
                 return Err(Error::CorruptRepository("invalid stale outcome".into()));
@@ -764,18 +981,15 @@ impl Attempt {
 
 fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attempt>> {
     let row = conn
-        .query_row(
-            "SELECT expected,manifest,accepted,result FROM attempts WHERE id=?1",
-            [operation.as_str()],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            },
-        )
+        .prepare_cached("SELECT expected,manifest,accepted,result FROM attempts WHERE id=?1")?
+        .query_row([operation.as_str()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
         .optional()?;
     row.map(|(expected, manifest, accepted, result)| {
         if accepted != 0 && accepted != 1 {
@@ -784,7 +998,7 @@ fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attem
         Ok(Attempt {
             operation: operation.clone(),
             expected: VersionNumber::decode(expected)?,
-            manifest: decode_id(&manifest)?,
+            manifest: manifest.as_deref().map(decode_id).transpose()?,
             accepted: accepted == 1,
             result: VersionNumber::decode(result)?,
         })

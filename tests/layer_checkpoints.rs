@@ -93,7 +93,7 @@ fn ordered_checkpoint_bytes(base: &LayerBase, delta: &SparseChanges) -> Vec<u8> 
     struct Fixture<'a> {
         repository: String,
         version: u64,
-        manifest: String,
+        world: String,
         changes: &'a std::collections::BTreeMap<RepoPath, Option<FileEntry>>,
     }
     serde_json::to_vec(&Fixture {
@@ -102,7 +102,7 @@ fn ordered_checkpoint_bytes(base: &LayerBase, delta: &SparseChanges) -> Vec<u8> 
             .unwrap()
             .into(),
         version: base.version().get(),
-        manifest: base.manifest().to_string(),
+        world: base.world().to_string(),
         changes: delta.entries(),
     })
     .unwrap()
@@ -119,7 +119,7 @@ fn assert_ordered_fixture_matches_store(repo: &mut Repository, db: &Connection, 
         .unwrap();
     assert_eq!(ordered_checkpoint_bytes(base, &changes([])), actual);
     let entry = repo
-        .read_manifest(base.manifest())
+        .manifest_at(base.version())
         .unwrap()
         .entries()
         .values()
@@ -205,11 +205,9 @@ fn normalized_checkpoint_rejects_only_noncanonical_byte_encoding() {
     }
 }
 
+/// Commands read only their own rows; binding damage is caught by the Layer's
+/// history read, `check()` and reopening through `init`.
 fn assert_binding_damage_rejected(root: &TempDir, repo: &mut Repository, head: &LayerHead) {
-    assert!(matches!(
-        repo.layer_state(head.layer()),
-        Err(Error::CorruptRepository(_))
-    ));
     assert!(matches!(
         repo.layer_history(head.layer()),
         Err(Error::CorruptRepository(_))
@@ -219,20 +217,6 @@ fn assert_binding_damage_rejected(root: &TempDir, repo: &mut Repository, head: &
         Repository::init(root.path()),
         Err(Error::CorruptRepository(_))
     ));
-    let db = raw(root);
-    let count: i64 = db
-        .query_row("SELECT count(*) FROM layer_attempts", [], |r| r.get(0))
-        .unwrap();
-    assert!(
-        repo.capture_layer(&op("after-tamper"), head, &changes([]))
-            .is_err()
-    );
-    assert_eq!(
-        db.query_row("SELECT count(*) FROM layer_attempts", [], |r| r
-            .get::<_, i64>(0))
-            .unwrap(),
-        count
-    );
 }
 
 #[test]
@@ -430,9 +414,8 @@ fn directory_prefix_tombstones_do_not_substitute_for_exact_file_deletions() {
         .unwrap(),
     );
     assert!(
-        repo.read_checkpoint(removed.checkpoint())
+        repo.checkpoint_manifest(removed.checkpoint())
             .unwrap()
-            .manifest()
             .entries()
             .is_empty()
     );
@@ -488,8 +471,9 @@ fn sparse_capture_clone_diff_and_discard_share_objects_and_preserve_worlds() {
     let frozen = repo.read_checkpoint(head.checkpoint()).unwrap();
     assert_eq!(frozen.base(), &base);
     assert_eq!(frozen.changes().entries().len(), 2);
-    assert_eq!(frozen.manifest().entries().get(&path("keep")), Some(&large));
-    assert!(!frozen.manifest().entries().contains_key(&path("remove")));
+    let snapshot = repo.checkpoint_manifest(frozen.id()).unwrap();
+    assert_eq!(snapshot.entries().get(&path("keep")), Some(&large));
+    assert!(!snapshot.entries().contains_key(&path("remove")));
     let captured = usage(&db);
     assert_eq!(captured.0 - before.0, 2); // one new blob and one sparse checkpoint
     assert!(captured.1 - before.1 < 1024);
@@ -711,11 +695,12 @@ fn foreign_bases_heads_and_imported_checkpoint_objects_are_rejected() {
     );
     assert!(second.read_checkpoint(head.checkpoint()).is_err());
     assert!(second.check().is_err());
+    let manifest = first.put_manifest(&Manifest::new([]).unwrap()).unwrap();
     assert!(
         first
             .clone_layer(
                 &id("wrong-kind"),
-                CheckpointId::parse(&base.manifest().to_string()).unwrap()
+                CheckpointId::parse(&manifest.to_string()).unwrap()
             )
             .is_err()
     );
@@ -766,11 +751,7 @@ fn structural_changes_validate_the_whole_resolved_tree_and_modes_and_symlinks() 
     let diff = repo.layer_diff(&head2).unwrap();
     assert_eq!(diff[0].after, Some(mode));
     assert_eq!(diff[1].after, Some(link.clone()));
-    let manifest = repo
-        .read_checkpoint(head2.checkpoint())
-        .unwrap()
-        .manifest()
-        .clone();
+    let manifest = repo.checkpoint_manifest(head2.checkpoint()).unwrap();
     let manifest_id = repo.put_manifest(&manifest).unwrap();
     assert_eq!(repo.read_manifest(manifest_id).unwrap(), manifest);
     assert_eq!(repo.read_blob(link.content()).unwrap(), b"../keep");
@@ -867,18 +848,24 @@ fn malformed_or_missing_checkpoint_graphs_and_head_history_never_fall_back() {
             }
             _ => unreachable!(),
         }
-        assert!(repo.layer_state(head.layer()).is_err(), "{damage}");
-        assert!(
-            repo.capture_layer(&op("new-op"), &head, &changes([]))
-                .is_err(),
-            "{damage}"
-        );
-        assert!(
-            repo.clone_layer(&id("clone"), head.checkpoint()).is_err(),
-            "{damage}"
-        );
+        assert!(repo.layer_history(head.layer()).is_err(), "{damage}");
+        // Commands verify what they read: the head checkpoint and its content.
+        if ["checkpoint", "content"].contains(&damage) {
+            assert!(
+                repo.capture_layer(&op("new-op"), &head, &changes([]))
+                    .is_err(),
+                "{damage}"
+            );
+            assert!(
+                repo.clone_layer(&id("clone"), head.checkpoint()).is_err(),
+                "{damage}"
+            );
+        }
         assert!(repo.check().is_err(), "{damage}");
         assert!(Repository::init(root.path()).is_err(), "{damage}");
+        if !["checkpoint", "content"].contains(&damage) {
+            continue;
+        }
         assert_eq!(
             db.query_row(
                 "SELECT count(*) FROM layer_attempts WHERE id='new-op'",
@@ -960,7 +947,8 @@ fn valid_hash_checkpoint_must_have_exact_base_canonical_sparse_paths_and_valid_g
     let (root, mut repo, large, _) = fixture();
     let base = repo.layer_base(version(1)).unwrap();
     let identity = serde_json::to_value(&base).unwrap()["repository"].clone();
-    let original = serde_json::json!({"repository":identity,"version":1,"manifest":base.manifest(),"changes":{}});
+    let original =
+        serde_json::json!({"repository":identity,"version":1,"world":base.world(),"changes":{}});
     let mut invalid_path = original.clone();
     invalid_path["changes"] = serde_json::json!({"../bad":null});
     let mut wrong_base = original.clone();

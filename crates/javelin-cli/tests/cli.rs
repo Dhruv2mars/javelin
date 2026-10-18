@@ -35,7 +35,7 @@ fn fresh_cli_init_history_and_integrity_are_useful_and_restart_safe() {
     let check = cli(&root, &["check", "--json"]);
     assert!(check.status.success());
     let check: Value = serde_json::from_slice(&check.stdout).unwrap();
-    assert_eq!(check["integrity"]["objects"], 1);
+    assert_eq!(check["integrity"]["objects"], 0);
     let plain = cli(&root, &["history"]);
     assert!(
         String::from_utf8(plain.stdout)
@@ -82,14 +82,23 @@ fn ordinary_and_structured_failures_have_exit_codes_and_no_success_output() {
 #[test]
 fn integrity_cli_rejects_corrupt_content() {
     let root = TempDir::new().unwrap();
-    let repo = Repository::init(root.path()).unwrap();
-    let initial = repo.version(VersionNumber::new(0).unwrap()).unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let blob = repo.put_blob(b"content").unwrap();
+    let file = javelin::FileEntry::Regular {
+        content: blob,
+        executable: false,
+    };
+    let manifest = javelin::Manifest::new([(javelin::RepoPath::parse("file").unwrap(), file)]);
+    let manifest = repo.put_manifest(&manifest.unwrap()).unwrap();
+    let operation = javelin::OperationId::parse("first").unwrap();
+    repo.compare_and_advance(&operation, VersionNumber::new(0).unwrap(), manifest)
+        .unwrap();
     drop(repo);
     let db = rusqlite::Connection::open(root.path().join(".javelin/repository.sqlite3")).unwrap();
     db.execute_batch("DROP TRIGGER objects_no_UPDATE;").unwrap();
     db.execute(
         "UPDATE objects SET bytes=x'00' WHERE id=?1",
-        [initial.manifest.to_string()],
+        [blob.to_string()],
     )
     .unwrap();
     let result = cli(&root, &["check", "--json"]);

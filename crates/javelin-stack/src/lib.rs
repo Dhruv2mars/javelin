@@ -54,8 +54,10 @@ pub fn stack_layer(
     }
     let ours = repo.read_checkpoint(target.checkpoint())?;
     let theirs = repo.read_checkpoint(source)?;
-    let base = repo.read_manifest(theirs.base().manifest())?;
-    let merged = javelin_merge::merge(&base, ours.manifest(), theirs.manifest(), |id| {
+    let base = repo.manifest_at(theirs.base().version())?;
+    let ours_manifest = repo.checkpoint_manifest(ours.id())?;
+    let theirs_manifest = repo.checkpoint_manifest(theirs.id())?;
+    let merged = javelin_merge::merge(&base, &ours_manifest, &theirs_manifest, |id| {
         repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize)
     })
     .map_err(StackError::Merge)?;
@@ -76,7 +78,7 @@ pub fn stack_layer(
         entries.push((path, entry));
     }
     let merged = Manifest::new(entries)?;
-    let target_base = repo.read_manifest(ours.base().manifest())?;
+    let target_base = repo.manifest_at(ours.base().version())?;
     let paths: BTreeSet<_> = target_base
         .entries()
         .keys()

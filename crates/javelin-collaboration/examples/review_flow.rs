@@ -32,7 +32,7 @@ fn proposal(repo: &mut Repository, n: u32, text: &str) -> Res<RevisionRef> {
         return Err("capture was not applied".into());
     };
     let checkpoint = repo.read_checkpoint(head.checkpoint())?;
-    let manifest = repo.put_manifest(checkpoint.manifest())?;
+    let manifest = repo.put_manifest(&repo.checkpoint_manifest(checkpoint.id())?)?;
     let context = repo.put_blob(format!("supplied context {n}").as_bytes())?;
     Ok(RevisionRef::new(
         checkpoint.base().version(),
