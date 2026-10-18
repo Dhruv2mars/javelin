@@ -1,8 +1,54 @@
-# APFS run provenance
+# Run provenance
 
-The consolidated JSON/Markdown retains exact selected raw rows and names each
-row's `source_run`. Individual JSON/Markdown files are unedited harness outputs.
-Machine specs and argv are embedded in every JSON file.
+Round-3 matched timings supersede sequential timing cohorts for the decision.
+The native 100k timing cohort, image accounting/remount controls and final Linux
+run are listed below. Historical image cold-volume timing and checkpoint proxy
+rows remain context. Both decision criteria are stated before results in the
+[decision document](../../../docs/storage-benchmark.md).
+
+Committed JSON files are compact summaries (median/p95/p99, sample count, notes,
+raw SHA-256 and location). Raw local outputs live outside Git at
+`/Users/dhruv2mars/.local/share/javelin-storage-bench/round3/`; Linux raws live in
+the corresponding Actions artifact. Earlier raw files were removed by a normal
+deletion commit; branch history was not rewritten. Historical consolidated rows
+retain `source_run` provenance. Markdown tables retain every case statistic.
+Machine specs and argv are embedded in each summary. Use
+`python3 tools/storage-bench/summarize.py RAW.json --location LOCATION` to regenerate.
+
+## Round 3
+
+Final benchmark code: `8d787684765ce087324e433ac56401b433d7834c`.
+Complete Linux run: [39130520311](https://github.com/Dhruv2mars/javelin/actions/runs/39130520311).
+Its three filesystem artifacts include raw JSON, compact summaries, complete
+Markdown and `machine.txt`. The previous
+[run 39121284581](https://github.com/Dhruv2mars/javelin/actions/runs/39121284581)
+is superseded for Linux decisions and accounting.
+
+The native decision run uses:
+
+```sh
+rtk proxy /usr/bin/time -p tools/storage-bench/target/release/storage-bench --dir /tmp/jbench-r3-native-100k --files 100000 --reps 5 --decision-only --label 'APFS native internal SSD; round3 rotated 100k decision cohort; no cache reset available' --json /Users/dhruv2mars/.local/share/javelin-storage-bench/round3/apfs-native-round3.json
+```
+
+Native cold was unavailable: `/usr/sbin/purge` returned `Unable to purge disk
+buffers: Operation not permitted`; `sudo -n true` required a password. The
+strict free-space plateau initially failed on the active system volume after
+60 seconds, before timing began. Native timing now uses sync plus two seconds;
+its space deltas are diagnostic, and all authoritative footprint numbers use
+the isolated image. This is explicit in code and raw notes.
+
+The image control uses a new 30GiB sparse APFS image at
+`/tmp/jbench-r3.sparseimage`, mounted as `/Volumes/jbench-r3`. The hook detaches
+that volume and reattaches the same image, exactly as in the benchmark README.
+
+Native elapsed wall time (`/usr/bin/time -p`) was 1220.47s, with no paused
+operations. Native warm medians/p95s: A-tuned 18.406/20.348s, B-clone
+21.551/23.880s, B-copy 25.486/30.008s. Durable ingest was
+7.768/9.604s for A and 32.233/33.827s for B. Exact samples/order:
+[summary](apfs-native-round3.summary.json), [tables](apfs-native-round3.md).
+
+## Historical round-1 image/context cohorts
+
 
 SQLite NONE schema setup initially used SQLite's default FULL before ingest
 switched to OFF. The ingest-only correction applies OFF before schema creation;
@@ -35,12 +81,12 @@ counters are not used for the performance comparisons.
 
 | Raw run | Source commit | Reported time-p real s | Log timestamp span s | Selected contribution |
 | --- | --- | ---: | ---: | --- |
-| [apfs-2026-10-18-sqlite.json](apfs-2026-10-18-sqlite.json) | 4b348cb | 4209.10 | 4704.47 | SQLite core timings and pilots; incomplete primary, invalid B setup excluded |
-| [apfs-2026-10-18-files.json](apfs-2026-10-18-files.json) | 9db759e | 1540.17 | 6430.46 | B durable/none full matrix, five independent allocations |
-| [apfs-2026-10-18-sqlite-disk.json](apfs-2026-10-18-sqlite-disk.json) | aa26561 | 1612.43 | 1612.45 | A-tuned durable/none five independent allocations |
-| [apfs-2026-10-18-real-disk.json](apfs-2026-10-18-real-disk.json) | aa26561 | 433.60 | 433.62 | A-real 1k/10k five independent allocations |
-| [apfs-2026-10-18-real-context.json](apfs-2026-10-18-real-context.json) | aa26561 | 1418.64 | 1418.65 | A-real 100k real-API read context and five allocations; 20-rep checkpoint variants and 40 randomized kills |
-| [apfs-2026-10-18-none-ingest.json](apfs-2026-10-18-none-ingest.json) | ff6968c | 111.15 | 111.17 | Corrected SQLite NONE schema initialization: ingest-only repeats; other SQLite rows retain identical data/schema workloads |
+| [apfs-2026-10-18-sqlite.json](apfs-2026-10-18-sqlite.summary.json) | 4b348cb | 4209.10 | 4704.47 | SQLite core timings and pilots; incomplete primary, invalid B setup excluded |
+| [apfs-2026-10-18-files.json](apfs-2026-10-18-files.summary.json) | 9db759e | 1540.17 | 6430.46 | B durable/none full matrix, five independent allocations |
+| [apfs-2026-10-18-sqlite-disk.json](apfs-2026-10-18-sqlite-disk.summary.json) | aa26561 | 1612.43 | 1612.45 | A-tuned durable/none five independent allocations |
+| [apfs-2026-10-18-real-disk.json](apfs-2026-10-18-real-disk.summary.json) | aa26561 | 433.60 | 433.62 | A-real 1k/10k five independent allocations |
+| [apfs-2026-10-18-real-context.json](apfs-2026-10-18-real-context.summary.json) | aa26561 | 1418.64 | 1418.65 | A-real 100k real-API read context and five allocations; 20-rep checkpoint variants and 40 randomized kills |
+| [apfs-2026-10-18-none-ingest.json](apfs-2026-10-18-none-ingest.summary.json) | ff6968c | 111.15 | 111.17 | Corrected SQLite NONE schema initialization: ingest-only repeats; other SQLite rows retain identical data/schema workloads |
 
 Commands ran from the checkout root. `/usr/bin/time -p` writes the reported real-time counter.
 The primary output was subsequently renamed from `apfs-2026-10-18.json` to
@@ -87,4 +133,4 @@ Checks also included locked release builds, native and x86_64-linux Clippy with
 an initial 1k checkpoint/crash smoke (18.89 s), and the updated cloned-Layer /
 2 MiB killed-writer smoke (20.52 s). Smoke outputs are not performance
 evidence for the 100k decision and are not included in the consolidated samples.
-Linux runtime measurements remain pending CI. No production code was changed.
+Round-3 Linux measurements supersede these cohorts. No production code was changed.
