@@ -10,8 +10,9 @@
 //! publishes, then measures `samples` more one-file publishes. Blob storage is
 //! outside the measured step. It reports the median `publish_layer` latency, the
 //! mean database growth, and the mean bytes of 4 KiB database pages the publish
-//! rewrote (journal writes are not counted). It uses only APIs that exist both
-//! before and after World changesets, so it runs unchanged on either.
+//! rewrote (journal writes are not counted), and the median time to read the full
+//! snapshot (`manifest_at`) of the head and of World 1. It uses only APIs that
+//! exist before and after World changesets and derived trees, so it runs on each.
 use std::time::{Duration, Instant};
 
 use javelin::{
@@ -134,6 +135,23 @@ fn run(files: usize, history: usize, samples: usize) {
     }
     latencies.sort();
     let median: Duration = latencies[latencies.len() / 2];
+    // Snapshot-at-version: the full manifest of the head and of World 1.
+    let snapshot = |n: u64| {
+        let mut times: Vec<_> = (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                let manifest = bench
+                    .repo
+                    .manifest_at(VersionNumber::new(n).unwrap())
+                    .unwrap();
+                assert_eq!(manifest.entries().len(), files);
+                start.elapsed()
+            })
+            .collect();
+        times.sort();
+        times[1].as_secs_f64() * 1e3
+    };
+    let (snapshot_head_ms, snapshot_first_ms) = (snapshot(bench.head), snapshot(1));
     println!(
         "{}",
         serde_json::json!({
@@ -146,6 +164,8 @@ fn run(files: usize, history: usize, samples: usize) {
             "mean_db_growth_bytes": growth / samples as i64,
             "mean_rewritten_page_bytes": rewritten / samples,
             "db_bytes": std::fs::metadata(&bench.database).unwrap().len(),
+            "snapshot_head_ms": snapshot_head_ms,
+            "snapshot_world1_ms": snapshot_first_ms,
             "setup_s": setup.as_secs_f64(),
         })
     );
