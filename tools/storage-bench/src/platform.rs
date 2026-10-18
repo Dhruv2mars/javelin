@@ -134,7 +134,7 @@ pub fn cold(hook: &str) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn shared(p: &Path) -> io::Result<()> {
+pub fn shared_bytes(p: &Path) -> io::Result<(u64, u64)> {
     use std::os::fd::AsRawFd;
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -166,17 +166,39 @@ pub fn shared(p: &Path) -> io::Result<()> {
         reserved: 0,
         extents: [Extent::default(); 32],
     };
-    if unsafe { libc::ioctl(file.as_raw_fd(), 0xc020660b as libc::c_ulong, &mut map) } != 0 {
-        return Err(io::Error::last_os_error());
+    let mut total = 0;
+    let mut shared = 0;
+    loop {
+        if unsafe { libc::ioctl(file.as_raw_fd(), 0xc020660b as libc::c_ulong, &mut map) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if map.mapped == 0 {
+            break;
+        }
+        for e in &map.extents[..map.mapped as usize] {
+            total += e.length;
+            if e.flags & 0x2000 != 0 {
+                shared += e.length;
+            }
+        }
+        let last = map.extents[map.mapped as usize - 1];
+        if last.flags & 1 != 0 {
+            break;
+        }
+        let next = last.logical + last.length;
+        if next <= map.start {
+            return Err(io::Error::other("FIEMAP failed to advance"));
+        }
+        map.start = next;
+        map.length = u64::MAX - next;
+        map.mapped = 0;
     }
-    if map.mapped == 0
-        || map.extents[..map.mapped as usize]
-            .iter()
-            .any(|e| e.flags & 0x2000 == 0)
-    {
-        return Err(io::Error::other("FIEMAP: clone has unshared extents"));
+    if total == 0 || shared != total {
+        return Err(io::Error::other(format!(
+            "FIEMAP: shared {shared}/{total} extent bytes"
+        )));
     }
-    Ok(())
+    Ok((shared, total))
 }
 
 /// Rust File::sync_all uses F_FULLFSYNC on Apple; call plain fsync explicitly
@@ -192,4 +214,9 @@ pub fn fsync(file: &File) -> io::Result<()> {
             return Err(e);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn shared(p: &Path) -> io::Result<()> {
+    shared_bytes(p).map(|_| ())
 }

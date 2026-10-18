@@ -12,14 +12,18 @@ cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
 Tables print to stdout. `out.json` contains all samples, machine details, corpus
 fingerprints and notes; `out.md` contains the tables. Both update after each
 measurement, preserving partial output on failure. Timed operations use five
-repetitions, except the explicitly limited real-store 100k ingest. Disk snapshots recreate store/base/Layer allocations for every repetition; every
+repetitions, except the explicitly limited real-store 100k ingest. The 100k run
+also measures 10-edit store commits with 20 repetitions per variant, and kills
+20 writers per durable store. `--extras-only` repeats those additional decision
+measurements without rerunning the core matrix. Disk snapshots recreate store/base/Layer allocations for every repetition; every
 materialization also records its allocation delta. `--disk-only` repeats just those
 allocation cases, and `--page-size 4096` (or 16384) fixes the pilot choice for a
 repeat run. SQLite uses a closed byte-identical seed in a temporary directory outside
 the measured scratch directory; B is freshly ingested through its actual write
 path. Seeds are removed on success.
 `--reps` must be at least five. `--stores A-real` (or a comma-separated list of
-exact store/policy labels) restricts a repeat run. `--real10k-ms MS` supplies an
+exact store/policy labels) restricts core cases in a repeat run. The additional
+100k decision measurements always compare all three required durable stores. `--real10k-ms MS` supplies an
 already-measured real-store 10k median when repeating only 100k; this is recorded
 in the invocation. If the projected 100k real ingest exceeds 15 minutes, it is
 extrapolated and the real schema is batch-seeded outside timing for API read and
@@ -78,8 +82,17 @@ Materialization timings include directory creation and writable file permissions
 but exclude store-handle opening, sync, correctness checks and cleanup. B-copy uses explicit read/write;
 B-clone never falls back. Linux requires FIEMAP shared extents on sampled files;
 APFS requires clone allocation to be less than half the explicit-copy control.
-The SIGKILL test interrupts one deterministic pre-rename boundary; it is not a
-power-loss test. LRU eviction uses a recorded deterministic touch sequence and
+The early SIGKILL test interrupts one deterministic pre-rename boundary. The
+100k decision supplement also kills actual ingest loops at 20 pseudorandom delays
+for each of B durable and A-tuned durable, verifies every final hash and SQLite
+integrity, and counts/sweeps leftover temps. Neither is a power-loss test.
+Checkpoint cases read/hash 10 edited files and commit their blobs; additional
+variants include a sparse-checkpoint-shaped SQLite row and a real full-manifest
+canonical-byte SQLite row. Both designs retain metadata in SQLite. These isolate
+store cost and exclude scanning, serialization, graph validation, cache saving
+and head publication; the full-manifest variant is a conservative proxy because
+current capture writes a sparse checkpoint. A metadata-only walk is reported
+alongside for scale. LRU eviction uses a recorded deterministic touch sequence and
 reports both DELETE/unlink and actual incremental-vacuum reclamation.
 
 See [the decision and results](../../docs/storage-benchmark.md). Linux CI uses

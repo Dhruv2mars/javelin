@@ -102,6 +102,8 @@ pub fn operations(
             }
             let mut times = Vec::new();
             let mut deltas = Vec::new();
+            #[cfg(target_os = "linux")]
+            let mut fractions = Vec::new();
             for rep in 0..reps {
                 remove(&dst)?;
                 let before = platform::settled(scratch)?;
@@ -138,13 +140,19 @@ pub fn operations(
                 verify(blobs, &dst)?;
                 if clones {
                     #[cfg(target_os = "linux")]
-                    for b in blobs
-                        .iter()
-                        .filter(|b| b.bytes.len() >= 4096)
-                        .step_by((n / 100).max(1))
-                        .take(100)
                     {
-                        platform::shared(&dst.join(&b.path))?;
+                        let (mut shared, mut total) = (0u64, 0u64);
+                        for b in blobs
+                            .iter()
+                            .filter(|b| b.bytes.len() >= 4096)
+                            .step_by((n / 100).max(1))
+                            .take(100)
+                        {
+                            let (a, b) = platform::shared_bytes(&dst.join(&b.path))?;
+                            shared += a;
+                            total += b;
+                        }
+                        fractions.push(shared as f64 / total as f64);
                     }
                     #[cfg(target_os = "macos")]
                     if copy_disk <= 0 || delta < 0 || delta > copy_disk / 2 {
@@ -186,6 +194,10 @@ pub fn operations(
                 &times,
                 "includes dirs and writable chmod; excludes store-handle opening, verification, sync and cleanup",
             )?;
+            #[cfg(target_os = "linux")]
+            if clones {
+                out.row(n,bytes,name,&format!("fiemap-shared-fraction/{state}"),"fraction",&fractions,"byte-weighted fraction of all mapped extents on up to 100 sampled non-inline files >=4KiB; paginates FIEMAP; run fails unless every sampled extent is shared")?;
+            }
             out.row(
                 n,
                 bytes,

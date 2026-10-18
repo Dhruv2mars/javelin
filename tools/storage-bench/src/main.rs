@@ -1,5 +1,6 @@
 //! Standalone measurement harness; never called by Javelin.
 mod corpus;
+mod extras;
 mod measure;
 mod platform;
 mod report;
@@ -138,6 +139,12 @@ fn crash_check(root: &Path) -> Result<()> {
 
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--kill-writer") {
+        return extras::child(
+            args.get(2).ok_or("writer kind missing")?,
+            PathBuf::from(args.get(3).ok_or("writer path missing")?),
+        );
+    }
     if args.get(1).is_some_and(|s| s == "--crash-child") {
         return crash_child(PathBuf::from(args.get(2).ok_or("crash path missing")?));
     }
@@ -149,7 +156,7 @@ fn run() -> Result<()> {
     };
     if args.iter().any(|a| a == "--help") {
         println!(
-            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
+            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only | --extras-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
         );
         return Ok(());
     }
@@ -203,6 +210,20 @@ fn run() -> Result<()> {
         machine,
     };
     print!("{}", out.md);
+    if args.iter().any(|a| a == "--extras-only") {
+        let n = *sizes.last().ok_or("--files is empty")?;
+        if n < 1000 {
+            return Err("extras require >=1000 files".into());
+        }
+        extras::checkpoint(&mut out, &scratch, n, 4096)?;
+        extras::killed_writers(&mut out, &scratch)?;
+        if let Some(p) = ingest_dir {
+            fs::remove_dir(p)?;
+        }
+        fs::remove_dir(&scratch)?;
+        out.save()?;
+        return Ok(());
+    }
     crash_check(&scratch.join("crash-test"))?;
     out.row(100,0,"B/durable","crash-sigkill","passed",&[1.0],"100 complete finals hash-verified; partial tmp detected and swept; deterministic pre-rename boundary, not power-loss proof")?;
     // Cheap page-size pilot at matched durable policy, before choosing for all cases.
@@ -314,6 +335,7 @@ fn run() -> Result<()> {
     if real10k.is_some_and(|n| !n.is_finite() || n <= 0.0) {
         return Err("--real10k-ms must be finite and positive".into());
     }
+    let extras = sizes.contains(&100000) && !disk_only;
     for n in sizes {
         let blobs = fixture(n, n as u64);
         let bytes = blobs.iter().map(|b| b.bytes.len() as u64).sum();
@@ -479,6 +501,10 @@ fn run() -> Result<()> {
             }
             remove(&s.root)?;
         }
+    }
+    if extras {
+        extras::checkpoint(&mut out, &scratch, 100000, page)?;
+        extras::killed_writers(&mut out, &scratch)?;
     }
     if let Some(p) = ingest_dir {
         fs::remove_dir(p)?;

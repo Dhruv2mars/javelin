@@ -11,6 +11,18 @@ logical bytes**, and ingest is **no more than 2× slower at matched durability**
 The comparison is A-tuned durable versus B durable. A “no” is valid. All three
 conditions must hold; cheap Layer creation is context, not the comparison target.
 
+Criterion 2, quoted verbatim from the decision brief for PR #45 before collecting
+its additional checkpoint and randomized-crash measurements:
+
+> Go if, on the 100k-file `tools/layer-bench` fixture, on APFS and on one Linux reflink filesystem (btrfs or XFS), materializing a cold base from blob files (1) copies 0 file bytes, (2) is no slower than materializing from SQLite, and (3) uses at most 1.1× the tree's bytes for blob store plus base. Also, (4) a 10-edit checkpoint commit is at most 10% slower than with SQLite, and (5) a writer killed mid-write leaves no visible partial blob. Any miss is a no-go on that platform, and blobs stay in SQLite there.
+
+The two criteria receive separate verdicts. Criterion 2 requires an APFS go and a
+go on at least one Linux reflink filesystem; ext4 is measured as a copy control.
+For its store comparisons, the matched durable A-tuned baseline is reported
+alongside A-real, whose extra Apple device flushing can otherwise obscure a
+store regression. The checkpoint table separates sparse metadata from the
+additional full-manifest proxy; neither includes shared capture work.
+
 ## Results
 
 Pending local APFS measurement. Linux: pending CI run.
@@ -140,6 +152,11 @@ explicit-copy control for the same corpus; Linux samples of files at least 4 KiB
 extents; this check does not certify tiny/inline-file metadata sharing. A sharing failure terminates the run. Every original remains live for
 the check. On this APFS volume, small B objects still consume 4 KiB minimum allocations,
 plus directory and inode metadata. Linux layout and rounding remain unmeasured. Reflinks share those blocks but cannot remove that rounding.
+For this exact 100k corpus, 697,364,836 logical bytes round to 932,982,784
+payload bytes at 4 KiB per-file granularity: **1.338× before metadata**. This
+APFS allocation floor already exceeds both decision bounds. It is a deterministic
+size calculation, separately reported from measured statfs deltas; it is not an
+assumption about btrfs inline-file accounting.
 
 Eviction orders blobs by deterministic last-touch index (LCG seed 42, 2× file-count
 touches, ties by original index), records victim indices and removes the least
@@ -152,13 +169,47 @@ the next sync flushes this restored state. Live-base reps recreate a current bas
 before eviction, so reinserted B objects share with that base in every rep. Layers
 are absent in this case; their additional retention effect is unmeasured.
 
+## Ten-edit checkpoint store cost
+
+At 100k, 20 repetitions per variant apply five single-byte appends and five
+same-size first-byte XOR rewrites, matching `examples/capture_bench.rs`. The
+100k-file directory is materialized before timing. Timings read and hash the ten
+files and commit their blobs; connections are already open. A-real uses actual
+per-blob `Repository::put_blob`; A-tuned commits the ten in one WAL FULL
+transaction; B writes/fsyncs/renames ten temps and fsyncs touched directories.
+
+The harness reports blobs alone, blobs plus a sparse-checkpoint-shaped SQLite
+row, and blobs plus real `Manifest::canonical_bytes()` for 100k entries. Metadata
+stays in SQLite for B, using the same WAL FULL policy as A-tuned. The tuned case
+places blobs and metadata in one transaction; B publishes blobs before committing
+metadata. A-real uses its real EXTRA/fullfsync blob policy and an EXTRA/fullfsync
+metadata transaction. Final WAL checkpoints are timed for the tuned/split cases.
+Distinct edits prevent accidental dedupe between trials; each store begins with
+the same corpus. The full-manifest row is the requested conservative proxy:
+`capture_at` batches new blobs, and `prepare_checkpoint` writes sparse checkpoint
+bytes rather than a new full manifest. A-real's requested per-blob baseline is
+therefore context, not an exact measurement of today's entire capture transaction.
+
+Serialization, filesystem edits, the stat walk, cache persistence, graph
+validation and Layer-head publication are outside this store comparison. The
+sparse row has the production encoding shape and kind tag but is not a complete
+valid Layer transaction. A metadata-only lstat walk over the 100k-file Layer is
+reported alongside each trial for scale; it is not a timed full `capture::scan`.
+These measurements do not establish end-to-end capture latency.
+
 ## Crash safety
 
 The small SIGKILL check stores 100 blobs, pauses with a partial next blob in
 `tmp/`, kills the child, hashes every final object and checks that exactly 100
 final paths exist. The partial tmp is detectable and swept. This exercises one
-known pre-rename process-crash boundary; it is not randomized crash injection,
-post-rename coverage or a power-loss proof.
+known pre-rename process-crash boundary. The additional decision measurement
+re-execs the actual ingestion loop and SIGKILLs it after each of 20 deterministic
+pseudorandom 1–200 ms delays per durable store. A ready handshake excludes process
+startup. Each trial starts with 100 committed blobs, verifies every final file or
+row after the kill, and checks SQLite `PRAGMA integrity_check`. B temp leftovers
+are counted, swept, and checked absent. Delays, final counts and temp counts are
+saved in raw results. This samples active ingestion without prescribing a write
+boundary; it is still process-crash testing, not power-loss proof.
 
 SQLite WAL makes a batch transaction atomic: recovery ignores incomplete WAL
 commits. OFF weakens crash guarantees. B publishes only complete temp files by
@@ -185,6 +236,15 @@ and Markdown are uploaded even after a partial failure. There are no timing gate
 | btrfs | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
 | ext4 | pending CI run | expected unsupported; pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
 | XFS reflink=1 | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
+
+The same workflow includes the 20-repetition checkpoint variants and 20 randomized
+writer kills per durable store. No performance cutoff is used.
+
+| FS | C1 speed / disk / ingest | C2 (1) base physical delta / FIEMAP shared fraction | C2 (2) cold speed | C2 (3) ≤1.1× | C2 (4) 10-edit ≤1.1× time | C2 (5) killed writer | Verdicts C1 / C2 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| btrfs | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
+| XFS reflink=1 | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
+| ext4 copy control | pending CI run | pending CI run (clone expected unsupported) | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
 
 Linux timing, shared-extent proof and physical accounting are unmeasured locally;
 no Linux outcome is inferred from APFS. The CI budget estimate is 45–120 minutes per filesystem, with all three jobs
