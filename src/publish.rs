@@ -174,10 +174,10 @@ impl Repository {
                     for (_, bytes) in &chunks {
                         insert_object(&tx, ObjectKind::Tree, bytes)?;
                     }
+                    let version = append_version_in(&tx, &against, operation, &changes, tree)?;
+                    crate::blame::record_in(&tx, expected.layer(), version.number, &changes)?;
                     crate::radar::untrack_in(&tx, expected.layer())?;
-                    PublishOutcome::Published {
-                        version: append_version_in(&tx, &against, operation, &changes, tree)?,
-                    }
+                    PublishOutcome::Published { version }
                 }
             };
             let receipt = PublicationReceipt {

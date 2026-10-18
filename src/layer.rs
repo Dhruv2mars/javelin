@@ -143,6 +143,7 @@ pub struct LayerCheckpoint {
     base: LayerBase,
     changes: SparseChanges,
     sources: Vec<CheckpointId>,
+    provenance: Option<ObjectId>,
 }
 
 impl LayerCheckpoint {
@@ -159,6 +160,17 @@ impl LayerCheckpoint {
     pub fn stack_sources(&self) -> &[CheckpointId] {
         &self.sources
     }
+    /// The Blob holding who and what produced this checkpoint, if declared.
+    pub fn provenance(&self) -> Option<ObjectId> {
+        self.provenance
+    }
+}
+
+/// A stored candidate head: its checkpoint, exact changes and provenance Blob.
+pub(crate) struct Candidate {
+    pub(crate) id: CheckpointId,
+    pub(crate) changes: SparseChanges,
+    pub(crate) provenance: Option<ObjectId>,
 }
 
 /// Status and diff share exact before/after entries, preserving type and mode changes.
@@ -178,6 +190,8 @@ struct EncodedCheckpoint {
     changes: BTreeMap<String, Option<FileEntry>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sources: Vec<CheckpointId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provenance: Option<ObjectId>,
 }
 
 impl Repository {
@@ -199,8 +213,8 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        let (checkpoint, changes) = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[])?;
-        let head = create_in(&tx, layer, checkpoint, &changes)?;
+        let empty = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[], None)?;
+        let head = create_in(&tx, layer, &empty)?;
         tx.commit()?;
         Ok(head)
     }
@@ -212,7 +226,12 @@ impl Repository {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
         let frozen = checkpoint_in(&tx, checkpoint.0)?;
-        let head = create_in(&tx, layer, checkpoint, &frozen.changes)?;
+        let source = Candidate {
+            id: checkpoint,
+            changes: frozen.changes,
+            provenance: frozen.provenance,
+        };
+        let head = create_in(&tx, layer, &source)?;
         tx.commit()?;
         Ok(head)
     }
@@ -279,7 +298,9 @@ impl Repository {
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let before = checkpoint_in(&tx, expected.checkpoint.0)?;
-        let candidate = prepare_checkpoint(&tx, &before.base, changes, &before.sources)?;
+        let provenance = self.provenance.as_ref();
+        let candidate =
+            prepare_checkpoint(&tx, &before.base, changes, &before.sources, provenance)?;
         let outcome = update_in(&tx, operation, expected, candidate, false, None)?;
         #[cfg(test)]
         crate::repository::test_boundary("layer_before_commit");
@@ -302,7 +323,11 @@ impl Repository {
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         // A discard untracks the Layer, so its changes are not needed.
-        let candidate = (expected.checkpoint, SparseChanges::default());
+        let candidate = Candidate {
+            id: expected.checkpoint,
+            changes: SparseChanges::default(),
+            provenance: None,
+        };
         let outcome = update_in(&tx, operation, expected, candidate, true, None)?;
         tx.commit()?;
         Ok(outcome)
@@ -360,6 +385,7 @@ fn checkpoint_bytes(
     base: &LayerBase,
     changes: &SparseChanges,
     sources: &[CheckpointId],
+    provenance: Option<ObjectId>,
 ) -> Vec<u8> {
     serde_json::to_vec(&EncodedCheckpoint {
         repository: base.repository,
@@ -367,25 +393,34 @@ fn checkpoint_bytes(
         world: base.world,
         sources: sources.to_vec(),
         changes: changes.encoded(),
+        provenance,
     })
     .expect("checkpoint encoding")
 }
 
-/// Stores the normalized checkpoint and returns it with its exact changes.
+/// Stores the normalized checkpoint, with its provenance Blob when declared.
 pub(crate) fn prepare_checkpoint(
     conn: &Connection,
     base: &LayerBase,
     changes: &SparseChanges,
     sources: &[CheckpointId],
-) -> Result<(CheckpointId, SparseChanges)> {
+    provenance: Option<&crate::Provenance>,
+) -> Result<Candidate> {
     validate_base(conn, base)?;
     let changes = crate::domain::normalize(&Index::new(conn), base.version, changes)?;
+    let provenance = provenance
+        .map(|p| crate::blame::store_provenance(conn, p))
+        .transpose()?;
     let id = insert_object(
         conn,
         ObjectKind::Checkpoint,
-        &checkpoint_bytes(base, &changes, sources),
+        &checkpoint_bytes(base, &changes, sources, provenance),
     )?;
-    Ok((CheckpointId(id), changes))
+    Ok(Candidate {
+        id: CheckpointId(id),
+        changes,
+        provenance,
+    })
 }
 
 /// Scoped to one validation transaction; never stored on a Repository handle.
@@ -476,15 +511,20 @@ fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
         .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint graph: {e}")))?;
     if normalized != changes
         || encoded.sources.windows(2).any(|pair| pair[0] >= pair[1])
-        || checkpoint_bytes(&base, &changes, &encoded.sources) != bytes
+        || checkpoint_bytes(&base, &changes, &encoded.sources, encoded.provenance) != bytes
     {
         return Err(Error::CorruptObject(id));
+    }
+    if let Some(provenance) = encoded.provenance {
+        crate::blame::read_provenance(conn, provenance)
+            .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint provenance: {e}")))?;
     }
     Ok(LayerCheckpoint {
         id: CheckpointId(id),
         base,
         changes,
         sources: encoded.sources,
+        provenance: encoded.provenance,
     })
 }
 
@@ -569,12 +609,8 @@ pub(crate) fn verify_head(conn: &Connection, head: &LayerHead) -> Result<()> {
     Ok(())
 }
 
-fn create_in(
-    conn: &Connection,
-    layer: &LayerId,
-    checkpoint: CheckpointId,
-    changes: &SparseChanges,
-) -> Result<LayerHead> {
+fn create_in(conn: &Connection, layer: &LayerId, candidate: &Candidate) -> Result<LayerHead> {
+    let checkpoint = candidate.id;
     let exists = conn
         .prepare("SELECT 1 FROM layer_heads WHERE layer=?1")?
         .exists([layer.as_str()])?;
@@ -589,7 +625,7 @@ fn create_in(
             "INSERT INTO layer_heads(layer,revision,checkpoint,discarded) VALUES(?1,0,?2,0)",
             params![layer.as_str(), checkpoint.0.to_string()],
         )?;
-        crate::radar::track_in(conn, layer, changes)?;
+        crate::radar::track_in(conn, layer, candidate)?;
     }
     Ok(LayerHead {
         repository: identity_in(conn)?,
@@ -599,17 +635,17 @@ fn create_in(
     })
 }
 
-/// `candidate` is the new head checkpoint and its changes. An applied update also
-/// moves the Layer's entries in the radar index, in the same transaction.
+/// `candidate` is the new head checkpoint. An applied update also moves the
+/// Layer's entries in the radar index, in the same transaction.
 pub(crate) fn update_in(
     conn: &Connection,
     operation: &OperationId,
     expected: &LayerHead,
-    candidate: (CheckpointId, SparseChanges),
+    candidate: Candidate,
     discard: bool,
     source: Option<CheckpointId>,
 ) -> Result<LayerUpdate> {
-    let (checkpoint, changes) = candidate;
+    let checkpoint = candidate.id;
     let prior = conn
         .query_row(
             "SELECT layer,expected,checkpoint,discard FROM layer_attempts WHERE id=?1",
@@ -653,7 +689,7 @@ pub(crate) fn update_in(
         if discard {
             crate::radar::untrack_in(conn, &expected.layer)?;
         } else {
-            crate::radar::track_in(conn, &expected.layer, &changes)?;
+            crate::radar::track_in(conn, &expected.layer, &candidate)?;
         }
     }
     if let Some(source) = source {
@@ -886,3 +922,36 @@ pub(crate) fn latest_event_state_in(conn: &Connection, layer: &LayerId) -> Resul
 #[cfg(test)]
 #[path = "../tests/support/stack_validation.rs"]
 mod stack_validation_tests;
+
+/// Per-path attribution of a Layer's head at `revision`, from its history: each
+/// changed path's entry and the checkpoint (and provenance) that last set it.
+/// Revision 0 attributes a clone's paths to its source checkpoint.
+pub(crate) type Attribution =
+    BTreeMap<RepoPath, (Option<FileEntry>, CheckpointId, Option<ObjectId>)>;
+
+pub(crate) fn attribution_in(
+    checkpoints: &mut CheckpointReader<'_>,
+    layer: &LayerId,
+    revision: u64,
+) -> Result<Attribution> {
+    let mut attribution = Attribution::new();
+    for revision in 0..=revision {
+        let revision = i64::try_from(revision)
+            .map_err(|_| Error::CorruptRepository("invalid Layer revision".into()))?;
+        let event = event_in(checkpoints.conn, layer, revision)?;
+        let checkpoint = checkpoints.read(event.checkpoint.0)?;
+        attribution = checkpoint
+            .changes
+            .entries()
+            .iter()
+            .map(|(path, entry)| {
+                let origin = match attribution.remove(path) {
+                    Some((before, id, provenance)) if &before == entry => (id, provenance),
+                    _ => (checkpoint.id, checkpoint.provenance),
+                };
+                (path.clone(), (entry.clone(), origin.0, origin.1))
+            })
+            .collect();
+    }
+    Ok(attribution)
+}

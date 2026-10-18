@@ -2,6 +2,7 @@
 //! Layers are plain directories cloned from an immutable World base and captured
 //! without a daemon (docs/workspace-approach.md).
 
+mod blame;
 pub mod capture;
 mod domain;
 mod ignore;
@@ -13,6 +14,7 @@ mod stack;
 pub mod tree;
 mod workspace;
 
+pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::Capture;
 pub use domain::{
     FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath, SparseChanges,
