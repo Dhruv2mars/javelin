@@ -41,6 +41,7 @@ javelin layer state ID
 javelin layer history ID
 javelin layer publication --operation ID
 javelin layer diff ID [--revision N]
+javelin layer radar ID
 javelin layer clone ID --checkpoint HASH
 javelin layer stack ID --revision N --source HASH --operation ID
 javelin layer discard ID --revision N --operation ID
@@ -87,6 +88,42 @@ Later edits to either Layer cannot change that source checkpoint. Creating or
 cloning again with the same ID and snapshot returns the original revision 0,
 even if the Layer subsequently advanced or was discarded. Read `layer state`
 to find its current state.
+
+## Collision radar
+
+`javelin layer radar ID` reports, before Publish, the paths that would make the
+active Layer's Publish conflict. It uses Publish's exact rule: a collision is the
+same path, or an ancestor or descendant path, changed on both sides, and only
+when the other side's entry actually differs from this Layer's base. Siblings in
+the same directory and name prefixes (`src` and `src2/a`) never collide.
+
+- `radar.world` holds World advances since the Layer's base: `version` is the
+  current head and `paths` are exactly the paths Publish would report as a
+  conflict now.
+- `radar.layers` lists each other live (unpublished, undiscarded) Layer that
+  would make this Publish conflict if it published first. Each entry has
+  `layer` and `paths`, a sorted list of `{ours, theirs}` pairs: this Layer's
+  changed path and the other Layer's colliding path.
+
+```sh
+javelin layer radar my-layer --repo /path/to/project --json
+# {"ok":true,"command":"layer radar","clear":false,"radar":{"head":{...},"base":3,
+#  "world":{"version":5,"paths":["src/lib.rs"]},
+#  "layers":[{"layer":"other","paths":[{"ours":"src","theirs":"src/new.rs"}]}]}}
+```
+
+The radar is a warning, not a failure: it exits 0 and sets `clear`. It captures
+the Layer's workspace first, like other `layer` commands. `checkpoint` adds the
+same `radar` object to its JSON, and warning lines to its text when not clear, so
+the agent lifecycle hook surfaces future conflicts as soon as they exist. A Layer
+that is not active refuses with `invalid_input`.
+
+Cost is O(the Layer's changed paths × path depth) index lookups plus the
+collisions found. It does not grow with repository size, history or the number of
+live Layers: at 100k files, the median radar took 0.14 ms with 10 live Layers and
+0.17 ms with 1,000 (`tests/radar_bench.rs`, release build, Apple Silicon). Only
+Layers in this repository store are seen; the hosted World will serve the same
+report across machines.
 
 ## Clone-backed workspaces
 
