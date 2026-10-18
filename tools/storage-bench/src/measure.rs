@@ -183,6 +183,43 @@ pub fn operations(
                     &[],
                     &format!("unsupported: {e}"),
                 )?;
+                for missing in if state == "warm" {
+                    &["warm", "cold-start"][..]
+                } else {
+                    &["cold-start"][..]
+                } {
+                    let note = format!("unsupported: clone capability failure; no fallback: {e}");
+                    if *missing != state {
+                        out.row(
+                            n,
+                            bytes,
+                            name,
+                            &format!("materialize/{method}/{missing}"),
+                            "ms",
+                            &[],
+                            &note,
+                        )?;
+                    }
+                    out.row(
+                        n,
+                        bytes,
+                        name,
+                        &format!("base-physical/{method}/{missing}"),
+                        "bytes",
+                        &[],
+                        &note,
+                    )?;
+                    #[cfg(target_os = "linux")]
+                    out.row(
+                        n,
+                        bytes,
+                        name,
+                        &format!("fiemap-shared-fraction/{missing}"),
+                        "fraction",
+                        &[],
+                        &note,
+                    )?;
+                }
                 break;
             }
             out.row(

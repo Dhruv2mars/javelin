@@ -11,6 +11,7 @@ use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -126,13 +127,41 @@ fn stat_walk(p: &Path) -> Result<usize> {
 pub fn checkpoint(out: &mut Output, scratch: &Path, n: usize, page: usize) -> Result<()> {
     let mut blobs = fixture(n, n as u64);
     let bytes = blobs.iter().map(|b| b.bytes.len() as u64).sum();
-    let root = scratch.join("checkpoint-layer");
-    fs::create_dir(&root)?;
+    let base = scratch.join("checkpoint-base");
+    fs::create_dir(&base)?;
     for b in &blobs {
-        let p = root.join(&b.path);
+        let p = base.join(&b.path);
         fs::create_dir_all(p.parent().unwrap())?;
         fs::write(p, &b.bytes)?;
     }
+    let root = scratch.join("checkpoint-layer");
+    let cloned = match platform::layer(&base, &root, true) {
+        Ok(()) => true,
+        Err(e)
+            if matches!(
+                e.raw_os_error(),
+                Some(libc::ENOTSUP) | Some(libc::ENOTTY) | Some(libc::EINVAL)
+            ) =>
+        {
+            remove(&root)?;
+            platform::tree(&base, &root, false)?;
+            false
+        }
+        Err(e) => return Err(e.into()),
+    };
+    out.row(
+        n,
+        bytes,
+        "checkpoint-context",
+        "layer-construction",
+        "context",
+        &[],
+        if cloned {
+            "actual APFS directory clone / Linux per-file reflink; base remains live during edits"
+        } else {
+            "explicit-copy Layer: filesystem clone unsupported; base remains live"
+        },
+    )?;
     platform::settled(scratch)?;
     let manifest_size = manifest(&blobs)?.canonical_bytes().len();
     out.row(n,bytes,"checkpoint-context","manifest-canonical-size","bytes",&[manifest_size as f64],"real Manifest::canonical_bytes, 100k entries; capture itself writes sparse checkpoint metadata, not a fresh full manifest")?;
@@ -203,14 +232,18 @@ pub fn checkpoint(out: &mut Output, scratch: &Path, n: usize, page: usize) -> Re
                 let mut paths = Vec::new();
                 for i in 0..10 {
                     let b = &mut blobs[(start + i) % n];
+                    let p = root.join(&b.path);
                     if i % 2 == 0 {
                         b.bytes.push(b'x');
+                        fs::OpenOptions::new()
+                            .append(true)
+                            .open(&p)?
+                            .write_all(b"x")?;
                     } else {
                         b.bytes[0] ^= 0xff;
+                        fs::write(&p, &b.bytes)?;
                     }
                     b.id = ObjectId::for_blob(&b.bytes);
-                    let p = root.join(&b.path);
-                    fs::write(&p, &b.bytes)?;
                     paths.push(p);
                 }
                 let t = Instant::now();
@@ -279,10 +312,17 @@ pub fn checkpoint(out: &mut Output, scratch: &Path, n: usize, page: usize) -> Re
             b.bytes.truncate(len);
             b.bytes[0] = first;
             b.id = ObjectId::for_blob(&b.bytes);
-            fs::write(root.join(&b.path), &b.bytes)?;
+            let p = root.join(&b.path);
+            fs::remove_file(&p)?;
+            if cloned {
+                platform::clone_file(&base.join(&b.path), &p)?;
+            } else {
+                platform::copy_bytes(&base.join(&b.path), &p)?;
+            }
         }
     }
-    remove(&root)
+    remove(&root)?;
+    remove(&base)
 }
 
 pub fn child(kind: &str, root: PathBuf) -> Result<()> {
@@ -298,6 +338,16 @@ pub fn child(kind: &str, root: PathBuf) -> Result<()> {
         incremental: false,
     };
     let mut blobs = fixture(100, 819);
+    // Maximum-size fault-injection payload; timed fixture generation is unchanged.
+    let mut large = vec![0; 2 * 1024 * 1024];
+    let mut rng = 0x813d_d3a9_u64;
+    for byte in &mut large {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        *byte = rng as u8;
+    }
+    blobs.insert(0, Blob::new(PathBuf::from("large-crash-blob"), large));
     fs::write(s.root.join("ready"), b"ready")?;
     for batch in 0u64.. {
         for (i, b) in blobs.iter_mut().enumerate() {
@@ -411,7 +461,7 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
             );
         }
         let note = format!(
-            "20/20 SIGKILL trials; all final objects fully hash-verified; SQLite integrity_check=ok each trial; seeded 100 baseline blobs; ready handshake then deterministic pseudorandom delays ms={delays:?}; process-crash only, not power-loss"
+            "20/20 SIGKILL trials; all final objects fully hash-verified; SQLite integrity_check=ok each trial; seeded 100 baseline blobs; stream includes one 2MiB random payload plus 100 fixture blobs per batch; ready handshake then deterministic pseudorandom delays ms={delays:?}; process-crash only, not power-loss"
         );
         out.row(
             100000,
