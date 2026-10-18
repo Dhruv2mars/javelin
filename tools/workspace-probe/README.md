@@ -8,7 +8,6 @@ From the repository root, run:
 
 ```sh
 rtk proxy bun tools/workspace-probe/verify.mjs /tmp/javelin-probe-evidence
-rtk proxy bun tools/workspace-probe/discover.mjs /tmp/javelin-host.json
 ```
 
 `verify.mjs` runs controls sequentially. It expects directory and macOS clonefile
