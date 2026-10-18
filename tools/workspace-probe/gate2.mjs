@@ -52,9 +52,9 @@ const want = clause => !only || only.has(clause);
 
 // ---- running javelin ----------------------------------------------------------------
 function argvFor(args) { return script ? [process.execPath, javelin, ...args] : [javelin, ...args]; }
-function launch(args) {
+function launch(args, cwd) {
   const [cmd, ...rest] = argvFor([...args, '--json']);
-  const child = spawn(cmd, rest, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(cmd, rest, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   const result = { args, stdout: '', stderr: '', code: null, signal: null, started: Date.now() };
   child.stdout.on('data', d => { result.stdout += d; });
   child.stderr.on('data', d => { result.stderr += d; });
@@ -75,9 +75,9 @@ async function settle(run) {
   report.commands.push({ args: r.args, code: r.code, signal: r.signal, ms: r.ms, out: (r.code === 0 ? r.stdout : r.stderr).slice(0, 2000) });
   return r;
 }
-const jv = args => settle(launch(args));
-async function ok(args) {
-  const r = await jv(args);
+const jv = (args, cwd) => settle(launch(args, cwd));
+async function ok(args, cwd) {
+  const r = await jv(args, cwd);
   if (r.code !== 0 || r.json?.ok === false) throw new Error(`javelin ${r.args.join(' ')} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 400)}`);
   return r;
 }
@@ -99,21 +99,27 @@ const hexUnder = (json, re) => {
   const scope = find(json, k => re.test(k), () => true);
   return typeof scope === 'string' ? scope : find(scope, () => true, v => typeof v === 'string' && /^[0-9a-f]{16,}$/.test(v));
 };
+const layerPaths = new Map();
 const S = {
   init: repo => ok(['init', repo]),
   head: async repo => { const r = await ok(['history', repo]); return find(r.json, k => k === 'versions', Array.isArray).at(-1).number; },
   integrity: repo => ok(['check', repo]),
   create: async (repo, id, extra = []) => {
     const r = await ok(['workspace', 'create', id, ...extra, '--repo', repo]);
-    return { path: find(r.json, k => k === 'path'), strategy: find(r.json, k => k === 'strategy'), r };
+    const path = find(r.json, k => k === 'path');
+    layerPaths.set(`${repo}\0${id}`, path);
+    return { path, strategy: find(r.json, k => k === 'strategy'), r };
   },
   path: (repo, id) => jv(['workspace', 'path', id, '--repo', repo]),
   createArgs: (repo, id) => ['workspace', 'create', id, '--repo', repo],
-  // An ordinary read; capture must run first.
+  // An ordinary read; the product must capture first (every javelin command captures).
   state: async (repo, id) => hexUnder((await ok(['layer', 'state', id, '--repo', repo])).json, /checkpoint/i),
   diff: async (repo, id) => { const r = await ok(['layer', 'diff', id, '--repo', repo]); return (find(r.json, k => k === 'changes', Array.isArray) || []).map(c => c.path); },
+  // The agent lifecycle hook: run from inside the Layer directory, as an agent tool would.
   checkpointArgs: (repo, id) => ['checkpoint', id, '--repo', repo],
-  checkpoint: (repo, id) => jv(['checkpoint', id, '--repo', repo]),
+  checkpointCwd: (repo, id) => layerPaths.get(`${repo}\0${id}`),
+  checkpoint: (repo, id) => jv(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id)),
+  capture: async (repo, id) => hexUnder((await ok(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id))).json, /checkpoint/i),
   publish: (repo, id, op) => jv(['workspace', 'publish', id, '--operation', op, '--repo', repo]),
   discardArgs: (repo, id) => ['workspace', 'discard', id, '--repo', repo],
   discard: (repo, id) => ok(['workspace', 'discard', id, '--repo', repo]),
@@ -259,7 +265,7 @@ try {
   });
   await check('tools', 'capture-writes-nothing-into-the-layer', async () => {
     await sleep(500); wa.events.length = 0;
-    await ok(S.checkpointArgs(repo, 'layer-a')); await S.state(repo, 'layer-a');
+    await S.capture(repo, 'layer-a'); await S.state(repo, 'layer-a');
     await sleep(1500);
     assert(wa.events.length === 0, `capture touched the Layer: ${wa.events.slice(0, 5).join(', ')}`);
   });
@@ -285,7 +291,7 @@ try {
   });
   await check('tools', 'case-only-rename', async () => {
     fs.renameSync(join(a.path, 'docs/Guide.md'), join(a.path, 'docs/GUIDE.md'));
-    const snap = await snapshot(repo, await S.state(repo, 'layer-a'));
+    const snap = await snapshot(repo, await S.capture(repo, 'layer-a'));
     assert(snap['docs/GUIDE.md'] && !snap['docs/Guide.md'], `captured docs entries: ${Object.keys(snap).filter(p => p.startsWith('docs/')).join(', ')}`);
   });
   await check('capture', 'every-edit-captured-by-ordinary-commands', async () => {
@@ -299,22 +305,22 @@ try {
     sameTree(tree(a.path, noBuild), snap, 'captured checkpoint vs Layer on disk');
   });
   await check('capture', 'unchanged-layer-captures-nothing-new', async () => {
-    const first = await S.state(repo, 'layer-a'), second = await S.state(repo, 'layer-a');
-    assert(first === second, `checkpoint moved without an edit: ${first} -> ${second}`);
+    const first = await S.capture(repo, 'layer-a'), second = await S.capture(repo, 'layer-a'), third = await S.state(repo, 'layer-a');
+    assert(first === second && second === third, `checkpoint moved without an edit: ${first} -> ${second} -> ${third}`);
   });
   await check('capture', 'mtime-preserving-rewrite', async () => {
     // cp -p, tar and rsync -t restore an old mtime; only ctime or inode reveals the rewrite.
     const f = join(a.path, 'src/value.txt'), old = new Date('2020-01-02T03:04:05Z');
-    fs.writeFileSync(f, 'one\n'); fs.utimesSync(f, old, old); await S.state(repo, 'layer-a');
+    fs.writeFileSync(f, 'one\n'); fs.utimesSync(f, old, old); await S.capture(repo, 'layer-a');
     fs.writeFileSync(f, 'two\n'); fs.utimesSync(f, old, old);
-    const snap = await snapshot(repo, await S.state(repo, 'layer-a'));
+    const snap = await snapshot(repo, await S.capture(repo, 'layer-a'));
     assert(snap['src/value.txt'] === fileHash('two\n'), 'a same-size rewrite that keeps mtime (cp -p, tar, rsync -t) was not captured');
   });
   await check('capture', 'same-second-rewrite', async () => {
     const f = join(a.path, 'src/value.txt'), second = new Date(Math.floor(Date.now() / 1000) * 1000);
-    fs.writeFileSync(f, 'sec1\n'); fs.utimesSync(f, second, second); await S.state(repo, 'layer-a');
+    fs.writeFileSync(f, 'sec1\n'); fs.utimesSync(f, second, second); await S.capture(repo, 'layer-a');
     fs.writeFileSync(f, 'sec2\n'); fs.utimesSync(f, second, second);
-    const snap = await snapshot(repo, await S.state(repo, 'layer-a'));
+    const snap = await snapshot(repo, await S.capture(repo, 'layer-a'));
     assert(snap['src/value.txt'] === fileHash('sec2\n'), 'a rewrite within the same mtime second (racy entry) was not captured');
   });
   await check('capture', 'concurrent-rewrites-during-capture', async () => {
@@ -332,7 +338,7 @@ try {
       if (cp && !during.includes(cp)) during.push(cp);
     }
     assert(await done === 0, 'writer failed');
-    const snap = await snapshot(repo, await S.state(repo, 'layer-a'));
+    const snap = await snapshot(repo, await S.capture(repo, 'layer-a'));
     for (const f of ['inplace.txt', 'atomic.txt']) assert(snap[`hot/${f}`] === fileHash(fs.readFileSync(join(a.path, 'hot', f))), `final hot/${f} not captured after rewrites stopped`);
     // Atomic saves replace whole files; every captured version must be a complete one.
     let inspected = 0;
@@ -351,7 +357,7 @@ try {
     return { checkpointsDuringRewrites: during.length, inspected, finalGeneration: finalGen.trim() };
   });
   await check('tools', 'layer-clone-is-an-isolated-snapshot', async () => {
-    const cp = await S.state(repo, 'layer-a');
+    const cp = await S.capture(repo, 'layer-a');
     const d = await S.create(repo, 'layer-d', ['--checkpoint', cp]);
     sameTree(tree(a.path, noBuild), tree(d.path, noBuild), 'clone vs source checkpoint');
     fs.writeFileSync(join(a.path, 'src/value.txt'), 'after clone\n');
@@ -437,7 +443,7 @@ try {
     const fb = await stableFree();
     fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
     const fe = await stableFree();
-    await S.state(bulkRepo, 'bulk-1');
+    await S.capture(bulkRepo, 'bulk-1');
     const fc = await stableFree();
     const textCreate = spawnSync(argvFor(S.createArgs(bulkRepo, 'bulk-2'))[0], argvFor(S.createArgs(bulkRepo, 'bulk-2')).slice(1), { env, encoding: 'utf8' });
     const f3 = await stableFree();
@@ -467,8 +473,8 @@ try {
     });
 
     // Crash safety: kill each operation at spread points across its own measured duration.
-    async function killed(args, delay) {
-      const run = launch(args);
+    async function killed(args, delay, cwd) {
+      const run = launch(args, cwd);
       let exited = false; run.exited.then(() => { exited = true; });
       await sleep(delay);
       const landed = !exited;
@@ -478,7 +484,7 @@ try {
       return landed;
     }
     const points = d => [0.05, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(f => Math.max(1, Math.round(d * f)));
-    const timed = async args => { const r = await ok(args); return r.ms; };
+    const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
     await check('crash', 'interrupted-create-recovers', async () => {
       const duration = await timed(S.createArgs(bulkRepo, 'time-create'));
       await S.discard(bulkRepo, 'time-create');
@@ -498,14 +504,14 @@ try {
     await check('crash', 'interrupted-checkpoint-recovers', async () => {
       const k = await S.create(bulkRepo, 'kill-checkpoint');
       const rewrite = n => { for (let i = 1; i < Math.min(9, bulkFiles); i++) fs.writeFileSync(join(k.path, 'bulk', `blob-${i}.bin`), randomBytes(2 << 20)); fs.writeFileSync(join(k.path, 'round.txt'), `${n}\n`); };
-      rewrite(-2); await ok(S.checkpointArgs(bulkRepo, 'kill-checkpoint'));
+      rewrite(-2); await S.capture(bulkRepo, 'kill-checkpoint');
       rewrite(-1);
-      const duration = await timed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'));
+      const duration = await timed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), k.path);
       let landed = 0;
       for (const [i, delay] of points(duration).slice(0, 5).entries()) {
         rewrite(i);
-        if (await killed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), delay)) landed++;
-        const snap = await snapshot(bulkRepo, await S.state(bulkRepo, 'kill-checkpoint'));
+        if (await killed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), delay, k.path)) landed++;
+        const snap = await snapshot(bulkRepo, await S.capture(bulkRepo, 'kill-checkpoint'));
         sameTree(tree(k.path), snap, `checkpoint after interrupted capture ${i}`);
       }
       await S.discard(bulkRepo, 'kill-checkpoint');

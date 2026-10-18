@@ -1,0 +1,155 @@
+name: Gate 2
+
+# Proves docs/build-contract.md gate 2 with the real javelin binary on every target
+# filesystem. Each filesystem runs the harness twice, as an unprivileged user with
+# failing git/sudo/mount stand-ins first on PATH: first against the reference model
+# (proves the harness itself passes there), then against javelin. Negative controls
+# run once per OS on a clone-capable filesystem. See tools/workspace-probe/README.md.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["test/gate2**"]
+  pull_request:
+    paths:
+      - src/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - tools/workspace-probe/**
+      - .github/workflows/gate2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+
+jobs:
+  gate2:
+    name: Gate 2 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    env:
+      EXE: ${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Build javelin, tool stand-ins and launcher
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo build --locked --release -p javelin-cli
+          shims=$RUNNER_TEMP/shims probe=tools/workspace-probe
+          mkdir -p "$shims"
+          rustc --edition 2021 -O -o "$RUNNER_TEMP/shim$EXE" $probe/shim.rs
+          for tool in git sudo mount umount fusermount3 mountvol diskpart subst; do cp "$RUNNER_TEMP/shim$EXE" "$shims/$tool$EXE"; done
+          if [[ $RUNNER_OS == Windows ]]; then
+            rustc --edition 2021 -O -o "$RUNNER_TEMP/deelevate.exe" $probe/deelevate.rs
+            echo "AS_USER=$RUNNER_TEMP/deelevate.exe" >> "$GITHUB_ENV"
+          elif [[ $RUNNER_OS == Linux ]]; then
+            # no_new_privs: setuid binaries such as the real sudo cannot elevate the run.
+            echo "AS_USER=setpriv --no-new-privs" >> "$GITHUB_ENV"
+          fi
+          { echo "SHIMS=$shims"; echo "JAVELIN=$PWD/target/release/javelin$EXE"; echo "EVIDENCE=$RUNNER_TEMP/gate2-evidence"; } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/gate2-evidence"
+
+      # Privileged setup ends here: the steps below only create the volumes under test.
+      - name: Linux XFS and btrfs loop volumes
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq xfsprogs btrfs-progs > /dev/null
+          for fs in xfs btrfs; do
+            truncate -s 12G "$RUNNER_TEMP/$fs.img"
+            sudo mkfs.$fs -q "$RUNNER_TEMP/$fs.img" > /dev/null
+            sudo mkdir -p /mnt/$fs && sudo mount -o loop "$RUNNER_TEMP/$fs.img" /mnt/$fs
+            sudo chown "$(id -u):$(id -g)" /mnt/$fs
+          done
+          xfs_info /mnt/xfs | grep -o 'reflink=[01]'
+
+      - name: Windows Developer Mode and a ReFS Dev Drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Developer Mode lets a standard user create symlinks, as on a developer machine.
+          reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v AllowDevelopmentWithoutDevLicense /d 1 | Out-Null
+          $vhd = "$env:RUNNER_TEMP\devdrive.vhdx"
+          "create vdisk file=`"$vhd`" maximum=20480 type=expandable`nattach vdisk`ncreate partition primary`nassign letter=R" | Set-Content "$env:RUNNER_TEMP\dp.txt"
+          diskpart /s "$env:RUNNER_TEMP\dp.txt" | Out-Null
+          try { Format-Volume -DriveLetter R -DevDrive -Confirm:$false -Force | Out-Null; "devdrive=yes" }
+          catch { Format-Volume -DriveLetter R -FileSystem ReFS -Confirm:$false -Force | Out-Null; "devdrive=no ($_)" }
+          fsutil fsinfo volumeinfo R: | Select-String "File System Name|Block Refcounting"
+          New-Item -ItemType Directory R:\gate2 | Out-Null
+          icacls R:\gate2 /grant "${env:USERNAME}:(OI)(CI)F" | Out-Null
+
+      - name: Prove gate 2 as an unprivileged user
+        run: |
+          set +e # run every filesystem, then fail on any NOT VERIFIED
+          probe=tools/workspace-probe
+          failed=()
+          prove() { # FS DIR EXPECT REFERENCE_EXPECT
+            local fs=$1 dir=$2
+            for subject in reference javelin; do
+              local bin=$JAVELIN expect=$3 bulk=128
+              [[ $subject == reference ]] && bin=$probe/gate2-reference.mjs expect=$4 bulk=64
+              echo "::group::$fs / $subject"
+              $AS_USER bun $probe/gate2.mjs --javelin "$bin" --dir "$dir/$subject" --fs "$fs" --expect "$expect" \
+                --bulk-mb $bulk --shims "$SHIMS" --out "$EVIDENCE/$fs-$subject.json"
+              local code=$?
+              echo "::endgroup::"
+              echo "| $fs | $subject | $expect | $([[ $code == 0 ]] && echo VERIFIED || echo "NOT VERIFIED ($code)") |" >> "$GITHUB_STEP_SUMMARY"
+              [[ $code == 0 ]] || failed+=("$fs/$subject")
+            done
+          }
+          controls() { # FS DIR
+            echo "::group::$1 / negative controls"
+            $AS_USER bun $probe/gate2-controls.mjs --dir "$2" --shims "$SHIMS" --fs "$1" | tee "$EVIDENCE/$1-controls.txt"
+            local code=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            echo "| $1 | negative controls | lies caught | $([[ $code == 0 ]] && echo VERIFIED || echo "NOT VERIFIED ($code)") |" >> "$GITHUB_STEP_SUMMARY"
+            [[ $code == 0 ]] || failed+=("$1/controls")
+          }
+          { echo "## Gate 2 on ${{ matrix.os }}"; echo; echo "| Filesystem | Subject | Expect | Verdict |"; echo "|---|---|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          $AS_USER bun $probe/gate2.mjs --privilege | tee "$EVIDENCE/privilege.json"
+          case $RUNNER_OS in
+            macOS)
+              prove apfs "$RUNNER_TEMP/apfs" shared shared
+              controls apfs "$RUNNER_TEMP/apfs-controls" ;;
+            Linux)
+              prove ext4 "$RUNNER_TEMP/ext4" copy copy
+              prove xfs /mnt/xfs/gate2 shared shared
+              prove btrfs /mnt/btrfs/gate2 shared shared
+              controls btrfs /mnt/btrfs/controls ;;
+            Windows)
+              # The reference model always byte-copies on Windows; only javelin is held to sharing.
+              prove ntfs "$RUNNER_TEMP/ntfs" copy copy
+              prove refs R:/gate2/run shared copy
+              controls refs R:/gate2/controls ;;
+          esac
+          invoked=("$SHIMS"/invoked-*)
+          [[ -e ${invoked[0]} ]] && { echo "stand-ins invoked: ${invoked[*]}"; failed+=(shims); }
+          (( ${#failed[@]} == 0 )) || { echo "failed: ${failed[*]}"; exit 1; }
+
+      - name: Retain evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gate2-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 30

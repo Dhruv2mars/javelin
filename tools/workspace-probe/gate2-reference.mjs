@@ -73,7 +73,7 @@ function walk(root) {
   (function visit(dir) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name), path = relative(root, full).split(sep).join('/');
-      if (e.isSymbolicLink()) out[path] = { type: 'symlink', target: fs.readlinkSync(full).split(sep).join('/') };
+      if (e.isSymbolicLink()) out[path] = { type: 'symlink', target: fs.readlinkSync(full).split(sep).join('/'), dir: Boolean(fs.statSync(full, { throwIfNoEntry: false })?.isDirectory()) };
       else if (e.isDirectory()) visit(full);
       else if (e.isFile()) out[path] = { type: 'file', full, stat: fs.statSync(full) };
     }
@@ -152,22 +152,19 @@ function cloneTree(source, target) {
     for (const [path, e] of Object.entries(walk(source))) {
       const full = join(target, ...path.split('/'));
       fs.mkdirSync(join(full, '..'), { recursive: true });
-      if (e.type === 'symlink') fs.symlinkSync(e.target, full); else fs.linkSync(e.full, full);
+      if (e.type === 'symlink') fs.symlinkSync(e.target, full, e.dir ? 'dir' : 'file'); else fs.linkSync(e.full, full);
     }
     return 'reflink';
   }
-  if (lie === 'copy-claims-clone') {
-    // read and write every byte, so no filesystem can share the data behind our back
+  // Read and write every byte, so no filesystem can share the data behind our back.
+  // Windows uses it too: CopyFile may block-clone on ReFS, which would blur an honest 'copy'.
+  if (lie === 'copy-claims-clone' || process.platform === 'win32') {
     for (const [path, e] of Object.entries(walk(source))) {
       const full = join(target, ...path.split('/'));
       fs.mkdirSync(join(full, '..'), { recursive: true });
-      if (e.type === 'symlink') fs.symlinkSync(e.target, full); else fs.writeFileSync(full, fs.readFileSync(e.full), { mode: e.stat.mode });
+      if (e.type === 'symlink') fs.symlinkSync(e.target, full, e.dir ? 'dir' : 'file'); else fs.writeFileSync(full, fs.readFileSync(e.full), { mode: e.stat.mode });
     }
-    return 'clonefile';
-  }
-  if (process.platform === 'win32') {
-    fs.cpSync(source, target, { recursive: true, verbatimSymlinks: true });
-    return process.env.JAVELIN_REFERENCE_WINDOWS_STRATEGY || 'copy';
+    return lie ? 'clonefile' : 'copy';
   }
   if (process.platform === 'darwin') { cp(['-cR', source, target]); return 'clonefile'; }
   if (spawnSync('cp', ['-a', '--reflink=always', source, target]).status === 0) return 'reflink';
