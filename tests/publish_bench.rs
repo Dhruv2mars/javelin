@@ -4,6 +4,7 @@
 //! ```text
 //! cargo test --release --test publish_bench -- --ignored --nocapture
 //! JAVELIN_BENCH_CASES=1000x10,100000x1000 JAVELIN_BENCH_SAMPLES=20 cargo test ...
+//! JAVELIN_BENCH_CHURN=1000 changes 1,000 files per history step instead of one.
 //! ```
 //!
 //! Each case builds World 1 with `files` paths, then `history - 1` one-file
@@ -117,8 +118,21 @@ fn run(files: usize, history: usize, samples: usize) {
     .unwrap();
     let head = bench.prepare(import);
     bench.publish(&head);
+    // Each history step changes `churn` files (JAVELIN_BENCH_CHURN, default 1).
+    let churn: usize = std::env::var("JAVELIN_BENCH_CHURN")
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
     for step in 1..history {
-        let head = bench.one_file(step % files, format!("history {step}\n").as_bytes());
+        let content = bench
+            .repo
+            .put_blob(format!("history {step}\n").as_bytes())
+            .unwrap();
+        let entry = FileEntry::Regular {
+            content,
+            executable: false,
+        };
+        let changes = (0..churn).map(|k| (path((step * churn + k) % files), Some(entry.clone())));
+        let head = bench.prepare(SparseChanges::new(changes).unwrap());
         bench.publish(&head);
     }
     let setup = started.elapsed();
@@ -156,6 +170,7 @@ fn run(files: usize, history: usize, samples: usize) {
         "{}",
         serde_json::json!({
             "files": files,
+            "churn": churn,
             "history": history,
             "samples": samples,
             "head": bench.head,
