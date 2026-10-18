@@ -683,6 +683,7 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
     writer.marker("BOUNDARY layer_before_commit");
     let repo = Repository::open(root.path()).unwrap();
     assert_eq!(repo.check().unwrap().objects, 3); // with the empty World tree
+    assert_eq!(indexed(&repo), 0);
     match repo
         .layer_state(&crate::LayerId::parse("shared").unwrap())
         .unwrap()
@@ -702,14 +703,9 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
     );
     retry.release();
     assert_eq!(retry.result()["outcome"], "applied");
-    assert_eq!(
-        Repository::open(root.path())
-            .unwrap()
-            .check()
-            .unwrap()
-            .objects,
-        4
-    );
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.check().unwrap().objects, 4);
+    assert_eq!(indexed(&repo), 1);
 }
 
 #[test]
@@ -761,6 +757,13 @@ fn layer_lost_and_received_ack_survive_process_exit_and_later_heads() {
         assert_eq!(read["changes"], 1);
         assert_eq!(read["integrity"]["versions"], 1);
     }
+}
+
+/// Rows in the radar's live-Layer path index.
+fn indexed(repo: &Repository) -> i64 {
+    repo.conn
+        .query_row("SELECT count(*) FROM layer_paths", [], |r| r.get(0))
+        .unwrap()
 }
 
 fn publish_fixture(overlap: bool, count: usize) -> (TempDir, Vec<crate::LayerHead>) {
@@ -975,12 +978,14 @@ fn whole_publish_kill_before_commit_readers_see_no_partial_references() {
             .is_none()
     );
     assert_eq!(repo.check().unwrap().objects, before);
+    assert_eq!(indexed(&repo), 1, "the Layer stays live in the radar");
     drop(repo);
     let mut retry = publisher(root.path(), head, "interrupted", "");
     retry.release();
     assert_eq!(retry.result()["outcome"]["outcome"], "published");
     let repo = Repository::open(root.path()).unwrap();
     assert_eq!(repo.check().unwrap().versions, 2);
+    assert_eq!(indexed(&repo), 0, "Publish clears the Layer");
     assert!(matches!(
         repo.layer_state(head.layer()).unwrap(),
         crate::LayerState::Published { .. }
@@ -1017,6 +1022,7 @@ fn whole_publish_lost_and_received_ack_survive_kill_and_later_world() {
         assert_eq!(read["state"]["head"], read["receipt"]["expected"]);
         assert_eq!(read["history"][1], read["receipt"]["outcome"]["version"]);
         let mut repo = Repository::open(root.path()).unwrap();
+        assert_eq!(indexed(&repo), 0, "the committed Publish cleared the Layer");
         let later = candidate(&mut repo, b"later");
         repo.compare_and_advance(
             &OperationId::parse("later").unwrap(),

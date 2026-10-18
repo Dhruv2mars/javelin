@@ -176,3 +176,75 @@ fn a_stacked_head_is_never_reverted_by_capture() {
     let diff = ok(root.path(), &["layer", "diff", "target", "--json"]);
     assert!(diff.to_string().contains("from-source.txt"), "{diff}");
 }
+
+#[test]
+fn radar_warns_at_checkpoint_and_clears_after_discard() {
+    let root = TempDir::new().unwrap();
+    let repo = root.path().to_str().unwrap();
+    ok(root.path(), &["init", "--json"]);
+    for (layer, file) in [
+        ("a", "src/main.rs"),
+        ("b", "src/main.rs"),
+        ("c", "docs/x.md"),
+    ] {
+        ok(root.path(), &["layer", "create", layer, "--json"]);
+        let dir = root.path().join(format!("dir-{layer}"));
+        let file = dir.join(file);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, layer).unwrap();
+        let path = dir.to_str().unwrap();
+        let reply = ok(
+            root.path(),
+            &[
+                "checkpoint",
+                layer,
+                "--path",
+                path,
+                "--repo",
+                repo,
+                "--json",
+            ],
+        );
+        let expected: &[&str] = if layer == "b" { &["a"] } else { &[] };
+        let warned: Vec<_> = reply["radar"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["layer"].as_str().unwrap())
+            .collect();
+        assert_eq!(warned, expected, "{reply}");
+    }
+    let radar = ok(root.path(), &["layer", "radar", "a", "--json"]);
+    assert_eq!(radar["clear"], false);
+    assert_eq!(radar["radar"]["world"]["paths"], serde_json::json!([]));
+    assert_eq!(
+        radar["radar"]["layers"],
+        serde_json::json!([{"layer": "b", "paths": [{"ours": "src/main.rs", "theirs": "src/main.rs"}]}])
+    );
+    let text = invoke(root.path(), &["layer", "radar", "a"]);
+    assert_eq!(text.status.code(), Some(0));
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        text.contains("Layer b if it publishes first: \"src/main.rs\""),
+        "{text}"
+    );
+
+    ok(
+        root.path(),
+        &[
+            "layer",
+            "discard",
+            "b",
+            "--revision",
+            "1",
+            "--operation",
+            "drop-b",
+            "--json",
+        ],
+    );
+    let radar = ok(root.path(), &["layer", "radar", "a", "--json"]);
+    assert_eq!(radar["clear"], true);
+    let refused = invoke(root.path(), &["layer", "radar", "b", "--json"]);
+    assert_eq!(refused.status.code(), Some(2));
+    ok(root.path(), &["check", "--json"]);
+}
