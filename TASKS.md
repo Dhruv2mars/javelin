@@ -121,7 +121,7 @@ workflow may invoke or interpret Git.
 - [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
   The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PR #46)
   passes 34/34 with the real binary on APFS, btrfs, XFS and ext4 (copy fallback) in run
-  `39113744899` at `d455ff2`. NTFS and ReFS pass 33/34: Windows capture misses a
+  `39119613851` at `564ab8c`. NTFS and ReFS pass 33/34: Windows capture misses a
   same-size rewrite that restores mtime (no ChangeTime in the stat cache), listed in
   `gate2-known-failures.json`. Check this item when that list is empty. Worlds are seeded
   through the library because clone-backed workspaces have no Publish yet.
