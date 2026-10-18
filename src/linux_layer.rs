@@ -28,6 +28,7 @@ use crate::{
     SparseChanges, WorldVersion, domain::ObjectKind,
 };
 
+mod ignore;
 mod watch;
 
 const RECORD_FORMAT: u32 = 1;
@@ -334,15 +335,17 @@ pub(crate) fn snapshot(
     lower: &Manifest,
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Snapshot> {
-    read_snapshot(root, Some(upper), lower, store)
+    read_snapshot(root, Some(upper), lower, None, store)
 }
 
 fn read_snapshot(
     root: &Path,
     upper: Option<&HashSet<Vec<u8>>>,
     lower: &Manifest,
+    tracked: Option<&Manifest>,
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Snapshot> {
+    let rules = tracked.map(|_| ignore::load(root)).transpose()?;
     let mut entries = BTreeMap::new();
     let mut unrepresented = Vec::new();
     let mut pending = vec![PathBuf::new()];
@@ -351,7 +354,12 @@ fn read_snapshot(
             .map(|e| Ok(e?.file_name()))
             .collect::<Result<Vec<_>>>()?;
         names.sort();
-        if names.is_empty() && !directory.as_os_str().is_empty() {
+        if names.is_empty()
+            && !directory.as_os_str().is_empty()
+            && !rules
+                .as_ref()
+                .is_some_and(|r| r.ignored(&directory.to_string_lossy()))
+        {
             unrepresented.push(directory.to_string_lossy().into_owned());
         }
         for name in names {
@@ -359,6 +367,18 @@ fn read_snapshot(
             let text = relative
                 .to_str()
                 .ok_or_else(|| unsupported(&relative, "non-UTF-8 name"))?;
+            // Ignore discovery only. A tracked descendant keeps its ancestors traversable.
+            if let (Some(rules), Some(tracked)) = (&rules, tracked)
+                && rules.ignored(text)
+                && !tracked.entries().keys().any(|p| {
+                    p.as_str() == text
+                        || p.as_str()
+                            .strip_prefix(text)
+                            .is_some_and(|s| s.starts_with('/'))
+                })
+            {
+                continue;
+            }
             let path = RepoPath::parse(text)
                 .map_err(|_| unsupported(&relative, "name outside the native path model"))?;
             let full = root.join(&relative);
@@ -1259,7 +1279,15 @@ impl LinuxLayerRuntime {
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
             let base = repo.read_manifest(opened.base().manifest())?;
             let view = self.root.join("views").join(slot);
-            let snap = snapshot(&view, &upper, opened.manifest(), &mut |b| repo.put_blob(b))?;
+            let expected = self.head(repo, layer, record)?;
+            let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
+            let snap = read_snapshot(
+                &view,
+                Some(&upper),
+                opened.manifest(),
+                Some(checkpoint.manifest()),
+                &mut |b| repo.put_blob(b),
+            )?;
             // Every mutating helper verb advances the epoch, so equality proves no
             // thaw, remount or unmount happened between the listing and the last read.
             if self.epoch()? != epoch {
@@ -1331,8 +1359,8 @@ impl LinuxLayerRuntime {
     }
 
     /// Publishes the whole bound checkpoint after freezing the ordinary path.
-    /// Uncaptured file changes or empty directories require an explicit checkpoint
-    /// or cleanup first; no edits are silently omitted. A successful view stays
+    /// Uncaptured tracked/nonignored file changes or empty directories require a
+    /// checkpoint or cleanup first. Ignored untracked bytes remain private. A successful view stays
     /// read-only. Completed retries return the original native receipt and never
     /// rerun the guard. Recovery with no native receipt releases the intent without
     /// publishing: callers must explicitly retry with their guard/policy again.
@@ -1386,8 +1414,14 @@ impl LinuxLayerRuntime {
             let expected = self.head(repo, layer, &record)?;
             let (epoch, upper) = parse_upper(&self.helper("list", &["view", &slot])?)?;
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
-            let snap = snapshot(&view, &upper, opened.manifest(), &mut hash_only)?;
             let checkpoint = repo.read_checkpoint(expected.checkpoint())?;
+            let snap = read_snapshot(
+                &view,
+                Some(&upper),
+                opened.manifest(),
+                Some(checkpoint.manifest()),
+                &mut hash_only,
+            )?;
             if snap.entries != *checkpoint.manifest().entries() || !snap.unrepresented.is_empty() {
                 return Err(Error::InvalidInput(
                     "workspace has uncaptured changes; checkpoint first (remove empty directories, which checkpoints cannot represent)".into(),
@@ -1889,6 +1923,71 @@ mod tests {
         let frozen = repo.read_checkpoint(head.checkpoint()).unwrap();
         assert_eq!(frozen.changes(), &changes);
         assert_eq!(frozen.manifest().entries(), &snap.entries);
+    }
+
+    #[test]
+    fn ignore_discovery_preserves_current_checkpoint_entries_and_deletions() {
+        let (_d, mut repo) = repo();
+        let tree = base_tree();
+        let lower = import(&mut repo, tree.path());
+        let root = tree.path();
+        fs::create_dir_all(root.join("build/nested")).unwrap();
+        fs::write(root.join("build/added"), b"tracked after opening").unwrap();
+        symlink("README.txt", root.join("added-link")).unwrap();
+        let current = import(&mut repo, root);
+        fs::write(
+            root.join(".javelinignore"),
+            "build/\nadded-link\nREADME.txt\nbytes.bin\ndir/\n",
+        )
+        .unwrap();
+        fs::write(root.join("build/nested/private"), b"never stored").unwrap();
+        fs::create_dir(root.join("build/empty")).unwrap();
+        fs::write(root.join("build/added"), b"tracked edit").unwrap();
+        fs::set_permissions(root.join("bytes.bin"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_file(root.join("added-link")).unwrap();
+        symlink("new-target", root.join("added-link")).unwrap();
+        fs::remove_file(root.join("README.txt")).unwrap();
+        fs::remove_dir_all(root.join("dir")).unwrap();
+        let before = fs::read(root.join("build/nested/private")).unwrap();
+        let snap = read_snapshot(
+            root,
+            Some(&all_paths(root)),
+            &lower,
+            Some(&current),
+            &mut |b| repo.put_blob(b),
+        )
+        .unwrap();
+        let observed = read_snapshot(root, None, &current, Some(&current), &mut hash_only).unwrap();
+        assert_eq!(snap, observed);
+        assert!(!snap.entries.contains_key(&path("build/nested/private")));
+        assert!(snap.unrepresented.is_empty());
+        assert_eq!(fs::read(root.join("build/nested/private")).unwrap(), before);
+        assert!(snap.entries.contains_key(&path(".javelinignore")));
+        assert!(matches!(
+            snap.entries[&path("bytes.bin")],
+            FileEntry::Regular {
+                executable: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            repo.read_blob(snap.entries[&path("build/added")].content())
+                .unwrap(),
+            b"tracked edit"
+        );
+        assert_eq!(
+            repo.read_blob(snap.entries[&path("added-link")].content())
+                .unwrap(),
+            b"new-target"
+        );
+        let changes = complete_changes(&current, &snap.entries).unwrap();
+        for name in ["README.txt", "dir/a.txt", "dir/sub/b.txt"] {
+            assert_eq!(changes.entries()[&path(name)], None);
+        }
+        // Removing rules discovers the still-present bytes; no ignore operation deleted them.
+        fs::write(root.join(".javelinignore"), "").unwrap();
+        let exposed = read_snapshot(root, None, &current, Some(&current), &mut hash_only).unwrap();
+        assert!(exposed.entries.contains_key(&path("build/nested/private")));
     }
 
     #[test]

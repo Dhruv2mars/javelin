@@ -232,9 +232,10 @@ javelin workspace mount next --root "$runtime" --helper "$helper"
 
 Publish delegates freeze, exact checkpoint matching, durable receipt binding,
 recovery and read-only enforcement to `LinuxLayerRuntime::publish`. Close writable
-file handles first. Held writers return `busy`. Uncaptured edits and empty
-directories refuse with `invalid_input`; checkpoint edits and remove empty
-directories before retrying. A successful mounted view remains readable and
+file handles first. Held writers return `busy`. Uncaptured tracked/nonignored
+edits and nonignored empty directories refuse with `invalid_input`; checkpoint
+edits and remove those empty directories before retrying. Ignored untracked
+artifacts stay private and remain readable in the published view. A successful mounted view remains readable and
 read-only (`EROFS` on writes). `workspace path` only reports writable views;
 retain the original path to read a published view or inspect immutable metadata.
 Further work requires `layer create` or `layer clone --checkpoint HASH`.
@@ -343,7 +344,7 @@ with Ctrl-C; private edits remain. Output (or `--json`) is a final summary on du
 expiry, or an error on failure. Individual checkpoints appear in `layer history`
 while watch runs. The summary counts captures completed or recovered by this run.
 
-Watch reads all file bytes, symlink targets and executable bits, then waits 250ms
+Watch reads discovered/tracked file bytes, symlink targets and executable bits, then waits 250ms
 after each scan before sampling again. The default quiet window is 1000ms; choose
 `--quiet-ms N` with N >= 250. At least two equal content samples spanning that
 window are required. Renames and deletions appear as normal native path changes.
@@ -369,6 +370,9 @@ discard or rebind must be recovered explicitly.
 `--duration-ms N` must be positive. It bounds scheduling, not the time spent in an
 individual scan/helper/storage call; it does not force a final checkpoint of
 nonquiet edits. Sampling can miss edits made and reverted entirely between scans.
-There is no ignore filtering: capture includes files regardless of ignore rules;
-ignore support remains unimplemented. Large-tree performance and resource bounds
-beyond existing capture/storage limits remain unverified.
+Watch observes the effective tree after root `.javelinignore` discovery filtering.
+Large-tree performance and resource bounds beyond existing capture/storage limits
+remain unverified.
+
+Linux workspace discovery supports root `.javelinignore` literal paths; see
+[syntax and tracked-file guarantees](linux-layer-runtime.md#ignore-aware-discovery).

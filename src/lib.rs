@@ -3,6 +3,7 @@
 //! OverlayFS views; autosave, other platforms and mounted Publish lifecycle are later work.
 
 mod domain;
+mod ignore;
 mod layer;
 #[cfg(unix)]
 mod linux_layer;
@@ -11,6 +12,7 @@ mod repository;
 mod stack;
 
 pub use domain::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
+pub use ignore::IgnoreRules;
 pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate,
     PathDiff, SparseChanges,

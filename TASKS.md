@@ -151,3 +151,19 @@ workflow may invoke or interpret Git.
 
 Detailed per-workstream logs were removed on 2026-10-17; merged PRs hold that
 history. Current state is in `docs/architecture.md` and `docs/workspace-approach.md`.
+
+### Workspace ignore rules (PR #36)
+
+Done means the rebased PR exposes a pure matcher usable by clone-backed capture,
+preserves tracked entries and private outputs, passes workspace checks and required
+CI, and is merged.
+
+- [x] Rebase onto main's structure and consolidate the nested checklist here.
+- [x] Preserve bounded literal rules, current-checkpoint tracking and private bytes;
+  retain capture/watch, Publish/rebind and recovery regressions.
+- [x] Expose the platform-independent matcher and remove duplicated runtime/CLI test helpers.
+- [x] Repair references to deleted evidence and documentation.
+- [x] Pass local workspace formatting, warnings-denied Clippy and tests (212 passed,
+  one ignored actor), with a validated failing Git shim and no invocation marker.
+
+PR #36 tracks required CI, review handling and the final merge through T3 monitoring.

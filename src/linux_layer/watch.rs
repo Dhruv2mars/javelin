@@ -135,9 +135,13 @@ impl LinuxLayerRuntime {
         // resume behavior preserves terminal states and thaws this active view.
         self.resume_view(repo, layer, &slot, &record, false)?;
         let checkpoint = repo.read_checkpoint(bound.checkpoint())?;
-        let observed = match read_snapshot(&view, None, checkpoint.manifest(), &mut |bytes| {
-            Ok(ObjectId::hash(ObjectKind::Blob, bytes))
-        }) {
+        let observed = match read_snapshot(
+            &view,
+            None,
+            checkpoint.manifest(),
+            Some(checkpoint.manifest()),
+            &mut |bytes| Ok(ObjectId::hash(ObjectKind::Blob, bytes)),
+        ) {
             // Atomic saves/deletions during a live scan are expected races.
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(Error::Busy("path disappeared during observation".into()));
@@ -157,9 +161,13 @@ impl LinuxLayerRuntime {
         let validation = (|| {
             let (epoch, upper) = parse_upper(&self.helper("list", &["view", &slot])?)?;
             let opened = repo.read_checkpoint(CheckpointId::parse(&record.opened)?)?;
-            let frozen = snapshot(&view, &upper, opened.manifest(), &mut |b| {
-                Ok(ObjectId::hash(ObjectKind::Blob, b))
-            })?;
+            let frozen = read_snapshot(
+                &view,
+                Some(&upper),
+                opened.manifest(),
+                Some(checkpoint.manifest()),
+                &mut |b| Ok(ObjectId::hash(ObjectKind::Blob, b)),
+            )?;
             if self.epoch()? != epoch || stable.observed.as_ref().map(|(s, _)| s) != Some(&frozen) {
                 return Err(Error::Busy(
                     "frozen candidate differs from quiet observation".into(),

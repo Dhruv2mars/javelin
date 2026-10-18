@@ -3011,19 +3011,20 @@ fn published_observation_preserves_explicitly_unmounted_views() {
     );
 }
 
+fn watch(s: &mut Setup) -> Result<u64> {
+    s.rt.watch(
+        &mut s.repo,
+        &s.layer,
+        Duration::from_millis(250),
+        Some(Duration::from_millis(800)),
+    )
+}
+
 #[test]
 #[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
 fn foreground_watch_stability_busy_and_terminal_stops() {
     let env = env();
     let mut s = setup(&env, "watch-flow");
-    let watch = |s: &mut Setup| {
-        s.rt.watch(
-            &mut s.repo,
-            &s.layer,
-            Duration::from_millis(250),
-            Some(Duration::from_millis(800)),
-        )
-    };
     let history = s.repo.layer_history(&s.layer).unwrap();
     assert_eq!(watch(&mut s).unwrap(), 0);
     assert_eq!(s.repo.layer_history(&s.layer).unwrap(), history);
@@ -3307,5 +3308,232 @@ fn foreground_watch_restarts_same_pending_operation_without_duplicate() {
         &env,
         "watch-recovery",
         &json!({"verdict":"VERIFIED", "boundaries":["watch_pending","capture_listed","capture_committed"], "duplicateAcceptedCheckpoints":0}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
+    let env = env();
+    let mut s = setup(&env, "ignore-flow");
+    fs::create_dir_all(s.view.join("build/nested")).unwrap();
+    fs::write(s.view.join("build/tracked"), b"initial").unwrap();
+    s.rt.capture(&mut s.repo, &s.layer, &op("ignore-initial"))
+        .unwrap();
+    fs::write(
+        s.view.join(".javelinignore"),
+        "build/\nREADME.txt\nvalue.h\ninside-link\ndelete.txt\n",
+    )
+    .unwrap();
+    fs::write(s.view.join("build/nested/private"), b"private bytes").unwrap();
+    fs::create_dir(s.view.join("build/empty")).unwrap();
+    let bytes = tree(&s.view);
+    fs::write(s.view.join(".javelinignore"), "!build\n").unwrap();
+    let malformed = tree(&s.view);
+    assert!(
+        s.rt.capture(&mut s.repo, &s.layer, &op("ignore-malformed"))
+            .is_err()
+    );
+    assert_eq!(tree(&s.view), malformed);
+    assert!(!s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    fs::write(
+        s.view.join(".javelinignore"),
+        "build/\nREADME.txt\nvalue.h\ninside-link\ndelete.txt\n",
+    )
+    .unwrap();
+    assert_eq!(tree(&s.view), bytes);
+    fs::write(s.view.join("ordinary"), b"ordinary").unwrap();
+    fs::write(s.view.join("build/tracked"), b"still tracked").unwrap();
+    fs::write(s.view.join("README.txt"), b"tracked content").unwrap();
+    fs::set_permissions(s.view.join("value.h"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::remove_file(s.view.join("inside-link")).unwrap();
+    std::os::unix::fs::symlink("ordinary", s.view.join("inside-link")).unwrap();
+    fs::remove_file(s.view.join("delete.txt")).unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 1);
+    let head = active(&s.repo, &s.layer);
+    let checkpoint = s.repo.read_checkpoint(head.checkpoint()).unwrap();
+    let entries = checkpoint.manifest().entries();
+    let path = |p| RepoPath::parse(p).unwrap();
+    assert!(!entries.contains_key(&path("build/nested/private")));
+    assert!(!entries.contains_key(&path("delete.txt")));
+    assert_eq!(
+        s.repo
+            .read_blob(entries[&path("build/tracked")].content())
+            .unwrap(),
+        b"still tracked"
+    );
+    assert!(matches!(
+        entries[&path("value.h")],
+        FileEntry::Regular {
+            executable: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        entries[&path("inside-link")],
+        FileEntry::Symlink { .. }
+    ));
+    let clone = s.rt.mount_checkpoint(&s.repo, head.checkpoint()).unwrap();
+    assert!(!clone.join("build/nested/private").exists());
+    assert!(clone.join("build/tracked").exists());
+    s.rt.unmount_checkpoint(&s.repo, head.checkpoint()).unwrap();
+    // Ignored-only writes never make watch grow history.
+    fs::write(s.view.join("build/nested/private"), b"private changed").unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 0);
+    assert_eq!(active(&s.repo, &s.layer), head);
+    // Explicit checkpoint also keeps ignored bytes outside the native graph.
+    s.rt.capture(&mut s.repo, &s.layer, &op("ignore-explicit"))
+        .unwrap();
+    fs::remove_file(s.view.join("build/tracked")).unwrap();
+    assert_eq!(watch(&mut s).unwrap(), 1);
+    assert!(
+        !s.repo
+            .read_checkpoint(active(&s.repo, &s.layer).checkpoint())
+            .unwrap()
+            .manifest()
+            .entries()
+            .contains_key(&path("build/tracked"))
+    );
+    let writer = publication_writer(&s.view);
+    let before = tree(&s.view);
+    assert!(matches!(
+        s.rt.capture(&mut s.repo, &s.layer, &op("ignore-busy")),
+        Err(Error::Busy(_))
+    ));
+    assert_eq!(tree(&s.view), before);
+    writer.release();
+    s.rt.capture(&mut s.repo, &s.layer, &op("ignore-after-writer"))
+        .unwrap();
+    // Publish refuses nonignored additions and tracked changes despite other ignored files.
+    for name in ["ordinary", "visible-new"] {
+        fs::write(s.view.join(name), b"needs capture").unwrap();
+        let bytes = tree(&s.view);
+        assert!(
+            s.rt.publish(
+                &mut s.repo,
+                &s.layer,
+                &op(&format!("ignore-refuse-{name}")),
+                &PublishAttribution::Human,
+                |_, _| Ok(())
+            )
+            .is_err()
+        );
+        assert_eq!(tree(&s.view), bytes);
+    }
+    s.rt.capture(&mut s.repo, &s.layer, &op("ignore-before-publish"))
+        .unwrap();
+    let bytes = tree(&s.view);
+    let receipt =
+        s.rt.publish(
+            &mut s.repo,
+            &s.layer,
+            &op("ignore-publish"),
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    published(&receipt);
+    assert_eq!(tree(&s.view), bytes);
+    assert_eq!(
+        fs::read(s.view.join("build/nested/private")).unwrap(),
+        b"private changed"
+    );
+    publication_read_only(&s.view);
+    assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    assert_eq!(tree(&s.view), bytes);
+    s.rt.unmount(&s.layer).unwrap();
+
+    let mut s = setup(&env, "ignore-rebind");
+    fs::write(s.view.join(".javelinignore"), "build/\n").unwrap();
+    let old = applied(
+        &s.rt
+            .capture(&mut s.repo, &s.layer, &op("ignore-old"))
+            .unwrap()
+            .update,
+    );
+    fs::create_dir(s.view.join("build")).unwrap();
+    fs::write(s.view.join("build/private"), b"must survive refusal").unwrap();
+    let changes = s
+        .repo
+        .read_checkpoint(old.checkpoint())
+        .unwrap()
+        .changes()
+        .clone();
+    let desired = applied(
+        &s.repo
+            .capture_layer(&op("ignore-native"), &old, &changes)
+            .unwrap(),
+    );
+    let bytes = tree(&s.view);
+    assert!(s.rt.rebind(&mut s.repo, &old, &desired).is_err());
+    assert_eq!(tree(&s.view), bytes);
+    assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    assert_eq!(tree(&s.view), bytes);
+    s.rt.unmount(&s.layer).unwrap();
+    save(
+        &env,
+        "ignore-flow",
+        &json!({"verdict":"VERIFIED", "syntax":"literal root-relative paths; no negation/globs", "privateBytesRetained":true}),
+    );
+}
+
+#[test]
+#[ignore = "requires disposable hosted Linux; run by linux-layer-runtime workflow"]
+fn ignore_rule_quiet_race_and_uncertain_capture_recovery() {
+    let env = env();
+    let mut s = setup(&env, "ignore-race");
+    fs::write(s.view.join(".javelinignore"), "private\n").unwrap();
+    fs::write(s.view.join("private"), b"kept outside checkpoint").unwrap();
+    let mut actor = Actor::spawn(
+        &env,
+        s.repo_dir.path(),
+        &s.root,
+        "watch",
+        "A",
+        "unused",
+        "watch_quiet",
+    );
+    actor.marker("BOUNDARY watch_quiet");
+    fs::write(s.view.join(".javelinignore"), "private\nother\n").unwrap();
+    actor.send(b"x");
+    actor.marker("BOUNDARY watch_quiet");
+    assert_eq!(active(&s.repo, &s.layer).revision(), 0);
+    assert!(actor.release().contains("Ok(1)"));
+    assert_eq!(active(&s.repo, &s.layer).revision(), 1);
+    assert_eq!(
+        fs::read(s.view.join("private")).unwrap(),
+        b"kept outside checkpoint"
+    );
+    fs::write(s.view.join("ordinary"), b"commit before lost reply").unwrap();
+    kill_after_native_commit(&env, &s, "ignore-lost-reply");
+    assert_eq!(
+        os_error(fs::write(s.view.join(".javelinignore"), "")),
+        libc::EROFS
+    );
+    let blocker =
+        rusqlite::Connection::open(s.repo_dir.path().join(".javelin/repository.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    assert!(!s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    blocker.execute_batch("COMMIT").unwrap();
+    assert!(s.rt.status(&s.repo, &s.layer).unwrap().frozen);
+    assert!(s.rt.recover(&mut s.repo).unwrap().failures.is_empty());
+    assert_eq!(active(&s.repo, &s.layer).revision(), 2);
+    assert_eq!(
+        fs::read(s.view.join("private")).unwrap(),
+        b"kept outside checkpoint"
+    );
+    assert!(
+        !s.repo
+            .read_checkpoint(active(&s.repo, &s.layer).checkpoint())
+            .unwrap()
+            .manifest()
+            .entries()
+            .contains_key(&RepoPath::parse("private").unwrap())
+    );
+    s.rt.unmount(&s.layer).unwrap();
+    save(
+        &env,
+        "ignore-race",
+        &json!({"verdict":"VERIFIED", "quietRuleEditRefused":true, "uncertainRecoveryRetainedPrivateBytes":true}),
     );
 }
