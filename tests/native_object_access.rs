@@ -162,7 +162,7 @@ fn missing_kind_and_cap_boundaries_are_explicit() {
         raw(&root)
             .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        7
+        8
     );
 }
 

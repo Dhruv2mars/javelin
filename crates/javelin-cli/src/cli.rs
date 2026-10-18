@@ -2,11 +2,11 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use javelin::{
     Capture, CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId,
-    OperationId, PublicationReceipt, PublishOutcome, Repository, Result, VersionNumber,
+    OperationId, PublicationReceipt, PublishOutcome, Radar, Repository, Result, VersionNumber,
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -242,7 +242,7 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
         "publication" => &["--repo", "--operation"],
         "create" => &["--repo", "--world"],
         "clone" => &["--repo", "--checkpoint"],
-        "state" | "history" => &["--repo"],
+        "state" | "history" | "radar" => &["--repo"],
         "diff" => &["--repo", "--revision"],
         "discard" => &["--repo", "--revision", "--operation"],
         _ => {
@@ -307,6 +307,13 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
             success(
                 json!({"ok": true, "command": command, "state": state}),
                 describe(&state),
+            )
+        }
+        "radar" => {
+            let radar = repo.radar(&id)?;
+            success(
+                json!({"ok": true, "command": command, "clear": radar.clear(), "radar": radar}),
+                radar_text(&radar),
             )
         }
         "history" => {
@@ -496,7 +503,65 @@ pub fn checkpoint(args: Vec<OsString>) -> Result<Output> {
     if let Some(text) = uncertain_text(&capture) {
         output.1 = format!("{}\n{text}", output.1);
     }
+    // The lifecycle hook is the earliest point to warn about a future conflict.
+    match repo.radar(&id) {
+        Ok(radar) => {
+            if !radar.clear() {
+                output.1 = format!("{}\n{}", output.1, radar_text(&radar));
+            }
+            output.0["radar"] = json!(radar);
+        }
+        // Published or discarded since the capture: nothing can conflict.
+        Err(Error::InvalidInput(_)) => {}
+        Err(error) => return Err(error),
+    }
     Ok(output)
+}
+
+fn quoted(path: &javelin::RepoPath) -> String {
+    serde_json::to_string(path.as_str()).expect("path encoding")
+}
+
+fn radar_text(radar: &Radar) -> String {
+    let layer = radar.head.layer().as_str();
+    if radar.clear() {
+        return format!(
+            "Radar clear: Layer {layer} has no World or Layer collisions at World {}",
+            radar.world.version
+        );
+    }
+    let mut lines = vec![format!(
+        "Radar: Layer {layer} revision {} would conflict",
+        radar.head.revision()
+    )];
+    if !radar.world.paths.is_empty() {
+        let paths: Vec<_> = radar.world.paths.iter().map(quoted).collect();
+        lines.push(format!(
+            "  World {} since base World {}: {}",
+            radar.world.version,
+            radar.base,
+            paths.join(", ")
+        ));
+    }
+    for collision in &radar.layers {
+        let pairs: Vec<_> = collision
+            .paths
+            .iter()
+            .map(|pair| {
+                if pair.ours == pair.theirs {
+                    quoted(&pair.ours)
+                } else {
+                    format!("{} with {}", quoted(&pair.ours), quoted(&pair.theirs))
+                }
+            })
+            .collect();
+        lines.push(format!(
+            "  Layer {} if it publishes first: {}",
+            collision.layer.as_str(),
+            pairs.join(", ")
+        ));
+    }
+    lines.join("\n")
 }
 
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {

@@ -11,7 +11,7 @@ use crate::{
     tree::{self, Node, Trees},
 };
 
-const FORMAT: i64 = 7;
+const FORMAT: i64 = 8;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 // A World version's primary record is its changeset: one `changes` row per changed
@@ -54,7 +54,7 @@ BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 -- this index SQLite scans every attempt inside the Publish write transaction.
 CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=7;
+PRAGMA user_version=8;
 ";
 
 /// One World version. `tree` is the root of its derived snapshot tree; `id` is its
@@ -134,6 +134,7 @@ impl Repository {
             tx.execute_batch(crate::layer::SCHEMA)?;
             tx.execute_batch(crate::publish::SCHEMA)?;
             tx.execute_batch(crate::stack::SCHEMA)?;
+            tx.execute_batch(crate::radar::SCHEMA)?;
             for table in [
                 "objects",
                 "versions",
@@ -459,6 +460,7 @@ fn validate_state_with_checkpoints(
     crate::layer::check_layers(checkpoints)?;
     crate::stack::check_stacks(conn)?;
     crate::publish::check_publications(conn)?;
+    crate::radar::check_radar(checkpoints)?;
     Ok(history)
 }
 
@@ -726,7 +728,7 @@ fn bind_attempt(conn: &Connection, version: &WorldVersion) -> Result<()> {
     Ok(())
 }
 
-fn encode_entry(entry: &Option<FileEntry>) -> (Option<i64>, Option<String>) {
+pub(crate) fn encode_entry(entry: &Option<FileEntry>) -> (Option<i64>, Option<String>) {
     match entry {
         None => (None, None),
         Some(FileEntry::Regular {
@@ -737,7 +739,10 @@ fn encode_entry(entry: &Option<FileEntry>) -> (Option<i64>, Option<String>) {
     }
 }
 
-fn decode_entry(kind: Option<i64>, content: Option<String>) -> Result<Option<FileEntry>> {
+pub(crate) fn decode_entry(
+    kind: Option<i64>,
+    content: Option<String>,
+) -> Result<Option<FileEntry>> {
     let content = content.as_deref().map(decode_id).transpose()?;
     match (kind, content) {
         (None, None) => Ok(None),
@@ -750,7 +755,7 @@ fn decode_entry(kind: Option<i64>, content: Option<String>) -> Result<Option<Fil
     }
 }
 
-fn decode_path(path: &str) -> Result<RepoPath> {
+pub(crate) fn decode_path(path: &str) -> Result<RepoPath> {
     RepoPath::parse(path).map_err(|_| Error::CorruptRepository("invalid World change path".into()))
 }
 

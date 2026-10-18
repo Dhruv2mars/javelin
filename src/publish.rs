@@ -174,6 +174,7 @@ impl Repository {
                     for (_, bytes) in &chunks {
                         insert_object(&tx, ObjectKind::Tree, bytes)?;
                     }
+                    crate::radar::untrack_in(&tx, expected.layer())?;
                     PublishOutcome::Published {
                         version: append_version_in(&tx, &against, operation, &changes, tree)?,
                     }
@@ -300,7 +301,7 @@ fn prepare_in(
     }))
 }
 
-fn layer_state_in(conn: &Connection, layer: &LayerId) -> Result<LayerState> {
+pub(crate) fn layer_state_in(conn: &Connection, layer: &LayerId) -> Result<LayerState> {
     match published_state_in(conn, layer)? {
         Some(state) => Ok(state),
         None => latest_event_state_in(conn, layer),

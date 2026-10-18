@@ -7,6 +7,7 @@ mod domain;
 mod ignore;
 mod layer;
 mod publish;
+mod radar;
 mod repository;
 mod stack;
 pub mod tree;
@@ -22,6 +23,7 @@ pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate, PathDiff,
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
+pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 pub use workspace::{
     BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,
