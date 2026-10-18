@@ -51,6 +51,8 @@ jobs:
           truncate -s 16G "$RUNNER_TEMP/storage.img"
           if [[ "$FS" == xfs ]]; then
             sudo mkfs.xfs -q -m reflink=1 "$RUNNER_TEMP/storage.img"
+          elif [[ "$FS" == ext4 ]]; then
+            sudo mkfs.ext4 -F -q "$RUNNER_TEMP/storage.img"
           else
             sudo mkfs."$FS" -q "$RUNNER_TEMP/storage.img"
           fi

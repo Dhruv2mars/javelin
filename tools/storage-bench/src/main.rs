@@ -92,7 +92,7 @@ fn crash_child(root: PathBuf) -> Result<()> {
     s.ingest(&fixture(100, 100), None)?;
     let mut f = fs::File::create(s.root.join("tmp/interrupted"))?;
     f.write_all(b"partial next blob")?;
-    f.sync_all()?;
+    platform::fsync(&f)?;
     fs::write(s.root.join("ready"), b"kill me")?;
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));

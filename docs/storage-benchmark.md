@@ -71,9 +71,12 @@ materialization, read and eviction measurements. All stores' measured ingest run
 on native internal-SSD APFS (`--ingest-dir`); closed, checkpointed stores are
 then byte-copied to the image outside timings. Store files are restored to 0444.
 Thus each comparison uses the same location for both designs. This separation
-avoids measuring disk-image flush overhead as native ingest cost: a preliminary
-100-file fsync probe took about 0.014 s natively, whereas durable B's image smoke
-run took about 2 s/100 blobs. These probes are diagnostic, not full-matrix results.
+keeps the real API's stronger per-blob fullfsync timings on the native SSD while
+isolating allocation and allowing mounted-volume cache resets. A preliminary
+run using Rust File::sync_all for B was discarded: on Apple it requests
+F_FULLFSYNC, which would mismatch SQLite's fullfsync=OFF. B now calls
+libc::fsync explicitly, including for directories; no preliminary numbers are
+used in the results. See [Rust's platform implementation](https://raw.githubusercontent.com/rust-lang/rust/1.93.0/library/std/src/sys/fs/unix.rs).
 The resulting mixed-location matrix must not be read as an end-to-end native
 SSD latency claim. The exact commands and machine probes accompany the results.
 
@@ -97,14 +100,15 @@ permissions. A reads then writes; B-copy explicitly loops over read/write with a
 64 KiB buffer, never `fs::copy`, `io::copy` or `copy_file_range`. B-clone uses
 clonefile on APFS or FICLONE on Linux and chmods to 0644. Unsupported clones are
 reported and never replaced by copies in that timing case. Timing excludes sync,
-verification, cleanup and cache setup. Consequently this is materialization cost,
+store-handle opening, verification, cleanup and cache setup. Consequently this is materialization cost,
 not a durable whole-tree commit time. A-tuned SELECT/B-copy do not rehash on the
 hot path; A-real does. B-clone trusts immutable object contents. Verification is
 outside timing: all files at 1k, 100 regularly spaced files at larger sizes, and
 every random read are compared to expected bytes; checked materializations are
 also hashed. Every incremental changed path is checked, including deletion.
 
-Incremental cases prepare an untimed fresh base and prestored new blobs: one
+Incremental cases prepare an untimed base and prestored new blobs, then restore
+changed paths outside timing between repetitions: one
 modified file, or 34 modified + 33 deleted + 33 added paths. Writes/clones use
 sibling temps and rename; no destination fsync is timed. B reports both copy and
 clone incremental paths. This tests applying a changeset, not generating one.

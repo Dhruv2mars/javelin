@@ -68,9 +68,9 @@ impl Store {
                     fs::create_dir(self.root.join("objects").join(format!("{i:02x}")))?;
                 }
                 if self.durable {
-                    File::open(self.root.join("objects"))?.sync_all()?;
-                    File::open(&self.root)?.sync_all()?;
-                    File::open(self.root.parent().unwrap())?.sync_all()?;
+                    platform::fsync(&File::open(self.root.join("objects"))?)?;
+                    platform::fsync(&File::open(&self.root)?)?;
+                    platform::fsync(&File::open(self.root.parent().unwrap())?)?;
                 }
             }
         }
@@ -126,16 +126,16 @@ impl Store {
                         f.write_all(&b.bytes)?;
                         f.set_permissions(fs::Permissions::from_mode(0o444))?;
                         if self.durable {
-                            f.sync_all()?;
+                            platform::fsync(&f)?;
                         }
                         fs::rename(&temp, &target)?;
                         dirs.insert(target.parent().unwrap().to_path_buf());
                     }
                     if self.durable {
                         for d in dirs {
-                            File::open(d)?.sync_all()?;
+                            platform::fsync(&File::open(d)?)?;
                         }
-                        File::open(self.root.join("tmp"))?.sync_all()?;
+                        platform::fsync(&File::open(self.root.join("tmp"))?)?;
                     }
                 }
             }
@@ -151,6 +151,15 @@ impl Store {
     }
     pub fn materialize(&self, blobs: &[Blob], dst: &Path, clones: bool) -> Result<()> {
         let reader = self.reader()?;
+        self.materialize_from(blobs, dst, clones, &reader)
+    }
+    pub fn materialize_from(
+        &self,
+        blobs: &[Blob],
+        dst: &Path,
+        clones: bool,
+        reader: &Reader,
+    ) -> Result<()> {
         fs::create_dir(dst)?;
         let mut last = PathBuf::new();
         for b in blobs {
@@ -197,7 +206,7 @@ impl Store {
                 }
                 if self.durable {
                     for d in dirs {
-                        File::open(d)?.sync_all()?;
+                        platform::fsync(&File::open(d)?)?;
                     }
                 }
             }

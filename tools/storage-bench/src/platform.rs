@@ -178,3 +178,18 @@ pub fn shared(p: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Rust File::sync_all uses F_FULLFSYNC on Apple; call plain fsync explicitly
+/// to match SQLite FULL with fullfsync=OFF. Retry interrupted syscalls.
+pub fn fsync(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    loop {
+        if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+            return Ok(());
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+}

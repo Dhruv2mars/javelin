@@ -3,7 +3,7 @@ use crate::{
     corpus::Blob,
     platform, remove,
     report::Output,
-    store::{Kind, Store},
+    store::{Kind, Reader, Store},
 };
 use javelin::ObjectId;
 use std::{fs, path::Path, time::Instant};
@@ -36,13 +36,13 @@ fn elapsed(t: Instant) -> f64 {
 
 fn incremental(
     s: &Store,
+    r: &Reader,
     blobs: &[Blob],
     dst: &Path,
     changes: &[Blob],
     count: usize,
     clones: bool,
 ) -> Result<()> {
-    let r = s.reader()?;
     for i in 0..count {
         let to = if i % 3 == 2 {
             dst.join(format!("added-{i}"))
@@ -109,8 +109,9 @@ pub fn operations(
                 } else {
                     warm(s, blobs)?;
                 }
+                let reader = s.reader()?;
                 let t = Instant::now();
-                if let Err(e) = s.materialize(blobs, &dst, clones) {
+                if let Err(e) = s.materialize_from(blobs, &dst, clones, &reader) {
                     // Only clone capability errors are recorded as unsupported.
                     if clones
                         && e.downcast_ref::<std::io::Error>().is_some_and(|e| {
@@ -145,7 +146,7 @@ pub fn operations(
                         platform::shared(&dst.join(&b.path))?;
                     }
                     #[cfg(target_os = "macos")]
-                    if copy_disk > 0 && delta > copy_disk / 2 {
+                    if copy_disk <= 0 || delta < 0 || delta > copy_disk / 2 {
                         return Err(format!(
                             "clone sharing proof failed: clone {delta}, copy {copy_disk}"
                         )
@@ -180,7 +181,7 @@ pub fn operations(
                 &format!("materialize/{method}/{state}"),
                 "ms",
                 &times,
-                "includes dirs and writable chmod; excludes content verification, sync and cleanup",
+                "includes dirs and writable chmod; excludes store-handle opening, verification, sync and cleanup",
             )?;
             out.row(
                 n,
@@ -194,7 +195,7 @@ pub fn operations(
         }
     }
     remove(&dst)?;
-    // Increments use an untimed, fresh base and prestored new blobs for each rep.
+    // Reuse a base, restoring changed paths outside timing before the next rep.
     let changes: Vec<_> = blobs
         .iter()
         .take(100)
@@ -214,10 +215,11 @@ pub fn operations(
     for &clones in incremental_methods {
         for count in [1, 100] {
             let mut times = Vec::new();
+            s.materialize(blobs, &dst, s.kind == Kind::Files && clone_ok)?;
+            let reader = s.reader()?;
             for _ in 0..reps {
-                s.materialize(blobs, &dst, s.kind == Kind::Files && clone_ok)?;
                 let t = Instant::now();
-                incremental(s, blobs, &dst, &changes, count, clones)?;
+                incremental(s, &reader, blobs, &dst, &changes, count, clones)?;
                 times.push(elapsed(t));
                 for i in 0..count {
                     let to = if i % 3 == 2 {
@@ -231,8 +233,16 @@ pub fn operations(
                         assert_eq!(fs::read(to)?, changes[i].bytes);
                     }
                 }
-                remove(&dst)?;
+                for (i, b) in blobs.iter().take(count).enumerate() {
+                    if i % 3 == 2 {
+                        fs::remove_file(dst.join(format!("added-{i}")))?;
+                    } else {
+                        fs::write(dst.join(&b.path), reader.read(b.id)?)?;
+                    }
+                }
             }
+            verify(blobs, &dst)?;
+            remove(&dst)?;
             out.row(n,bytes,name,&format!("incremental/{count}/{}",if clones {"clone"} else {"read-write"}),"ms",&times,"1 = modified; 100 = 34 modified + 33 deleted + 33 added; atomic temp+rename, no base fsync")?;
         }
     }

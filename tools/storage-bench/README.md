@@ -39,12 +39,13 @@ hdiutil detach /Volumes/jbench-storage
 rm /tmp/jbench-storage.sparseimage /tmp/storage-cache-reset.sh
 ```
 
-`--ingest-dir` is optional. On this Mac, image fsync is about 100× slower than
-native APFS fsync. The committed run therefore measures **all** stores' ingest
+`--ingest-dir` is optional. The committed run measures **all** stores' ingest
 on native internal-SSD APFS, then byte-copies their closed, checkpointed stores
 onto the dedicated image outside timings. Materialization, disk and eviction are
 measured on the image. Ingest comparisons are native-to-native; materialization
-comparisons are image-to-image. The image and native results are not interchangeable.
+comparisons are image-to-image. This keeps the real API's fullfsync timings on
+native SSD while isolating disk accounting and resetting the volume cache.
+The image and native results are not interchangeable.
 Linux CI omits this flag and measures all operations on its loop filesystem.
 
 Close Finder windows and other handles to the image before starting. Detach and
@@ -64,7 +65,7 @@ None means SQLite OFF versus no file/directory fsync. Files use real Javelin blo
 IDs, 256 fanouts and read-only object files. There is one writer.
 
 Materialization timings include directory creation and writable file permissions,
-but exclude sync, correctness checks and cleanup. B-copy uses explicit read/write;
+but exclude store-handle opening, sync, correctness checks and cleanup. B-copy uses explicit read/write;
 B-clone never falls back. Linux requires FIEMAP shared extents on sampled files;
 APFS requires clone allocation to be less than half the explicit-copy control.
 The SIGKILL test interrupts one deterministic pre-rename boundary; it is not a
