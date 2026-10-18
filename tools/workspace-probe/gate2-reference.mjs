@@ -221,6 +221,9 @@ function open(s, l) {
   for (const p of delta) fs.rmSync(join(staging, ...p.split('/')), { force: true });
   materialize(s, Object.fromEntries(delta.filter(p => want[p]).map(p => [p, want[p]])), staging, want);
   if (lie !== 'no-refusal') {
+    // Windows can create these only through \\?\ paths that ordinary tools cannot open.
+    const reserved = Object.keys(want).find(p => process.platform === 'win32' && /(^|\/)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.[^/]*)?(\/|$)|[. ](\/|$)/i.test(p));
+    if (reserved !== undefined) { fs.rmSync(staging, { recursive: true, force: true }); fail('unsupported', `path ${JSON.stringify(reserved)} cannot be materialized on Windows`, reserved); }
     const got = walk(staging);
     const lost = [...new Set([...Object.keys(want), ...Object.keys(got)])].find(p => !want[p] || !got[p]);
     if (lost !== undefined) { fs.rmSync(staging, { recursive: true, force: true }); fail('unsupported', `path ${JSON.stringify(lost)} cannot be materialized here`, lost); }

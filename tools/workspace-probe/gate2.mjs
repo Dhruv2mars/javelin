@@ -215,8 +215,18 @@ async function snapshot(repo, checkpoint) {
   return t;
 }
 const fileHash = text => `f:${sha(text)}`;
+// Flush dirty data first: ReFS allocates written data lazily, which would otherwise shift
+// one step's usage into the next measurement. Windows has no unprivileged volume flush,
+// so flush each file under the run (FlushFileBuffers through fsync).
+function flushTree(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) flushTree(full);
+    else if (e.isFile()) { try { const fd = fs.openSync(full, 'r+'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } } catch {} }
+  }
+}
 function freeBytes() {
-  if (!win) spawnSync('sync');
+  if (win) flushTree(root); else spawnSync('sync');
   const s = fs.statfsSync(root);
   return Number(s.bavail) * Number(s.bsize);
 }

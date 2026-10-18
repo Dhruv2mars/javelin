@@ -127,7 +127,10 @@ rtk proxy bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin \
 `--expect` is `shared` for clone-capable filesystems and `copy` for the fallback.
 `--only CLAUSE,...` limits the run; `--bulk-mb N` sizes the sharing fixture
 (default 128). Exit 0 means every check is VERIFIED, 1 that one is not, and 2 that
-setup failed. The command names and JSON fields live in one adapter, `S`, in
+setup failed. `--known gate2-known-failures.json` lists product bugs the proof has
+already found, per filesystem, with their finding: if only those fail the exit is 3
+and the verdict stays NOT VERIFIED; a listed check that passes fails the run, so the
+list only shrinks. Gate 2 is proven once the list is empty. The command names and JSON fields live in one adapter, `S`, in
 `gate2.mjs`. The shims are failing stand-ins for tools Javelin must never run.
 
 Clone-backed workspaces have no Publish yet, so `--seed` names the fixture tool that
