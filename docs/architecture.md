@@ -75,7 +75,8 @@ Code: src/tree.rs, src/repository.rs
 - `LayerId` uses the `OperationId` rules.
 - `checkpoint_bytes` produces the canonical JSON for a checkpoint.
 - `normalize()` (`src/domain.rs`) drops no-op entries, rejects directory-prefix tombstones with `invalid_input`, and rejects file/descendant collisions, using indexed lookups against the base version.
-- `LayerBase` is `{ repository, version, world }`, where `world` is the base version's `id`. `LayerCheckpoint` holds the base and changes only; it no longer carries a full manifest.
+- `LayerBase` is `{ repository, version, world }`, where `world` is the base version's `id`. `LayerCheckpoint` holds the base, changes, Stack sources and an optional `provenance` Blob ID; it no longer carries a full manifest.
+- Provenance (`Provenance` in `src/blame.rs`) is `{ actor: human|agent, agent?, session?, reference? }`, each field 1 to 256 bytes without control characters, stored as one canonical-JSON Blob. `Repository::set_provenance` declares it for a handle; `capture_layer` and `commit_stack` record it in the checkpoints they write, and capture's generated operation ID hashes it. Created Layers' empty checkpoints and handles without provenance stay unattributed. It is caller-declared, not authenticated.
 - Operations: `create_layer`, `capture_layer`, `discard_layer`, `clone_layer`, `layer_diff`, `layer_history`, `check_layers`.
 - Each mutating call goes through `update_in`, which records its operation id in `layer_attempts`. `attempt_outcome_in` returns the recorded outcome when an id is replayed.
 - Recorded outcomes include accepted, stale, conflict, and `LayerStale`. ID reuse surfaces as the error code `operation_id_reused`.
@@ -105,6 +106,18 @@ Code: src/layer.rs, src/capture.rs, src/ignore.rs, src/workspace.rs, crates/jave
 - CLI: `javelin layer radar ID`, and a `radar` object in `checkpoint` output.
 
 Code: src/radar.rs, src/domain.rs, src/layer.rs, src/publish.rs
+
+## Trace blame
+
+- Attribution is per path: each `layer_paths` row also names the `checkpoint` (and its `provenance`) that last set the path's entry. `track_in` attributes a new or changed entry to the new head checkpoint and keeps an unchanged one's. A clone's paths are attributed to its source checkpoint; Stack's imported changes to the Stack checkpoint, so to whoever ran Stack.
+- Publish copies the published Layer's rows into table `blame(path, version, checkpoint, provenance)`, primary key `(path, version)`, `WITHOUT ROWID`, one row per World change, in its write transaction (O(change)), before clearing the Layer's radar rows. Versions advanced by `compare_and_advance` have no rows: their origin has no checkpoint.
+- `Repository::blame(path, at)` returns the last change at or before `at` (default head) and its `Origin { version, layer, checkpoint, provenance }`: one primary-key read of `changes`, then point reads. O(log), independent of history.
+- `Repository::blame_lines(path, at)` walks only this path's `changes` rows since it was last created, reading each version's blob and matching its lines to the previous version's with Myers' O(ND) diff (`matching()`, common prefix and suffix trimmed, lines interned). Unmatched lines take that version's origin. Past 2,048 edits in the trimmed middle, the middle counts as rewritten. Origins are resolved only for versions that still own a line. No cache: at 1,000 versions of a 1,000-line file it took 63 ms (`tests/blame_bench.rs`).
+- A rename is a delete plus an add, so a renamed file's lines start at the renaming version. A deleted path's line history restarts when it is recreated.
+- Derived and verified: `attribution_in` (`src/layer.rs`) rebuilds a Layer's per-path attribution from its revision history. `check()` compares it with `layer_paths` for live Layers and with `blame` for every successful publication, and refuses extra rows.
+- CLI: `javelin blame PATH [--world N] [--lines]`. Provenance comes from `--actor`, `--agent`, `--session`, `--reference` on `checkpoint` and `layer stack`, else from `JAVELIN_ACTOR`, `JAVELIN_AGENT`, `JAVELIN_SESSION`, `JAVELIN_REFERENCE` for every command that captures.
+
+Code: src/blame.rs, src/layer.rs, src/radar.rs, src/publish.rs, crates/javelin-cli/src/cli.rs
 
 ## Stack and mechanical merge
 

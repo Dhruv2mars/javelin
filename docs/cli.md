@@ -33,8 +33,10 @@ workspaces.
 javelin init [project-directory] [--json]
 javelin history [project-directory] [--json]
 javelin check [project-directory] [--json]
+javelin blame PATH [--world N] [--lines]
 
-javelin checkpoint ID [--path DIR]
+javelin checkpoint ID [--path DIR] [--actor human|agent] [--agent NAME]
+    [--session ID] [--reference REF]
 
 javelin layer create ID [--world N]
 javelin layer state ID
@@ -124,6 +126,50 @@ live Layers: at 100k files, the median radar took 0.14 ms with 10 live Layers an
 0.17 ms with 1,000 (`tests/radar_bench.rs`, release build, Apple Silicon). Only
 Layers in this repository store are seen; the hosted World will serve the same
 report across machines.
+
+## Provenance and trace blame
+
+Every checkpoint records who and what produced it, as declared by the harness:
+
+| Field | Flag | Environment | Meaning |
+| --- | --- | --- | --- |
+| actor | `--actor human\|agent` | `JAVELIN_ACTOR` | Kind of actor |
+| agent | `--agent NAME` | `JAVELIN_AGENT` | Agent or model name, e.g. `claude-code/claude-opus-5-5` |
+| session | `--session ID` | `JAVELIN_SESSION` | Harness session ID |
+| reference | `--reference REF` | `JAVELIN_REFERENCE` | Optional tool-call or prompt reference |
+
+A flag overrides its variable. Flags are accepted by `checkpoint` and `layer stack`;
+every other command that captures a workspace uses the variables, so a harness
+sets them once for the agent's shell. An agent name implies `actor=agent`; a
+session or reference alone implies `human`; a human has no agent name. Each value
+is 1 to 256 bytes without control characters, otherwise `invalid_input`. With
+nothing declared, checkpoints are unattributed. Provenance is caller-declared,
+not authenticated identity.
+
+Publish carries each path's provenance into World history: a path is attributed
+to the checkpoint that last changed it in its Layer, so a Layer shared by several
+sessions keeps each session's paths apart.
+
+```sh
+javelin blame src/lib.rs --json
+# {"ok":true,"command":"blame","blame":{"path":"src/lib.rs","entry":{...},
+#  "origin":{"version":{"number":7,...},"layer":"fix-parser",
+#  "checkpoint":"…","provenance":{"actor":"agent","agent":"claude-code",
+#  "session":"s-42","reference":"tool-7"}}}}
+javelin blame src/lib.rs --lines
+#     7 claude-code session s-42 ref tool-7      1| fn parse() {
+```
+
+- `blame PATH` reports the last World version that changed `PATH` at or before
+  `--world N` (default: the head): its Layer, checkpoint and provenance. `entry`
+  is null when that change deleted the path; `blame` is null when the path has no
+  history. It is one indexed read, independent of history length.
+- `blame PATH --lines` attributes every line of the file. JSON has `origins` (in
+  World order) and `lines` of `{number, origin, text}`, where `origin` indexes
+  `origins`. It walks only that path's own versions with a line diff.
+- A rename is a delete plus an add: the new path's lines start at the renaming
+  version. Stack attributes imported changes to whoever ran Stack. A version
+  advanced without a Layer has no checkpoint (`no Layer` in text).
 
 ## Clone-backed workspaces
 
