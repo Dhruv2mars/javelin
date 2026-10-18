@@ -14,7 +14,7 @@ Code: src/lib.rs, src/layer.rs, src/stack.rs, src/publish.rs
 
 ## Storage
 
-- The repository is `.javelin/repository.sqlite3`. Format is `4`; the SQLite application id is `0x4a41564c`.
+- The repository is `.javelin/repository.sqlite3`. Format is `5`; the SQLite application id is `0x4a41564c`.
 - Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten.
 - `connect()` sets `foreign_keys=ON`, `synchronous=EXTRA`, `fullfsync=ON`, and a 5 second `busy_timeout`. Writes run in `BEGIN IMMEDIATE` transactions.
 - `fullfsync` is set unconditionally. It only has effect on Apple platforms.
@@ -88,10 +88,13 @@ Code: src/stack.rs, crates/javelin-stack/src/lib.rs, crates/javelin-merge/src/li
 
 - Table `publications` records each attempt. Outcome codes: 1 Published, 2 Conflict, 3 LayerStale.
 - A partial unique index allows at most one successful publication per Layer.
-- `publish_layer(operation, expected, attribution, guard)` is the entry point. `operation` is the idempotency key; `expected` is the World version the caller expects to advance from.
-- `compose_in` applies the whole Layer onto the current World. It intersects Layer paths with World changes, covering exact-path and ancestor/descendant path collisions.
-- The World advance uses `Repository::compare_and_advance`. Writes run in `BEGIN IMMEDIATE` transactions.
-- `publication()` returns the stored receipt when an operation id is replayed.
+- `publish_layer(operation, expected, attribution, guard)` is the entry point. `operation` is the idempotency key. `expected` is a `LayerHead`: the exact latest Active checkpoint of the Layer being published, not a World version.
+- Prepare (`prepare_in`) runs in a read snapshot without the write lock. It replays an existing receipt, refuses operation-id reuse, verifies the head and trace, validates only the records the advance builds on (the head World's receipt and this Layer's earlier receipts), and composes the candidate.
+- `compose_in` applies the whole Layer onto the current World. It intersects Layer paths with World changes, covering exact-path and ancestor/descendant path collisions. Its cost scales with the tree, not with history.
+- Advance is a short `BEGIN IMMEDIATE` transaction in `publish_layer` itself, not `Repository::compare_and_advance`. It rechecks that the operation id is unused, that the World head is still the prepared `against`, and that the Layer state is unchanged. On a mismatch it re-prepares, so compatible concurrent Publishes rebase and intersecting ones record a conflict. It then runs the guard, inserts the manifest, `attempts`, `versions` and `publications` rows, and commits.
+- Every lookup inside that transaction uses a key or index (`attempts_result`, `publications_layer`, the one-success index), so its cost does not grow with history. The cost test in `tests/support/publish_cost.rs` measured 521 SQLite VM instructions at both 1 and 1,000 prior Worlds.
+- Full history, Layer, Stack and publication validation stays in `Repository::check`. `compare_and_advance` and Layer operations still validate the full state.
+- `publication()` returns the stored receipt when an operation id is replayed, validating that receipt's own bindings.
 - Attribution: `PublishAttribution::Human`, or `PublishAttribution::Agent { context, allow_missing_trace }`. Agent publishes without a trace are refused with `missing_agent_trace` unless `allow_missing_trace` is set.
 
 Code: src/publish.rs, src/repository.rs, src/lib.rs

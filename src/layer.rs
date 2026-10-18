@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, Result, VersionNumber,
     domain::ObjectKind,
-    repository::{decode_id, history_in, insert_object, manifest_in, read_object, validate_entry},
+    repository::{decode_id, insert_object, manifest_in, read_object, validate_entry},
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -408,9 +408,7 @@ fn validate_base(conn: &Connection, base: &LayerBase) -> Result<Manifest> {
     if identity_in(conn)? != base.repository {
         return Err(Error::InvalidInput("foreign Layer base".into()));
     }
-    let world = history_in(conn)?
-        .into_iter()
-        .find(|v| v.number == base.version)
+    let world = crate::repository::version_in(conn, base.version)?
         .ok_or(Error::MissingVersion(base.version))?;
     if world.manifest != base.manifest {
         return Err(Error::CorruptRepository(

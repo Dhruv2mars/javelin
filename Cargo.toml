@@ -19,4 +19,6 @@ thiserror = "2.0.21"
 libc = "0.2.190"
 
 [dev-dependencies]
+# hooks: the Publish write-transaction cost test counts SQLite VM instructions.
+rusqlite = { version = "0.40.2", features = ["bundled", "blob", "hooks"] }
 tempfile = "3.27.0"

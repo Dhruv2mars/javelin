@@ -31,6 +31,11 @@ branch contains checked working components. This does not establish GA.
 - [ ] Merge the build plan and completed native dependency chain.
 - [ ] Integrate other finished components with relevant checks.
 - [ ] Complete whole-Layer Publish, then connect the local developer workflow.
+  - [x] Make Publish incremental: snapshot prepare, short compare-and-swap write
+    transaction, full validation only in `check` (write transaction 521 VM
+    instructions at 1 and 1,000 prior Worlds; main took 16 ms → 611 ms under the lock).
+  - [ ] Store Worlds as changesets (`base(V+1)` = V + changeset) instead of full
+    manifests. Deferred: it changes the version schema and the protocol.
 
 ## Historical user pause for recalibration on 2026-10-15
 

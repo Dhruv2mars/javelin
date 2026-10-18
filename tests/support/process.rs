@@ -884,6 +884,41 @@ fn whole_publish_disjoint_processes_all_compose_contiguously_and_overlap_has_one
 }
 
 #[test]
+fn whole_publish_world_advance_after_prepare_rebases_or_conflicts_at_the_cas() {
+    for overlap in [false, true] {
+        let (root, heads) = publish_fixture(overlap, 2);
+        let mut slow = publisher(root.path(), &heads[0], "slow", "publish_prepared");
+        slow.release();
+        slow.marker("BOUNDARY publish_prepared");
+        let mut fast = publisher(root.path(), &heads[1], "fast", "");
+        fast.release();
+        let fast = fast.result();
+        assert_eq!(fast["outcome"]["version"]["number"], 1);
+        slow.release();
+        let slow = slow.result();
+        // The slow plan composed against World 0; the short write transaction saw
+        // World 1 and re-prepared instead of advancing from a stale head.
+        assert_eq!(slow["against"]["number"], 1, "{slow}");
+        if overlap {
+            assert_eq!(slow["outcome"]["outcome"], "conflict");
+        } else {
+            assert_eq!(slow["outcome"]["version"]["number"], 2);
+        }
+        let repo = Repository::open(root.path()).unwrap();
+        let history = repo.history().unwrap();
+        assert_eq!(history.len(), if overlap { 2 } else { 3 });
+        assert_eq!(
+            repo.read_manifest(history.last().unwrap().manifest)
+                .unwrap()
+                .entries()
+                .len(),
+            if overlap { 1 } else { 2 }
+        );
+        repo.check().unwrap();
+    }
+}
+
+#[test]
 fn whole_publish_same_operation_process_retries_commit_one_receipt() {
     let (root, heads) = publish_fixture(false, 1);
     let mut actors: Vec<_> = (0..4)
