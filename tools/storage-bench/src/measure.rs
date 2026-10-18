@@ -141,21 +141,18 @@ pub fn operations(
                 if clones {
                     #[cfg(target_os = "linux")]
                     {
-                        let (mut shared, mut total) = (0u64, 0u64);
-                        for b in blobs
-                            .iter()
-                            .filter(|b| b.bytes.len() >= 4096)
-                            .step_by((n / 100).max(1))
-                            .take(100)
-                        {
-                            let (a, b) = platform::shared_bytes(&dst.join(&b.path))?;
-                            shared += a;
-                            total += b;
-                        }
+                        let (shared, total) = fiemap(
+                            out,
+                            name,
+                            blobs,
+                            bytes,
+                            &dst,
+                            &format!("{state}/rep-{}", rep + 1),
+                        )?;
                         fractions.push(shared as f64 / total as f64);
                     }
                     #[cfg(target_os = "macos")]
-                    if copy_disk <= 0 || delta < 0 || delta > copy_disk / 2 {
+                    if copy_disk > 0 && (delta < 0 || delta > copy_disk / 2) {
                         return Err(format!(
                             "clone sharing proof failed: clone {delta}, copy {copy_disk}"
                         )
@@ -233,7 +230,7 @@ pub fn operations(
             )?;
             #[cfg(target_os = "linux")]
             if clones {
-                out.row(n,bytes,name,&format!("fiemap-shared-fraction/{state}"),"fraction",&fractions,"byte-weighted fraction of all mapped extents on up to 100 sampled non-inline files >=4KiB; paginates FIEMAP; run fails unless every sampled extent is shared")?;
+                out.row(n,bytes,name,&format!("fiemap-shared-fraction/{state}"),"fraction",&fractions,"all files inspected including tiny/inline; logical-byte weighted; inline payload is counted separately as copied, not shared")?;
             }
             out.row(
                 n,
@@ -242,7 +239,7 @@ pub fn operations(
                 &format!("base-physical/{method}/{state}"),
                 "bytes",
                 &deltas,
-                "statfs allocation delta; clone metadata included",
+                "synced physical allocation delta (btrfs Data+Metadata+System used with DUP; otherwise statfs); raw readings retained",
             )?;
         }
     }
@@ -341,6 +338,7 @@ pub fn operations(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn disk(
     out: &mut Output,
     s: &Store,
@@ -349,6 +347,7 @@ pub fn disk(
     bytes: u64,
     reps: usize,
     scratch: &Path,
+    remount: Option<&str>,
 ) -> Result<bool> {
     // Preserve a closed byte-identical seed outside the measured directory. Its
     // allocation is constant and excluded from each before/after delta.
@@ -402,17 +401,34 @@ pub fn disk(
                 return Err("disk snapshot failed APFS sharing check".into());
             }
             #[cfg(target_os = "linux")]
-            for b in blobs
-                .iter()
-                .filter(|b| b.bytes.len() >= 4096)
-                .step_by((n / 100).max(1))
-                .take(100)
-            {
-                platform::shared(&base.join(&b.path))?;
-            }
+            fiemap(
+                out,
+                name,
+                blobs,
+                bytes,
+                &base,
+                &format!("disk/rep-{}", rep + 1),
+            )?;
         }
         physical[1].push((empty - base_free) as f64 / bytes as f64);
         base_apparent.push(platform::apparent(&base)? as f64);
+        if rep == 0
+            && n == 100000
+            && let Some(hook) = remount
+        {
+            platform::cold(hook)?;
+            let remounted = platform::settled(scratch)?;
+            out.row(n, bytes, name, "disk/remount-store+base", "corpus-x", &[(empty - remounted) as f64 / bytes as f64], "one remount control at 100k, same live store+base; compare disk/store+base first sample")?;
+            out.row(
+                n,
+                bytes,
+                name,
+                "disk/remount-drift",
+                "bytes",
+                &[(base_free - remounted) as f64],
+                "positive means more allocation reported after remount",
+            )?;
+        }
         for i in 1..=5 {
             let dst = scratch.join(format!("layer-{i}"));
             match platform::layer(&base, &dst, layer_clones) {
@@ -456,7 +472,7 @@ pub fn disk(
     .iter()
     .enumerate()
     {
-        out.row(n,bytes,name,&format!("disk/{op}"),"corpus-x",&physical[i],if layer_clones {"fresh independent allocations from closed seed; sync+settle; APFS directory clone / Linux per-file reflink Layers"} else {"fresh independent allocations; sync+settle; explicit-copy Layers (clone unsupported)"})?;
+        out.row(n,bytes,name,&format!("disk/{op}"),"corpus-x",&physical[i],if layer_clones {"fresh independent allocations from closed seed; sync+2s plateau; btrfs physical used including metadata DUP, others statfs; APFS directory clone / Linux per-file reflink Layers"} else {"fresh independent allocations; sync+settle; explicit-copy Layers (clone unsupported)"})?;
     }
     out.row(
         n,
@@ -638,4 +654,72 @@ pub fn eviction(
         }
     }
     Ok(())
+}
+
+/// Inspect every destination file, including sub-4KiB payloads. Inline bytes are
+/// copied by btrfs FICLONE and cannot satisfy the zero-file-bytes criterion.
+#[cfg(target_os = "linux")]
+pub fn fiemap(
+    out: &mut Output,
+    name: &str,
+    blobs: &[Blob],
+    bytes: u64,
+    dst: &Path,
+    label: &str,
+) -> Result<(u64, u64)> {
+    let mut totals = [0u64; 5];
+    let mut counts = [0u64; 4];
+    for b in blobs {
+        let e = platform::extents(&dst.join(&b.path))?;
+        let values = [e.inline, e.shared, e.unshared, e.unmapped];
+        for i in 0..4 {
+            totals[i] += values[i];
+            counts[i] += u64::from(values[i] > 0);
+        }
+        totals[4] += e.extents;
+    }
+    for (i, category) in ["inline-copied", "shared", "unshared", "unmapped"]
+        .iter()
+        .enumerate()
+    {
+        out.row(blobs.len(), bytes, name, &format!("fiemap/{label}/{category}-bytes"), "bytes", &[totals[i] as f64], "ALL files, logical payload overlap with each FIEMAP extent; inline takes precedence over SHARED; unmapped is not proof of sharing")?;
+        out.row(blobs.len(), bytes, name, &format!("fiemap/{label}/{category}-files"), "count", &[counts[i] as f64], "files with at least one byte in this category; mixed files can occur in multiple categories")?;
+    }
+    out.row(
+        blobs.len(),
+        bytes,
+        name,
+        &format!("fiemap/{label}/files-inspected"),
+        "count",
+        &[blobs.len() as f64],
+        &format!("{} mapped extents; no minimum-size exclusion", totals[4]),
+    )?;
+    assert_eq!(totals[..4].iter().sum::<u64>(), bytes);
+    Ok((totals[1], bytes))
+}
+
+pub fn allocation_control(
+    out: &mut Output,
+    scratch: &Path,
+    blobs: &[Blob],
+    bytes: u64,
+    reps: usize,
+) -> Result<()> {
+    let dst = scratch.join("standalone-control");
+    let mut allocated = Vec::new();
+    let mut residual = Vec::new();
+    for _ in 0..reps {
+        let before = platform::settled(scratch)?;
+        fs::create_dir(&dst)?;
+        for b in blobs {
+            let path = dst.join(&b.path);
+            fs::create_dir_all(path.parent().unwrap())?;
+            fs::write(path, &b.bytes)?;
+        }
+        allocated.push((before - platform::settled(scratch)?) as f64);
+        remove(&dst)?;
+        residual.push((before - platform::settled(scratch)?) as f64);
+    }
+    out.row(blobs.len(), bytes, "control", "disk/standalone-tree", "bytes", &allocated, "fresh explicit-write tree, no store, sync+2s plateau; btrfs physical used including metadata DUP; allocated-tree denominator context only")?;
+    out.row(blobs.len(), bytes, "control", "disk/deletion-residual", "bytes", &residual, "allocation remaining after deleting the standalone control; negative is filesystem metadata reclamation/noise; raw statfs retained alongside btrfs usage")
 }

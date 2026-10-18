@@ -95,6 +95,7 @@ impl Store {
     /// Limit is checked after each committed object for the real-store 100k budget.
     pub fn ingest(&self, blobs: &[Blob], limit: Option<f64>) -> Result<bool> {
         let t = Instant::now();
+        let kill_stage = std::env::var("STORAGE_BENCH_KILL_STAGE").ok();
         match self.kind {
             Kind::Real => {
                 let mut repo = Repository::open(&self.root)?;
@@ -112,12 +113,30 @@ impl Store {
                         c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                     {
                         let mut insert = tx.prepare("INSERT INTO objects(id,kind,bytes) VALUES(?1,1,?2) ON CONFLICT(id) DO NOTHING")?;
-                        for b in batch {
+                        for (index, b) in batch.iter().enumerate() {
                             let id = ObjectId::for_blob(&b.bytes);
                             insert.execute(params![id.to_string(), b.bytes])?;
+                            if index == 9
+                                && let Some(target) = &kill_stage
+                            {
+                                crate::extras::writer_stage(
+                                    &self.root,
+                                    target,
+                                    "sqlite-mid-transaction",
+                                    10,
+                                )?;
+                            }
                         }
                     }
                     tx.commit()?;
+                    if let Some(target) = &kill_stage {
+                        crate::extras::writer_stage(
+                            &self.root,
+                            target,
+                            "sqlite-after-commit",
+                            batch.len() as u64,
+                        )?;
+                    }
                 }
                 // Include draining WAL in ingest, so deferred checkpoint work is not hidden.
                 c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
@@ -138,10 +157,34 @@ impl Store {
                             .write(true)
                             .create_new(true)
                             .open(&temp)?;
-                        f.write_all(&b.bytes)?;
+                        if let Some(target) = &kill_stage
+                            && b.bytes.len() >= 2 * 1024 * 1024
+                        {
+                            let half = b.bytes.len() / 2;
+                            f.write_all(&b.bytes[..half])?;
+                            crate::extras::writer_stage(
+                                &self.root,
+                                target,
+                                "files-mid-payload",
+                                half as u64,
+                            )?;
+                            f.write_all(&b.bytes[half..])?;
+                        } else {
+                            f.write_all(&b.bytes)?;
+                        }
                         f.set_permissions(fs::Permissions::from_mode(0o444))?;
                         if self.durable {
                             platform::fsync(&f)?;
+                        }
+                        if b.bytes.len() >= 2 * 1024 * 1024
+                            && let Some(stage) = &kill_stage
+                        {
+                            crate::extras::writer_stage(
+                                &self.root,
+                                stage,
+                                "files-pre-rename",
+                                f.metadata()?.len(),
+                            )?;
                         }
                         fs::rename(&temp, &target)?;
                         dirs.insert(target.parent().unwrap().to_path_buf());

@@ -1,5 +1,6 @@
 //! Standalone measurement harness; never called by Javelin.
 mod corpus;
+mod decision;
 mod extras;
 mod measure;
 mod platform;
@@ -59,6 +60,16 @@ fn specs(dir: &Path, label: &str, cache: Option<&str>) -> String {
     };
     #[cfg(target_os = "linux")]
     let filesystem = command("findmnt", &["-T", dir.to_str().unwrap()]);
+    #[cfg(target_os = "linux")]
+    let os = format!(
+        "{os}\n{}\n{}\n{}\n{}\nRunner image: {} {}",
+        command("mkfs.btrfs", &["--version"]),
+        command("mkfs.xfs", &["-V"]),
+        command("mke2fs", &["-V"]),
+        command("uname", &["-r"]),
+        std::env::var("ImageOS").unwrap_or_default(),
+        std::env::var("ImageVersion").unwrap_or_default()
+    );
     let os = format!("{os}\n{filesystem}");
     format!(
         "{label}\n{os}\n{}\n{}\n{}\ncache hook: {}\nArgs: {:?}",
@@ -156,7 +167,7 @@ fn run() -> Result<()> {
     };
     if args.iter().any(|a| a == "--help") {
         println!(
-            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only | --extras-only | --ingest-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
+            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only | --extras-only | --ingest-only | --decision-only | --kill-only] [--remount-cmd COMMAND] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
         );
         return Ok(());
     }
@@ -172,6 +183,9 @@ fn run() -> Result<()> {
         }
         fs::create_dir_all(p)?;
     }
+    let decision_only = args.iter().any(|a| a == "--decision-only");
+    let kill_only = args.iter().any(|a| a == "--kill-only");
+    let remount = flag("--remount-cmd");
     let disk_only = args.iter().any(|a| a == "--disk-only");
     let ingest_only = args.iter().any(|a| a == "--ingest-only");
     let reps: usize = flag("--reps").unwrap_or("5".into()).parse()?;
@@ -211,6 +225,24 @@ fn run() -> Result<()> {
         machine,
     };
     print!("{}", out.md);
+    if kill_only {
+        extras::killed_writers(&mut out, &scratch)?;
+        fs::remove_dir(&scratch)?;
+        return out.save();
+    }
+    if decision_only {
+        for n in sizes {
+            decision::run(
+                &mut out,
+                &scratch,
+                &fixture(n, n as u64),
+                reps,
+                cache.as_deref(),
+            )?;
+        }
+        fs::remove_dir(&scratch)?;
+        return out.save();
+    }
     if args.iter().any(|a| a == "--extras-only") {
         let n = *sizes.last().ok_or("--files is empty")?;
         if n < 1000 {
@@ -361,6 +393,10 @@ fn run() -> Result<()> {
                 .collect::<String>(),
         )?;
         out.row(n,bytes,"corpus","rounded-4k-payload","bytes",&[blobs.iter().map(|b|b.bytes.len().div_ceil(4096)*4096).sum::<usize>() as f64],"deterministic 4KiB payload-block bound; excludes inode/directory metadata; filesystem inline data may differ")?;
+        measure::allocation_control(&mut out, &scratch, &blobs, bytes, reps)?;
+        if !disk_only && !ingest_only {
+            decision::run(&mut out, &scratch, &blobs, reps, cache.as_deref())?;
+        }
         for (name, kind, durable) in [
             ("A-real", Kind::Real, true),
             ("A-tuned/durable", Kind::Tuned, true),
@@ -497,7 +533,16 @@ fn run() -> Result<()> {
                 remove(&ingest.root)?;
             }
             // Retain the final ingest or its byte-identical isolated-volume seed.
-            let clones = disk(&mut out, &s, name, &blobs, bytes, reps, &scratch)?;
+            let clones = disk(
+                &mut out,
+                &s,
+                name,
+                &blobs,
+                bytes,
+                reps,
+                &scratch,
+                remount.as_deref(),
+            )?;
             if disk_only {
                 remove(&s.root)?;
                 continue;

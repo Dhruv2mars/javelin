@@ -299,7 +299,7 @@ pub fn checkpoint(out: &mut Output, scratch: &Path, n: usize, page: usize) -> Re
                     samples.last().unwrap()
                 );
             }
-            out.row(n,bytes,name,&format!("checkpoint-10/{variant}"),"ms",&samples,"20 reps; 5 single-byte appends + 5 same-size first-byte rewrites; file reads, canonical hashes, store commits included; no stat scan/serialization/cache-save/head CAS; real uses per-blob API, tuned single transaction, split keeps metadata in WAL FULL SQLite; with-checkpoint writes canonical-shaped sparse metadata row; with-manifest adds requested conservative full-tree metadata proxy instead; neither executes graph validation/head publication")?;
+            out.row(n,bytes,name,&format!("checkpoint-10/{variant}"),"ms",&samples,"STORE-COST PROXY, not full checkpoint; 20 reps; 5 single-byte appends + 5 same-size first-byte rewrites; file reads, canonical hashes, store commits included; no stat scan/serialization/cache-save/head CAS; real uses per-blob API, tuned single transaction, split keeps metadata in WAL FULL SQLite; with-checkpoint writes canonical-shaped sparse metadata row; with-manifest adds requested conservative full-tree metadata proxy instead; neither executes graph validation/head publication")?;
             out.row(n,bytes,name,&format!("checkpoint-stat-scan/{variant}"),"ms",&scans,"100k metadata-only lstat walk alongside each 10-edit trial, following capture_bench baseline; not the complete production scan/cache algorithm")?;
         }
         drop(repo);
@@ -323,6 +323,19 @@ pub fn checkpoint(out: &mut Output, scratch: &Path, n: usize, page: usize) -> Re
     }
     remove(&root)?;
     remove(&base)
+}
+
+/// Benchmark-only handshake in the actual Store::ingest write path. Atomic
+/// stage publication lets the parent know exactly where the writer is paused.
+pub fn writer_stage(root: &Path, target: &str, stage: &str, length: u64) -> Result<()> {
+    fs::write(root.join("stage.new"), format!("{stage} length={length}"))?;
+    fs::rename(root.join("stage.new"), root.join("stage"))?;
+    if target == stage {
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+    Ok(())
 }
 
 pub fn child(kind: &str, root: PathBuf) -> Result<()> {
@@ -368,7 +381,21 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
         let mut leftovers = Vec::new();
         let mut finals = Vec::new();
         let mut delays = Vec::new();
-        for trial in 0..20 {
+        let stages: Vec<&str> = std::iter::repeat_n("random", 20)
+            .chain(std::iter::repeat_n(
+                if kind == Kind::Files {
+                    "files-mid-payload"
+                } else {
+                    "sqlite-mid-transaction"
+                },
+                5,
+            ))
+            .chain(std::iter::repeat_n(
+                "files-pre-rename",
+                if kind == Kind::Files { 5 } else { 0 },
+            ))
+            .collect();
+        for (trial, stage) in stages.iter().enumerate() {
             let s = Store {
                 root: scratch.join("random-kill"),
                 kind,
@@ -388,6 +415,7 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
                     },
                 ])
                 .arg(&s.root)
+                .env("STORAGE_BENCH_KILL_STAGE", stage)
                 .spawn()?;
             let t = Instant::now();
             while !s.root.join("ready").exists() {
@@ -404,14 +432,35 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
             rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
             let delay = 1 + (rng >> 32) % 200;
             delays.push(delay);
-            std::thread::sleep(Duration::from_millis(delay));
+            if *stage == "random" {
+                std::thread::sleep(Duration::from_millis(delay));
+            } else {
+                let t = Instant::now();
+                while !fs::read_to_string(s.root.join("stage"))
+                    .unwrap_or_default()
+                    .starts_with(stage)
+                {
+                    if let Some(status) = c.try_wait()? {
+                        return Err(format!("writer exited before {stage}: {status}").into());
+                    }
+                    if t.elapsed() > Duration::from_secs(30) {
+                        c.kill()?;
+                        c.wait()?;
+                        return Err(format!("writer did not reach {stage}").into());
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
             c.kill()?;
             let status = c.wait()?;
             if status.signal() != Some(libc::SIGKILL) {
                 return Err(format!("expected SIGKILL: {status}").into());
             }
+            let observed =
+                fs::read_to_string(s.root.join("stage")).unwrap_or_else(|_| "no stage yet".into());
             let mut count = 0;
             let mut tmp = 0;
+            let mut lengths = Vec::new();
             if kind == Kind::Files {
                 for d in fs::read_dir(s.root.join("objects"))? {
                     let d = d?;
@@ -429,7 +478,9 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
                     }
                 }
                 for f in fs::read_dir(s.root.join("tmp"))? {
-                    fs::remove_file(f?.path())?;
+                    let f = f?;
+                    lengths.push(f.metadata()?.len());
+                    fs::remove_file(f.path())?;
                     tmp += 1;
                 }
                 assert_eq!(fs::read_dir(s.root.join("tmp"))?.count(), 0);
@@ -451,12 +502,24 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
                     count += 1;
                 }
             }
-            passed.push(1.0);
-            leftovers.push(tmp as f64);
-            finals.push(count as f64);
+            if *stage != "random" {
+                assert_eq!(count, 100, "paused before publication/commit");
+            }
+            if *stage == "files-mid-payload" {
+                assert_eq!(lengths, vec![(2 * 1024 * 1024 + 8) / 2]);
+            }
+            if *stage == "files-pre-rename" {
+                assert_eq!(lengths, vec![2 * 1024 * 1024 + 8]);
+            }
+            out.row(100000, 0, name, &format!("crash-trial/{stage}/{trial}"), "passed", &[1.0], &format!("SIGKILL; observed={observed}; randomized delay={}ms; temp lengths={lengths:?}; final hash-verified count={count}; SQLite integrity_check when applicable; deterministic stages assert only 100 baseline objects visible", if *stage == "random" { delay } else { 0 }))?;
+            if *stage == "random" {
+                passed.push(1.0);
+                leftovers.push(tmp as f64);
+                finals.push(count as f64);
+            }
             remove(&s.root)?;
             eprintln!(
-                "{name} randomized SIGKILL {}/20: {count} finals verified, {tmp} tmp swept",
+                "{name} {stage} SIGKILL {}: {count} finals verified, {tmp} tmp swept",
                 trial + 1
             );
         }

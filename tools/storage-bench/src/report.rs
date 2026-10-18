@@ -1,7 +1,7 @@
 use crate::Result;
 use std::{fs, path::PathBuf};
 
-fn quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {
@@ -40,9 +40,10 @@ impl Output {
             fs::write(
                 &temp,
                 format!(
-                    "{{\"schema\":1,\"machine\":{},\"measurements\":[\n{}\n]}}\n",
+                    "{{\"schema\":1,\"machine\":{},\"measurements\":[\n{}\n],\"accounting_readings\":[\n{}\n]}}\n",
                     quote(&self.machine),
-                    self.rows.join(",\n")
+                    self.rows.join(",\n"),
+                    crate::platform::accounting()
                 ),
             )?;
             fs::rename(temp, p)?;

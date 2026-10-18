@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   RUSTUP_TOOLCHAIN: 1.99.0
@@ -41,6 +41,7 @@ jobs:
         run: |
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           cargo build --release --locked
+          cargo test --locked
 
       - name: Dedicated filesystem and machine details
         env:
@@ -59,6 +60,7 @@ jobs:
           sudo mkdir -p /mnt/storage-bench
           sudo mount -o loop "$RUNNER_TEMP/storage.img" /mnt/storage-bench
           sudo chown "$(id -u):$(id -g)" /mnt/storage-bench
+          mkdir -p "$RUNNER_TEMP/storage-results"
           {
             echo "## Storage benchmark: $FS, 16 GiB loop image"
             echo '```text'
@@ -73,9 +75,9 @@ jobs:
             if [[ "$FS" == xfs ]]; then xfs_info /mnt/storage-bench; fi
             findmnt /mnt/storage-bench
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee "$RUNNER_TEMP/storage-results/machine.txt" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Measure (unprivileged; cache drop alone uses sudo)
+      - name: Measure (unprivileged; cache drop and btrfs accounting reads use sudo)
         env:
           FS: ${{ matrix.fs }}
         run: |
@@ -87,6 +89,17 @@ jobs:
             --json "$RUNNER_TEMP/storage-results/$FS.json" \
             > "$RUNNER_TEMP/storage-results/$FS.stdout.md"
           cat "$RUNNER_TEMP/storage-results/$FS.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compact summary and raw hash
+        if: always()
+        env:
+          FS: ${{ matrix.fs }}
+        run: |
+          if [[ -f "$RUNNER_TEMP/storage-results/$FS.json" ]]; then
+            python3 tools/storage-bench/summarize.py "$RUNNER_TEMP/storage-results/$FS.json" \
+              --location "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} (storage-bench-$FS artifact)"
+            sha256sum "$RUNNER_TEMP/storage-results/$FS.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload raw samples and Markdown (including partial runs)
         if: always()
