@@ -83,6 +83,7 @@ pub fn operations(
     } else {
         &[("read-write", false)]
     };
+    #[cfg(target_os = "macos")]
     let mut copy_disk = 0;
     for &(method, clones) in methods {
         let mut unsupported = None;
@@ -153,7 +154,9 @@ pub fn operations(
                         .into());
                     }
                     clone_ok = true;
-                } else if s.kind == Kind::Files {
+                }
+                #[cfg(target_os = "macos")]
+                if !clones && s.kind == Kind::Files {
                     copy_disk = delta;
                 }
                 eprintln!(
@@ -295,27 +298,124 @@ pub fn disk(
     name: &str,
     blobs: &[Blob],
     bytes: u64,
-    empty: i64,
+    reps: usize,
     scratch: &Path,
 ) -> Result<bool> {
+    // Preserve a closed byte-identical seed outside the measured directory. Its
+    // allocation is constant and excluded from each before/after delta.
+    let seed = std::env::temp_dir().join(format!("javelin-storage-seed-{}", std::process::id()));
+    if s.kind != Kind::Files {
+        platform::tree(&s.root, &seed, false)?;
+    }
+    remove(&s.root)?;
     let n = blobs.len();
-    let store = empty - platform::settled(scratch)?;
-    out.row(
-        n,
-        bytes,
-        name,
-        "disk/store",
-        "corpus-x",
-        &[store as f64 / bytes as f64],
-        "one isolated allocation sample after checkpoint and sync",
-    )?;
+    let mut physical: [Vec<f64>; 4] = Default::default();
+    let mut apparent = Vec::new();
+    let mut base_apparent = Vec::new();
+    let mut context = Vec::new();
+    let mut clones = false;
+    let mut layer_clones = true;
+    for rep in 0..reps {
+        let empty = platform::settled(scratch)?;
+        s.seed_from(&seed, blobs)?;
+        if s.kind == Kind::Files {
+            let probe = scratch.join("probe");
+            clones = match platform::clone_file(&s.object(blobs[0].id), &probe) {
+                Ok(()) => true,
+                Err(e)
+                    if matches!(
+                        e.raw_os_error(),
+                        Some(libc::ENOTSUP)
+                            | Some(libc::ENOSYS)
+                            | Some(libc::EXDEV)
+                            | Some(libc::ENOTTY)
+                            | Some(libc::EINVAL)
+                    ) =>
+                {
+                    false
+                }
+                Err(e) => return Err(e.into()),
+            };
+            if probe.exists() {
+                fs::remove_file(probe)?;
+            }
+        }
+        let store_free = platform::settled(scratch)?;
+        physical[0].push((empty - store_free) as f64 / bytes as f64);
+        apparent.push(platform::apparent(&s.root)? as f64);
+        let base = scratch.join("base");
+        s.materialize(blobs, &base, clones)?;
+        verify(blobs, &base)?;
+        let base_free = platform::settled(scratch)?;
+        if clones {
+            #[cfg(target_os = "macos")]
+            if store_free - base_free < 0 || store_free - base_free > bytes as i64 / 2 {
+                return Err("disk snapshot failed APFS sharing check".into());
+            }
+            #[cfg(target_os = "linux")]
+            for b in blobs
+                .iter()
+                .filter(|b| b.bytes.len() >= 4096)
+                .step_by((n / 100).max(1))
+                .take(100)
+            {
+                platform::shared(&base.join(&b.path))?;
+            }
+        }
+        physical[1].push((empty - base_free) as f64 / bytes as f64);
+        base_apparent.push(platform::apparent(&base)? as f64);
+        for i in 1..=5 {
+            let dst = scratch.join(format!("layer-{i}"));
+            match platform::layer(&base, &dst, layer_clones) {
+                Ok(()) => {}
+                Err(e)
+                    if i == 1
+                        && matches!(
+                            e.raw_os_error(),
+                            Some(libc::ENOTSUP) | Some(libc::ENOTTY) | Some(libc::EINVAL)
+                        ) =>
+                {
+                    remove(&dst)?;
+                    layer_clones = false;
+                    platform::layer(&base, &dst, false)?;
+                }
+                Err(e) => return Err(e.into()),
+            }
+            if i == 1 || i == 5 {
+                physical[if i == 1 { 2 } else { 3 }]
+                    .push((empty - platform::settled(scratch)?) as f64 / bytes as f64);
+            }
+        }
+        let dest = scratch.join("context-layer");
+        let t = Instant::now();
+        platform::layer(&base, &dest, layer_clones)?;
+        context.push(elapsed(t));
+        remove(&dest)?;
+        for i in 1..=5 {
+            remove(&scratch.join(format!("layer-{i}")))?;
+        }
+        remove(&base)?;
+        remove(&s.root)?;
+        eprintln!("{name} {n} disk allocation rep {}/{}", rep + 1, reps);
+    }
+    for (i, op) in [
+        "store",
+        "store+base",
+        "store+base+1layers",
+        "store+base+5layers",
+    ]
+    .iter()
+    .enumerate()
+    {
+        out.row(n,bytes,name,&format!("disk/{op}"),"corpus-x",&physical[i],if layer_clones {"fresh independent allocations from closed seed; sync+settle; APFS directory clone / Linux per-file reflink Layers"} else {"fresh independent allocations; sync+settle; explicit-copy Layers (clone unsupported)"})?;
+    }
     out.row(
         n,
         bytes,
         name,
         "disk/store-apparent",
         "bytes",
-        &[platform::apparent(&s.root)? as f64],
+        &apparent,
         "sum st_size; includes db + wal; logical, not exclusive blocks",
     )?;
     if s.kind != Kind::Files {
@@ -325,84 +425,23 @@ pub fn disk(
             name,
             "disk/sqlite-db-wal",
             "bytes",
-            &[platform::apparent(&s.root)? as f64],
-            "checkpointed DB plus any WAL and SHM",
+            &apparent,
+            "closed checkpointed DB plus any WAL/SHM",
         )?;
     }
-    let base = scratch.join("base");
-    let clones = s.kind == Kind::Files && {
-        let b = &blobs[0];
-        let probe = scratch.join("probe");
-        let ok = platform::clone_file(&s.object(b.id), &probe).is_ok();
-        let _ = fs::remove_file(probe);
-        ok
-    };
-    s.materialize(blobs, &base, clones)?;
-    out.row(
-        n,
-        bytes,
-        name,
-        "disk/store+base",
-        "corpus-x",
-        &[(empty - platform::settled(scratch)?) as f64 / bytes as f64],
-        "B clones where supported; ext4 explicit copy",
-    )?;
-    let mut layer_clones = true;
-    for i in 1..=5 {
-        let dst = scratch.join(format!("layer-{i}"));
-        match platform::layer(&base, &dst, layer_clones) {
-            Ok(()) => {}
-            Err(e)
-                if i == 1
-                    && matches!(
-                        e.raw_os_error(),
-                        Some(libc::ENOTSUP) | Some(libc::ENOTTY) | Some(libc::EINVAL)
-                    ) =>
-            {
-                remove(&dst)?;
-                layer_clones = false;
-                platform::layer(&base, &dst, false)?;
-            }
-            Err(e) => return Err(e.into()),
-        }
-        if i == 1 || i == 5 {
-            out.row(
-                n,
-                bytes,
-                name,
-                &format!("disk/store+base+{i}layers"),
-                "corpus-x",
-                &[(empty - platform::settled(scratch)?) as f64 / bytes as f64],
-                if layer_clones {
-                    "APFS directory clone / Linux per-file reflink"
-                } else {
-                    "explicit byte-copy Layers (clone unsupported)"
-                },
-            )?;
-            out.row(
-                n,
-                bytes,
-                name,
-                &format!("disk/apparent-base+{i}layers"),
-                "bytes",
-                &[((i + 1) as u64 * platform::apparent(&base)?) as f64],
-                "apparent sizes count shared clone contents repeatedly",
-            )?;
-        }
-    }
-    for i in 1..=5 {
-        remove(&scratch.join(format!("layer-{i}")))?;
-    }
-    remove(&base)?;
-    let mut context = Vec::new();
-    // Context uses the very same already-materialized base, outside timed setup.
-    s.materialize(blobs, &base, clones)?;
-    for _ in 0..5 {
-        let dest = scratch.join("context-layer");
-        let t = Instant::now();
-        platform::layer(&base, &dest, layer_clones)?;
-        context.push(elapsed(t));
-        remove(&dest)?;
+    for layers in [1, 5] {
+        out.row(
+            n,
+            bytes,
+            name,
+            &format!("disk/apparent-base+{layers}layers"),
+            "bytes",
+            &base_apparent
+                .iter()
+                .map(|b| b * (layers + 1) as f64)
+                .collect::<Vec<_>>(),
+            "apparent sizes count clone contents repeatedly",
+        )?;
     }
     out.row(
         n,
@@ -412,12 +451,16 @@ pub fn disk(
         "ms",
         &context,
         if layer_clones {
-            "not comparison target; APFS recursive directory clone / Linux per-file reflink"
+            "not comparison target; APFS directory clone / Linux per-file reflink"
         } else {
             "ext4 explicit copy; not comparison target"
         },
     )?;
-    remove(&base)?;
+    // Leave an unchanged store for the remaining operations.
+    s.seed_from(&seed, blobs)?;
+    if s.kind != Kind::Files {
+        remove(&seed)?;
+    }
     Ok(clones)
 }
 

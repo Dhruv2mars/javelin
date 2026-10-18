@@ -149,7 +149,7 @@ fn run() -> Result<()> {
     };
     if args.iter().any(|a| a == "--help") {
         println!(
-            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
+            "storage-bench --dir NEW_SCRATCH --files 1000,10000,100000 --reps 5 --label FS [--json out.json] [--disk-only] [--stores A-real,...] [--real10k-ms MS] [--page-size 4096|16384] [--ingest-dir NEW_NATIVE_SCRATCH] [--drop-caches-cmd 'sync; ...']"
         );
         return Ok(());
     }
@@ -165,6 +165,7 @@ fn run() -> Result<()> {
         }
         fs::create_dir_all(p)?;
     }
+    let disk_only = args.iter().any(|a| a == "--disk-only");
     let reps: usize = flag("--reps").unwrap_or("5".into()).parse()?;
     if reps < 5 {
         return Err("--reps must be >=5".into());
@@ -237,7 +238,13 @@ fn run() -> Result<()> {
             "durable FULL; 5 fresh stores; choose fastest median",
         )?;
     }
-    let page = best.1;
+    let page = flag("--page-size")
+        .map(|p| p.parse::<usize>())
+        .transpose()?
+        .unwrap_or(best.1);
+    if ![4096, 16384].contains(&page) {
+        return Err("--page-size must be 4096 or 16384".into());
+    }
     let read_store = Store {
         root: scratch.join("read-pilot"),
         kind: Kind::Tuned,
@@ -287,7 +294,26 @@ fn run() -> Result<()> {
         &[page as f64],
         &format!("64MiB cache; 2GiB mmap; batch 1000; incremental-read={incremental}"),
     )?;
-    let mut real10k = None;
+    let selected = flag("--stores");
+    if let Some(names) = &selected {
+        for name in names.split(',') {
+            if ![
+                "A-real",
+                "A-tuned/durable",
+                "A-tuned/none",
+                "B/durable",
+                "B/none",
+            ]
+            .contains(&name)
+            {
+                return Err(format!("unknown store {name}").into());
+            }
+        }
+    }
+    let mut real10k = flag("--real10k-ms").map(|s| s.parse::<f64>()).transpose()?;
+    if real10k.is_some_and(|n| !n.is_finite() || n <= 0.0) {
+        return Err("--real10k-ms must be finite and positive".into());
+    }
     for n in sizes {
         let blobs = fixture(n, n as u64);
         let bytes = blobs.iter().map(|b| b.bytes.len() as u64).sum();
@@ -311,6 +337,7 @@ fn run() -> Result<()> {
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>(),
         )?;
+        out.row(n,bytes,"corpus","rounded-4k-payload","bytes",&[blobs.iter().map(|b|b.bytes.len().div_ceil(4096)*4096).sum::<usize>() as f64],"deterministic 4KiB payload-block bound; excludes inode/directory metadata; filesystem inline data may differ")?;
         for (name, kind, durable) in [
             ("A-real", Kind::Real, true),
             ("A-tuned/durable", Kind::Tuned, true),
@@ -318,6 +345,12 @@ fn run() -> Result<()> {
             ("B/durable", Kind::Files, true),
             ("B/none", Kind::Files, false),
         ] {
+            if selected
+                .as_ref()
+                .is_some_and(|names| !names.split(',').any(|s| s == name))
+            {
+                continue;
+            }
             let s = Store {
                 root: scratch.join("store"),
                 kind,
@@ -331,32 +364,29 @@ fn run() -> Result<()> {
                     .map_or_else(|| s.root.clone(), |p| p.join("store")),
                 ..s.clone()
             };
-            if kind == Kind::Real
+            let fast_seed = kind == Kind::Real
                 && n >= 100000
-                && real10k.is_some_and(|ms: f64| ms * n as f64 / 10000.0 > 900000.0)
-            {
-                out.row(
-                    n,
-                    bytes,
-                    name,
-                    "ingest/extrapolated-from-10k",
-                    "ms",
-                    &[real10k.unwrap() * n as f64 / 10000.0],
-                    "NOT measured; projected >15min, A-real 100k reads/materialize unmeasured",
-                )?;
-                continue;
+                && (disk_only || real10k.is_some_and(|ms: f64| ms * n as f64 / 10000.0 > 900000.0));
+            if fast_seed {
+                if !disk_only {
+                    out.row(n,bytes,name,"ingest/extrapolated-from-10k","ms",&[real10k.unwrap()*n as f64/10000.0],"NOT measured; projected >15min. Read/materialize context uses untimed batched SQL seeding into real schema, then real Repository API reads")?;
+                }
+                ingest.init()?;
+                ingest.seed_real_read_context(&blobs)?;
+                out.row(n,bytes,name,"setup/real-read-context","setup",&[],"100k objects batch-seeded outside timings; read_blob is actual API; production per-blob ingest is not claimed")?;
             }
-            let count = if kind == Kind::Real && n >= 100000 {
+            let count = if fast_seed {
+                0
+            } else if disk_only || (kind == Kind::Real && n >= 100000) {
                 1
             } else {
                 reps
             };
             let mut times = Vec::new();
             let mut complete = true;
-            let mut empty = 0;
             for rep in 0..count {
                 remove(&ingest.root)?;
-                empty = platform::settled(&scratch)?;
+                platform::settled(&scratch)?;
                 let t = Instant::now();
                 ingest.init()?;
                 if !ingest.ingest(
@@ -394,48 +424,46 @@ fn run() -> Result<()> {
             if kind == Kind::Real && n == 10000 {
                 real10k = Some(percentile(&times, 0.5));
             }
-            out.row(n,bytes,name,"ingest","ms",&times,"RAM corpus; includes hashing, fresh store setup and final WAL checkpoint; A-real 100k single run")?;
-            out.row(
-                n,
-                bytes,
-                name,
-                "ingest-throughput",
-                "MB/s",
-                &times
-                    .iter()
-                    .map(|ms| bytes as f64 / ms / 1000.0)
-                    .collect::<Vec<_>>(),
-                "decimal MB",
-            )?;
-            out.row(
-                n,
-                bytes,
-                name,
-                "ingest-files",
-                "files/s",
-                &times
-                    .iter()
-                    .map(|ms| n as f64 * 1000.0 / ms)
-                    .collect::<Vec<_>>(),
-                "",
-            )?;
+            if !disk_only && !fast_seed {
+                out.row(n,bytes,name,"ingest","ms",&times,"RAM corpus; includes hashing, fresh store setup and final WAL checkpoint; A-real 100k single run")?;
+                out.row(
+                    n,
+                    bytes,
+                    name,
+                    "ingest-throughput",
+                    "MB/s",
+                    &times
+                        .iter()
+                        .map(|ms| bytes as f64 / ms / 1000.0)
+                        .collect::<Vec<_>>(),
+                    "decimal MB",
+                )?;
+                out.row(
+                    n,
+                    bytes,
+                    name,
+                    "ingest-files",
+                    "files/s",
+                    &times
+                        .iter()
+                        .map(|ms| n as f64 * 1000.0 / ms)
+                        .collect::<Vec<_>>(),
+                    "",
+                )?;
+            }
             if ingest_dir.is_some() {
-                // Source handles are closed and WAL is checkpointed. Byte-copy the immutable
-                // store for isolated-volume operations; copying is outside all timings.
-                empty = platform::settled(&scratch)?;
-                platform::tree(&ingest.root, &s.root, false)?;
-                if kind == Kind::Files {
-                    for b in &blobs {
-                        fs::set_permissions(
-                            s.object(b.id),
-                            std::os::unix::fs::PermissionsExt::from_mode(0o444),
-                        )?;
-                    }
-                }
+                // Source handles are closed and WAL is checkpointed. Seed the
+                // isolated-volume store outside timings using its actual write path.
+                platform::settled(&scratch)?;
+                s.seed_from(&ingest.root, &blobs)?;
                 remove(&ingest.root)?;
             }
             // Retain the final ingest or its byte-identical isolated-volume seed.
-            let clones = disk(&mut out, &s, name, &blobs, bytes, empty, &scratch)?;
+            let clones = disk(&mut out, &s, name, &blobs, bytes, reps, &scratch)?;
+            if disk_only {
+                remove(&s.root)?;
+                continue;
+            }
             operations(
                 &mut out,
                 &s,

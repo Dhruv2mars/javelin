@@ -142,6 +142,34 @@ impl Store {
         }
         Ok(true)
     }
+    /// Only for the budgeted 100k real-store read context. This is untimed setup,
+    /// not Repository::put_blob ingest: preserve the actual schema and DELETE
+    /// journal, then let production reads verify every canonical object hash.
+    pub fn seed_real_read_context(&self, blobs: &[Blob]) -> Result<()> {
+        assert!(self.kind == Kind::Real);
+        let mut c = Connection::open(self.db())?;
+        c.execute_batch("PRAGMA synchronous=OFF; PRAGMA fullfsync=OFF;")?;
+        let tx = c.transaction()?;
+        {
+            let mut insert = tx.prepare("INSERT INTO objects(id,kind,bytes) VALUES(?1,1,?2)")?;
+            for b in blobs {
+                insert.execute(params![b.id.to_string(), b.bytes])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// Reproduce B's actual temp+rename insertion order and durability on the
+    /// measured volume. SQLite keeps its logical page layout in a closed copy.
+    pub fn seed_from(&self, source: &Path, blobs: &[Blob]) -> Result<()> {
+        if self.kind == Kind::Files {
+            self.init()?;
+            self.ingest(blobs, None)?;
+        } else {
+            platform::tree(source, &self.root, false)?;
+        }
+        Ok(())
+    }
     pub fn reader(&self) -> Result<Reader> {
         Ok(match self.kind {
             Kind::Real => Reader::Real(Repository::open(&self.root)?),

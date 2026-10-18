@@ -12,12 +12,22 @@ cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
 Tables print to stdout. `out.json` contains all samples, machine details, corpus
 fingerprints and notes; `out.md` contains the tables. Both update after each
 measurement, preserving partial output on failure. Timed operations use five
-repetitions, except the explicitly limited real-store 100k ingest. Disk allocation
-snapshots use one sample; every materialization also records its allocation delta.
-`--reps` must be at least five. Omit the cache hook to mark cold cases unmeasured.
+repetitions, except the explicitly limited real-store 100k ingest. Disk snapshots recreate store/base/Layer allocations for every repetition; every
+materialization also records its allocation delta. `--disk-only` repeats just those
+allocation cases, and `--page-size 4096` (or 16384) fixes the pilot choice for a
+repeat run. SQLite uses a closed byte-identical seed in a temporary directory outside
+the measured scratch directory; B is freshly ingested through its actual write
+path. Seeds are removed on success.
+`--reps` must be at least five. `--stores A-real` (or a comma-separated list of
+exact store/policy labels) restricts a repeat run. `--real10k-ms MS` supplies an
+already-measured real-store 10k median when repeating only 100k; this is recorded
+in the invocation. If the projected 100k real ingest exceeds 15 minutes, it is
+extrapolated and the real schema is batch-seeded outside timing for API read and
+materialization context. This setup is explicitly distinct from production ingest. Omit the cache hook to mark cold cases unmeasured.
 The hook runs outside timings and must fail if it cannot reset the cache. The
 benchmark refuses an existing scratch directory and removes its generated data on
-success. On failure, inspect and remove that scratch directory yourself.
+success. On failure, inspect and remove that scratch directory and any
+`temp_dir/javelin-storage-seed-<pid>` left by this process.
 
 APFS example (image is outside the repository):
 
@@ -40,8 +50,8 @@ rm /tmp/jbench-storage.sparseimage /tmp/storage-cache-reset.sh
 ```
 
 `--ingest-dir` is optional. The committed run measures **all** stores' ingest
-on native internal-SSD APFS, then byte-copies their closed, checkpointed stores
-onto the dedicated image outside timings. Materialization, disk and eviction are
+on native internal-SSD APFS, then seeds the image outside timings: byte-copy closed, checkpointed SQLite
+files; insert B through its actual write path in corpus order with the same policy. Materialization, disk and eviction are
 measured on the image. Ingest comparisons are native-to-native; materialization
 comparisons are image-to-image. This keeps the real API's fullfsync timings on
 native SSD while isolating disk accounting and resetting the volume cache.
