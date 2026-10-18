@@ -2,6 +2,8 @@
 
 - Define "done" as a self-verifiable outcome before starting.
 - Keep solutions concise and simple.
+- Be ambitious and open to wacky ideas. Always strive for the most effective and
+  novel solution, then find the simplest way to implement it.
 - Do not overcomplicate or overengineer the solution.
 - Use one branch per task. Implement the change, run appropriate checks, then open a regular pull request. Do not create draft PRs or require a planning PR before implementation.
 - Keep one flow: the owning thread implements, checks, opens and links its PR, reports the result briefly, and finishes. Do not add routine separate review, audit, acceptance or handoff rounds.
