@@ -25,7 +25,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function privilege() {
   if (win) {
-    const out = spawnSync('whoami', ['/groups', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).stdout || '';
+    // Absolute: Git for Windows puts its own whoami, which has no /groups, first on PATH.
+    const out = spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'whoami.exe'), ['/groups', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).stdout || '';
     const level = out.match(/Mandatory Label\\(\w+) Mandatory Level/)?.[1] ?? 'unknown';
     return { elevated: level !== 'Medium' && level !== 'Low', integrity: level, adminDenyOnly: /BUILTIN\\Administrators[^\n]*deny only/i.test(out) };
   }

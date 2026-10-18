@@ -82,6 +82,15 @@ jobs:
           done
           xfs_info /mnt/xfs | grep -o 'reflink=[01]'
 
+      # The runner's boot volume is busy (logs, caches, Spotlight), which swamps free-space
+      # deltas; a private APFS volume measures only the run. Attaching needs no root.
+      - name: macOS APFS volume
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil create -size 20g -type SPARSE -fs APFS -volname gate2 "$RUNNER_TEMP/gate2.sparseimage" > /dev/null
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/apfs" "$RUNNER_TEMP/gate2.sparseimage"
+          diskutil info "$RUNNER_TEMP/apfs" | grep -E "File System Personality|Volume Free Space"
+
       - name: Windows Developer Mode and a ReFS Dev Drive
         if: runner.os == 'Windows'
         shell: pwsh
@@ -128,8 +137,8 @@ jobs:
           $AS_USER bun $probe/gate2.mjs --privilege | tee "$EVIDENCE/privilege.json"
           case $RUNNER_OS in
             macOS)
-              prove apfs "$RUNNER_TEMP/apfs" shared shared
-              controls apfs "$RUNNER_TEMP/apfs-controls" ;;
+              prove apfs "$RUNNER_TEMP/apfs/run" shared shared
+              controls apfs "$RUNNER_TEMP/apfs/controls" ;;
             Linux)
               prove ext4 "$RUNNER_TEMP/ext4" copy copy
               prove xfs /mnt/xfs/gate2 shared shared
