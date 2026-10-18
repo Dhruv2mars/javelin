@@ -244,8 +244,12 @@ a stacked PR without the 65,536-entry cap.
   50k-entry directory 6.5 KB; snapshot flat at 76–86 ms over 10–300 versions x
   1,000-file churn where format 6 grew to 176 ms; Publish unchanged at 14–15 ms.
 - [x] Docs (`architecture.md`).
-- [ ] Stacked PR: protocol v2 on trees (have/want by hash, root-down fetch,
-  sparse prefix fetch, per-chunk bounds).
+- [x] Stacked PR: protocol v2 on trees. Have/want by hash, pruned at any
+  chunk the receiver holds (a stored chunk implies its closure); root-down fetch
+  with sparse prefix fetch; per-object bounds (`MAX_TREE`, `MAX_BLOB`,
+  `MAX_OBJECTS`) replace `MAX_ENTRIES`; Publish of a tree root verifies the
+  changed part and canonical form (`advance_to_tree`). A 70,000-entry snapshot
+  transfers and publishes.
 
 ## Git 3.0 roadmap, accepted 2026-10-18
 
@@ -259,13 +263,9 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [x] Record the Git 3.0 decision and amend the contract and workspace docs (PR #45).
 - [x] Storage benchmark, blob files vs SQLite (PR #50; APFS no-go): apply the go/no-go
   criterion recorded in `docs/git3-direction.md`.
-  - Result (2026-10-20, PR #50): blobs stay in SQLite on every measured platform.
-    Both criteria are no-go on APFS, btrfs and XFS reflink=1; ext4 is a copy control
-    and fails every gate. Runs: Linux CI 39130520311 (head `8d78768`); APFS
-    2026-10-18 local. Details: `docs/storage-benchmark.md`, "Final decision".
-- [x] Tree objects as derived data (PR #51, format 7): Merkle trees with prolly chunking, then the
-  protocol on trees (PR #52), which drops the 65,536-entry `MAX_ENTRIES` cap.
-  Trees merged 2026-10-20 (#51); the protocol (#52) is being rebased.
+- [x] Tree objects as derived data: Merkle trees with prolly chunking, then the
+  protocol on trees, which drops the 65,536-entry `MAX_ENTRIES` cap (PRs #51 and #52;
+  measurements in `docs/architecture.md`).
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
 - [ ] Collision radar and trace blame (PRs #48, #49; rebase to format 8 after #51).

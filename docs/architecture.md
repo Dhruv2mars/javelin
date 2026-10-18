@@ -143,45 +143,53 @@ Code: src/publish.rs, src/repository.rs, src/lib.rs
 
 ## Repository protocol crate (`crates/javelin-protocol`)
 
+Version 2 moves snapshots as derived trees: tree chunks and blobs, content-addressed and verified by hash, with no packfiles and no snapshot-wide size limit.
+
 Framing and messages (`src/codec.rs`):
 
-- Magic `JVLP`, `VERSION` 1, frame length as `u32` big-endian, then a tag byte. Tags are in the range 0x01 to 0x7f.
-- Tags: Hello 0x01, HelloOk 0x02, Want 0x10, Missing 0x11, Blobs 0x20, Manifests 0x21, Stored 0x22, Publish 0x30, Outcome 0x31, Error 0x7f.
-- `Outcome::from_native(outcome, manifest)` maps repository results to wire outcomes; the accepted outcome reports the requested manifest.
+- Magic `JVLP`, `VERSION` 2, frame length as `u32` big-endian, then a tag byte. Tags are in the range 0x01 to 0x7f. Version 1 peers are refused with `unsupported_version`.
+- Tags: Hello 0x01, HelloOk 0x02, Want 0x10, Missing 0x11, Get 0x12, Objects 0x20, Stored 0x22, Publish 0x30, Outcome 0x31, Resolve 0x40, Resolved 0x41, Error 0x7f.
+- Object kinds on the wire: Blob 1, Tree 4. `Objects` items are `(kind, id, bytes)`; the decoder checks each length against its kind's limit and decodes every tree chunk with the native canonical decoder before accepting the frame.
+- `Outcome::from_native(outcome)` maps repository results to wire outcomes; the accepted outcome reports the version's tree root.
 - `read_frame` and `write_frame` enforce the frame limits below.
 
 Receiver (`src/receiver.rs`, `serve()`):
 
 - `negotiate()` requires Hello as the first message.
-- `Want` checks presence with `has_blob` and `has_manifest` and rejects duplicate ids. Only ids the receiver lacks are reported as Missing.
-- `Blobs` and `Manifests` verify each payload's id before storing it. A mismatch is reported as `id_mismatch`.
-- `Publish` calls `compare_and_advance` and returns the outcome.
+- `Want` checks presence with `has_blob` and `has_tree` and rejects duplicate ids. Only ids the receiver lacks are reported as Missing.
+- `Objects` verifies each payload's id before storing it (`id_mismatch` otherwise). Blobs go to `put_blob`, chunks to `Repository::put_tree`, which refuses a chunk until every chunk, subdirectory and blob it names is stored. Having a tree therefore means having all of it, so a sender can stop probing at any chunk the receiver has.
+- `Publish` calls `Repository::advance_to_tree`. It diffs the candidate against the expected version's tree (unchanged subtrees are never read), validates the changed contents, and requires the root derived from that changeset to equal the candidate, which rejects any non-canonical tree. Work is O(change × depth).
+- `Resolve` returns a version's (or the head's) number, ID and tree root. `Get` returns the longest prefix of the requested objects that fits one frame; the client asks again for the rest.
 
 Sender (`src/sender.rs`, `push()`):
 
-- Reads the manifest with `manifest_bytes_bounded(MAX_FRAME)` and blobs with `read_blob_bounded(MAX_BLOB)`. To push a World version, derive its snapshot with `manifest_at` and store it with `put_manifest`.
-- Sends only items the receiver marked Missing.
-- `consistent()` checks that returned outcomes match what was sent.
+- Probes from the root down, one level per `Want`, and never descends below a chunk the receiver has. An unchanged snapshot costs one probe; a one-file change sends the new blob and the chunks on its path.
+- Sends blobs first, then missing chunks children before parents, batched by `MAX_OBJECTS` and `MAX_FRAME`, then publishes the root.
+- `consistent()` checks that returned outcomes match what was sent. `Repository::put_snapshot` turns a full snapshot into a tree to push.
+
+Fetch (`src/fetch.rs`, `fetch()`):
+
+- Resolves the version, then reads its tree from the root down, one level per round trip, and the blobs last. Chunks already in the caller's `tree::Store` and blobs the caller has are not requested. Every object is checked against its id.
+- With a path prefix it follows only the chunks on the way to the prefix, using each internal chunk's last names (`Chunk::child_for`), then everything below it. The result lists the files at or below the prefix.
+- Replies that answer another version, carry unrequested objects or bytes that do not match their ids, or make no progress are refused.
 
 Limits (`limits` module in `src/lib.rs`):
 
 - `MAX_FRAME` 16 MiB (`16 << 20`)
 - `MAX_BLOB` 8 MiB
-- `MAX_BLOBS` 1024
-- `MAX_WANT` 4096
-- `MAX_MANIFESTS` 16
-- `MAX_ENTRIES` 65536
-- `MAX_PATH` 4096
-- `MAX_DEPTH` 256
+- `MAX_TREE` `javelin::tree::MAX_CHUNK` (about 69 KiB): one tree chunk
+- `MAX_OBJECTS` 1024 objects per `Objects` frame
+- `MAX_WANT` 4096 ids per `Want`, `Missing` or `Get`
 - `MAX_DETAIL` 1024
+- Version 1's `MAX_MANIFESTS` and repository-wide `MAX_ENTRIES` (65,536) are gone: a snapshot spans as many chunks and frames as it needs. Paths are bounded natively (`MAX_PATH`, `MAX_DEPTH`); trees that would exceed them are refused when read.
 
 CLI binary (`src/main.rs`):
 
 - `javelin-protocol serve <project>` runs the receiver.
-- `javelin-protocol push <project> <manifest> <operation> <expected>` runs the sender.
+- `javelin-protocol push <project> <tree> <operation> <expected>` runs the sender.
 - Results go to stderr as `accepted ...`, `stale ...`, or `error <code> <detail>`.
 
-Code: crates/javelin-protocol/src/lib.rs, src/codec.rs, src/receiver.rs, src/sender.rs, src/main.rs
+Code: crates/javelin-protocol/src/lib.rs, src/codec.rs, src/receiver.rs, src/sender.rs, src/fetch.rs, src/main.rs
 
 ## Review and permission model crate (`crates/javelin-collaboration`)
 
@@ -228,7 +236,8 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 - Capture and first-time base materialization read full snapshots (`manifest_at`, `checkpoint_manifest`) by walking a tree: O(snapshot), independent of history length. They already walk the whole directory, so this is not their dominant cost. Commands no longer re-validate full state.
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.
-- Protocol frames and item counts are capped by the `limits` constants. Only protocol version 1 exists. It still moves full manifests (capped at 65,536 entries); the stacked protocol change moves trees.
+- Protocol frames, objects and item counts are capped by the `limits` constants; snapshots are not. Only protocol version 2 exists. `Get` serves any stored object by id; authorization is outside the crate.
+- Fetch returns files and stores chunks in a caller-supplied store; attaching a local repository to fetched versions is roadmap item 7.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
 
 Code: src/capture.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs
