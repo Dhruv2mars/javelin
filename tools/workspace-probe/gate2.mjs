@@ -530,11 +530,13 @@ try {
     const done = new Promise(r => writer.on('exit', r));
     await sleep(200);
     const during = [];
+    let uncertain = 0;
     let running = true; done.then(() => { running = false; });
     while (running) {
       const r = await S.checkpoint(repo, 'layer-a');
       assert(r.code === 0 || (r.json?.ok === false && r.json?.error?.code), `capture during rewrites crashed: exit ${r.code} ${r.stderr.slice(0, 300)}`);
       const cp = r.code === 0 ? hexUnder(r.json, /checkpoint/i) : null;
+      uncertain += find(r.json, k => k === 'uncertain', Array.isArray)?.length ?? 0;
       if (cp && !during.includes(cp)) during.push(cp);
     }
     assert(await done === 0, 'writer failed');
@@ -554,7 +556,7 @@ try {
       inspected++;
     }
     assert(inspected >= 2, `only ${inspected} checkpoints captured during rewrites contained the atomic file`);
-    return { checkpointsDuringRewrites: during.length, inspected, finalGeneration: finalGen.trim() };
+    return { checkpointsDuringRewrites: during.length, inspected, uncertain, finalGeneration: finalGen.trim() };
   });
   await check('tools', 'layer-clone-is-an-isolated-snapshot', async () => {
     const cp = await S.capture(repo, 'layer-a');

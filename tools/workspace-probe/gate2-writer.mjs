@@ -19,5 +19,7 @@ while (Date.now() < until) {
     try { fs.renameSync(join(dir, 'atomic.txt.tmp'), join(dir, 'atomic.txt')); break; }
     catch (e) { if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code) || tries > 200) throw e; retries++; Atomics.wait(pause, 0, 0, 5); }
   }
+  // Save repeatedly, like an editor, with short quiet gaps for a capture to read through.
+  Atomics.wait(pause, 0, 0, 30);
 }
 console.log(`${n} generations, ${retries} rename retries`);
