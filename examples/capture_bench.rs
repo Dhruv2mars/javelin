@@ -119,11 +119,7 @@ fn main() {
         panic!()
     };
     assert_eq!(head.revision(), 1, "{:?}", first.update);
-    let manifest = repo
-        .read_checkpoint(head.checkpoint())
-        .unwrap()
-        .manifest()
-        .clone();
+    let manifest = repo.checkpoint_manifest(head.checkpoint()).unwrap();
     let manifest = repo.put_manifest(&manifest).unwrap();
     let world = OperationId::parse("world-1").unwrap();
     repo.compare_and_advance(&world, VersionNumber::new(0).unwrap(), manifest)
@@ -188,11 +184,7 @@ fn main() {
             }
         }
         // Scan alone (stat walk, racy rule, stable reads, hashing), cache left unsaved.
-        let prior = repo
-            .read_checkpoint(head.checkpoint())
-            .unwrap()
-            .manifest()
-            .clone();
+        let prior = repo.checkpoint_manifest(head.checkpoint()).unwrap();
         let mut cache = StatCache::load(&cache_path);
         assert!(!cache.rebuilt());
         let t = Instant::now();

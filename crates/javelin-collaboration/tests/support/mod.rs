@@ -74,7 +74,10 @@ impl Fixture {
         };
         let checkpoint = self.repo.read_checkpoint(head.checkpoint()).unwrap();
         // Public API: storing the checkpoint manifest yields its native object ID.
-        let manifest = self.repo.put_manifest(checkpoint.manifest()).unwrap();
+        let manifest = self
+            .repo
+            .put_manifest(&self.repo.checkpoint_manifest(checkpoint.id()).unwrap())
+            .unwrap();
         let context = context.map(|bytes| self.repo.put_blob(bytes).unwrap());
         RevisionRef::new(checkpoint.base().version(), manifest, context)
     }

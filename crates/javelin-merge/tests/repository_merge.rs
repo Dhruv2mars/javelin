@@ -71,10 +71,7 @@ impl Fixture {
         else {
             panic!("capture was not applied: {update:?}");
         };
-        repo.read_checkpoint(head.checkpoint())
-            .unwrap()
-            .manifest()
-            .clone()
+        repo.checkpoint_manifest(head.checkpoint()).unwrap()
     }
 
     fn merge(&self, ours: &Manifest, theirs: &Manifest) -> MergeOutcome {

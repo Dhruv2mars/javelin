@@ -440,8 +440,8 @@ fn mounted_views_capture_clone_and_discard() {
     let at_c1 = tree(&a);
     let after_capture = inventory(&env, &root, "flow-inventory-after-capture");
     assert_eq!(
-        after_capture["caches"]["b".to_string() + &base.manifest().to_string()],
-        initial["caches"]["b".to_string() + &base.manifest().to_string()],
+        after_capture["caches"]["b".to_string() + &base.world().to_string()],
+        initial["caches"]["b".to_string() + &base.world().to_string()],
         "base cache changed"
     );
 
@@ -1212,8 +1212,8 @@ fn stack_rebind_tools_checkpoint_and_publish() {
     );
     assert_eq!(tree(&sibling), sibling_tree);
     assert_eq!(
-        s.repo.read_checkpoint(old.checkpoint()).unwrap().manifest(),
-        old_checkpoint.manifest()
+        s.repo.checkpoint_manifest(old.checkpoint()).unwrap(),
+        s.repo.checkpoint_manifest(old_checkpoint.id()).unwrap()
     );
     let inv = inventory(&env, &s.root, "rebind-flow-inventory");
     assert!(inv["stages"].as_array().unwrap().is_empty());
@@ -1247,7 +1247,7 @@ fn stack_rebind_tools_checkpoint_and_publish() {
         )
         .unwrap();
     assert_eq!(published(&receipt).number.get(), 2);
-    let manifest = s.repo.read_manifest(published(&receipt).manifest).unwrap();
+    let manifest = s.repo.manifest_at(published(&receipt).number).unwrap();
     assert_eq!(
         s.repo
             .read_blob(manifest.entries()[&RepoPath::parse("tool.txt").unwrap()].content())
@@ -1823,7 +1823,12 @@ fn published_view_replays_receipt_and_keeps_private_checkpoint_clone() {
         allow_missing_trace: false,
     };
     let operation = op("publish-mounted");
-    let manifest = repo.read_checkpoint(captured.checkpoint()).unwrap();
+    let manifest = repo.checkpoint_manifest(captured.checkpoint()).unwrap();
+    let changes = repo
+        .read_checkpoint(captured.checkpoint())
+        .unwrap()
+        .changes()
+        .clone();
     let mut guard_calls = 0;
     let receipt = rt
         .publish(
@@ -1834,7 +1839,7 @@ fn published_view_replays_receipt_and_keeps_private_checkpoint_clone() {
             |world, candidate| {
                 guard_calls += 1;
                 assert_eq!(world.number.get(), 1);
-                assert_eq!(candidate, manifest.manifest());
+                assert_eq!(candidate, &changes);
                 Ok(())
             },
         )
@@ -1845,15 +1850,16 @@ fn published_view_replays_receipt_and_keeps_private_checkpoint_clone() {
     let version = published(&receipt).clone();
     assert_eq!(version.number.get(), 2);
     assert_eq!(
-        repo.read_manifest(version.manifest).unwrap(),
-        *manifest.manifest()
+        repo.manifest_at(version.number).unwrap(),
+        manifest
     );
     assert_eq!(repo.publication(&operation).unwrap(), Some(receipt.clone()));
     publication_settled(&rt, &repo, &layer);
     let errors = publication_read_only(&view);
 
     // Later World advancement cannot change the original receipt or rerun policy.
-    repo.compare_and_advance(&op("after-publication"), version.number, version.manifest)
+    let snapshot = repo.put_manifest(&manifest).unwrap();
+    repo.compare_and_advance(&op("after-publication"), version.number, snapshot)
         .unwrap();
     drop(rt);
     drop(repo);
@@ -2768,10 +2774,9 @@ fn external_native_publication_is_enforced_when_runtime_observes_it() {
         publication_settled(&s.rt, &s.repo, &s.layer);
         assert_eq!(tree(&s.view), bytes);
         publication_read_only(&s.view);
-        let accepted = s.repo.read_checkpoint(head.checkpoint()).unwrap();
+        let accepted = s.repo.checkpoint_manifest(head.checkpoint()).unwrap();
         assert!(
             !accepted
-                .manifest()
                 .entries()
                 .contains_key(&RepoPath::parse("after-native.txt").unwrap())
         );
@@ -3036,28 +3041,26 @@ fn foreground_watch_stability_busy_and_terminal_stops() {
     );
     assert_eq!(watch(&mut s).unwrap(), 1);
     let captured = active(&s.repo, &s.layer);
-    let manifest = s.repo.read_checkpoint(captured.checkpoint()).unwrap();
+    let manifest = s.repo.checkpoint_manifest(captured.checkpoint()).unwrap();
     assert!(
         !manifest
-            .manifest()
             .entries()
             .contains_key(&RepoPath::parse("delete.txt").unwrap())
     );
     assert!(
         !manifest
-            .manifest()
             .entries()
             .contains_key(&RepoPath::parse("bytes.bin").unwrap())
     );
     assert!(matches!(
-        manifest.manifest().entries()[&RepoPath::parse("main.c").unwrap()],
+        manifest.entries()[&RepoPath::parse("main.c").unwrap()],
         FileEntry::Regular {
             executable: true,
             ..
         }
     ));
     assert!(matches!(
-        manifest.manifest().entries()[&RepoPath::parse("new-link").unwrap()],
+        manifest.entries()[&RepoPath::parse("new-link").unwrap()],
         FileEntry::Symlink { .. }
     ));
     let frozen =

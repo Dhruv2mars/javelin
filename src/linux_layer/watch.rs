@@ -138,8 +138,8 @@ impl LinuxLayerRuntime {
         let observed = match read_snapshot(
             &view,
             None,
-            checkpoint.manifest(),
-            Some(checkpoint.manifest()),
+            &repo.checkpoint_manifest(checkpoint.id())?,
+            Some(&repo.checkpoint_manifest(checkpoint.id())?),
             &mut |bytes| Ok(ObjectId::hash(ObjectKind::Blob, bytes)),
         ) {
             // Atomic saves/deletions during a live scan are expected races.
@@ -148,7 +148,7 @@ impl LinuxLayerRuntime {
             }
             result => result?,
         };
-        if observed.entries == *checkpoint.manifest().entries() {
+        if observed.entries == *repo.checkpoint_manifest(checkpoint.id())?.entries() {
             *stable = Quiet::default();
             return Ok(false);
         }
@@ -164,8 +164,8 @@ impl LinuxLayerRuntime {
             let frozen = read_snapshot(
                 &view,
                 Some(&upper),
-                opened.manifest(),
-                Some(checkpoint.manifest()),
+                &repo.checkpoint_manifest(opened.id())?,
+                Some(&repo.checkpoint_manifest(checkpoint.id())?),
                 &mut |b| Ok(ObjectId::hash(ObjectKind::Blob, b)),
             )?;
             if self.epoch()? != epoch || stable.observed.as_ref().map(|(s, _)| s) != Some(&frozen) {
@@ -187,7 +187,7 @@ impl LinuxLayerRuntime {
             "watch-{}",
             ObjectId::hash(ObjectKind::Blob, &nonce)
         ))?;
-        let base = repo.read_manifest(checkpoint.base().manifest())?;
+        let base = repo.manifest_at(checkpoint.base().version())?;
         let changes = complete_changes(
             &base,
             &stable

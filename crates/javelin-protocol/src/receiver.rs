@@ -106,7 +106,7 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             manifest,
         } => {
             let outcome = repo.compare_and_advance(&operation, expected, manifest)?;
-            Ok(Message::Outcome(Outcome::from_native(&outcome)?))
+            Ok(Message::Outcome(Outcome::from_native(&outcome, manifest)?))
         }
         _ => Err(unexpected()),
     }

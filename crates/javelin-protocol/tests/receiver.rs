@@ -66,7 +66,10 @@ fn transfers_verifies_and_publishes_exact_outcome() {
         VersionNumber::new(0).unwrap(),
         id,
     );
-    assert_eq!(Outcome::from_native(&native.unwrap()).unwrap(), expected);
+    assert_eq!(
+        Outcome::from_native(&native.unwrap(), id).unwrap(),
+        expected
+    );
     assert_eq!(dest.read_manifest(id).unwrap(), manifest);
     for (blob, bytes) in &blobs {
         assert_eq!(&dest.read_blob(*blob).unwrap(), bytes);
@@ -162,7 +165,7 @@ fn refuses_blob_with_valid_hash_of_other_content() {
         )
         .unwrap();
     assert_eq!(
-        Outcome::from_native(&outcome).unwrap(),
+        Outcome::from_native(&outcome, retained_id).unwrap(),
         Outcome::Accepted {
             number: VersionNumber::new(1).unwrap(),
             manifest: retained_id,

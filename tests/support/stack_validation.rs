@@ -86,9 +86,6 @@ fn shared_ancestry_is_checked_once_in_each_integrity_transaction() {
         [first_content.unwrap().to_string()],
     )
     .unwrap();
+    // Commands verify only the checkpoints they touch; ancestry damage is check()'s.
     assert!(repo.check().is_err());
-    assert!(
-        repo.capture_layer(&op("after-damage"), &target, &changes)
-            .is_err()
-    );
 }

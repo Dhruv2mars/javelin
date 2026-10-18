@@ -1145,8 +1145,10 @@ fn binary_stack_merges_frozen_source_and_replays_original_inputs_and_ancestry() 
         &[javelin::CheckpointId::parse(&source).unwrap()]
     );
     assert_eq!(
-        repo.read_blob(frozen.manifest().entries()[&path("file")].content())
-            .unwrap(),
+        repo.read_blob(
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")].content(),
+        )
+        .unwrap(),
         b"FIRST\nanchor\nLAST\n"
     );
     assert_eq!(ok(root.path(), &args), result);

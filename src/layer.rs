@@ -8,9 +8,12 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, Result, VersionNumber,
-    domain::ObjectKind,
-    repository::{decode_id, insert_object, manifest_in, read_object, validate_entry},
+    Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, Result, SparseChanges,
+    VersionNumber,
+    domain::{ObjectKind, WorldIndex},
+    repository::{
+        Index, decode_id, insert_object, read_object, snapshot_in, validate_format, version_in,
+    },
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -71,39 +74,20 @@ impl CheckpointId {
 }
 
 /// Exact immutable base, issued by a repository rather than assembled by callers.
+/// `world` is the base version's hash-chain identity.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct LayerBase {
     repository: ObjectId,
     version: VersionNumber,
-    manifest: ObjectId,
+    world: ObjectId,
 }
 
 impl LayerBase {
     pub fn version(&self) -> VersionNumber {
         self.version
     }
-    pub fn manifest(&self) -> ObjectId {
-        self.manifest
-    }
-}
-
-/// Complete private changes relative to the exact base. None deletes an exact
-/// file/symlink path; capture must expand directory deletion into entry tombstones.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SparseChanges(BTreeMap<RepoPath, Option<FileEntry>>);
-
-impl SparseChanges {
-    pub fn new(entries: impl IntoIterator<Item = (RepoPath, Option<FileEntry>)>) -> Result<Self> {
-        let mut changes = BTreeMap::new();
-        for (path, entry) in entries {
-            if changes.insert(path, entry).is_some() {
-                return Err(Error::InvalidInput("duplicate changed path".into()));
-            }
-        }
-        Ok(Self(changes))
-    }
-    pub fn entries(&self) -> &BTreeMap<RepoPath, Option<FileEntry>> {
-        &self.0
+    pub fn world(&self) -> ObjectId {
+        self.world
     }
 }
 
@@ -153,12 +137,13 @@ pub enum LayerUpdate {
 }
 
 /// A frozen graph read. Later head updates do not alter these values or objects.
+/// Changes are relative to the base; `Repository::checkpoint_manifest` derives the
+/// full snapshot when a caller needs one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayerCheckpoint {
     id: CheckpointId,
     base: LayerBase,
     changes: SparseChanges,
-    manifest: Manifest,
     sources: Vec<CheckpointId>,
 }
 
@@ -171,9 +156,6 @@ impl LayerCheckpoint {
     }
     pub fn changes(&self) -> &SparseChanges {
         &self.changes
-    }
-    pub fn manifest(&self) -> &Manifest {
-        &self.manifest
     }
     /// Frozen direct Stack sources, retained by later captures and clones.
     pub fn stack_sources(&self) -> &[CheckpointId] {
@@ -204,7 +186,7 @@ pub struct PathDiff {
 struct EncodedCheckpoint {
     repository: ObjectId,
     version: u64,
-    manifest: ObjectId,
+    world: ObjectId,
     changes: BTreeMap<String, Option<FileEntry>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sources: Vec<CheckpointId>,
@@ -223,7 +205,7 @@ impl Repository {
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn layer_operation(&self, operation: &OperationId) -> Result<Option<LayerAttempt>> {
         let tx = self.conn.unchecked_transaction()?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         let row = tx
             .query_row(
                 "SELECT layer,discard,checkpoint,expected FROM layer_attempts WHERE id=?1",
@@ -256,14 +238,11 @@ impl Repository {
 
     pub fn layer_base(&self, version: VersionNumber) -> Result<LayerBase> {
         let tx = self.conn.unchecked_transaction()?;
-        let world = crate::repository::validate_state_in(&tx)?
-            .into_iter()
-            .find(|v| v.number == version)
-            .ok_or(Error::MissingVersion(version))?;
+        validate_format(&tx)?;
         let base = LayerBase {
             repository: identity_in(&tx)?,
             version,
-            manifest: world.manifest,
+            world: version_in(&tx, version)?.id,
         };
         tx.commit()?;
         Ok(base)
@@ -274,7 +253,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         let checkpoint = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[])?;
         let head = create_in(&tx, layer, checkpoint)?;
         tx.commit()?;
@@ -286,7 +265,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         checkpoint_in(&tx, checkpoint.0)?;
         let head = create_in(&tx, layer, checkpoint)?;
         tx.commit()?;
@@ -295,24 +274,38 @@ impl Repository {
 
     pub fn layer_state(&self, layer: &LayerId) -> Result<LayerState> {
         let tx = self.conn.unchecked_transaction()?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         let state = crate::publish::published_state_in(&tx, layer)?
             .unwrap_or(latest_in(&tx, layer)?.state(identity_in(&tx)?));
         tx.commit()?;
         Ok(state)
     }
 
+    /// Verifies the checkpoint and its complete Stack ancestry.
     pub fn read_checkpoint(&self, checkpoint: CheckpointId) -> Result<LayerCheckpoint> {
         let tx = self.conn.unchecked_transaction()?;
-        let frozen = checkpoint_in(&tx, checkpoint.0)?;
+        let frozen = (*CheckpointReader::new(&tx).read(checkpoint.0)?).clone();
         tx.commit()?;
         Ok(frozen)
     }
 
+    /// Derives the checkpoint's complete snapshot: its base World plus its changes.
+    pub fn checkpoint_manifest(&self, checkpoint: CheckpointId) -> Result<Manifest> {
+        let tx = self.conn.unchecked_transaction()?;
+        let frozen = checkpoint_in(&tx, checkpoint.0)?;
+        let mut entries = snapshot_in(&tx, frozen.base.version)?;
+        frozen.changes.apply(&mut entries);
+        tx.commit()?;
+        Manifest::new(entries)
+    }
+
     /// Enumerates immutable head events, followed by terminal publication when present.
+    /// Verifies this Layer's complete event and attempt history; other Layers and
+    /// the World are `check()`'s.
     pub fn layer_history(&self, layer: &LayerId) -> Result<Vec<LayerState>> {
         let tx = self.conn.unchecked_transaction()?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
+        check_layer(&mut CheckpointReader::shallow(&tx), layer)?;
         let latest = latest_in(&tx, layer)?;
         let repository = identity_in(&tx)?;
         let mut history = (0..=latest.revision)
@@ -336,7 +329,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let before = checkpoint_in(&tx, expected.checkpoint.0)?;
@@ -359,7 +352,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        crate::repository::validate_state_in(&tx)?;
+        validate_format(&tx)?;
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let outcome = update_in(&tx, operation, expected, expected.checkpoint, true, None)?;
@@ -372,20 +365,19 @@ impl Repository {
         let tx = self.conn.unchecked_transaction()?;
         verify_head(&tx, head)?;
         let frozen = checkpoint_in(&tx, head.checkpoint.0)?;
-        let base = manifest_in(&tx, frozen.base.manifest)?;
+        let index = Index(&tx);
         let diff = frozen
             .changes
-            .0
-            .into_iter()
+            .entries()
+            .iter()
             .map(|(path, after)| {
-                let before = base.entries().get(&path).cloned();
-                PathDiff {
-                    path,
-                    before,
-                    after,
-                }
+                Ok(PathDiff {
+                    path: path.clone(),
+                    before: index.entry_at(path, frozen.base.version)?,
+                    after: after.clone(),
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         tx.commit()?;
         Ok(diff)
     }
@@ -404,63 +396,16 @@ fn identity_in(conn: &Connection) -> Result<ObjectId> {
     }
 }
 
-fn validate_base(conn: &Connection, base: &LayerBase) -> Result<Manifest> {
+fn validate_base(conn: &Connection, base: &LayerBase) -> Result<()> {
     if identity_in(conn)? != base.repository {
         return Err(Error::InvalidInput("foreign Layer base".into()));
     }
-    let world = crate::repository::version_in(conn, base.version)?
-        .ok_or(Error::MissingVersion(base.version))?;
-    if world.manifest != base.manifest {
+    if version_in(conn, base.version)?.id != base.world {
         return Err(Error::CorruptRepository(
             "Layer base disagrees with exact World".into(),
         ));
     }
-    manifest_in(conn, base.manifest)
-}
-
-fn normalize(
-    conn: &Connection,
-    base: &Manifest,
-    changes: &SparseChanges,
-) -> Result<(SparseChanges, Manifest)> {
-    let mut merged = base.entries().clone();
-    let mut delta = BTreeMap::new();
-    for (path, after) in &changes.0 {
-        if let Some(entry) = after {
-            validate_entry(conn, entry)?;
-        }
-        if after.is_none() && !base.entries().contains_key(path) {
-            let prefix = format!("{}/", path.as_str());
-            let has_children = base
-                .entries()
-                .keys()
-                .chain(
-                    changes
-                        .0
-                        .iter()
-                        .filter_map(|(p, entry)| entry.as_ref().map(|_| p)),
-                )
-                .any(|p| p.as_str().starts_with(&prefix));
-            if has_children {
-                return Err(Error::InvalidInput(
-                    "directory-prefix tombstone is ambiguous; delete exact entries".into(),
-                ));
-            }
-        }
-        if base.entries().get(path) == after.as_ref() {
-            continue;
-        }
-        match after {
-            Some(entry) => {
-                merged.insert(path.clone(), entry.clone());
-            }
-            None => {
-                merged.remove(path);
-            }
-        }
-        delta.insert(path.clone(), after.clone());
-    }
-    Ok((SparseChanges(delta), Manifest::new(merged)?))
+    Ok(())
 }
 
 fn checkpoint_bytes(
@@ -471,13 +416,9 @@ fn checkpoint_bytes(
     serde_json::to_vec(&EncodedCheckpoint {
         repository: base.repository,
         version: base.version.get(),
-        manifest: base.manifest,
+        world: base.world,
         sources: sources.to_vec(),
-        changes: changes
-            .0
-            .iter()
-            .map(|(p, e)| (p.as_str().into(), e.clone()))
-            .collect(),
+        changes: changes.encoded(),
     })
     .expect("checkpoint encoding")
 }
@@ -488,8 +429,8 @@ pub(crate) fn prepare_checkpoint(
     changes: &SparseChanges,
     sources: &[CheckpointId],
 ) -> Result<CheckpointId> {
-    let base_manifest = validate_base(conn, base)?;
-    let (changes, _) = normalize(conn, &base_manifest, changes)?;
+    validate_base(conn, base)?;
+    let changes = crate::domain::normalize(&Index(conn), base.version, changes)?;
     Ok(CheckpointId(insert_object(
         conn,
         ObjectKind::Checkpoint,
@@ -499,10 +440,13 @@ pub(crate) fn prepare_checkpoint(
 
 /// Scoped to one validation transaction; never stored on a Repository handle.
 /// Only fully verified graphs enter this cache. Rc avoids copying sparse trees
-/// every time an event/attempt refers to the same immutable checkpoint.
+/// every time an event/attempt refers to the same immutable checkpoint. A shallow
+/// reader verifies only the checkpoints it is asked for, not their Stack sources;
+/// commands use it so cost follows what they touch, and `check()` reads deeply.
 pub(crate) struct CheckpointReader<'a> {
     pub(crate) conn: &'a Connection,
     checked: BTreeMap<ObjectId, Rc<LayerCheckpoint>>,
+    deep: bool,
 }
 
 impl<'a> CheckpointReader<'a> {
@@ -510,6 +454,14 @@ impl<'a> CheckpointReader<'a> {
         Self {
             conn,
             checked: BTreeMap::new(),
+            deep: true,
+        }
+    }
+
+    fn shallow(conn: &'a Connection) -> Self {
+        Self {
+            deep: false,
+            ..Self::new(conn)
         }
     }
 
@@ -525,7 +477,11 @@ impl<'a> CheckpointReader<'a> {
                     return Err(Error::CorruptRepository("cyclic Stack ancestry".into()));
                 }
                 let node = Rc::new(checkpoint_node(self.conn, id)?);
-                let sources = node.sources.clone();
+                let sources = if self.deep {
+                    node.sources.clone()
+                } else {
+                    vec![]
+                };
                 pending.push((id, Some(node)));
                 pending.extend(sources.into_iter().rev().map(|source| (source.0, None)));
             }
@@ -534,8 +490,9 @@ impl<'a> CheckpointReader<'a> {
     }
 }
 
+/// Reads and verifies one checkpoint without walking its Stack ancestry.
 pub(crate) fn checkpoint_in(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
-    Ok((*CheckpointReader::new(conn).read(id)?).clone())
+    Ok((*CheckpointReader::shallow(conn).read(id)?).clone())
 }
 
 #[cfg(test)]
@@ -552,7 +509,7 @@ fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
     let base = LayerBase {
         repository: encoded.repository,
         version: VersionNumber::new(encoded.version).map_err(|_| Error::CorruptObject(id))?,
-        manifest: encoded.manifest,
+        world: encoded.world,
     };
     let changes = SparseChanges::new(
         encoded
@@ -563,9 +520,9 @@ fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
             .map_err(|_| Error::CorruptObject(id))?,
     )
     .map_err(|_| Error::CorruptObject(id))?;
-    let base_manifest = validate_base(conn, &base)
+    validate_base(conn, &base)
         .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint base: {e}")))?;
-    let (normalized, manifest) = normalize(conn, &base_manifest, &changes)
+    let normalized = crate::domain::normalize(&Index(conn), base.version, &changes)
         .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint graph: {e}")))?;
     if normalized != changes
         || encoded.sources.windows(2).any(|pair| pair[0] >= pair[1])
@@ -577,7 +534,6 @@ fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
         id: CheckpointId(id),
         base,
         changes,
-        manifest,
         sources: encoded.sources,
     })
 }
@@ -749,7 +705,7 @@ pub(crate) fn update_in(
 }
 
 pub(crate) fn attempt_outcome(conn: &Connection, operation: &OperationId) -> Result<LayerUpdate> {
-    attempt_outcome_in(&mut CheckpointReader::new(conn), operation)
+    attempt_outcome_in(&mut CheckpointReader::shallow(conn), operation)
 }
 
 fn attempt_outcome_in(
@@ -860,6 +816,40 @@ pub(crate) fn check_layers(checkpoints: &mut CheckpointReader<'_>) -> Result<usi
     for layer in &layers {
         let layer = LayerId::parse(layer)
             .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))?;
+        check_events(checkpoints, &layer)?;
+    }
+    let operations = conn
+        .prepare("SELECT id FROM layer_attempts")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    check_attempts(checkpoints, operations)?;
+    Ok(layers.len())
+}
+
+/// One Layer's complete event and attempt history, for reads of that history.
+fn check_layer(checkpoints: &mut CheckpointReader<'_>, layer: &LayerId) -> Result<()> {
+    check_events(checkpoints, layer)?;
+    let operations = checkpoints
+        .conn
+        .prepare("SELECT id FROM layer_attempts WHERE layer=?1")?
+        .query_map([layer.as_str()], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    check_attempts(checkpoints, operations)
+}
+
+fn check_attempts(checkpoints: &mut CheckpointReader<'_>, operations: Vec<String>) -> Result<()> {
+    for operation in operations {
+        let op = OperationId::parse(&operation)
+            .map_err(|_| Error::CorruptRepository("invalid stored Layer operation".into()))?;
+        attempt_outcome_in(checkpoints, &op)?;
+    }
+    Ok(())
+}
+
+fn check_events(checkpoints: &mut CheckpointReader<'_>, layer: &LayerId) -> Result<()> {
+    let conn = checkpoints.conn;
+    let layer = layer.clone();
+    {
         let revisions = conn
             .prepare("SELECT revision FROM layer_heads WHERE layer=?1 ORDER BY revision")?
             .query_map([layer.as_str()], |r| r.get::<_, i64>(0))?
@@ -902,16 +892,7 @@ pub(crate) fn check_layers(checkpoints: &mut CheckpointReader<'_>) -> Result<usi
             previous = Some(event);
         }
     }
-    let operations = conn
-        .prepare("SELECT id FROM layer_attempts")?
-        .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for operation in operations {
-        let op = OperationId::parse(&operation)
-            .map_err(|_| Error::CorruptRepository("invalid stored Layer operation".into()))?;
-        attempt_outcome_in(checkpoints, &op)?;
-    }
-    Ok(layers.len())
+    Ok(())
 }
 
 /// Raw historical accessors. These never project today's publication status.

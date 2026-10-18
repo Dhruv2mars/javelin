@@ -10,7 +10,7 @@ use crate::{
     SparseChanges, VersionNumber,
     domain::ObjectKind,
     publish::{PublishAttribution, PublishOutcome},
-    repository::insert_object,
+    repository::{append_version_in, head_in, insert_object},
 };
 
 struct Cost {
@@ -26,14 +26,12 @@ fn publish_after(prior: u64) -> Cost {
     let tx = repo.conn.transaction().unwrap();
     for n in 1..=prior {
         let content = insert_object(&tx, ObjectKind::Blob, n.to_string().as_bytes()).unwrap();
-        let manifest = Manifest::new([(
-            RepoPath::parse("counter").unwrap(),
-            FileEntry::Regular {
-                content,
-                executable: false,
-            },
-        )])
-        .unwrap();
+        let entry = FileEntry::Regular {
+            content,
+            executable: false,
+        };
+        let path = RepoPath::parse("counter").unwrap();
+        let manifest = Manifest::new([(path.clone(), entry.clone())]).unwrap();
         let manifest =
             insert_object(&tx, ObjectKind::Manifest, &manifest.canonical_bytes()).unwrap();
         let operation = format!("world-{n}");
@@ -42,11 +40,9 @@ fn publish_after(prior: u64) -> Cost {
             params![operation, n as i64 - 1, manifest.to_string(), n as i64],
         )
         .unwrap();
-        tx.execute(
-            "INSERT INTO versions(number,manifest,operation) VALUES(?1,?2,?3)",
-            params![n as i64, manifest.to_string(), operation],
-        )
-        .unwrap();
+        let changes = SparseChanges::new([(path, Some(entry))]).unwrap();
+        let head = head_in(&tx).unwrap();
+        append_version_in(&tx, &head, &OperationId::parse(&operation).unwrap(), &changes).unwrap();
     }
     tx.commit().unwrap();
     let base = repo.layer_base(VersionNumber::new(prior).unwrap()).unwrap();

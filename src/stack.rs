@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::domain::ObjectKind;
 use crate::layer::{attempt_outcome, checkpoint_in, prepare_checkpoint, update_in, verify_head};
-use crate::repository::{decode_id, insert_object, read_object, validate_state_in};
+use crate::repository::{decode_id, insert_object, read_object, validate_format};
 use crate::{
     CheckpointId, Error, LayerHead, LayerUpdate, OperationId, Repository, Result, SparseChanges,
 };
@@ -28,7 +28,7 @@ impl Repository {
         source: CheckpointId,
     ) -> Result<Option<LayerUpdate>> {
         let tx = self.conn.unchecked_transaction()?;
-        validate_state_in(&tx)?;
+        validate_format(&tx)?;
         let result = replay_in(&tx, operation, expected, source)?;
         tx.commit()?;
         Ok(result)
@@ -48,7 +48,7 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        validate_state_in(&tx)?;
+        validate_format(&tx)?;
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         checkpoint_in(&tx, source.object())?;
@@ -84,14 +84,16 @@ fn replay_in(
     let Some((layer, revision)) = prior else {
         return Ok(None);
     };
-    if layer != expected.layer().as_str()
-        || revision != expected.revision() as i64
-        || source_in(conn, operation)? != Some(source)
-    {
+    if layer != expected.layer().as_str() || revision != expected.revision() as i64 {
+        return Err(Error::OperationIdReused(operation.clone()));
+    }
+    // Verifies the attempt's Stack binding before comparing its source.
+    let outcome = attempt_outcome(conn, operation)?;
+    if source_in(conn, operation)? != Some(source) {
         return Err(Error::OperationIdReused(operation.clone()));
     }
     verify_head(conn, expected)?;
-    Ok(Some(attempt_outcome(conn, operation)?))
+    Ok(Some(outcome))
 }
 
 pub(crate) fn source_in(

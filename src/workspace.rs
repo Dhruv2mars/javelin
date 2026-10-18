@@ -181,7 +181,7 @@ impl Repository {
             let (applied, _) = if changes.is_empty() {
                 (0, 0)
             } else {
-                let before = self.read_manifest(checkpoint.base().manifest())?;
+                let before = self.manifest_at(checkpoint.base().version())?;
                 let changes = changes.iter().map(|(p, e)| (p, e.as_ref()));
                 self.apply(&staging, &before, changes)?
             };
@@ -249,13 +249,9 @@ impl Repository {
         VersionNumber::decode(head)
     }
 
+    /// The derived snapshot of a World version.
     fn world_manifest(&self, version: VersionNumber) -> Result<Manifest> {
-        let id: String = self.conn.query_row(
-            "SELECT manifest FROM versions WHERE number=?1",
-            [version.sql()],
-            |r| r.get(0),
-        )?;
-        crate::repository::manifest_in(&self.conn, crate::repository::decode_id(&id)?)
+        self.manifest_at(version)
     }
 
     /// Layers with a terminal discard event, in one query.

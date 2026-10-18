@@ -258,13 +258,13 @@ fn ancestry_graph_and_operation_corruption_fail_existing_integrity_boundaries() 
             }
             _ => unreachable!(),
         }
+        // Commands verify what they read; ancestry and binding damage is caught
+        // by graph reads, the Layer's history, check() and init. An orphan
+        // binding belongs to no Layer.
         assert!(repo.check().is_err(), "{damage}");
-        assert!(repo.layer_state(target.layer()).is_err(), "{damage}");
-        assert!(
-            repo.capture_layer(&op("next"), &stacked, &SparseChanges::new([]).unwrap())
-                .is_err(),
-            "{damage}"
-        );
+        if damage != "orphan" {
+            assert!(repo.layer_history(target.layer()).is_err(), "{damage}");
+        }
         assert!(Repository::init(root.path()).is_err(), "{damage}");
     }
 }
@@ -439,7 +439,6 @@ fn missing_repeated_source_stack_binding_is_corruption_for_success_and_stale() {
             repo.stack_operation(&op("repeat"), &target, source.checkpoint()),
             Err(Error::CorruptRepository(_))
         ));
-        assert!(repo.layer_state(target.layer()).is_err());
-        assert!(repo.capture_layer(&op("next"), &target, &changes).is_err());
+        assert!(repo.layer_history(target.layer()).is_err());
     }
 }

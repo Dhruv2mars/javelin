@@ -212,7 +212,7 @@ fn actor() {
         let checkpoint =
             crate::CheckpointId::parse(&std::env::var("JAVELIN_TEST_MANIFEST").unwrap()).unwrap();
         let frozen = repo.read_checkpoint(checkpoint).unwrap();
-        json!({"checkpoint":frozen.id(),"entries":frozen.manifest().entries(),"changes":frozen.changes().entries().len(),"integrity":repo.check().unwrap()})
+        json!({"checkpoint":frozen.id(),"entries":repo.checkpoint_manifest(frozen.id()).unwrap().entries(),"changes":frozen.changes().entries().len(),"integrity":repo.check().unwrap()})
     } else {
         let mut repo = Repository::open(&root).unwrap();
         let operation =
@@ -262,7 +262,7 @@ fn concurrent_initializers_share_one_immutable_world() {
     assert!(results.iter().all(|r| r == &results[0]));
     let repo = Repository::open(root.path()).unwrap();
     assert_eq!(repo.check().unwrap().versions, 1);
-    assert_eq!(repo.check().unwrap().objects, 1);
+    assert_eq!(repo.check().unwrap().objects, 0);
     assert_eq!(
         std::fs::read(root.path().join("existing")).unwrap(),
         [0, 255]
@@ -492,7 +492,7 @@ fn initialization_recovers_on_both_sides_of_commit() {
         assert_eq!(retry.result()["initial"]["number"], 0);
         let repo = Repository::open(root.path()).unwrap();
         assert_eq!(repo.check().unwrap().versions, 1);
-        assert_eq!(repo.check().unwrap().objects, 1);
+        assert_eq!(repo.check().unwrap().objects, 0);
     }
 }
 
@@ -622,7 +622,7 @@ fn simultaneous_independent_layer_heads_do_not_invalidate_each_other() {
     let repo = Repository::open(root.path()).unwrap();
     let report = repo.check().unwrap();
     assert_eq!(report.layers, 9);
-    assert_eq!(report.objects, 4); // genesis, empty checkpoint, blob, changed checkpoint
+    assert_eq!(report.objects, 3); // empty checkpoint, blob, changed checkpoint
     assert_eq!(report.versions, 1);
 }
 
@@ -682,7 +682,7 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
     writer.release();
     writer.marker("BOUNDARY layer_before_commit");
     let repo = Repository::open(root.path()).unwrap();
-    assert_eq!(repo.check().unwrap().objects, 3);
+    assert_eq!(repo.check().unwrap().objects, 2);
     match repo
         .layer_state(&crate::LayerId::parse("shared").unwrap())
         .unwrap()
@@ -708,7 +708,7 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
             .check()
             .unwrap()
             .objects,
-        4
+        3
     );
 }
 
@@ -848,9 +848,7 @@ fn whole_publish_disjoint_processes_all_compose_contiguously_and_overlap_has_one
             history.iter().map(|w| w.number.get()).collect::<Vec<_>>(),
             (0..=winners as u64).collect::<Vec<_>>()
         );
-        let final_manifest = repo
-            .read_manifest(history.last().unwrap().manifest)
-            .unwrap();
+        let final_manifest = repo.manifest_at(history.last().unwrap().number).unwrap();
         assert_eq!(final_manifest.entries().len(), winners);
         if !overlap {
             for (i, head) in heads.iter().enumerate() {
@@ -858,9 +856,8 @@ fn whole_publish_disjoint_processes_all_compose_contiguously_and_overlap_has_one
                     final_manifest
                         .entries()
                         .get(&RepoPath::parse(&format!("file-{i}")).unwrap()),
-                    repo.read_checkpoint(head.checkpoint())
+                    repo.checkpoint_manifest(head.checkpoint())
                         .unwrap()
-                        .manifest()
                         .entries()
                         .get(&RepoPath::parse(&format!("file-{i}")).unwrap())
                 );
@@ -908,7 +905,7 @@ fn whole_publish_world_advance_after_prepare_rebases_or_conflicts_at_the_cas() {
         let history = repo.history().unwrap();
         assert_eq!(history.len(), if overlap { 2 } else { 3 });
         assert_eq!(
-            repo.read_manifest(history.last().unwrap().manifest)
+            repo.manifest_at(history.last().unwrap().number)
                 .unwrap()
                 .entries()
                 .len(),

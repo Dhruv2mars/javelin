@@ -42,12 +42,16 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Adapts a native outcome. Accepted native versions always carry their operation.
-    pub fn from_native(outcome: &javelin::AdvanceOutcome) -> Result<Self, ProtocolError> {
+    /// Adapts a native outcome of advancing to `manifest`. Accepted native versions
+    /// always carry their operation; a replayed operation is bound to its manifest.
+    pub fn from_native(
+        outcome: &javelin::AdvanceOutcome,
+        manifest: ObjectId,
+    ) -> Result<Self, ProtocolError> {
         match outcome {
             javelin::AdvanceOutcome::Accepted { version } => Ok(Self::Accepted {
                 number: version.number,
-                manifest: version.manifest,
+                manifest,
                 operation: version.operation.clone().ok_or_else(|| {
                     ProtocolError::new("invalid_input", "accepted World lacks operation")
                 })?,

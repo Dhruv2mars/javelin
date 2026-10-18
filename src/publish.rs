@@ -6,13 +6,13 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use serde::Serialize;
 
 use crate::{
-    Error, LayerHead, LayerId, LayerState, Manifest, ObjectId, OperationId, RepoPath, Repository,
-    Result, VersionNumber, WorldVersion,
-    domain::ObjectKind,
+    Error, LayerHead, LayerId, LayerState, ObjectId, OperationId, RepoPath, Repository, Result,
+    SparseChanges, VersionNumber, WorldVersion,
+    domain::{ObjectKind, intersections, version_id},
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        decode_id, insert_object, manifest_in, read_object, validate_format, version_in,
-        world_head_in,
+        Index, append_version_in, changeset_in, decode_id, head_in as world_head_in,
+        insert_object, read_object, validate_format, version_in,
     },
 };
 
@@ -98,15 +98,16 @@ impl PublicationReceipt {
 
 impl Repository {
     /// Accepts the whole exact latest Active captured checkpoint. Compatible World
-    /// advances compose without changing its immutable base.
+    /// advances compose without changing its immutable base. Work is O(change),
+    /// independent of repository size and history length.
     ///
     /// Preparation reads one snapshot without the write lock: it validates only the
     /// records this advance depends on and composes the candidate. A short write
     /// transaction then rechecks the operation ID, the World head and the Layer
     /// state, and advances atomically. A moved World or Layer re-prepares, so
     /// compatible concurrent Publishes rebase. The guard runs inside that short
-    /// transaction and sees the locked current World and exact composed candidate
-    /// before any new writes; it must stay fast. Refusal reserves no operation;
+    /// transaction and sees the locked current World and the exact changeset the
+    /// new version applies to it, before any new writes; it must stay fast. Refusal reserves no operation;
     /// durable retries never rerun the guard. Full history checks live in `check`.
     pub fn publish_layer<F>(
         &mut self,
@@ -116,7 +117,7 @@ impl Repository {
         guard: F,
     ) -> Result<PublicationReceipt>
     where
-        F: FnOnce(&WorldVersion, &Manifest) -> Result<()>,
+        F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
     {
         let mut guard = Some(guard);
         #[cfg(test)]
@@ -161,24 +162,11 @@ impl Repository {
                 Some(Ok(candidate)) => {
                     let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &candidate)?;
-                    let manifest =
-                        insert_object(&tx, ObjectKind::Manifest, &candidate.canonical_bytes())?;
-                    let number =
-                        VersionNumber::new(against.number.get().checked_add(1).ok_or_else(
-                            || Error::InvalidInput("World version overflow".into()),
-                        )?)?;
-                    tx.execute("INSERT INTO attempts(id,expected,manifest,accepted,result) VALUES(?1,?2,?3,1,?4)",
-                        params![operation.as_str(), against.number.sql(), manifest.to_string(), number.sql()])?;
-                    tx.execute(
-                        "INSERT INTO versions(number,manifest,operation) VALUES(?1,?2,?3)",
-                        params![number.sql(), manifest.to_string(), operation.as_str()],
-                    )?;
+                    let number = crate::repository::next_number(against.number)?;
+                    tx.execute("INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
+                        params![operation.as_str(), against.number.sql(), number.sql()])?;
                     PublishOutcome::Published {
-                        version: WorldVersion {
-                            number,
-                            manifest,
-                            operation: Some(operation.clone()),
-                        },
+                        version: append_version_in(&tx, &against, operation, &candidate)?,
                     }
                 }
             };
@@ -241,10 +229,10 @@ struct Plan {
     against: WorldVersion,
     actual: LayerState,
     warnings: Vec<PublishWarning>,
-    composed: Option<std::result::Result<Manifest, Vec<RepoPath>>>,
+    composed: Option<std::result::Result<SparseChanges, Vec<RepoPath>>>,
 }
 
-/// Cost scales with the Layer's own records and the composed tree, not with history.
+/// Cost scales with the Layer's own records and its changeset, not with history.
 fn prepare_in(
     conn: &Connection,
     operation: &OperationId,
@@ -336,55 +324,28 @@ fn revision(state: &LayerState) -> u64 {
     }
 }
 
-/// Uses end-to-end base/head differences, not intervening World attempts.
+/// Uses end-to-end base/head differences, not intervening World attempts. The
+/// candidate is the Layer's changeset, which is canonical relative to `world`
+/// whenever nothing intersects. Indexed lookups only; no snapshot is loaded.
 fn compose_in(
     conn: &Connection,
     head: &LayerHead,
     world: &WorldVersion,
-) -> Result<std::result::Result<Manifest, Vec<RepoPath>>> {
+) -> Result<std::result::Result<SparseChanges, Vec<RepoPath>>> {
     let checkpoint = checkpoint_in(conn, head.checkpoint().object())?;
     if checkpoint.base().version() > world.number {
         return Err(corrupt("publication World precedes Layer base"));
     }
-    let base = manifest_in(conn, checkpoint.base().manifest())?;
-    let current = manifest_in(conn, world.manifest)?;
-    let world_changes: BTreeSet<_> = base
-        .entries()
-        .keys()
-        .chain(current.entries().keys())
-        .filter(|p| base.entries().get(*p) != current.entries().get(*p))
-        .collect();
-    let mut intersections = BTreeSet::new();
-    for path in checkpoint.changes().entries().keys() {
-        for changed in &world_changes {
-            if path == *changed || ancestor(path, changed) || ancestor(changed, path) {
-                intersections.insert(path.clone());
-                intersections.insert((*changed).clone());
-            }
-        }
+    let found = intersections(
+        &Index(conn),
+        checkpoint.changes(),
+        checkpoint.base().version(),
+        world.number,
+    )?;
+    if !found.is_empty() {
+        return Ok(Err(found.into_iter().collect()));
     }
-    if !intersections.is_empty() {
-        return Ok(Err(intersections.into_iter().collect()));
-    }
-    let mut entries = current.entries().clone();
-    for (path, after) in checkpoint.changes().entries() {
-        match after {
-            Some(entry) => {
-                entries.insert(path.clone(), entry.clone());
-            }
-            None => {
-                entries.remove(path);
-            }
-        }
-    }
-    Ok(Ok(Manifest::new(entries)?))
-}
-
-fn ancestor(parent: &RepoPath, child: &RepoPath) -> bool {
-    child
-        .as_str()
-        .strip_prefix(parent.as_str())
-        .is_some_and(|tail| tail.starts_with('/'))
+    Ok(Ok(checkpoint.changes().clone()))
 }
 
 struct PublicationRow {
@@ -437,8 +398,8 @@ fn stored_layer(id: &str) -> Result<LayerId> {
 }
 
 fn world_at(conn: &Connection, number: i64) -> Result<WorldVersion> {
-    version_in(conn, VersionNumber::decode(number)?)?
-        .ok_or_else(|| corrupt("missing publication World"))
+    version_in(conn, VersionNumber::decode(number)?)
+        .map_err(|_| corrupt("missing publication World"))
 }
 
 fn success_state(conn: &Connection, row: &PublicationRow) -> Result<LayerState> {
@@ -460,12 +421,16 @@ fn success_state(conn: &Connection, row: &PublicationRow) -> Result<LayerState> 
     })
 }
 
-/// Terminal projection only, found through the one-success-per-Layer index.
-/// Historical capture/discard events and their receipts never call this helper.
+/// Terminal projection only, found through the one-success-per-Layer index and
+/// verified through its receipt bindings (O(that change)). Historical
+/// capture/discard events and their receipts never call this helper.
 pub(crate) fn published_state_in(conn: &Connection, layer: &LayerId) -> Result<Option<LayerState>> {
     rows_in(conn, "WHERE layer=?1 AND outcome=1", [layer.as_str()])?
         .first()
-        .map(|r| success_state(conn, r))
+        .map(|r| {
+            receipt_in(conn, r)?;
+            success_state(conn, r)
+        })
         .transpose()
 }
 
@@ -583,8 +548,8 @@ fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationRece
                 .map_err(|_| corrupt("successful publication intersects World changes"))?;
             let version = world_at(conn, result)?;
             if version.operation.as_ref() != Some(&operation)
-                || version.manifest != ObjectId::for_manifest(&candidate)
-                || manifest_in(conn, version.manifest)? != candidate
+                || version.id != version_id(Some(against.id), &candidate)
+                || changeset_in(conn, version.number)? != candidate
             {
                 return Err(corrupt(
                     "published World disagrees with complete Layer composition",

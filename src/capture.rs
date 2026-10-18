@@ -708,7 +708,7 @@ impl Repository {
 
     fn capture_at(&mut self, head: LayerHead, root: &Path) -> Result<Capture> {
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
-        let base = self.read_manifest(checkpoint.base().manifest())?;
+        let base = self.manifest_at(checkpoint.base().version())?;
         let cache_path = self.capture_cache(head.layer())?;
         let mut cache = StatCache::load(&cache_path);
         let rebuilt = cache.rebuilt();
@@ -724,8 +724,9 @@ impl Repository {
                 behind: true,
             });
         }
+        let manifest = self.checkpoint_manifest(checkpoint.id())?;
         let tx = self.conn.unchecked_transaction()?;
-        let scan = scan(root, &mut cache, checkpoint.manifest(), &mut |bytes| {
+        let scan = scan(root, &mut cache, &manifest, &mut |bytes| {
             store_blob(&tx, bytes)
         })?;
         tx.commit()?;

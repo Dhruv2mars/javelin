@@ -116,5 +116,5 @@ fn edit(repo: &mut Repository, name: &str, bytes: &[u8]) -> Result<Manifest> {
     else {
         return Err(format!("capture not applied: {update:?}").into());
     };
-    Ok(repo.read_checkpoint(head.checkpoint())?.manifest().clone())
+    Ok(repo.checkpoint_manifest(head.checkpoint())?)
 }
