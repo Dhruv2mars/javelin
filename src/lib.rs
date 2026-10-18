@@ -1,6 +1,7 @@
-//! Native immutable repository storage and ordered World publication metadata.
-//! Sparse Layer state is available. Linux binds it to ordinary paths through sparse
-//! OverlayFS views; autosave, other platforms and mounted Publish lifecycle are later work.
+//! Native immutable repository storage, Layers, Stack and whole-Layer Publish.
+//! Linux binds Layers to ordinary paths through the OverlayFS helper. Clone-backed
+//! plain-directory Layers with daemonless capture are the accepted replacement
+//! (docs/workspace-approach.md).
 
 mod domain;
 mod ignore;
