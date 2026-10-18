@@ -149,7 +149,7 @@ workflow may invoke or interpret Git.
 - [ ] Implement identity, scoped credentials, applied permissions, and revocation.
 - [ ] Implement author-owned immutable Publish Request revisions and exact approvals.
 - [ ] Implement browser review, comments, checks, direct Publish, and reviewed Publish.
-- [ ] Implement clone and independent forks with permitted inherited history.
+- [ ] Implement attach and independent forks with permitted inherited history.
 - [ ] Verify public upstream contribution without requiring a hosted fork.
 - [ ] Verify control-plane outage behavior and provider-outage local work.
 - [ ] Resolve CI execution design and verify the accepted workflow syntax.
@@ -208,3 +208,25 @@ CI, and is merged.
   one ignored actor), with a validated failing Git shim and no invocation marker.
 
 PR #36 tracks required CI, review handling and the final merge through T3 monitoring.
+
+## Git 3.0 roadmap, accepted 2026-10-18
+
+The user accepted the Git 3.0 direction (`docs/git3-direction.md`): online-first
+and outage-tolerant, Bonsai changesets with derived trees, storage split by
+primitive, one rolling base, and no local kernel VFS. These items are in
+dependency order. Each is done when its PR is merged with the checks it names.
+
+- [ ] Format-5 changeset World: O(change) Publish and shallow hot-path
+  validation (in flight, `t3/world-changeset-publish`).
+- [ ] Record the Git 3.0 decision and amend the contract and workspace docs.
+- [ ] Storage benchmark, blob files vs SQLite (in flight): apply the go/no-go
+  criterion recorded in `docs/git3-direction.md`.
+- [ ] Tree objects as derived data: Merkle trees with prolly chunking, then the
+  protocol on trees, which drops the 65,536-entry `MAX_ENTRIES` cap.
+- [ ] Rolling base: one base per repository per machine, advanced in place under
+  a short lock; Layer create is lock, clone, unlock.
+- [ ] Collision radar and trace blame.
+- [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
+  queue and replay, and the quorum-replicated World log.
+- [ ] Later, not GA: optional `javelin mount` (FUSE, lazy fetch) for cloud agent
+  runners and Linux CI.
