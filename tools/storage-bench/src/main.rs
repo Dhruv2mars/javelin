@@ -386,7 +386,7 @@ fn run() -> Result<()> {
                     .map_or_else(|| s.root.clone(), |p| p.join("store")),
                 ..s.clone()
             };
-            let fast_seed = kind == Kind::Real
+            let mut fast_seed = kind == Kind::Real
                 && n >= 100000
                 && (disk_only || real10k.is_some_and(|ms: f64| ms * n as f64 / 10000.0 > 900000.0));
             if fast_seed {
@@ -441,7 +441,18 @@ fn run() -> Result<()> {
             }
             if !complete {
                 remove(&ingest.root)?;
-                continue;
+                if kind != Kind::Real || n < 100000 {
+                    continue;
+                }
+                let projection: Vec<_> = real10k
+                    .map(|ms| ms * n as f64 / 10000.0)
+                    .into_iter()
+                    .collect();
+                out.row(n,bytes,name,"ingest/extrapolated-from-10k","ms",&projection,"NOT measured; actual attempt exceeded 15min. Empty samples mean no 10k baseline was supplied; API read context is batch-seeded outside timings")?;
+                ingest.init()?;
+                ingest.seed_real_read_context(&blobs)?;
+                fast_seed = true;
+                out.row(n,bytes,name,"setup/real-read-context","setup",&[],"bounded real ingest aborted; complete real-schema corpus batch-seeded outside timings; production API reads remain measured")?;
             }
             if kind == Kind::Real && n == 10000 {
                 real10k = Some(percentile(&times, 0.5));

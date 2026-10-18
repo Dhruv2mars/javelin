@@ -460,8 +460,13 @@ pub fn killed_writers(out: &mut Output, scratch: &Path) -> Result<()> {
                 trial + 1
             );
         }
+        let integrity = if kind == Kind::Tuned {
+            "SQLite integrity_check=ok each trial"
+        } else {
+            "file-object namespace checked each trial; no SQLite writer in this case"
+        };
         let note = format!(
-            "20/20 SIGKILL trials; all final objects fully hash-verified; SQLite integrity_check=ok each trial; seeded 100 baseline blobs; stream includes one 2MiB random payload plus 100 fixture blobs per batch; ready handshake then deterministic pseudorandom delays ms={delays:?}; process-crash only, not power-loss"
+            "20/20 SIGKILL trials; all final objects fully hash-verified; {integrity}; seeded 100 baseline blobs; stream includes one 2MiB random payload plus 100 fixture blobs per batch; ready handshake then deterministic pseudorandom delays ms={delays:?}; process-crash only, not power-loss"
         );
         out.row(
             100000,
