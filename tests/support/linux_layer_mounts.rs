@@ -1849,10 +1849,7 @@ fn published_view_replays_receipt_and_keeps_private_checkpoint_clone() {
     assert_eq!(receipt.attribution, attribution);
     let version = published(&receipt).clone();
     assert_eq!(version.number.get(), 2);
-    assert_eq!(
-        repo.manifest_at(version.number).unwrap(),
-        manifest
-    );
+    assert_eq!(repo.manifest_at(version.number).unwrap(), manifest);
     assert_eq!(repo.publication(&operation).unwrap(), Some(receipt.clone()));
     publication_settled(&rt, &repo, &layer);
     let errors = publication_read_only(&view);
