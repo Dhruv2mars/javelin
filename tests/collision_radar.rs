@@ -301,7 +301,8 @@ fn check_detects_a_damaged_index() {
     raw.execute("DELETE FROM layer_paths", []).unwrap();
     assert_eq!(repo.check().unwrap_err().code(), "corrupt_repository");
     raw.execute(
-        "INSERT INTO layer_paths(path,layer,kind,content) VALUES('y','ghost',NULL,NULL)",
+        "INSERT INTO layer_paths(path,layer,kind,content,checkpoint) \
+         SELECT 'y','ghost',NULL,NULL,checkpoint FROM layer_heads LIMIT 1",
         [],
     )
     .unwrap();

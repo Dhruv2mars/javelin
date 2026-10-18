@@ -248,3 +248,79 @@ fn radar_warns_at_checkpoint_and_clears_after_discard() {
     assert_eq!(refused.status.code(), Some(2));
     ok(root.path(), &["check", "--json"]);
 }
+
+#[test]
+fn checkpoint_records_harness_provenance_and_blame_reports_it() {
+    use javelin::{LayerId, LayerState, OperationId, PublishAttribution, Repository};
+    let root = TempDir::new().unwrap();
+    let repo = root.path().to_str().unwrap();
+    ok(root.path(), &["init", "--json"]);
+    ok(root.path(), &["layer", "create", "work", "--json"]);
+    let dir = root.path().join("dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("f"), "one\ntwo\n").unwrap();
+    let path = dir.to_str().unwrap();
+    // The harness sets the environment; a flag overrides one field.
+    let output = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .current_dir(root.path())
+        .args(["checkpoint", "work", "--path", path, "--repo", repo])
+        .args(["--session", "s-42", "--json"])
+        .env("JAVELIN_AGENT", "claude-code/opus")
+        .env("JAVELIN_SESSION", "ignored")
+        .env("JAVELIN_REFERENCE", "tool-7")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+
+    let mut native = Repository::open(root.path()).unwrap();
+    let LayerState::Active { head } = native
+        .layer_state(&LayerId::parse("work").unwrap())
+        .unwrap()
+    else {
+        panic!()
+    };
+    native
+        .publish_layer(
+            &OperationId::parse("publish").unwrap(),
+            &head,
+            &PublishAttribution::Human,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+    let blame = ok(root.path(), &["blame", "f", "--json"]);
+    let origin = &blame["blame"]["origin"];
+    assert_eq!(origin["version"]["number"], 1);
+    assert_eq!(origin["layer"], "work");
+    assert_eq!(
+        origin["provenance"],
+        serde_json::json!({"actor": "agent", "agent": "claude-code/opus", "session": "s-42", "reference": "tool-7"})
+    );
+    let lines = ok(root.path(), &["blame", "f", "--lines", "--json"]);
+    assert_eq!(lines["lines"]["lines"][1]["text"], "two");
+    let text = invoke(root.path(), &["blame", "f", "--lines"]);
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        text.contains("claude-code/opus session s-42 ref tool-7"),
+        "{text}"
+    );
+    let text = String::from_utf8(invoke(root.path(), &["blame", "f"]).stdout).unwrap();
+    assert!(
+        text.starts_with("\"f\" last changed in World 1 Layer work"),
+        "{text}"
+    );
+    let missing = ok(root.path(), &["blame", "nope", "--json"]);
+    assert!(missing["blame"].is_null());
+    let bad = invoke(
+        root.path(),
+        &[
+            "checkpoint",
+            "work",
+            "--path",
+            path,
+            "--actor",
+            "robot",
+            "--json",
+        ],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+}
