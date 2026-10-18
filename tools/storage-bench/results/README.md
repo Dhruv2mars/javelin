@@ -47,6 +47,35 @@ operations. Native warm medians/p95s: A-tuned 18.406/20.348s, B-clone
 7.768/9.604s for A and 32.233/33.827s for B. Exact samples/order:
 [summary](apfs-native-round3.summary.json), [tables](apfs-native-round3.md).
 
+Image disk controls: [summary](apfs-image-round3.summary.json),
+[tables](apfs-image-round3.md). Wall time 2797.66s, no paused operations. All 69
+saved snapshots have at least five equal readings spanning at least two seconds.
+The standalone tree is 987,992,064 bytes median / 988,176,384 p95; deletion residual
+is zero median / 4,096 bytes p95. First-repetition store+base remount drift is zero
+for both A and B. Five-allocation medians/p95s: A 2.537457/2.549504× logical;
+B 1.476355/1.476761× logical. B/allocated-standalone-tree is 1.042× (context).
+
+```sh
+rtk proxy /usr/bin/time -p tools/storage-bench/target/release/storage-bench --dir /Volumes/jbench-r3/disk --files 100000 --reps 5 --disk-only --stores A-tuned/durable,B/durable --page-size 4096 --remount-cmd /tmp/jbench-r3-remount.sh --label 'APFS isolated 30GiB sparse image; round3 sustained plateau and remount control' --json /Users/dhruv2mars/.local/share/javelin-storage-bench/round3/apfs-image-round3.json
+```
+
+Fresh checkpoint/kill supplement: [summary](apfs-extras-round3.summary.json),
+[tables](apfs-extras-round3.md). Wall time 319.05s. All three 20-repetition
+store-cost proxies are retained. Sparse with-checkpoint medians/p95s are
+5.894/8.275ms for A-tuned and 4.339/48.711ms for B (median ratio 0.736×).
+Full-manifest proxy is 68.965/97.220ms versus 94.820/196.717ms (1.375×).
+Neither verifies the full production checkpoint path. All 55 kills pass:
+20 random + five exact SQLite mid-transaction, 20 random + five B mid-payload +
+five B pre-rename. Per-trial notes retain exact observed stages/temp lengths.
+The aggregate RNG delay list also includes unused draws for the exact-stage
+trials; use per-trial delay fields for actual waits. Raw quantiles, repetition
+coverage, all 70 local image/extras plateaus and all local summary hashes were
+independently recomputed and checked. The generated image was detached/deleted.
+
+```sh
+rtk proxy /usr/bin/time -p tools/storage-bench/target/release/storage-bench --dir /Volumes/jbench-r3/extras --files 100000 --reps 5 --extras-only --label 'APFS isolated 30GiB sparse image; round3 checkpoint store-cost proxies and exact/random kills' --json /Users/dhruv2mars/.local/share/javelin-storage-bench/round3/apfs-extras-round3.json
+```
+
 ## Historical round-1 image/context cohorts
 
 

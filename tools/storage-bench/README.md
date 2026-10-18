@@ -1,104 +1,142 @@
-# Storage bench (not product code)
+# Storage bench (benchmark code only)
 
-Run on a dedicated scratch filesystem, with a path that does **not** yet exist:
+Native APFS decision timings, from the checkout root (fresh scratch path):
 
 ```sh
-cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
-  --dir /mnt/scratch/run --files 1000,10000,100000 --reps 5 --label 'btrfs loop image' \
-  --drop-caches-cmd "sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'" \
-  --json out.json
+rtk proxy cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
+  --dir /tmp/jbench-native-decision --files 100000 --reps 5 --decision-only \
+  --label 'native APFS internal SSD, warm only' --json /tmp/apfs-native.json
 ```
 
-Tables print to stdout. `out.json` contains all samples, machine details, corpus
-fingerprints and notes; `out.md` contains the tables. Both update after each
-measurement, preserving partial output on failure. Timed operations use five
-repetitions, except the explicitly limited real-store 100k ingest. The 100k run
-also measures 10-edit store commits with 20 repetitions per variant, and kills
-20 writers per durable store. `--extras-only` repeats those additional decision
-measurements without rerunning the core matrix. Disk snapshots recreate store/base/Layer allocations for every repetition; every
-materialization also records its allocation delta. `--disk-only` repeats just those
-allocation cases, and `--page-size 4096` (or 16384) fixes the pilot choice for a
-repeat run. `--ingest-only` repeats fresh-store ingest with all repetitions,
-skipping materialization, allocation and checkpoint cases. SQLite uses a closed
-byte-identical seed in a temporary directory outside
-the measured scratch directory; B is freshly ingested through its actual write
-path. Seeds are removed on success.
-`--reps` must be at least five. `--stores A-real` (or a comma-separated list of
-exact store/policy labels) restricts core cases in a repeat run. The additional
-100k decision measurements always compare all three required durable stores. `--real10k-ms MS` supplies an
-already-measured real-store 10k median when repeating only 100k; this is recorded
-in the invocation. If the projected 100k real ingest exceeds 15 minutes, it is
-extrapolated and the real schema is batch-seeded outside timing for API read and
-materialization context. This setup is explicitly distinct from production ingest. Omit the cache hook to mark cold cases unmeasured.
-The hook runs outside timings and must fail if it cannot reset the cache. The
-benchmark refuses an existing scratch directory and removes its generated data on
-success. On failure, inspect and remove that scratch directory and any
-`temp_dir/javelin-storage-seed-<pid>` left by this process.
+This runs four matched ingest cases (A-tuned FULL/OFF, B fsync/none), rotating
+case order every repetition, then rotates A-tuned read/write, B-clone and B-copy
+materializations. All matched decision cases use 4KiB SQLite pages and SELECT,
+without a pilot-dependent choice. `decision-order` rows record every repetition.
+`decision/*` rows are the timing evidence for the decision. The broader matrix's
+sequential cohorts remain context and must not replace the matched cohort.
+Warm setup reads the entire source. Each case has a common sync plus two-second
+boundary. On an isolated filesystem this also requires a sustained allocation
+plateau; native system-volume statfs deltas are diagnostic because unrelated
+writers prevent exclusive accounting. Cold timing is explicitly unmeasured
+without a working cache-reset hook. No fallback is hidden in B-clone.
 
-APFS example (image is outside the repository):
+For the complete matrix, prepare and mount a **dedicated** scratch filesystem
+first. On Linux, run the measurement unprivileged with sudo available only for
+cache drop and the read-only btrfs accounting command:
 
 ```sh
-hdiutil create -size 30g -fs APFS -type SPARSE -volname jbench-storage /tmp/jbench-storage.sparseimage
-hdiutil attach -nobrowse /tmp/jbench-storage.sparseimage
-cat > /tmp/storage-cache-reset.sh <<'SH'
+rtk proxy cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
+  --dir /mnt/storage-bench/run --files 1000,10000,100000 --reps 5 \
+  --label 'btrfs dedicated loop image' \
+  --drop-caches-cmd "sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'" \
+  --json /tmp/btrfs.json
+rtk proxy python3 tools/storage-bench/summarize.py /tmp/btrfs.json
+```
+
+The full run includes matched decision cohorts, the real Repository API context,
+five independent allocations of store/base/one/five Layers, incremental changes,
+reads, LRU eviction, all three checkpoint store-cost proxies (20 repetitions each)
+and killed writers. The Linux workflow builds and runs the same command on btrfs,
+XFS (`reflink=1`) and ext4, with 16GiB loop images. It records runner/kernel/CPU,
+distro, formatter versions and machine.txt in each artifact. The workflow does
+not cancel an active run on push and has no performance acceptance gate.
+
+Output JSON retains raw samples, exact machine/argv, order rows and accounting
+readings. Markdown retains per-case sample counts, median/p95/p99 and notes.
+Both update after every row, preserving partial results. `summarize.py` creates a
+summary JSON of all case statistics, sample counts and SHA-256/location of the raw
+file. Commit summaries and Markdown; retain raw JSON in CI artifacts or the
+recorded local archive. Git history is not rewritten to remove earlier raw files.
+Nearest-rank quantiles are used; p95 is the maximum for five repetitions.
+
+Other modes/options:
+
+| Option | Meaning |
+| --- | --- |
+| `--decision-only` | Rotated matched ingest/materialization cohort; ignores `--stores` and uses `--dir`, not `--ingest-dir` |
+| `--kill-only` | 20 randomized kills per durable store, plus five SQLite mid-transaction, five B mid-payload and five B pre-rename kills |
+| `--extras-only` | Checkpoint store-cost proxies plus killed writers; requires at least 1,000 files |
+| `--disk-only` | Standalone allocation/deletion controls and independent disk states, without timing the broad operation matrix |
+| `--ingest-only` | Legacy sequential ingest context; use `--decision-only` for matched comparisons |
+| `--stores A-tuned/durable,B/durable` | Select broad matrix/disk cases; does not restrict matched decision or extras cohorts |
+| `--page-size 4096` | Fix broad matrix page size; otherwise a 4/16KiB pilot chooses it |
+| `--ingest-dir NEW_PATH` | Broad matrix only: ingest all stores on a separate native volume, then seed measured stores outside timings |
+| `--real10k-ms MS` | Recorded real-API 10k baseline for a 100k-only context run; projected ingest over 15 minutes is explicitly extrapolated |
+| `--remount-cmd COMMAND` | One 100k store+base remount control per selected store, at the first disk repetition |
+
+At least five repetitions and 100 files are required. Existing scratch paths are
+refused. Modes should be used separately. Successful runs delete only generated
+scratch data. On failure inspect the fresh scratch path and any
+`temp_dir/javelin-storage-seed-<pid>` before removing them. A-real's 100k ingest is
+budgeted separately; an aborted or extrapolated case never becomes a measured
+throughput result. Untimed real-schema SQL seeding provides actual API read
+context, not production ingestion evidence.
+
+APFS disk/remount control setup (image outside the repository):
+
+```sh
+rtk proxy hdiutil create -size 30g -fs APFS -type SPARSE -volname jbench-image /tmp/jbench-image.sparseimage
+rtk proxy hdiutil attach -nobrowse /tmp/jbench-image.sparseimage
+rtk proxy sh -c 'cat > /tmp/jbench-remount.sh <<"SH"
 #!/bin/sh
 set -eu
-hdiutil detach /Volumes/jbench-storage >/dev/null
-hdiutil attach -nobrowse /tmp/jbench-storage.sparseimage >/dev/null
-SH
-chmod +x /tmp/storage-cache-reset.sh
-cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
-  --dir /Volumes/jbench-storage/run --files 1000,10000,100000 --reps 5 \
-  --label 'APFS (30 GB sparse disk image, internal SSD backing)' --ingest-dir /tmp/jbench-native-ingest \
-  --drop-caches-cmd /tmp/storage-cache-reset.sh --json out.json
-hdiutil detach /Volumes/jbench-storage
-rm /tmp/jbench-storage.sparseimage /tmp/storage-cache-reset.sh
+hdiutil detach /Volumes/jbench-image >/dev/null
+hdiutil attach -nobrowse /tmp/jbench-image.sparseimage >/dev/null
+SH'
+rtk proxy chmod +x /tmp/jbench-remount.sh
+rtk proxy cargo run --release --locked --manifest-path tools/storage-bench/Cargo.toml -- \
+  --dir /Volumes/jbench-image/run --files 100000 --reps 5 --disk-only \
+  --stores A-tuned/durable,B/durable --page-size 4096 \
+  --remount-cmd /tmp/jbench-remount.sh --label 'APFS isolated image, disk control' \
+  --json /tmp/apfs-image.json
+rtk proxy hdiutil detach /Volumes/jbench-image
 ```
 
-`--ingest-dir` is optional. The committed run measures **all** stores' ingest
-on native internal-SSD APFS, then seeds the image outside timings: byte-copy closed, checkpointed SQLite
-files; insert B through its actual write path in corpus order with the same policy. Materialization, disk and eviction are
-measured on the image. Ingest comparisons are native-to-native; materialization
-comparisons are image-to-image. This keeps the real API's fullfsync timings on
-native SSD while isolating disk accounting and resetting the volume cache.
-The image and native results are not interchangeable.
-Linux CI omits this flag and measures all operations on its loop filesystem.
+The same hook can supply `--drop-caches-cmd` for cold-volume context in a full run.
+Close other handles to the image first. Detach/re-attach resets volume cache;
+host image-backing and SSD caches can remain warm. Image timings are not native
+SSD timings. Native cold timing needs a separate working reset mechanism.
 
-Close Finder windows and other handles to the image before starting. Detach and
-re-attach discards the mounted volume's filesystem cache; the host's image-backing
-cache may remain warm. This is a cold **volume** measurement, not an SSD hardware
-cache flush. Random-read cold-start sequences reset once per 1,000 reads and then
-warm; they are not 1,000 independently cold reads. Warm cases explicitly read all
-corpus objects first. The in-memory corpus itself remains allocated in both cases.
+A-tuned preserves production object columns, constraints and immutable triggers,
+but uses WAL, 64MiB cache, a 2GiB mmap limit and 1,000-object batches. Matched durable
+means SQLite FULL/fullfsync OFF versus ordinary fsync of every B temp before
+rename, then touched fanouts and tmp directory once per batch. NONE means SQLite
+OFF versus no fsync. Setup and final WAL checkpoint are included in ingest.
+A-real retains its actual, stronger Apple fullfsync behavior as context. There is
+one writer. No power-loss durability claim follows from process-kill trials.
 
-A-real is the actual `Repository` API, including its stronger Apple fullfsync and
-read-back hash verification. It is context, not the matched-durability baseline.
-A-tuned has the production `objects` columns, constraints and immutable triggers,
-WAL, a 64 MiB cache, 2 GiB mmap limit and batches of 1,000. A pilot chooses 4/16 KiB
-pages and SELECT/incremental blob reads. Durable means SQLite FULL (fullfsync OFF)
-versus file fsync before rename and one fsync per touched directory per batch.
-None means SQLite OFF versus no file/directory fsync. Files use real Javelin blob
-IDs, 256 fanouts and read-only object files. Schema creation uses the selected
-SQLite policy too; the harness checks its effective page size, synchronous mode
-and WAL mode. There is one writer.
+B uses canonical Javelin blob IDs, 256 fanouts and 0444 objects, publishing through
+temp/write/chmod/fsync/rename. Materialization includes directories and writable
+permissions, excluding sync, store-handle opening, verification and cleanup.
+B-copy loops over read/write; it never uses a copy API that might silently reflink.
+Per-file APFS clone does not stat its source to test whether it is a directory.
+Directory cloning of an already materialized base is a separate Layer context.
 
-Materialization timings include directory creation and writable file permissions,
-but exclude store-handle opening, sync, correctness checks and cleanup. B-copy uses explicit read/write;
-B-clone never falls back. Linux requires FIEMAP shared extents on sampled files;
-APFS requires clone allocation to be less than half the explicit-copy control.
-The early SIGKILL test interrupts one deterministic pre-rename boundary. The
-100k decision supplement also kills actual ingest loops at 20 pseudorandom delays
-for each of B durable and A-tuned durable (including 2 MiB payloads), verifies every final hash and SQLite
-integrity, and counts/sweeps leftover temps. Neither is a power-loss test.
-Checkpoint cases use an actual Layer clone of a live base (explicit copy on
-ext4), append/rewrite 10 files, then read/hash and commit their blobs; additional
-variants include a sparse-checkpoint-shaped SQLite row and a real full-manifest
-canonical-byte SQLite row. Both designs retain metadata in SQLite. These isolate
-store cost and exclude scanning, serialization, graph validation, cache saving
-and head publication; the full-manifest variant is a conservative proxy because
-current capture writes a sparse checkpoint. A metadata-only walk is reported
-alongside for scale. LRU eviction uses a recorded deterministic touch sequence and
-reports both DELETE/unlink and actual incremental-vacuum reclamation.
+Disk snapshots sync and require five equal readings at 500ms intervals (at least
+two seconds), with a 60-second timeout; raw readings are saved. On btrfs, the
+primary number sums `btrfs filesystem usage --raw` **used** Data, Metadata and
+System bytes, multiplying DUP/RAID1 by two. GlobalReserve is already metadata and
+is not counted twice. Unsupported profiles fail explicitly. Statfs is retained as
+a diagnostic; APFS/XFS/ext4 use statfs allocation deltas. Standalone explicit-write
+trees and deletion residuals control accounting and supply the separately labelled
+allocated-tree denominator. Official bounds always divide by logical corpus bytes.
+FIEMAP inspects **every file**, including tiny ones, reports inline/shared/unshared/
+unmapped payload bytes and file counts, and paginates all extents. Inline data is
+counted as copied payload, so an inline btrfs clone cannot satisfy zero file bytes.
 
-See [the decision and results](../../docs/storage-benchmark.md). Linux CI uses
-three parallel jobs, each with a dedicated 16 GiB loop image, including ext4.
+Kill injection is inside the benchmark's actual ingestion path and is enabled
+only for child fault trials. B pauses after half a 2MiB payload and after complete
+file fsync before rename; SQLite pauses after ten inserts before commit. The parent
+waits for each exact stage, SIGKILLs, records observed stage and temp lengths, checks
+all visible hashes and SQLite integrity, and sweeps temps. Randomized trials are
+retained as additional coverage. Timing paths do not enable those hooks.
+
+Checkpoint rows are **store-cost proxies**: ten file reads/hashes and blob commits,
+optionally plus a sparse-checkpoint-shaped or full-manifest SQLite row. Tuned blobs
+and metadata share one transaction; real capture commits blobs, saves the cache,
+then commits checkpoint/head separately. Scan, serialization, cache persistence,
+graph validation and head publication are excluded. These rows cannot verify the
+full C2 checkpoint criterion. Both medians and tails remain available.
+
+See [decision and results](../../docs/storage-benchmark.md) and
+[run provenance](results/README.md).
