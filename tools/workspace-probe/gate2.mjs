@@ -268,6 +268,148 @@ try {
     return fs.readdirSync(shims).filter(n => !n.startsWith('invoked-'));
   });
 
+  // Shared data, measured by free-space deltas against a byte-copy control on the same volume.
+  if (want('sharing') || want('crash')) {
+    const bulkRepo = await seed('bulk', true);
+    const bulkBytes = bulkFiles * (2 << 20);
+    // The first Layer of a World also materializes its base, once; measure Layers after it.
+    const warm = await S.create(bulkRepo, 'bulk-0');
+    const worldTree = tree(warm.path);
+    // Reclaim all trash now, so no deferred reclaim frees space inside a measured create.
+    await ok(['workspace', 'recover', '--repo', bulkRepo]);
+    // No deletions between readings: ReFS frees deleted space lazily, and a free landing
+    // inside a measured step would hide a copy. The byte-copy control therefore runs last.
+    const f0 = await stableFree();
+    const l1 = await S.create(bulkRepo, 'bulk-1');
+    const f1 = await stableFree();
+    const textArgv = argvFor(S.createArgs(bulkRepo, 'bulk-2'));
+    const textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
+    const f2 = await stableFree();
+    fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
+    const fe = await stableFree();
+    await S.capture(bulkRepo, 'bulk-1');
+    const fc = await stableFree();
+    const control = join(root, 'control-copy');
+    fs.mkdirSync(control);
+    for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
+    const fk = await stableFree();
+    fs.rmSync(control, { recursive: true });
+    const mb = n => Math.round(n / 1048576);
+    const deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
+    report.disk = { strategy: l1.strategy, deltas, base: find(warm.r.json, k => k === 'base', () => true) };
+    await check('sharing', 'byte-copy-control-is-measurable', () => {
+      assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
+      const rose = Object.entries(deltas).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * mb(bulkBytes));
+      assert(rose.length === 0, `free space rose during measured steps (${rose.map(([k, v]) => `${k} ${v}`).join(', ')}); a concurrent free could hide a copy`);
+      return deltas;
+    });
+    await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
+      if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
+      else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
+      return deltas;
+    });
+    await check('sharing', 'edit-and-capture-stay-sparse', () => {
+      assert(f2 - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(f2 - fe)} MB`);
+      assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
+      return deltas;
+    });
+    await check('sharing', 'strategy-reported', () => {
+      assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
+      const copy = /copy/i.test(l1.strategy);
+      assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
+      const text = `${textCreate.stdout}${textCreate.stderr}`;
+      assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
+      if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
+      return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
+    });
+
+    // Crash safety: kill each operation at spread points across its own measured duration.
+    async function killed(args, delay, cwd) {
+      const run = launch(args, cwd);
+      let exited = false; run.exited.then(() => { exited = true; });
+      await sleep(delay);
+      const landed = !exited;
+      if (landed) run.child.kill('SIGKILL');
+      await run.exited; await Promise.race([run.closed, sleep(2000)]);
+      report.commands.push({ args, killedAfterMs: delay, landed, code: run.result.code, signal: run.result.signal });
+      return landed;
+    }
+    const points = d => [0.05, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(f => Math.max(1, Math.round(d * f)));
+    const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
+    const bulkWorld = await S.head(bulkRepo);
+    await check('crash', 'interrupted-create-recovers', async () => {
+      const duration = await timed(S.createArgs(bulkRepo, 'time-create', bulkWorld));
+      await S.discard(bulkRepo, 'time-create');
+      let landed = 0;
+      for (const [i, delay] of points(duration).entries()) {
+        const id = `kill-create-${i}`;
+        if (await killed(S.createArgs(bulkRepo, id, bulkWorld), delay)) landed++;
+        // The next command sees either no Layer, or one whose directory is complete or absent.
+        const p = await S.path(bulkRepo, id);
+        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after an interrupted create`);
+        sameTree(worldTree, tree((await S.create(bulkRepo, id, bulkWorld)).path), `retried create ${id}`);
+        await S.discard(bulkRepo, id);
+      }
+      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms create`);
+      return { durationMs: duration, landed };
+    });
+    await check('crash', 'interrupted-checkpoint-recovers', async () => {
+      const k = await S.create(bulkRepo, 'kill-checkpoint');
+      const rewrite = n => { for (let i = 1; i < Math.min(9, bulkFiles); i++) fs.writeFileSync(join(k.path, 'bulk', `blob-${i}.bin`), randomBytes(2 << 20)); fs.writeFileSync(join(k.path, 'round.txt'), `${n}\n`); };
+      rewrite(-2); await S.capture(bulkRepo, 'kill-checkpoint');
+      rewrite(-1);
+      const duration = await timed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), k.path);
+      let landed = 0;
+      for (const [i, delay] of points(duration).slice(0, 5).entries()) {
+        rewrite(i);
+        if (await killed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), delay, k.path)) landed++;
+        const snap = await snapshot(bulkRepo, await S.capture(bulkRepo, 'kill-checkpoint'));
+        sameTree(tree(k.path), snap, `checkpoint after interrupted capture ${i}`);
+      }
+      await S.discard(bulkRepo, 'kill-checkpoint');
+      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms checkpoint`);
+      return { durationMs: duration, landed };
+    });
+    await check('crash', 'interrupted-discard-recovers-on-next-command', async () => {
+      const t = await S.create(bulkRepo, 'time-discard');
+      const duration = await timed(S.discardArgs(bulkRepo, 'time-discard'));
+      assert(!fs.existsSync(t.path), 'discarded Layer path still exists');
+      let landed = 0;
+      const outcomes = [];
+      for (const [i, delay] of points(duration).entries()) {
+        const id = `kill-discard-${i}`, marker = `gate2-marker-${randomBytes(6).toString('hex')}`;
+        const { path } = await S.create(bulkRepo, id);
+        fs.writeFileSync(join(path, marker), 'marker\n');
+        const before = tree(path);
+        if (await killed(S.discardArgs(bulkRepo, id), delay)) landed++;
+        // The next command finishes or undoes the discard: an active Layer is intact; a
+        // discarded one has no directory, and its data is reclaimed.
+        await S.path(bulkRepo, id);
+        if (await S.active(bulkRepo, id)) {
+          sameTree(before, tree(path), `Layer ${id} still active after an interrupted discard`);
+          await S.discard(bulkRepo, id);
+          outcomes.push('rolled-back');
+        } else {
+          assert(!fs.existsSync(path), `Layer ${id} is discarded but its directory is still at ${path} after the next command`);
+          outcomes.push('rolled-forward');
+        }
+        // Only create, open, discard and recover take the store lock and reclaim trash
+        // (bounded); the next of those, here a fresh Layer, must reclaim this one.
+        await S.create(bulkRepo, `${id}-next`);
+        await S.discard(bulkRepo, `${id}-next`);
+        const left = [];
+        // Sealed World bases are unreadable (mode 000) and hold only World data.
+        const entries = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch (e) { if (e.code === 'EACCES') return []; throw e; } };
+        (function search(d) { for (const e of entries(d)) { if (e.name === marker) left.push(join(d, e.name)); else if (e.isDirectory() && !e.isSymbolicLink()) search(join(d, e.name)); } })(root);
+        assert(left.length === 0, `discarded data not reclaimed by the next reclaiming workspace command: ${left.join(', ')}`);
+      }
+      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms discard`);
+      return { durationMs: duration, landed, outcomes };
+    });
+    await check('crash', 'repository-integrity-after-interruptions', () => S.integrity(bulkRepo).then(() => true));
+    fs.rmSync(join(root, 'bulk-fixture'), { recursive: true });
+  }
+
   const repo = await seed('small', false);
   const world = await S.head(repo);
   const a = await S.create(repo, 'layer-a'), b = await S.create(repo, 'layer-b');
@@ -481,145 +623,6 @@ try {
       return out;
     });
     await check('refusals', 'repository-integrity-after-refusals', () => S.integrity(portable).then(() => true));
-  }
-
-  // Shared data, measured by free-space deltas against a byte-copy control on the same volume.
-  if (want('sharing') || want('crash')) {
-    const bulkRepo = await seed('bulk', true);
-    const bulkBytes = bulkFiles * (2 << 20);
-    // The first Layer of a World also materializes its base, once; measure Layers after it.
-    const warm = await S.create(bulkRepo, 'bulk-0');
-    const worldTree = tree(warm.path);
-    // Reclaim all trash now, so no deferred reclaim frees space inside a measured create.
-    await ok(['workspace', 'recover', '--repo', bulkRepo]);
-    const f0 = await stableFree();
-    const l1 = await S.create(bulkRepo, 'bulk-1');
-    const f1 = await stableFree();
-    const control = join(root, 'control-copy');
-    fs.mkdirSync(control);
-    for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
-    const f2 = await stableFree();
-    fs.rmSync(control, { recursive: true });
-    const fb = await stableFree();
-    fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
-    const fe = await stableFree();
-    await S.capture(bulkRepo, 'bulk-1');
-    const fc = await stableFree();
-    const textArgv = argvFor(S.createArgs(bulkRepo, 'bulk-2'));
-    const textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
-    const f3 = await stableFree();
-    const mb = n => Math.round(n / 1048576);
-    const deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(fc - f3), controlCopyMB: mb(f1 - f2), editOneFileMB: mb(fb - fe), captureMB: mb(fe - fc) };
-    report.disk = { strategy: l1.strategy, deltas, base: find(warm.r.json, k => k === 'base', () => true) };
-    await check('sharing', 'byte-copy-control-is-measurable', () => {
-      assert(f1 - f2 >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy freed only ${mb(f1 - f2)} MB; free-space deltas are not trustworthy here`);
-      return deltas;
-    });
-    await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
-      if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && fc - f3 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(fc - f3)} MB for ${mb(bulkBytes)} MB of unchanged data`);
-      else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'edit-and-capture-stay-sparse', () => {
-      assert(fb - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(fb - fe)} MB`);
-      assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'strategy-reported', () => {
-      assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
-      const copy = /copy/i.test(l1.strategy);
-      assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
-      const text = `${textCreate.stdout}${textCreate.stderr}`;
-      assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
-      if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
-      return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
-    });
-
-    // Crash safety: kill each operation at spread points across its own measured duration.
-    async function killed(args, delay, cwd) {
-      const run = launch(args, cwd);
-      let exited = false; run.exited.then(() => { exited = true; });
-      await sleep(delay);
-      const landed = !exited;
-      if (landed) run.child.kill('SIGKILL');
-      await run.exited; await Promise.race([run.closed, sleep(2000)]);
-      report.commands.push({ args, killedAfterMs: delay, landed, code: run.result.code, signal: run.result.signal });
-      return landed;
-    }
-    const points = d => [0.05, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(f => Math.max(1, Math.round(d * f)));
-    const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
-    const bulkWorld = await S.head(bulkRepo);
-    await check('crash', 'interrupted-create-recovers', async () => {
-      const duration = await timed(S.createArgs(bulkRepo, 'time-create', bulkWorld));
-      await S.discard(bulkRepo, 'time-create');
-      let landed = 0;
-      for (const [i, delay] of points(duration).entries()) {
-        const id = `kill-create-${i}`;
-        if (await killed(S.createArgs(bulkRepo, id, bulkWorld), delay)) landed++;
-        // The next command sees either no Layer, or one whose directory is complete or absent.
-        const p = await S.path(bulkRepo, id);
-        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after an interrupted create`);
-        sameTree(worldTree, tree((await S.create(bulkRepo, id, bulkWorld)).path), `retried create ${id}`);
-        await S.discard(bulkRepo, id);
-      }
-      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms create`);
-      return { durationMs: duration, landed };
-    });
-    await check('crash', 'interrupted-checkpoint-recovers', async () => {
-      const k = await S.create(bulkRepo, 'kill-checkpoint');
-      const rewrite = n => { for (let i = 1; i < Math.min(9, bulkFiles); i++) fs.writeFileSync(join(k.path, 'bulk', `blob-${i}.bin`), randomBytes(2 << 20)); fs.writeFileSync(join(k.path, 'round.txt'), `${n}\n`); };
-      rewrite(-2); await S.capture(bulkRepo, 'kill-checkpoint');
-      rewrite(-1);
-      const duration = await timed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), k.path);
-      let landed = 0;
-      for (const [i, delay] of points(duration).slice(0, 5).entries()) {
-        rewrite(i);
-        if (await killed(S.checkpointArgs(bulkRepo, 'kill-checkpoint'), delay, k.path)) landed++;
-        const snap = await snapshot(bulkRepo, await S.capture(bulkRepo, 'kill-checkpoint'));
-        sameTree(tree(k.path), snap, `checkpoint after interrupted capture ${i}`);
-      }
-      await S.discard(bulkRepo, 'kill-checkpoint');
-      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms checkpoint`);
-      return { durationMs: duration, landed };
-    });
-    await check('crash', 'interrupted-discard-recovers-on-next-command', async () => {
-      const t = await S.create(bulkRepo, 'time-discard');
-      const duration = await timed(S.discardArgs(bulkRepo, 'time-discard'));
-      assert(!fs.existsSync(t.path), 'discarded Layer path still exists');
-      let landed = 0;
-      const outcomes = [];
-      for (const [i, delay] of points(duration).entries()) {
-        const id = `kill-discard-${i}`, marker = `gate2-marker-${randomBytes(6).toString('hex')}`;
-        const { path } = await S.create(bulkRepo, id);
-        fs.writeFileSync(join(path, marker), 'marker\n');
-        const before = tree(path);
-        if (await killed(S.discardArgs(bulkRepo, id), delay)) landed++;
-        // The next command finishes or undoes the discard: an active Layer is intact; a
-        // discarded one has no directory, and its data is reclaimed.
-        await S.path(bulkRepo, id);
-        if (await S.active(bulkRepo, id)) {
-          sameTree(before, tree(path), `Layer ${id} still active after an interrupted discard`);
-          await S.discard(bulkRepo, id);
-          outcomes.push('rolled-back');
-        } else {
-          assert(!fs.existsSync(path), `Layer ${id} is discarded but its directory is still at ${path} after the next command`);
-          outcomes.push('rolled-forward');
-        }
-        // Only create, open, discard and recover take the store lock and reclaim trash
-        // (bounded); the next of those, here a fresh Layer, must reclaim this one.
-        await S.create(bulkRepo, `${id}-next`);
-        await S.discard(bulkRepo, `${id}-next`);
-        const left = [];
-        // Sealed World bases are unreadable (mode 000) and hold only World data.
-        const entries = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch (e) { if (e.code === 'EACCES') return []; throw e; } };
-        (function search(d) { for (const e of entries(d)) { if (e.name === marker) left.push(join(d, e.name)); else if (e.isDirectory() && !e.isSymbolicLink()) search(join(d, e.name)); } })(root);
-        assert(left.length === 0, `discarded data not reclaimed by the next reclaiming workspace command: ${left.join(', ')}`);
-      }
-      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms discard`);
-      return { durationMs: duration, landed, outcomes };
-    });
-    await check('crash', 'repository-integrity-after-interruptions', () => S.integrity(bulkRepo).then(() => true));
-    fs.rmSync(join(root, 'bulk-fixture'), { recursive: true });
   }
 
   await check('process', 'no-javelin-process-between-commands', () => {
