@@ -1,4 +1,5 @@
-//! Whole captured-Layer publication in the repository's single SQLite boundary.
+//! Whole captured-Layer publication: prepare from a read snapshot, then advance
+//! the World with a short compare-and-swap write transaction.
 use std::collections::BTreeSet;
 
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -10,7 +11,8 @@ use crate::{
     domain::ObjectKind,
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        decode_id, history_in, insert_object, manifest_in, read_object, validate_state_in,
+        decode_id, insert_object, manifest_in, read_object, validate_format, version_in,
+        world_head_in,
     },
 };
 
@@ -42,6 +44,7 @@ CREATE TABLE publications (
 ) STRICT;
 CREATE UNIQUE INDEX publications_one_success_per_layer
     ON publications(layer) WHERE outcome=1;
+CREATE INDEX publications_layer ON publications(layer);
 ";
 
 /// Caller-declared attribution, not authenticated identity. Context is one opaque Blob.
@@ -95,9 +98,16 @@ impl PublicationReceipt {
 
 impl Repository {
     /// Accepts the whole exact latest Active captured checkpoint. Compatible World
-    /// advances compose without changing its immutable base. The guard sees the
-    /// locked current World and exact composed candidate before any new writes.
-    /// Refusal reserves no operation; durable retries never rerun the guard.
+    /// advances compose without changing its immutable base.
+    ///
+    /// Preparation reads one snapshot without the write lock: it validates only the
+    /// records this advance depends on and composes the candidate. A short write
+    /// transaction then rechecks the operation ID, the World head and the Layer
+    /// state, and advances atomically. A moved World or Layer re-prepares, so
+    /// compatible concurrent Publishes rebase. The guard runs inside that short
+    /// transaction and sees the locked current World and exact composed candidate
+    /// before any new writes; it must stay fast. Refusal reserves no operation;
+    /// durable retries never rerun the guard. Full history checks live in `check`.
     pub fn publish_layer<F>(
         &mut self,
         operation: &OperationId,
@@ -108,44 +118,48 @@ impl Repository {
     where
         F: FnOnce(&WorldVersion, &Manifest) -> Result<()>,
     {
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let history = validate_state_in(&tx)?;
-        let rows = rows_in(&tx)?;
-        if let Some(row) = rows.iter().find(|r| r.id == operation.as_str()) {
-            let receipt = receipt_in(&tx, row, &rows, &history)?;
-            if receipt.expected != *expected || receipt.attribution != *attribution {
-                return Err(Error::OperationIdReused(operation.clone()));
+        let mut guard = Some(guard);
+        #[cfg(test)]
+        let mut first = true;
+        loop {
+            let snapshot = self.conn.unchecked_transaction()?;
+            let plan = prepare_in(&snapshot, operation, expected, attribution)?;
+            snapshot.commit()?;
+            #[cfg(test)]
+            if std::mem::take(&mut first) {
+                crate::repository::test_boundary("publish_prepared");
             }
-            tx.commit()?;
-            return Ok(receipt);
-        }
-        if tx
-            .prepare("SELECT 1 FROM attempts WHERE id=?1")?
-            .exists([operation.as_str()])?
-        {
-            return Err(Error::OperationIdReused(operation.clone()));
-        }
-        verify_head(&tx, expected)?;
-        let warnings = warnings_in(&tx, attribution)?;
-        let against = history
-            .last()
-            .ok_or_else(|| corrupt("missing initial World"))?
-            .clone();
-        let actual = published_state_in(&tx, expected.layer())?
-            .unwrap_or(latest_event_state_in(&tx, expected.layer())?);
-        let outcome = if actual
-            != (LayerState::Active {
-                head: expected.clone(),
-            }) {
-            PublishOutcome::LayerStale {
-                actual: actual.clone(),
+            let plan = match plan {
+                Prepared::Replay(receipt) => return Ok(receipt),
+                Prepared::Advance(plan) => plan,
+            };
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            #[cfg(test)]
+            lock_probe::start(&tx)?;
+            if operation_exists_in(&tx, operation)?
+                || tx
+                    .prepare("SELECT 1 FROM attempts WHERE id=?1")?
+                    .exists([operation.as_str()])?
+                || world_head_in(&tx)? != plan.against
+                || layer_state_in(&tx, expected.layer())? != plan.actual
+            {
+                continue;
             }
-        } else {
-            match compose_in(&tx, expected, &against)? {
-                Err(paths) => PublishOutcome::Conflict { paths },
-                Ok(candidate) => {
+            let Plan {
+                against,
+                actual,
+                warnings,
+                composed,
+            } = plan;
+            let outcome = match composed {
+                None => PublishOutcome::LayerStale {
+                    actual: actual.clone(),
+                },
+                Some(Err(paths)) => PublishOutcome::Conflict { paths },
+                Some(Ok(candidate)) => {
+                    let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &candidate)?;
                     let manifest =
                         insert_object(&tx, ObjectKind::Manifest, &candidate.canonical_bytes())?;
@@ -167,53 +181,124 @@ impl Repository {
                         },
                     }
                 }
-            }
-        };
-        let receipt = PublicationReceipt {
-            operation: operation.clone(),
-            expected: expected.clone(),
-            attribution: attribution.clone(),
-            against,
-            warnings,
-            outcome,
-        };
-        let blob = insert_object(&tx, ObjectKind::Blob, &receipt.bytes())?;
-        let (actor, context, allow_missing) = attribution_columns(attribution);
-        let (tag, result) = match &receipt.outcome {
-            PublishOutcome::Published { version } => (1, Some(version.number.sql())),
-            PublishOutcome::Conflict { .. } => (2, None),
-            PublishOutcome::LayerStale { .. } => (3, None),
-        };
-        let observed_publication = match &actual {
-            LayerState::Published { operation, .. } => Some(operation.as_str()),
-            _ => None,
-        };
-        tx.execute("INSERT INTO publications(id,layer,expected,checkpoint,against,observed,observed_publication,attribution,context,allow_missing_trace,outcome,result,world_operation,receipt) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
-            params![operation.as_str(), expected.layer().as_str(), expected.revision() as i64,
-                expected.checkpoint().object().to_string(), receipt.against.number.sql(),
-                revision(&actual) as i64, observed_publication, actor, context, allow_missing,
-                tag, result, result.map(|_| operation.as_str()), blob.to_string()])?;
-        #[cfg(test)]
-        crate::repository::test_boundary("publish_before_commit");
-        tx.commit()?;
-        #[cfg(test)]
-        crate::repository::test_boundary("publish_after_commit");
-        Ok(receipt)
+            };
+            let receipt = PublicationReceipt {
+                operation: operation.clone(),
+                expected: expected.clone(),
+                attribution: attribution.clone(),
+                against,
+                warnings,
+                outcome,
+            };
+            let blob = insert_object(&tx, ObjectKind::Blob, &receipt.bytes())?;
+            let (actor, context, allow_missing) = attribution_columns(attribution);
+            let (tag, result) = match &receipt.outcome {
+                PublishOutcome::Published { version } => (1, Some(version.number.sql())),
+                PublishOutcome::Conflict { .. } => (2, None),
+                PublishOutcome::LayerStale { .. } => (3, None),
+            };
+            let observed_publication = match &actual {
+                LayerState::Published { operation, .. } => Some(operation.as_str()),
+                _ => None,
+            };
+            tx.execute("INSERT INTO publications(id,layer,expected,checkpoint,against,observed,observed_publication,attribution,context,allow_missing_trace,outcome,result,world_operation,receipt) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                params![operation.as_str(), expected.layer().as_str(), expected.revision() as i64,
+                    expected.checkpoint().object().to_string(), receipt.against.number.sql(),
+                    revision(&actual) as i64, observed_publication, actor, context, allow_missing,
+                    tag, result, result.map(|_| operation.as_str()), blob.to_string()])?;
+            #[cfg(test)]
+            crate::repository::test_boundary("publish_before_commit");
+            tx.commit()?;
+            #[cfg(test)]
+            lock_probe::finish(&self.conn)?;
+            #[cfg(test)]
+            crate::repository::test_boundary("publish_after_commit");
+            return Ok(receipt);
+        }
     }
 
-    /// Recovers a lost acknowledgment. Every referenced graph and receipt binding
-    /// is validated in one read snapshot; later World advances do not change it.
+    /// Recovers a lost acknowledgment. The receipt's referenced graph and bindings
+    /// are validated in one read snapshot; later World advances do not change it.
     pub fn publication(&self, operation: &OperationId) -> Result<Option<PublicationReceipt>> {
         let tx = self.conn.unchecked_transaction()?;
-        let history = validate_state_in(&tx)?;
-        let rows = rows_in(&tx)?;
-        let receipt = rows
-            .iter()
-            .find(|r| r.id == operation.as_str())
-            .map(|row| receipt_in(&tx, row, &rows, &history))
+        validate_format(&tx)?;
+        let receipt = row_in(&tx, operation)?
+            .map(|row| receipt_in(&tx, &row))
             .transpose()?;
         tx.commit()?;
         Ok(receipt)
+    }
+}
+
+enum Prepared {
+    Replay(PublicationReceipt),
+    Advance(Plan),
+}
+
+/// Everything the advance decided from one snapshot. `composed` is None when the
+/// Layer is no longer the exact Active head.
+struct Plan {
+    against: WorldVersion,
+    actual: LayerState,
+    warnings: Vec<PublishWarning>,
+    composed: Option<std::result::Result<Manifest, Vec<RepoPath>>>,
+}
+
+/// Cost scales with the Layer's own records and the composed tree, not with history.
+fn prepare_in(
+    conn: &Connection,
+    operation: &OperationId,
+    expected: &LayerHead,
+    attribution: &PublishAttribution,
+) -> Result<Prepared> {
+    validate_format(conn)?;
+    if let Some(row) = row_in(conn, operation)? {
+        let receipt = receipt_in(conn, &row)?;
+        if receipt.expected != *expected || receipt.attribution != *attribution {
+            return Err(Error::OperationIdReused(operation.clone()));
+        }
+        return Ok(Prepared::Replay(receipt));
+    }
+    if conn
+        .prepare("SELECT 1 FROM attempts WHERE id=?1")?
+        .exists([operation.as_str()])?
+    {
+        return Err(Error::OperationIdReused(operation.clone()));
+    }
+    verify_head(conn, expected)?;
+    let warnings = warnings_in(conn, attribution)?;
+    let against = world_head_in(conn)?;
+    // The head World's own receipt and this Layer's earlier receipts are what the
+    // new outcome builds on; unrelated history is left to `check`.
+    if let Some(op) = &against.operation
+        && let Some(row) = row_in(conn, op)?
+    {
+        receipt_in(conn, &row)?;
+    }
+    for row in rows_in(conn, "WHERE layer=?1", [expected.layer().as_str()])? {
+        receipt_in(conn, &row)?;
+    }
+    let actual = layer_state_in(conn, expected.layer())?;
+    let composed = if actual
+        == (LayerState::Active {
+            head: expected.clone(),
+        }) {
+        Some(compose_in(conn, expected, &against)?)
+    } else {
+        None
+    };
+    Ok(Prepared::Advance(Plan {
+        against,
+        actual,
+        warnings,
+        composed,
+    }))
+}
+
+fn layer_state_in(conn: &Connection, layer: &LayerId) -> Result<LayerState> {
+    match published_state_in(conn, layer)? {
+        Some(state) => Ok(state),
+        None => latest_event_state_in(conn, layer),
     }
 }
 
@@ -319,14 +404,24 @@ struct PublicationRow {
     receipt: String,
 }
 
-fn rows_in(conn: &Connection) -> Result<Vec<PublicationRow>> {
-    Ok(conn.prepare("SELECT id,layer,expected,checkpoint,against,observed,observed_publication,attribution,context,allow_missing_trace,outcome,result,world_operation,receipt FROM publications ORDER BY id")?
-        .query_map([], |r| Ok(PublicationRow {
+fn rows_in(
+    conn: &Connection,
+    filter: &str,
+    params: impl rusqlite::Params,
+) -> Result<Vec<PublicationRow>> {
+    Ok(conn.prepare(&format!("SELECT id,layer,expected,checkpoint,against,observed,observed_publication,attribution,context,allow_missing_trace,outcome,result,world_operation,receipt FROM publications {filter} ORDER BY id"))?
+        .query_map(params, |r| Ok(PublicationRow {
             id: r.get(0)?, layer: r.get(1)?, expected: r.get(2)?, checkpoint: r.get(3)?,
             against: r.get(4)?, observed: r.get(5)?, observed_publication: r.get(6)?,
             attribution: r.get(7)?, context: r.get(8)?, allow_missing_trace: r.get(9)?,
             outcome: r.get(10)?, result: r.get(11)?, world_operation: r.get(12)?, receipt: r.get(13)?,
         }))?.collect::<std::result::Result<_, _>>()?)
+}
+
+fn row_in(conn: &Connection, operation: &OperationId) -> Result<Option<PublicationRow>> {
+    Ok(rows_in(conn, "WHERE id=?1", [operation.as_str()])?
+        .into_iter()
+        .next())
 }
 
 fn corrupt(message: &str) -> Error {
@@ -341,19 +436,12 @@ fn stored_layer(id: &str) -> Result<LayerId> {
     LayerId::parse(id).map_err(|_| corrupt("invalid publication Layer"))
 }
 
-fn world_at(history: &[WorldVersion], number: i64) -> Result<&WorldVersion> {
-    let number = VersionNumber::decode(number)?;
-    history
-        .iter()
-        .find(|w| w.number == number)
+fn world_at(conn: &Connection, number: i64) -> Result<WorldVersion> {
+    version_in(conn, VersionNumber::decode(number)?)?
         .ok_or_else(|| corrupt("missing publication World"))
 }
 
-fn success_state(
-    conn: &Connection,
-    row: &PublicationRow,
-    history: &[WorldVersion],
-) -> Result<LayerState> {
+fn success_state(conn: &Connection, row: &PublicationRow) -> Result<LayerState> {
     if row.outcome != 1 {
         return Err(corrupt("observation is not a successful publication"));
     }
@@ -365,21 +453,19 @@ fn success_state(
         )?,
         operation: stored_operation(&row.id)?,
         version: world_at(
-            history,
+            conn,
             row.result
                 .ok_or_else(|| corrupt("missing publication result"))?,
-        )?
-        .clone(),
+        )?,
     })
 }
 
-/// Terminal projection only. Callers validate the complete state first; historical
-/// capture/discard events and their receipts never call this helper.
+/// Terminal projection only, found through the one-success-per-Layer index.
+/// Historical capture/discard events and their receipts never call this helper.
 pub(crate) fn published_state_in(conn: &Connection, layer: &LayerId) -> Result<Option<LayerState>> {
-    let rows = rows_in(conn)?;
-    rows.iter()
-        .find(|r| r.layer == layer.as_str() && r.outcome == 1)
-        .map(|r| success_state(conn, r, &history_in(conn)?))
+    rows_in(conn, "WHERE layer=?1 AND outcome=1", [layer.as_str()])?
+        .first()
+        .map(|r| success_state(conn, r))
         .transpose()
 }
 
@@ -408,32 +494,30 @@ pub(crate) fn operation_exists_in(conn: &Connection, operation: &OperationId) ->
         .exists([operation.as_str()])?)
 }
 
-pub(crate) fn check_publications(conn: &Connection, history: &[WorldVersion]) -> Result<usize> {
-    let rows = rows_in(conn)?;
+pub(crate) fn check_publications(conn: &Connection) -> Result<usize> {
+    let rows = rows_in(conn, "", [])?;
     let mut successful_layers = BTreeSet::new();
     for row in &rows {
         if row.outcome == 1 && !successful_layers.insert(&row.layer) {
             return Err(corrupt("Layer published more than once"));
         }
-        receipt_in(conn, row, &rows, history)?;
+        receipt_in(conn, row)?;
     }
     Ok(rows.len())
 }
 
-fn receipt_in(
-    conn: &Connection,
-    row: &PublicationRow,
-    rows: &[PublicationRow],
-    history: &[WorldVersion],
-) -> Result<PublicationReceipt> {
+/// Validates one receipt against its own bindings, its Layer's other records and
+/// the Worlds it names. It never walks unrelated history.
+fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationReceipt> {
     let operation = stored_operation(&row.id)?;
     let layer = stored_layer(&row.layer)?;
+    let rows = rows_in(conn, "WHERE layer=?1", [layer.as_str()])?;
     let expected = head_in(conn, &layer, VersionNumber::decode(row.expected)?.get())?;
     if expected.checkpoint().object() != decode_id(&row.checkpoint)? || row.observed < row.expected
     {
         return Err(corrupt("publication checkpoint or observation disagrees"));
     }
-    let against = world_at(history, row.against)?.clone();
+    let against = world_at(conn, row.against)?;
     if checkpoint_in(conn, expected.checkpoint().object())?
         .base()
         .version()
@@ -463,7 +547,7 @@ fn receipt_in(
         {
             return Err(corrupt("invalid observed publication binding"));
         }
-        observed = success_state(conn, prior, history)?;
+        observed = success_state(conn, prior)?;
     }
     // Once a success is in this receipt's against-World, its terminal status
     // cannot be omitted, even if its raw final captured revision stayed the same.
@@ -497,7 +581,7 @@ fn receipt_in(
             }
             let candidate = compose_in(conn, &expected, &against)?
                 .map_err(|_| corrupt("successful publication intersects World changes"))?;
-            let version = world_at(history, result)?.clone();
+            let version = world_at(conn, result)?;
             if version.operation.as_ref() != Some(&operation)
                 || version.manifest != ObjectId::for_manifest(&candidate)
                 || manifest_in(conn, version.manifest)? != candidate
@@ -544,3 +628,43 @@ fn receipt_in(
     }
     Ok(receipt)
 }
+
+/// Measures the Publish write transaction: wall time and SQLite VM instructions.
+#[cfg(test)]
+pub(crate) mod lock_probe {
+    use std::{
+        cell::Cell,
+        time::{Duration, Instant},
+    };
+
+    use rusqlite::Connection;
+
+    thread_local! {
+        static ACTIVE: Cell<Option<(Instant, u64)>> = const { Cell::new(None) };
+        pub(crate) static LAST: Cell<Option<(Duration, u64)>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn start(conn: &Connection) -> crate::Result<()> {
+        ACTIVE.set(Some((Instant::now(), 0)));
+        conn.progress_handler(
+            1,
+            Some(|| {
+                ACTIVE.with(|a| a.set(a.get().map(|(t, n)| (t, n + 1))));
+                false
+            }),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn finish(conn: &Connection) -> crate::Result<()> {
+        conn.progress_handler(0, None::<fn() -> bool>)?;
+        if let Some((start, ops)) = ACTIVE.take() {
+            LAST.set(Some((start.elapsed(), ops)));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/support/publish_cost.rs"]
+mod publish_cost_tests;

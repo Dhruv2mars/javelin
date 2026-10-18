@@ -6,7 +6,7 @@ use sha2::Digest;
 
 use crate::{Error, Manifest, ObjectId, OperationId, Result, VersionNumber, domain::ObjectKind};
 
-const FORMAT: i64 = 4;
+const FORMAT: i64 = 5;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 const SCHEMA: &str = "
@@ -32,8 +32,11 @@ CREATE TABLE versions (
 CREATE TRIGGER versions_order BEFORE INSERT ON versions
 WHEN NEW.number != (SELECT COALESCE(MAX(number)+1,0) FROM versions)
 BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
+-- Inserting a version resolves the deferred attempts.result reference; without
+-- this index SQLite scans every attempt inside the Publish write transaction.
+CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=4;
+PRAGMA user_version=5;
 ";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -398,7 +401,7 @@ impl Repository {
 }
 
 /// Full state validation is above the raw World and Layer validators. Checkpoint
-/// base validation uses history_in, so it never recursively validates publications.
+/// base validation uses version_in, so it never recursively validates publications.
 pub(crate) fn validate_state_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
     validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(conn))
 }
@@ -411,7 +414,7 @@ fn validate_state_with_checkpoints(
     let history = history_in(conn)?;
     crate::layer::check_layers(checkpoints)?;
     crate::stack::check_stacks(conn)?;
-    crate::publish::check_publications(conn, &history)?;
+    crate::publish::check_publications(conn)?;
     Ok(history)
 }
 
@@ -463,7 +466,7 @@ fn sync_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_format(conn: &Connection) -> Result<()> {
+pub(crate) fn validate_format(conn: &Connection) -> Result<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version != FORMAT {
         return Err(Error::UnsupportedFormat(version));
@@ -668,6 +671,56 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
         attempt.outcome(&history)?;
     }
     Ok(history)
+}
+
+/// One World row and its accepted-attempt binding, without walking history.
+/// Callers that use the manifest validate its graph with manifest_in.
+pub(crate) fn version_in(conn: &Connection, number: VersionNumber) -> Result<Option<WorldVersion>> {
+    let row = conn
+        .query_row(
+            "SELECT manifest,operation FROM versions WHERE number=?1",
+            [number.sql()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?;
+    let Some((manifest, operation)) = row else {
+        return Ok(None);
+    };
+    let manifest = decode_id(&manifest)?;
+    let operation = operation.as_deref().map(decode_operation).transpose()?;
+    match &operation {
+        None if number.get() == 0 => {}
+        Some(op) if number.get() > 0 => {
+            let attempt = attempt_in(conn, op)?
+                .ok_or_else(|| Error::CorruptRepository("missing accepted attempt".into()))?;
+            if !attempt.accepted
+                || attempt.result != number
+                || attempt.expected.get() != number.get() - 1
+                || attempt.manifest != manifest
+            {
+                return Err(Error::CorruptRepository(
+                    "version and operation disagree".into(),
+                ));
+            }
+        }
+        _ => return Err(Error::CorruptRepository("invalid version operation".into())),
+    }
+    Ok(Some(WorldVersion {
+        number,
+        manifest,
+        operation,
+    }))
+}
+
+/// The latest World, found by primary key. Contiguity is enforced on insert.
+pub(crate) fn world_head_in(conn: &Connection) -> Result<WorldVersion> {
+    let number: Option<i64> =
+        conn.query_row("SELECT max(number) FROM versions", [], |r| r.get(0))?;
+    let number = VersionNumber::decode(
+        number.ok_or_else(|| Error::CorruptRepository("missing initial World".into()))?,
+    )?;
+    version_in(conn, number)?
+        .ok_or_else(|| Error::CorruptRepository("missing initial World".into()))
 }
 
 struct Attempt {
