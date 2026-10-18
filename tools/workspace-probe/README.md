@@ -108,15 +108,19 @@ records a verdict for every gate-2 clause in `docs/build-contract.md`: unprivile
 run, no Javelin process between commands, ordinary tools (read, in-place write,
 atomic-save and backup renames, deletes, symlinks, watchers, `rustc` builds,
 case-only renames), automatic capture (including mtime-preserving, same-second and
-concurrent rewrites), explicit refusal of case, Unicode-normalization and
-Windows-reserved collisions, shared data measured by free-space deltas against a
+concurrent rewrites), Worlds with case, Unicode-normalization or Windows-reserved
+collisions (refused with `unsupported` where the volume cannot hold them, otherwise
+materialized exactly), shared data measured by free-space deltas against a
 byte-copy control, the copy fallback reporting itself, and interrupted create,
 checkpoint and discard recovering on the next command.
 
 ```sh
 rustc --edition 2021 -o /tmp/shim tools/workspace-probe/shim.rs
 mkdir -p /tmp/g2shims && for t in git sudo mount umount; do cp /tmp/shim /tmp/g2shims/$t; done
+cargo build --locked --release -p javelin-cli
+cargo build --locked --release -p javelin --example gate2_seed
 rtk proxy bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin \
+  --seed target/release/examples/gate2_seed \
   --dir /tmp/gate2-run --fs apfs --expect shared --out /tmp/gate2.json --shims /tmp/g2shims
 ```
 
@@ -125,6 +129,12 @@ rtk proxy bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin \
 (default 128). Exit 0 means every check is VERIFIED, 1 that one is not, and 2 that
 setup failed. The command names and JSON fields live in one adapter, `S`, in
 `gate2.mjs`. The shims are failing stand-ins for tools Javelin must never run.
+
+Clone-backed workspaces have no Publish yet, so `--seed` names the fixture tool that
+accepts each test World: `examples/gate2_seed.rs` calls the same library functions
+as the workspace tests. Everything after seeding goes through the `javelin` binary.
+Repositories seal World bases with mode 000; use `chmod -R u+rwx` before deleting a
+run directory.
 
 `gate2-reference.mjs` is a small model of the same command surface. It is not product
 code: it shows the harness passes against an honest implementation on each

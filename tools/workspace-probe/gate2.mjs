@@ -11,9 +11,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const win = process.platform === 'win32';
 const opts = Object.fromEntries(process.argv.slice(2).reduce((pairs, a, i, all) => a.startsWith('--') ? [...pairs, [a.slice(2), all[i + 1]?.startsWith('--') || all[i + 1] === undefined ? 'true' : all[i + 1]]] : pairs, []));
 if (opts.privilege) { console.log(JSON.stringify(privilege())); process.exit(0); }
-for (const required of ['javelin', 'dir', 'fs', 'expect', 'out']) if (!opts[required]) { console.error(`missing --${required}`); process.exit(2); }
+for (const required of ['javelin', 'seed', 'dir', 'fs', 'expect', 'out']) if (!opts[required]) { console.error(`missing --${required}`); process.exit(2); }
 const javelin = resolve(opts.javelin);
 const script = javelin.endsWith('.mjs');
+const seeder = resolve(opts.seed);
 const root = resolve(opts.dir);
 const only = opts.only ? new Set(opts.only.split(',')) : null;
 const bulkFiles = Number(opts['bulk-mb'] || 128) / 2;
@@ -105,25 +106,40 @@ const S = {
   init: repo => ok(['init', repo]),
   head: async repo => { const r = await ok(['history', repo]); return find(r.json, k => k === 'versions', Array.isArray).at(-1).number; },
   integrity: repo => ok(['check', repo]),
-  create: async (repo, id, extra = []) => {
-    const r = await ok(['workspace', 'create', id, ...extra, '--repo', repo]);
-    const path = find(r.json, k => k === 'path');
+  // Fixture setup, not the flow under test: clone-backed workspaces have no Publish yet,
+  // so Worlds are accepted through the library (examples/gate2_seed.rs).
+  seedWorld: (repo, spec) => {
+    const file = join(root, `spec-${randomBytes(4).toString('hex')}.json`);
+    fs.writeFileSync(file, JSON.stringify(spec));
+    const argv = seeder.endsWith('.mjs') ? [process.execPath, seeder, 'seed-world', repo, file] : [seeder, repo, file];
+    const r = spawnSync(argv[0], argv.slice(1), { env, encoding: 'utf8' });
+    fs.rmSync(file);
+    return { code: r.status, out: `${r.stdout}${r.stderr}`.trim(), version: r.status === 0 ? JSON.parse(r.stdout.trim().split('\n').at(-1)).version : null };
+  },
+  createArgs: (repo, id, world) => ['workspace', 'create', id, ...(world === undefined ? [] : ['--world', String(world)]), '--repo', repo],
+  create: async (repo, id, world) => S.opened(repo, id, await ok(S.createArgs(repo, id, world))),
+  // A Layer started from an immutable checkpoint, then given its directory.
+  clone: async (repo, id, checkpoint) => {
+    await ok(['layer', 'clone', id, '--checkpoint', checkpoint, '--repo', repo]);
+    return S.opened(repo, id, await ok(['workspace', 'open', id, '--repo', repo]));
+  },
+  opened: (repo, id, r) => {
+    const path = find(r.json, k => k === 'root');
     layerPaths.set(`${repo}\0${id}`, path);
     return { path, strategy: find(r.json, k => k === 'strategy'), r };
   },
-  path: (repo, id) => jv(['workspace', 'path', id, '--repo', repo]),
-  createArgs: (repo, id) => ['workspace', 'create', id, '--repo', repo],
-  // An ordinary read; the product must capture first (every javelin command captures).
+  path: async (repo, id) => { const r = await jv(['workspace', 'path', id, '--repo', repo]); return { r, path: find(r.json, k => k === 'root'), exists: find(r.json, k => k === 'exists', v => typeof v === 'boolean') }; },
+  // An ordinary read; every layer and workspace command captures the Layer first.
   state: async (repo, id) => hexUnder((await ok(['layer', 'state', id, '--repo', repo])).json, /checkpoint/i),
+  active: async (repo, id) => (await ok(['layer', 'state', id, '--repo', repo])).json?.state?.state === 'active',
   diff: async (repo, id) => { const r = await ok(['layer', 'diff', id, '--repo', repo]); return (find(r.json, k => k === 'changes', Array.isArray) || []).map(c => c.path); },
   // The agent lifecycle hook: run from inside the Layer directory, as an agent tool would.
   checkpointArgs: (repo, id) => ['checkpoint', id, '--repo', repo],
   checkpointCwd: (repo, id) => layerPaths.get(`${repo}\0${id}`),
   checkpoint: (repo, id) => jv(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id)),
   capture: async (repo, id) => hexUnder((await ok(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id))).json, /checkpoint/i),
-  publish: (repo, id, op) => jv(['workspace', 'publish', id, '--operation', op, '--repo', repo]),
-  discardArgs: (repo, id) => ['workspace', 'discard', id, '--repo', repo],
-  discard: (repo, id) => ok(['workspace', 'discard', id, '--repo', repo]),
+  discardArgs: (repo, id, op = `discard-${id}`) => ['workspace', 'discard', id, '--operation', op, '--repo', repo],
+  discard: (repo, id, op) => ok(S.discardArgs(repo, id, op)),
 };
 
 // ---- trees and fixtures -------------------------------------------------------------
@@ -147,6 +163,7 @@ function sameTree(a, b, label) {
 }
 const MAIN_RS = 'fn main() {\n    let built = include_str!("value.txt").trim();\n    let live = std::fs::read_to_string("src/value.txt").unwrap();\n    println!("{}|{}", built, live.trim());\n}\n';
 function writeFixture(dir, bulk) {
+  fs.mkdirSync(dir, { recursive: true });
   const files = {
     'README.md': 'shared base text\n', 'src/main.rs': MAIN_RS, 'src/value.txt': 'base\n', 'docs/Guide.md': '# Guide\n',
     'data/nested/deep/file.txt': 'deep\n', 'empty.txt': '', 'bin/run.sh': '#!/bin/sh\necho run\n',
@@ -160,20 +177,33 @@ function writeFixture(dir, bulk) {
   for (let i = 0; i < bulkFiles; i++) fs.writeFileSync(join(dir, 'bulk', `blob-${i}.bin`), randomBytes(2 << 20));
   for (let i = 0; i < 2000; i++) fs.writeFileSync(join(dir, 'small', `s${i}.txt`), `small ${i}\n`.repeat(100));
 }
+// A spec for gate2_seed: every file by source path, every symlink by target.
+function specOf(dir) {
+  const spec = {};
+  (function visit(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, e.name), path = relative(dir, full).split(sep).join('/');
+      if (e.isSymbolicLink()) spec[path] = { link: fs.readlinkSync(full).split(sep).join('/') };
+      else if (e.isDirectory()) visit(full);
+      else spec[path] = { from: full, exec: !win && (fs.statSync(full).mode & 0o100) !== 0 };
+    }
+  })(dir);
+  return spec;
+}
 async function seed(name, bulk) {
-  const repo = join(root, name);
+  const repo = join(root, name), fixture = join(root, `${name}-fixture`);
   fs.mkdirSync(repo);
   await S.init(repo);
-  const { path } = await S.create(repo, 'seed');
-  writeFixture(path, bulk);
-  const r = await S.publish(repo, 'seed', 'seed-publish');
-  assert(r.code === 0, `seed publish failed: ${r.stderr}`);
+  writeFixture(fixture, bulk);
+  const r = S.seedWorld(repo, specOf(fixture));
+  assert(r.code === 0, `seeding World 1 failed: ${r.out}`);
+  fs.rmSync(fixture, { recursive: true });
   return repo;
 }
 let snapshots = 0;
 async function snapshot(repo, checkpoint) {
   const id = `snapshot-${++snapshots}`;
-  const { path } = await S.create(repo, id, ['--checkpoint', checkpoint]);
+  const { path } = await S.clone(repo, id, checkpoint);
   const t = tree(path, noBuild);
   await S.discard(repo, id);
   return t;
@@ -189,12 +219,13 @@ async function stableFree() {
   for (let i = 0; i < 20; i++) { await sleep(500); const now = freeBytes(); if (Math.abs(now - last) < (1 << 20)) return now; last = now; }
   return last;
 }
-function explicitRefusal(r, needle) {
-  const text = `${r.stdout}\n${r.stderr}\n${r.json?.error?.message ?? ''}\n${r.json?.error?.path ?? ''}`;
-  const named = [needle, needle.toLowerCase(), needle.normalize('NFC'), needle.normalize('NFD')].some(n => text.includes(n)) || text.toLowerCase().includes(needle.toLowerCase());
-  return r.code !== 0 && r.json?.ok === false && Boolean(r.json?.error?.code) && named;
+// Explicit: a failing exit, a JSON error code, and an offending path or directory named.
+function explicitRefusal(r, paths) {
+  const text = `${r.stdout}\n${r.stderr}`.normalize('NFC').toLowerCase();
+  const names = paths.flatMap(p => p.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/')));
+  const named = names.some(n => text.includes(n.normalize('NFC').toLowerCase()) || text.includes(JSON.stringify(n).slice(1, -1).toLowerCase()));
+  return r.code !== 0 && r.json?.ok === false && r.json?.error?.code === 'unsupported' && named;
 }
-const longPath = p => (win ? `\\\\?\\${resolve(p)}` : p);
 
 // ---- main ---------------------------------------------------------------------------
 const mounts = () => process.platform === 'linux' ? fs.readFileSync('/proc/self/mountinfo', 'utf8').split('\n').map(l => l.split(' ')[4]).sort().join('\n')
@@ -345,7 +376,7 @@ try {
     let inspected = 0;
     for (const cp of during.slice(0, 4)) {
       const id = `torn-${cp.slice(0, 12)}`;
-      const { path: p } = await S.create(repo, id, ['--checkpoint', cp]);
+      const { path: p } = await S.clone(repo, id, cp);
       const file = join(p, 'hot/atomic.txt');
       const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
       await S.discard(repo, id);
@@ -359,7 +390,7 @@ try {
   });
   await check('tools', 'layer-clone-is-an-isolated-snapshot', async () => {
     const cp = await S.capture(repo, 'layer-a');
-    const d = await S.create(repo, 'layer-d', ['--checkpoint', cp]);
+    const d = await S.clone(repo, 'layer-d', cp);
     sameTree(tree(a.path, noBuild), tree(d.path, noBuild), 'clone vs source checkpoint');
     fs.writeFileSync(join(a.path, 'src/value.txt'), 'after clone\n');
     fs.writeFileSync(join(d.path, 'README.md'), 'clone edit\n');
@@ -368,74 +399,74 @@ try {
     await S.discard(repo, 'layer-d');
   });
   await check('tools', 'fresh-layer-is-pristine', async () => {
-    const c = await S.create(repo, 'layer-c', ['--world', String(world)]);
+    const c = await S.create(repo, 'layer-c', world);
     sameTree(pristine, tree(c.path), 'fresh Layer after peer edits');
     await S.discard(repo, 'layer-c');
   });
 
-  // Portability: Worlds every supported OS can materialize. Refusal must be explicit.
-  async function refuse(label, needle, setup) {
-    const before = await S.head(repo);
-    const id = `refuse-${label}`;
-    const { path } = await S.create(repo, id);
-    const cleanup = setup(path);
-    const cp = await S.checkpoint(repo, id);
-    let refused = explicitRefusal(cp, needle);
-    let published = null;
-    if (!refused) { published = await S.publish(repo, id, `${id}-publish`); refused = explicitRefusal(published, needle); }
-    const after = await S.head(repo);
-    cleanup();
-    if (published?.code !== 0) await S.discard(repo, id);
-    assert(refused, `${label} was not refused explicitly (checkpoint exit ${cp.code}, publish exit ${published?.code}): ${(published ?? cp).stderr.slice(0, 300) || (published ?? cp).stdout.slice(0, 300)}`);
-    assert(after === before, `World advanced from ${before} to ${after} despite ${label}`);
-    return label;
-  }
-  async function crossLayer(label, first, second) {
-    const p = await S.create(repo, `${label}-first`), q = await S.create(repo, `${label}-second`);
-    fs.writeFileSync(join(p.path, first), 'first\n');
-    const r = await S.publish(repo, `${label}-first`, `${label}-first`);
-    assert(r.code === 0, `publishing ${first} failed: ${r.stderr.slice(0, 300)}`);
-    const before = await S.head(repo);
-    fs.writeFileSync(join(q.path, second), 'second\n');
-    const cp = await S.checkpoint(repo, `${label}-second`);
-    const pub = explicitRefusal(cp, second.split('/').at(-1)) ? cp : await S.publish(repo, `${label}-second`, `${label}-second`);
-    assert(explicitRefusal(pub, second.split('/').at(-1)) || explicitRefusal(pub, first.split('/').at(-1)), `${second} beside ${first} was not refused explicitly (exit ${pub.code}): ${(pub.stderr || pub.stdout).slice(0, 300)}`);
-    assert(await S.head(repo) === before, 'World advanced with a colliding path');
-    fs.rmSync(join(q.path, second));
-    await S.discard(repo, `${label}-second`);
-  }
-  await check('refusals', 'case-collision', async () => {
-    await crossLayer('case', 'src/Makefile', 'src/makefile');
-    const probe = join(root, 'case-probe'); fs.mkdirSync(probe); fs.writeFileSync(join(probe, 'x'), ''); fs.writeFileSync(join(probe, 'X'), '');
-    const sensitive = fs.readdirSync(probe).length === 2; fs.rmSync(probe, { recursive: true });
-    if (sensitive) await refuse('case-same-layer', 'Dup.txt', p => { fs.writeFileSync(join(p, 'Dup.txt'), '1'); fs.writeFileSync(join(p, 'dup.txt'), '2'); return () => fs.rmSync(join(p, 'dup.txt')); });
-    return { caseSensitiveVolume: sensitive };
-  });
-  await check('refusals', 'unicode-normalization-collision', () => crossLayer('nfc', 'docs/café.md', 'docs/café.md'));
-  await check('refusals', 'windows-reserved-names', async () => {
-    const names = ['CON', 'aux.txt', 'nul.c', 'COM1.h', 'LPT9.log', 'trailing.', 'trailing ', ...(win ? [] : ['a:b.txt', 'q?.txt', 'back\\slash.txt'])];
-    const tested = [];
-    for (const name of names) {
-      let made = false;
-      await refuse(`reserved-${tested.length}-${names.indexOf(name)}`, name.trim() || name, p => {
-        try { fs.writeFileSync(longPath(join(p, name)), 'x'); made = fs.readdirSync(p).includes(name); } catch { made = false; }
-        if (!made) { try { fs.rmSync(longPath(join(p, name)), { force: true }); } catch {} }
-        return () => { if (made) fs.rmSync(longPath(join(p, name)), { force: true }); };
-      }).then(() => tested.push(name), e => { if (made) throw e; });
-    }
-    assert(tested.length >= 5, `only ${tested.length} reserved names could be created and tested: ${tested.join(', ')}`);
-    return { tested };
-  });
   await S.integrity(repo);
+
+  // Worlds this volume cannot hold path for path (case or Unicode-normalization folding,
+  // Windows reserved names) must be refused explicitly; any other volume must
+  // materialize them exactly. Never a silent merge or rename.
+  if (want('refusals')) {
+    const portable = join(root, 'portable');
+    fs.mkdirSync(portable);
+    await S.init(portable);
+    const probeDir = join(root, 'volume-probe');
+    // Whether this volume keeps all names distinct and exactly as written.
+    const listing = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? listing(join(dir, e.name)).map(x => `${e.name}/${x}`) : [e.name]);
+    const holds = names => {
+      fs.rmSync(probeDir, { recursive: true, force: true }); fs.mkdirSync(probeDir);
+      try {
+        for (const x of names) { fs.mkdirSync(dirname(join(probeDir, x)), { recursive: true }); fs.writeFileSync(join(probeDir, x), x); }
+        const got = listing(probeDir);
+        return got.length === names.length && names.every(x => got.includes(x) && fs.readFileSync(join(probeDir, x), 'utf8') === x);
+      } catch { return false; } finally { fs.rmSync(probeDir, { recursive: true, force: true }); }
+    };
+    let n = 0;
+    async function world(label, names) {
+      const fits = holds(names);
+      const spec = Object.fromEntries(names.map(x => [x, { text: `${x}\n` }]));
+      const seeded = S.seedWorld(portable, spec);
+      if (seeded.code !== 0) return { label, refusedAt: 'world', detail: seeded.out.slice(0, 200) };
+      const id = `portable-${++n}`;
+      const r = await jv(S.createArgs(portable, id, seeded.version));
+      if (!fits) {
+        assert(explicitRefusal(r, names), `${label}: a World this volume cannot hold was not refused explicitly (exit ${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}`);
+        const p = await S.path(portable, id);
+        assert(!p.exists, `${label}: a refused Layer left a directory`);
+        return { label, refusedAt: 'materialize', error: r.json.error.message.slice(0, 160) };
+      }
+      assert(r.code === 0, `${label}: this volume holds ${names.join(', ')} distinctly, but create failed: ${(r.stderr || r.stdout).slice(0, 300)}`);
+      const got = tree(find(r.json, k => k === 'root'));
+      sameTree(Object.fromEntries(names.map(x => [x, fileHash(`${x}\n`)])), got, `${label}: materialized World`);
+      await S.discard(portable, id);
+      return { label, materialized: true };
+    }
+    await check('refusals', 'case-collision', async () => [
+      await world('case', ['src/Makefile', 'src/makefile']),
+      await world('directory case', ['Dir/a.txt', 'dir/b.txt']),
+    ]);
+    await check('refusals', 'unicode-normalization-collision', async () => [await world('nfc/nfd', ['docs/café.md', 'docs/café.md'])]);
+    await check('refusals', 'windows-reserved-names', async () => {
+      const out = [];
+      for (const name of ['CON', 'aux.txt', 'nul.c', 'COM1.h', 'LPT9.log', 'trailing.', 'trailing ', 'dir./x.txt']) out.push(await world(JSON.stringify(name), ['ok.txt', name]));
+      return out;
+    });
+    await check('refusals', 'repository-integrity-after-refusals', () => S.integrity(portable).then(() => true));
+  }
 
   // Shared data, measured by free-space deltas against a byte-copy control on the same volume.
   if (want('sharing') || want('crash')) {
     const bulkRepo = await seed('bulk', true);
     const bulkBytes = bulkFiles * (2 << 20);
+    // The first Layer of a World also materializes its base, once; measure Layers after it.
+    const warm = await S.create(bulkRepo, 'bulk-0');
+    const worldTree = tree(warm.path);
     const f0 = await stableFree();
     const l1 = await S.create(bulkRepo, 'bulk-1');
     const f1 = await stableFree();
-    const worldTree = tree(l1.path);
     const control = join(root, 'control-copy');
     fs.mkdirSync(control);
     for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
@@ -446,11 +477,12 @@ try {
     const fe = await stableFree();
     await S.capture(bulkRepo, 'bulk-1');
     const fc = await stableFree();
-    const textCreate = spawnSync(argvFor(S.createArgs(bulkRepo, 'bulk-2'))[0], argvFor(S.createArgs(bulkRepo, 'bulk-2')).slice(1), { env, encoding: 'utf8' });
+    const textArgv = argvFor(S.createArgs(bulkRepo, 'bulk-2'));
+    const textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
     const f3 = await stableFree();
     const mb = n => Math.round(n / 1048576);
     const deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(fc - f3), controlCopyMB: mb(f1 - f2), editOneFileMB: mb(fb - fe), captureMB: mb(fe - fc) };
-    report.disk = { strategy: l1.strategy, deltas };
+    report.disk = { strategy: l1.strategy, deltas, base: find(warm.r.json, k => k === 'base', () => true) };
     await check('sharing', 'byte-copy-control-is-measurable', () => {
       assert(f1 - f2 >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy freed only ${mb(f1 - f2)} MB; free-space deltas are not trustworthy here`);
       return deltas;
@@ -469,8 +501,10 @@ try {
       assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
       const copy = /copy/i.test(l1.strategy);
       assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
-      if (copy) assert(/cop/i.test(textCreate.stdout + textCreate.stderr), `human output does not report the copy: ${textCreate.stdout}`);
-      return { strategy: l1.strategy, text: (textCreate.stdout + textCreate.stderr).trim().slice(0, 300) };
+      const text = `${textCreate.stdout}${textCreate.stderr}`;
+      assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
+      if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
+      return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
     });
 
     // Crash safety: kill each operation at spread points across its own measured duration.
@@ -486,17 +520,18 @@ try {
     }
     const points = d => [0.05, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map(f => Math.max(1, Math.round(d * f)));
     const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
+    const bulkWorld = await S.head(bulkRepo);
     await check('crash', 'interrupted-create-recovers', async () => {
-      const duration = await timed(S.createArgs(bulkRepo, 'time-create'));
+      const duration = await timed(S.createArgs(bulkRepo, 'time-create', bulkWorld));
       await S.discard(bulkRepo, 'time-create');
       let landed = 0;
       for (const [i, delay] of points(duration).entries()) {
         const id = `kill-create-${i}`;
-        if (await killed(S.createArgs(bulkRepo, id), delay)) landed++;
-        await S.head(bulkRepo);
+        if (await killed(S.createArgs(bulkRepo, id, bulkWorld), delay)) landed++;
+        // The next command sees either no Layer, or one whose directory is complete or absent.
         const p = await S.path(bulkRepo, id);
-        if (p.code === 0) sameTree(worldTree, tree(find(p.json, k => k === 'path')), `Layer ${id} reported after an interrupted create`);
-        else sameTree(worldTree, tree((await S.create(bulkRepo, id)).path), `retried create ${id}`);
+        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after an interrupted create`);
+        sameTree(worldTree, tree((await S.create(bulkRepo, id, bulkWorld)).path), `retried create ${id}`);
         await S.discard(bulkRepo, id);
       }
       assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms create`);
@@ -524,23 +559,33 @@ try {
       const duration = await timed(S.discardArgs(bulkRepo, 'time-discard'));
       assert(!fs.existsSync(t.path), 'discarded Layer path still exists');
       let landed = 0;
+      const outcomes = [];
       for (const [i, delay] of points(duration).entries()) {
         const id = `kill-discard-${i}`, marker = `gate2-marker-${randomBytes(6).toString('hex')}`;
         const { path } = await S.create(bulkRepo, id);
         fs.writeFileSync(join(path, marker), 'marker\n');
         const before = tree(path);
         if (await killed(S.discardArgs(bulkRepo, id), delay)) landed++;
-        await S.head(bulkRepo);
-        const p = await S.path(bulkRepo, id);
-        if (p.code === 0) { sameTree(before, tree(path), `Layer ${id} still reported after an interrupted discard`); await S.discard(bulkRepo, id); }
-        else assert(!fs.existsSync(path) || fs.readdirSync(path).length === 0, `half-discarded Layer left at ${path}`);
-        await S.head(bulkRepo); await S.head(bulkRepo);
+        // The next command finishes or undoes the discard: an active Layer is intact; a
+        // discarded one has no directory, and its data is reclaimed.
+        await S.path(bulkRepo, id);
+        if (await S.active(bulkRepo, id)) {
+          sameTree(before, tree(path), `Layer ${id} still active after an interrupted discard`);
+          await S.discard(bulkRepo, id);
+          outcomes.push('rolled-back');
+        } else {
+          assert(!fs.existsSync(path), `Layer ${id} is discarded but its directory is still at ${path} after the next command`);
+          outcomes.push('rolled-forward');
+        }
+        await S.path(bulkRepo, id);
         const left = [];
-        (function search(d) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name === marker) left.push(join(d, e.name)); else if (e.isDirectory() && !e.isSymbolicLink()) search(join(d, e.name)); } })(root);
-        assert(left.length === 0, `discarded data not reclaimed: ${left.join(', ')}`);
+        // Sealed World bases are unreadable (mode 000) and hold only World data.
+        const entries = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch (e) { if (e.code === 'EACCES') return []; throw e; } };
+        (function search(d) { for (const e of entries(d)) { if (e.name === marker) left.push(join(d, e.name)); else if (e.isDirectory() && !e.isSymbolicLink()) search(join(d, e.name)); } })(root);
+        assert(left.length === 0, `discarded data not reclaimed by the next command: ${left.join(', ')}`);
       }
       assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms discard`);
-      return { durationMs: duration, landed };
+      return { durationMs: duration, landed, outcomes };
     });
     await check('crash', 'repository-integrity-after-interruptions', () => S.integrity(bulkRepo).then(() => true));
   }

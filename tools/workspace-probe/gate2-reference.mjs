@@ -1,6 +1,6 @@
-// Reference model of the Layer command surface that gate2.mjs drives. It lets the
-// harness run, and be mutation-tested through JAVELIN_REFERENCE_LIE, before the real
-// clone-backed Layers and daemonless capture land. It is not product code.
+// Reference model of the clone-backed workspace command surface that gate2.mjs drives.
+// It shows the harness passes against an honest implementation on each filesystem, and
+// is mutation-tested through JAVELIN_REFERENCE_LIE (gate2-controls.mjs). Not product code.
 import * as fs from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -20,20 +20,30 @@ const readJson = path => JSON.parse(fs.readFileSync(path, 'utf8'));
 
 function main([group, action, id]) {
   if (group === 'init') { init(action); return { command: 'init' }; }
-  if (group === 'history') { const s = store(action); recover(s); return { command: 'history', versions: worlds(s).map((w, number) => ({ number, manifest: sha(JSON.stringify(w)) })) }; }
-  if (group === 'check') { const s = store(action); recover(s); return { command: 'check', blobs: verifyBlobs(s) }; }
+  if (group === 'seed-world') return seedWorld(store(action), id ?? argv[2]);
+  if (group === 'history') { const s = store(action); return { command: 'history', versions: worlds(s).map((w, number) => ({ number, manifest: sha(JSON.stringify(w)) })) }; }
+  if (group === 'check') { const s = store(action); return { command: 'check', blobs: verifyBlobs(s) }; }
   const s = store(opt('--repo') || process.cwd());
   recover(s);
-  if (group === 'checkpoint') return { command: 'checkpoint', checkpoint: capture(s, active(s, action)) };
-  if (group === 'layer' && action === 'state') { const l = active(s, id); const checkpoint = capture(s, l); return { command: 'layer state', state: { state: 'active', head: { layer: id, revision: l.checkpoints.length, checkpoint } } }; }
-  if (group === 'layer' && action === 'diff') { const l = active(s, id); const head = readJson(join(s.dir, 'checkpoints', `${capture(s, l)}.json`)); const base = worlds(s)[l.world]; return { command: 'layer diff', changes: changed(base, head).map(path => ({ path })) }; }
+  if (group === 'checkpoint') return { command: 'checkpoint', state: head(s, action, capture(s, active(s, action))) };
+  // Every command naming a Layer captures its directory first, as javelin does.
+  const named = id && fs.existsSync(layerFile(s, id)) ? readJson(layerFile(s, id)) : null;
+  if (named?.state === 'active' && fs.existsSync(named.path)) capture(s, named);
+  if (group === 'layer' && action === 'state') {
+    if (named?.state === 'discarded') return { command: 'layer state', state: { state: 'discarded', layer: id, checkpoint: named.checkpoints.at(-1) } };
+    return { command: 'layer state', state: head(s, id, active(s, id).checkpoints.at(-1)) };
+  }
+  if (group === 'layer' && action === 'diff') { const l = active(s, id); const base = worlds(s)[l.world]; return { command: 'layer diff', changes: changed(base, manifest(s, l)).map(path => ({ path })) }; }
+  if (group === 'layer' && action === 'clone') return clone(s, id, opt('--checkpoint'));
   if (group !== 'workspace') fail('invalid_input', `unknown command ${group}`);
   if (action === 'create') return create(s, id);
-  if (action === 'path') { const l = active(s, id); return { command: 'workspace path', path: l.path, strategy: l.strategy }; }
-  if (action === 'publish') return publish(s, active(s, id), opt('--operation'));
-  if (action === 'discard') return discard(s, id);
+  if (action === 'open') return { command: 'workspace open', workspace: open(s, active(s, id)) };
+  if (action === 'path') { const l = readJson(layerFile(s, id)); return { command: 'workspace path', workspace: { layer: id, root: l.path, exists: fs.existsSync(l.path) } }; }
+  if (action === 'discard') return discard(s, id, opt('--operation'));
+  if (action === 'recover') return { command: 'workspace recover' };
   fail('invalid_input', `unknown workspace command ${action}`);
 }
+const head = (s, id, checkpoint) => ({ state: 'active', head: { layer: id, revision: readJson(layerFile(s, id)).checkpoints.length - 1, checkpoint } });
 
 function init(root) {
   const dir = join(root, '.javelin-reference');
@@ -61,8 +71,10 @@ const manifest = (s, l) => readJson(join(s.dir, 'checkpoints', `${l.checkpoints.
 function recover(s) {
   for (const name of layerNames(s)) {
     const l = readJson(join(s.dir, 'layers', name));
-    if (l.state === 'creating') { fs.rmSync(l.path, { recursive: true, force: true }); fs.rmSync(join(s.dir, 'layers', name)); }
-    else if (l.state === 'discarding') writeJson(join(s.dir, 'layers', name), { ...l, state: 'discarded' });
+    if (l.state === 'discarding') {
+      if (fs.existsSync(l.path)) fs.renameSync(l.path, join(s.dir, 'trash', `${l.id}-${randomBytes(4).toString('hex')}`));
+      writeJson(join(s.dir, 'layers', name), { ...l, state: 'discarded' });
+    }
   }
   for (const name of fs.readdirSync(join(s.dir, 'tmp'))) fs.rmSync(join(s.dir, 'tmp', name), { recursive: true, force: true });
   for (const name of fs.readdirSync(join(s.dir, 'trash'))) fs.rmSync(join(s.dir, 'trash', name), { recursive: true, force: true });
@@ -79,20 +91,6 @@ function walk(root) {
     }
   })(root);
   return out;
-}
-
-const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
-function portability(paths) {
-  if (lie === 'no-refusal') return;
-  const seen = new Map();
-  for (const path of paths) {
-    for (const part of path.split('/')) {
-      if (RESERVED.test(part) || /[. ]$/.test(part) || /[<>:"|?*\\\x00-\x1f]/.test(part)) fail('unportable_path', `path ${JSON.stringify(path)} is not portable to Windows`, path);
-    }
-    const key = path.normalize('NFC').toLowerCase();
-    if (seen.has(key)) fail('unportable_path', `paths ${JSON.stringify(seen.get(key))} and ${JSON.stringify(path)} collide on case-insensitive or normalizing filesystems`, path);
-    seen.set(key, path);
-  }
 }
 
 function capture(s, l) {
@@ -112,7 +110,6 @@ function capture(s, l) {
     newCache[path] = { key, hash };
     next[path] = { type: 'file', hash, exec: process.platform !== 'win32' && (e.stat.mode & 0o100) !== 0 };
   }
-  portability(Object.keys(next));
   if (lie === 'stat-only') writeJson(cacheFile, newCache);
   if (lie === 'touch-layer') fs.writeFileSync(join(l.path, '.reference-cache'), String(Date.now()));
   const id = sha(JSON.stringify(next));
@@ -174,69 +171,82 @@ function cloneTree(source, target) {
 }
 function cp(args) { const r = spawnSync('cp', args, { stdio: 'inherit' }); if (r.status !== 0) fail('clone_failed', `cp ${args.join(' ')} failed`); }
 
-function create(s, id) {
-  if (fs.existsSync(layerFile(s, id))) fail('layer_exists', `Layer ${id} exists`);
-  const all = worlds(s);
-  let world = opt('--world') === undefined ? all.length - 1 : Number(opt('--world'));
-  let m = all[world];
-  const from = opt('--checkpoint');
-  if (from) {
-    m = readJson(join(s.dir, 'checkpoints', `${from}.json`));
-    const owner = layerNames(s).map(n => readJson(join(s.dir, 'layers', n))).find(o => o.checkpoints.includes(from));
-    world = owner ? owner.world : world;
+// The next World holds exactly the spec's paths (gate2_seed's spec format).
+function seedWorld(s, specFile) {
+  const spec = readJson(specFile), next = {};
+  for (const [path, e] of Object.entries(spec)) {
+    if (e.link !== undefined) { next[path] = { type: 'symlink', target: e.link }; continue; }
+    const bytes = e.from !== undefined ? fs.readFileSync(e.from) : Buffer.from(e.text);
+    const hash = sha(bytes);
+    fs.writeFileSync(join(s.dir, 'blobs', hash), bytes);
+    next[path] = { type: 'file', hash, exec: Boolean(e.exec) };
   }
-  const path = join(s.root, '.javelin-reference-layers', id);
-  fs.mkdirSync(join(path, '..'), { recursive: true });
-  const record = { id, world, path, state: 'creating', checkpoints: [] };
-  writeJson(layerFile(s, id), record);
-  let strategy;
-  if (from) { materialize(s, m, path); strategy = 'materialize'; }
-  else strategy = cloneTree(join(s.dir, 'bases', String(world)), path);
+  const all = worlds(s);
+  materialize(s, next, join(s.dir, 'bases', String(all.length)));
+  writeJson(join(s.dir, 'worlds.json'), [...all, next]);
+  return { version: all.length };
+}
+
+function create(s, id) {
+  const all = worlds(s);
+  const world = opt('--world') === undefined ? all.length - 1 : Number(opt('--world'));
+  if (fs.existsSync(layerFile(s, id))) {
+    const l = readJson(layerFile(s, id));
+    if (l.world !== world) fail('invalid_input', `Layer ${id} exists from World ${l.world}`);
+    return { command: 'workspace create', workspace: open(s, active(s, id)) };
+  }
+  return { command: 'workspace create', workspace: open(s, newLayer(s, id, world, all[world])) };
+}
+function clone(s, id, from) {
+  const m = readJson(join(s.dir, 'checkpoints', `${from}.json`));
+  const owner = layerNames(s).map(n => readJson(join(s.dir, 'layers', n))).find(o => o.checkpoints.includes(from));
+  if (!fs.existsSync(layerFile(s, id))) newLayer(s, id, owner.world, m);
+  return { command: 'layer clone', state: head(s, id, readJson(layerFile(s, id)).checkpoints[0]) };
+}
+function newLayer(s, id, world, m) {
   const checkpoint = sha(JSON.stringify(m));
   if (!fs.existsSync(join(s.dir, 'checkpoints', `${checkpoint}.json`))) writeJson(join(s.dir, 'checkpoints', `${checkpoint}.json`), m);
-  writeJson(layerFile(s, id), { ...record, state: 'active', strategy, checkpoints: [checkpoint] });
+  const l = { id, world, path: join(s.root, '.javelin-reference-layers', id), state: 'active', checkpoints: [checkpoint] };
+  writeJson(layerFile(s, id), l);
+  return l;
+}
+// Clone the World base, apply the checkpoint, and refuse a tree this volume cannot hold.
+function open(s, l) {
+  if (fs.existsSync(l.path)) return { layer: l.id, root: l.path, created: false, clone: { strategy: l.strategy } };
+  const staging = join(s.dir, 'tmp', `${l.id}-${randomBytes(4).toString('hex')}`);
+  const strategy = cloneTree(join(s.dir, 'bases', String(l.world)), staging);
+  const want = manifest(s, l), base = worlds(s)[l.world];
+  const delta = changed(base, want);
+  for (const p of delta) fs.rmSync(join(staging, ...p.split('/')), { force: true });
+  materialize(s, Object.fromEntries(delta.filter(p => want[p]).map(p => [p, want[p]])), staging);
+  if (lie !== 'no-refusal') {
+    const got = walk(staging);
+    const lost = [...new Set([...Object.keys(want), ...Object.keys(got)])].find(p => !want[p] || !got[p]);
+    if (lost !== undefined) { fs.rmSync(staging, { recursive: true, force: true }); fail('unsupported', `path ${JSON.stringify(lost)} cannot be materialized here`, lost); }
+  }
+  fs.mkdirSync(join(l.path, '..'), { recursive: true });
+  fs.renameSync(staging, l.path);
+  writeJson(layerFile(s, l.id), { ...readJson(layerFile(s, l.id)), strategy });
   if (lie === 'daemon') spawn(process.execPath, [process.argv[1], '__linger'], { detached: true, stdio: 'ignore' }).unref();
-  const note = strategy === 'copy' ? 'copied every file: this filesystem has no clone support' : `cloned with ${strategy}`;
-  return { command: 'workspace create', layer: id, path, strategy, note, checkpoint };
+  const warning = strategy === 'copy' ? 'Warning: this volume cannot clone files, so unchanged data was duplicated' : null;
+  return { layer: l.id, root: l.path, created: true, clone: { strategy }, warning };
 }
 
-function publish(s, l, operation) {
-  if (!operation) fail('invalid_input', 'publish needs --operation');
-  const opsFile = join(s.dir, 'operations.json');
-  const ops = fs.existsSync(opsFile) ? readJson(opsFile) : {};
-  if (ops[operation]) return ops[operation];
-  capture(s, l);
-  const head = manifest(s, readJson(layerFile(s, l.id)));
-  const all = worlds(s), base = all[l.world], current = all.at(-1);
-  const paths = changed(base, head);
-  const conflicts = paths.filter(p => JSON.stringify(base[p] ?? null) !== JSON.stringify(current[p] ?? null));
-  if (conflicts.length) fail('conflict', `World changed ${conflicts.join(', ')}`);
-  const next = { ...current };
-  for (const p of paths) { if (head[p]) next[p] = head[p]; else delete next[p]; }
-  portability(Object.keys(next));
-  const version = all.length;
-  materialize(s, next, join(s.dir, 'bases', String(version)));
-  writeJson(join(s.dir, 'worlds.json'), [...all, next]);
-  writeJson(layerFile(s, l.id), { ...readJson(layerFile(s, l.id)), state: 'published' });
-  const out = { command: 'workspace publish', receipt: { operation, version } };
-  writeJson(opsFile, { ...ops, [operation]: out });
-  return out;
-}
-
-function discard(s, id) {
+function discard(s, id, operation) {
+  if (!operation) fail('invalid_input', 'discard needs --operation');
   if (!fs.existsSync(layerFile(s, id))) fail('not_found', `no Layer ${id}`);
   const l = readJson(layerFile(s, id));
-  if (l.state === 'discarded') return { command: 'workspace discard', layer: id, state: 'discarded' };
+  const out = { command: 'workspace discard', operation, update: { outcome: 'applied', state: { layer: id, state: 'discarded' } } };
+  if (l.state === 'discarded') return out;
   if (lie === 'torn-discard') {
     for (const e of Object.values(walk(l.path))) if (e.full) fs.rmSync(e.full, { force: true });
     fs.rmSync(l.path, { recursive: true, force: true });
+    writeJson(layerFile(s, id), { ...l, state: 'discarded' });
   } else {
     writeJson(layerFile(s, id), { ...l, state: 'discarding' });
-    if (fs.existsSync(l.path)) fs.renameSync(l.path, join(s.dir, 'trash', `${id}-${randomBytes(4).toString('hex')}`));
+    recover(s);
   }
-  writeJson(layerFile(s, id), { ...l, state: 'discarded' });
-  recover(s);
-  return { command: 'workspace discard', layer: id, state: 'discarded' };
+  return out;
 }
 
 if (argv[0] === '__linger') { setTimeout(() => {}, 30000); } else {

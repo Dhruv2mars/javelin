@@ -7,12 +7,11 @@ name: Gate 2
 # run once per OS on a clone-capable filesystem. See tools/workspace-probe/README.md.
 on:
   workflow_dispatch:
-  push:
-    branches: ["test/gate2**"]
   pull_request:
     paths:
       - src/**
       - crates/**
+      - examples/gate2_seed.rs
       - Cargo.toml
       - Cargo.lock
       - tools/workspace-probe/**
@@ -55,6 +54,8 @@ jobs:
         run: |
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           cargo build --locked --release -p javelin-cli
+          # Seeds Worlds through the library: clone-backed workspaces have no Publish yet.
+          cargo build --locked --release -p javelin --example gate2_seed
           shims=$RUNNER_TEMP/shims probe=tools/workspace-probe
           mkdir -p "$shims"
           rustc --edition 2021 -O -o "$RUNNER_TEMP/shim$EXE" $probe/shim.rs
@@ -66,7 +67,7 @@ jobs:
             # no_new_privs: setuid binaries such as the real sudo cannot elevate the run.
             echo "AS_USER=setpriv --no-new-privs" >> "$GITHUB_ENV"
           fi
-          { echo "SHIMS=$shims"; echo "JAVELIN=$PWD/target/release/javelin$EXE"; echo "EVIDENCE=$RUNNER_TEMP/gate2-evidence"; } >> "$GITHUB_ENV"
+          { echo "SHIMS=$shims"; echo "JAVELIN=$PWD/target/release/javelin$EXE"; echo "SEED=$PWD/target/release/examples/gate2_seed$EXE"; echo "EVIDENCE=$RUNNER_TEMP/gate2-evidence"; } >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/gate2-evidence"
 
       # Privileged setup ends here: the steps below only create the volumes under test.
@@ -114,10 +115,10 @@ jobs:
           prove() { # FS DIR EXPECT REFERENCE_EXPECT
             local fs=$1 dir=$2
             for subject in reference javelin; do
-              local bin=$JAVELIN expect=$3 bulk=128
-              [[ $subject == reference ]] && bin=$probe/gate2-reference.mjs expect=$4 bulk=64
+              local bin=$JAVELIN seed=$SEED expect=$3 bulk=128
+              [[ $subject == reference ]] && bin=$probe/gate2-reference.mjs seed=$probe/gate2-reference.mjs expect=$4 bulk=64
               echo "::group::$fs / $subject"
-              $AS_USER bun $probe/gate2.mjs --javelin "$bin" --dir "$dir/$subject" --fs "$fs" --expect "$expect" \
+              $AS_USER bun $probe/gate2.mjs --javelin "$bin" --seed "$seed" --dir "$dir/$subject" --fs "$fs" --expect "$expect" \
                 --bulk-mb $bulk --shims "$SHIMS" --out "$EVIDENCE/$fs-$subject.json"
               local code=$?
               echo "::endgroup::"
