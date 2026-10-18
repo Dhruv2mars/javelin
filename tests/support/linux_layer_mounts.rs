@@ -3351,8 +3351,8 @@ fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
     fs::remove_file(s.view.join("delete.txt")).unwrap();
     assert_eq!(watch(&mut s).unwrap(), 1);
     let head = active(&s.repo, &s.layer);
-    let checkpoint = s.repo.read_checkpoint(head.checkpoint()).unwrap();
-    let entries = checkpoint.manifest().entries();
+    let manifest = s.repo.checkpoint_manifest(head.checkpoint()).unwrap();
+    let entries = manifest.entries();
     let path = |p| RepoPath::parse(p).unwrap();
     assert!(!entries.contains_key(&path("build/nested/private")));
     assert!(!entries.contains_key(&path("delete.txt")));
@@ -3388,9 +3388,8 @@ fn ignore_capture_watch_publish_and_strict_rebind_preserve_private_bytes() {
     assert_eq!(watch(&mut s).unwrap(), 1);
     assert!(
         !s.repo
-            .read_checkpoint(active(&s.repo, &s.layer).checkpoint())
+            .checkpoint_manifest(active(&s.repo, &s.layer).checkpoint())
             .unwrap()
-            .manifest()
             .entries()
             .contains_key(&path("build/tracked"))
     );
@@ -3524,9 +3523,8 @@ fn ignore_rule_quiet_race_and_uncertain_capture_recovery() {
     );
     assert!(
         !s.repo
-            .read_checkpoint(active(&s.repo, &s.layer).checkpoint())
+            .checkpoint_manifest(active(&s.repo, &s.layer).checkpoint())
             .unwrap()
-            .manifest()
             .entries()
             .contains_key(&RepoPath::parse("private").unwrap())
     );

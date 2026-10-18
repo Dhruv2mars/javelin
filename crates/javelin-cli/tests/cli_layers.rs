@@ -1635,16 +1635,10 @@ fn linux_cli_foreground_watch_captures_stable_tools_and_noops() {
     else {
         panic!("active")
     };
-    let checkpoint = repo.read_checkpoint(head.checkpoint()).unwrap();
-    assert!(
-        checkpoint
-            .manifest()
-            .entries()
-            .contains_key(&path("main.c"))
-    );
+    let checkpoint = repo.checkpoint_manifest(head.checkpoint()).unwrap();
+    assert!(checkpoint.entries().contains_key(&path("main.c")));
     assert!(
         !checkpoint
-            .manifest()
             .entries()
             .keys()
             .any(|p| p.as_str().starts_with("build/"))

@@ -1429,7 +1429,9 @@ impl LinuxLayerRuntime {
                 Some(&repo.checkpoint_manifest(checkpoint.id())?),
                 &mut hash_only,
             )?;
-            if snap.entries != *repo.checkpoint_manifest(checkpoint.id())?.entries() || !snap.unrepresented.is_empty() {
+            if snap.entries != *repo.checkpoint_manifest(checkpoint.id())?.entries()
+                || !snap.unrepresented.is_empty()
+            {
                 return Err(Error::InvalidInput(
                     "workspace has uncaptured changes; checkpoint first (remove empty directories, which checkpoints cannot represent)".into(),
                 ));

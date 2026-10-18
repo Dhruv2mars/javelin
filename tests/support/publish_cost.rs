@@ -42,7 +42,13 @@ fn publish_after(prior: u64) -> Cost {
         .unwrap();
         let changes = SparseChanges::new([(path, Some(entry))]).unwrap();
         let head = head_in(&tx).unwrap();
-        append_version_in(&tx, &head, &OperationId::parse(&operation).unwrap(), &changes).unwrap();
+        append_version_in(
+            &tx,
+            &head,
+            &OperationId::parse(&operation).unwrap(),
+            &changes,
+        )
+        .unwrap();
     }
     tx.commit().unwrap();
     let base = repo.layer_base(VersionNumber::new(prior).unwrap()).unwrap();

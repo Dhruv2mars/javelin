@@ -324,7 +324,10 @@ fn checkpoint_changes_apply_on_top_of_the_base_clone() {
     want.remove("src/lib/deep/mod.rs");
     want.insert("src/lib/other/added.rs".into(), file(b"added"));
     assert_eq!(
-        repo.checkpoint_manifest(checkpoint.id()).unwrap().entries().len(),
+        repo.checkpoint_manifest(checkpoint.id())
+            .unwrap()
+            .entries()
+            .len(),
         want.len()
     );
     assert_eq!(tree(&report.root), expected(&want));

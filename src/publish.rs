@@ -11,8 +11,8 @@ use crate::{
     domain::{ObjectKind, intersections, version_id},
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        Index, append_version_in, changeset_in, decode_id, head_in as world_head_in,
-        insert_object, read_object, validate_format, version_in,
+        Index, append_version_in, changeset_in, decode_id, head_in as world_head_in, insert_object,
+        read_object, validate_format, version_in,
     },
 };
 
@@ -163,8 +163,10 @@ impl Repository {
                     let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &candidate)?;
                     let number = crate::repository::next_number(against.number)?;
-                    tx.execute("INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
-                        params![operation.as_str(), against.number.sql(), number.sql()])?;
+                    tx.execute(
+                        "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
+                        params![operation.as_str(), against.number.sql(), number.sql()],
+                    )?;
                     PublishOutcome::Published {
                         version: append_version_in(&tx, &against, operation, &candidate)?,
                     }
