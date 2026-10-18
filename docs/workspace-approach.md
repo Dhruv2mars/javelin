@@ -2,11 +2,14 @@
 
 Status: accepted on 2026-10-17. This supersedes the sparse-kernel-backend
 direction (FSKit, OverlayFS, ProjFS) and amends gate 2 of `build-contract.md`.
+Amended on 2026-10-18 by `git3-direction.md`: Javelin is online-first, one rolling
+base replaces per-version bases, and blobs are intended to become plain files
+that Layers clone from, pending the recorded benchmark.
 
 ## Decision
 
 A Layer is a plain directory on the same volume as the repository store. It is
-created by **cloning an immutable, materialized World base** with the kernel's
+created by **cloning the materialized World base** with the kernel's
 copy-on-write primitive. Javelin **captures changes without a daemon** whenever
 it runs: on every `javelin` command, and on lifecycle events that agent tools
 already emit. Checkpoints and Publish record **changesets**: the changed paths
@@ -38,7 +41,9 @@ projected" needs something users do not want:
 - **Linux:** OverlayFS needs a root-owned helper, `sudo -n` and an
   administrator-managed parent list.
 - **Elsewhere:** EdenFS, CitC and VFS for Git all depend on a long-lived daemon
-  or driver. VFS for Git is in maintenance mode.
+  or driver. VFS for Git was superseded by Scalar and sparse-checkout for new
+  deployments, largely because Apple deprecated the kernel features its macOS
+  port needed. EdenFS on macOS runs over NFS loopback.
 
 The result was that roughly three quarters of the added lines were proof and
 evidence code, the product shipped as Linux-only, and macOS and Windows had no
@@ -54,8 +59,8 @@ From Anthropic's [Scion write-up](https://www.anthropic.com/engineering/redesign
   the size of the change, not the size of the repository.
 - **Derived data.** Diffs, history, blame and bases are computed from changesets,
   eagerly or lazily, and never stored as primary truth.
-  `base(V+1) = clone(base(V)) + apply(changeset V→V+1)`, so keeping bases current
-  costs one clone plus the change.
+  The rolling base advances in place by `apply(changeset V→V+1)`, so keeping it
+  current costs only the change (`git3-direction.md`).
 - **One compare-and-swap row for World advance.** No global refs and no global
   lock. Preparation stays concurrent.
 - **An optional working copy.** Jobs that only read or query use the API without
@@ -65,8 +70,10 @@ From Anthropic's [Scion write-up](https://www.anthropic.com/engineering/redesign
 - **Saying no to over-engineering.** Scion's authors reported that adversarial
   review drifted into excessive validation. Javelin's proof tracks did the same.
 
-We do not take Scion's per-node daemon or its always-online client. Javelin stays
-local-first, with no daemon.
+We do not take Scion's per-node daemon: capture stays daemonless. Javelin was
+local-first until 2026-10-18, when `git3-direction.md` adopted Scion's online
+client: assume online for speed, never for correctness. Layers stay plain cloned
+directories, and Layer work continues during an outage.
 
 ## Change capture without a daemon
 
@@ -223,9 +230,11 @@ out.
   root helper.
 - **Discard is deferred.** Removing 100k files takes about 4 s. Discard renames
   the Layer into the store's trash, and later commands delete it.
-- **The base must be immutable.** A directory clone briefly blocks writers to its
-  source, which is harmless because bases are read-only. Bases are created
-  read-only and replaced, never edited in place.
+- **Layers never see base edits.** A directory clone briefly blocks writers to its
+  source, so Layer create takes the workspace lock, clones the base and unlocks.
+  A clone does not depend on its source afterwards. Until 2026-10-18 bases were
+  immutable and replaced, never edited in place. `git3-direction.md` replaced
+  that rule with one rolling base advanced in place under the same lock.
 - **Never hardlink.** A hardlink shares one inode across Layers, so an in-place
   write would leak between them. Clones are copy-on-write per file.
 - **Isolation is per directory.** A process can still write into another Layer's
@@ -245,8 +254,8 @@ out.
 exposes it as `javelin workspace create|open|path|discard|recover` without
 `--helper`; the OverlayFS commands keep `--helper` until they are retired.
 
-**Store layout.** Everything lives under `.javelin/`, on the repository's volume:
-`bases/<N>` holds World N, `layers/<id>` holds each Layer, `tmp/` holds staging, and
+**Store layout (current code).** Everything lives under `.javelin/`, on the
+repository's volume: `bases/<N>` holds World N, `layers/<id>` holds each Layer, `tmp/` holds staging, and
 `trash/` holds renamed-away directories. `workspace.lock` serializes workspace
 changes between processes. `Repository::layer_workspace` returns a Layer's root and
 base paths for capture.
@@ -259,7 +268,9 @@ copy must share its first cluster (`FSCTL_GET_RETRIEVAL_POINTERS`) before Javeli
 reports `file_clone`. Every result reports the strategy, the reason each faster
 strategy failed, and the bytes copied. Javelin never hardlinks.
 
-**Bases.** A cold base is written from stored objects, into a btrfs subvolume
+**Bases (current code).** The rolling base in `git3-direction.md` replaces the
+per-version bases below; this paragraph describes the code until that lands.
+A cold base is written from stored objects, into a btrfs subvolume
 where possible, flushed, published by rename, then sealed. `base(N)` derives from
 the nearest cached base: one clone plus the exact changeset between the two
 manifests. At most two bases are kept, and the World head and the base in use are
@@ -331,4 +342,5 @@ expected strategy and records a 20k-file cold and warm measurement.
 - **Other systems:** EdenFS overview, Scalar docs, pnpm store docs.
 - **Partially read:** the CitC/Piper material (CACM 2016) and the Mononoke/Bonsai
   schema were seen only through excerpts. They are marked unconfirmed and were
-  not relied on.
+  not relied on. `git3-direction.md` adopts Bonsai through Scion's description
+  and lists what remains unconfirmed.
