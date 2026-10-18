@@ -36,8 +36,10 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest, ObjectId, OperationId,
-    RepoPath, Repository, Result, SparseChanges, domain::ObjectKind,
+    Error, FileEntry, IgnoreRules, LayerHead, LayerId, LayerState, LayerUpdate, Manifest, ObjectId,
+    OperationId, RepoPath, Repository, Result, SparseChanges,
+    domain::ObjectKind,
+    ignore::{CONFIG, LIMIT},
 };
 
 /// Reads of one entry before it is reported uncertain.
@@ -147,7 +149,7 @@ pub struct Scan {
 ///
 /// `prior` is the Layer's current checkpointed manifest. It supplies the state of
 /// uncertain paths, the executable bit where the OS has none, and the tracked set
-/// that ignore rules never hide. Blobs go to `store`. Empty directories are not
+/// that root ignore rules (`.javelinignore`) never hide. Blobs go to `store`. Empty directories are not
 /// represented, matching the native model. `.javelin` entries are never captured.
 pub fn scan(
     root: &Path,
@@ -158,6 +160,7 @@ pub fn scan(
     if !fs::symlink_metadata(root)?.is_dir() {
         return Err(Error::InvalidInput("Layer root must be a directory".into()));
     }
+    let rules = ignore_rules(root)?;
     let racy = now() - RACY_MARGIN_NS;
     let mut old = std::mem::take(&mut cache.entries);
     let mut fresh = HashMap::with_capacity(old.len());
@@ -166,84 +169,54 @@ pub fn scan(
         hashed: 0,
         uncertain: Vec::new(),
     };
-    let mut pending = vec![String::new()];
-    while let Some(directory) = pending.pop() {
-        for item in fs::read_dir(root.join(&directory))? {
-            let item = item?;
-            let name = item.file_name();
-            let name = name
-                .to_str()
-                .ok_or_else(|| Error::Unsupported(format!("non-UTF-8 name in {directory:?}")))?;
-            if name.eq_ignore_ascii_case(".javelin") {
-                continue;
-            }
-            let relative = if directory.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{directory}/{name}")
-            };
-            let path = RepoPath::parse(&relative).map_err(|_| {
-                Error::Unsupported(format!("name outside the native path model: {relative:?}"))
-            })?;
-            let meta = match item.metadata() {
-                Ok(meta) => meta,
-                Err(e) if e.kind() == ErrorKind::NotFound => continue,
-                Err(e) => return Err(e.into()),
-            };
-            let kind = meta.file_type();
-            if kind.is_dir() {
-                if !untracked_ignored(prior, &path, true) {
-                    pending.push(relative);
-                }
-                continue;
-            }
-            if !kind.is_file() && !kind.is_symlink() {
-                return Err(Error::Unsupported(format!("special file at {relative:?}")));
-            }
-            if untracked_ignored(prior, &path, false) {
-                continue;
-            }
-            let stat = stat(&meta);
-            let reused = old
-                .remove(&relative)
-                .filter(|c| c.trusted && c.stat == stat);
-            let cached = match reused {
-                Some(cached) => cached,
-                None => {
-                    cache.dirty = true;
-                    let executable = matches!(
-                        prior.entries().get(&path),
-                        Some(FileEntry::Regular {
-                            executable: true,
-                            ..
-                        })
-                    );
-                    match read_stable(&root.join(&relative), executable, store)? {
-                        // The walk's fingerprint is what the next walk compares against;
-                        // the stable read's own fingerprint must also be old to trust it.
-                        Hashed::Stable(read, entry) => {
-                            scan.hashed += 1;
-                            let old = |s: Stat| s.mtime < racy && s.ctime < racy;
-                            Cached {
-                                stat,
-                                entry,
-                                trusted: old(stat) && old(read),
-                            }
-                        }
-                        Hashed::Gone => continue,
-                        Hashed::Unstable => {
-                            if let Some(entry) = prior.entries().get(&path) {
-                                scan.entries.insert(path.clone(), entry.clone());
-                            }
-                            scan.uncertain.push(path);
-                            continue;
+    for Found {
+        relative,
+        path,
+        stat,
+    } in walk(root, &rules, prior)?
+    {
+        let reused = old
+            .remove(&relative)
+            .filter(|c| c.trusted && c.stat == stat);
+        let cached = match reused {
+            Some(cached) => cached,
+            None => {
+                cache.dirty = true;
+                let executable = matches!(
+                    prior.entries().get(&path),
+                    Some(FileEntry::Regular {
+                        executable: true,
+                        ..
+                    })
+                );
+                match read_stable(&root.join(&relative), executable, store)? {
+                    // The walk's fingerprint is what the next walk compares against;
+                    // the stable read's own fingerprint must also be old to trust it.
+                    // Unix walks lstat, so a mismatch means the entry changed after
+                    // the walk; Windows walk data comes from the directory, not the
+                    // handle, and legitimately differs.
+                    Hashed::Stable(read, entry) => {
+                        scan.hashed += 1;
+                        let old = |s: Stat| s.mtime < racy && s.ctime < racy;
+                        Cached {
+                            stat,
+                            entry,
+                            trusted: old(stat) && old(read) && (cfg!(windows) || stat == read),
                         }
                     }
+                    Hashed::Gone => continue,
+                    Hashed::Unstable => {
+                        if let Some(entry) = prior.entries().get(&path) {
+                            scan.entries.insert(path.clone(), entry.clone());
+                        }
+                        scan.uncertain.push(path);
+                        continue;
+                    }
                 }
-            };
-            scan.entries.insert(path, cached.entry.clone());
-            fresh.insert(relative, cached);
-        }
+            }
+        };
+        scan.entries.insert(path, cached.entry.clone());
+        fresh.insert(relative, cached);
     }
     cache.dirty |= !old.is_empty();
     cache.entries = fresh;
@@ -251,10 +224,151 @@ pub fn scan(
     Ok(scan)
 }
 
-/// Seam for root ignore rules (PR #36). Tracked paths are never ignored.
-fn untracked_ignored(prior: &Manifest, path: &RepoPath, directory: bool) -> bool {
-    let ignored = |_: &RepoPath| false; // Replace with the shared path -> ignored? rule.
-    if !ignored(path) {
+struct Found {
+    relative: String,
+    path: RepoPath,
+    stat: Stat,
+}
+
+/// Lists every capturable file and symlink with its `lstat` fingerprint.
+///
+/// Directories are listed by a small thread pool: the walk is bound by per-entry
+/// syscall latency, not CPU, so parallel listing cuts a 100k-file rescan severalfold.
+fn walk(root: &Path, rules: &IgnoreRules, prior: &Manifest) -> Result<Vec<Found>> {
+    use std::sync::{Condvar, Mutex};
+    struct Queue {
+        pending: Vec<String>,
+        busy: usize,
+        error: Option<Error>,
+    }
+    let queue = Mutex::new(Queue {
+        pending: vec![String::new()],
+        busy: 0,
+        error: None,
+    });
+    let ready = Condvar::new();
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    let found = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut found = Vec::new();
+                    loop {
+                        let directory = {
+                            let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+                            loop {
+                                if q.error.is_some() {
+                                    return found;
+                                }
+                                if let Some(directory) = q.pending.pop() {
+                                    q.busy += 1;
+                                    break directory;
+                                }
+                                if q.busy == 0 {
+                                    return found;
+                                }
+                                q = ready.wait(q).unwrap_or_else(|e| e.into_inner());
+                            }
+                        };
+                        let mut subdirectories = Vec::new();
+                        let result = list(
+                            root,
+                            &directory,
+                            rules,
+                            prior,
+                            &mut found,
+                            &mut subdirectories,
+                        );
+                        let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+                        q.busy -= 1;
+                        match result {
+                            Ok(()) => q.pending.append(&mut subdirectories),
+                            Err(e) => {
+                                q.error.get_or_insert(e);
+                            }
+                        }
+                        ready.notify_all();
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("walk worker panicked"))
+            .collect()
+    });
+    match queue.into_inner().unwrap_or_else(|e| e.into_inner()).error {
+        Some(error) => Err(error),
+        None => Ok(found),
+    }
+}
+
+/// Lists one directory: files and symlinks into `found`, directories to visit next.
+fn list(
+    root: &Path,
+    directory: &str,
+    rules: &IgnoreRules,
+    prior: &Manifest,
+    found: &mut Vec<Found>,
+    subdirectories: &mut Vec<String>,
+) -> Result<()> {
+    let items = match fs::read_dir(root.join(directory)) {
+        Ok(items) => items,
+        // A directory removed after its parent was listed holds nothing to capture.
+        Err(e) if e.kind() == ErrorKind::NotFound && !directory.is_empty() => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for item in items {
+        let item = item?;
+        let name = item.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| Error::Unsupported(format!("non-UTF-8 name in {directory:?}")))?;
+        if name.eq_ignore_ascii_case(".javelin") {
+            continue;
+        }
+        let relative = if directory.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{directory}/{name}")
+        };
+        let path = RepoPath::parse(&relative).map_err(|_| {
+            Error::Unsupported(format!("name outside the native path model: {relative:?}"))
+        })?;
+        let meta = match item.metadata() {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+        };
+        let kind = meta.file_type();
+        if kind.is_dir() {
+            if !untracked_ignored(rules, prior, &path, true) {
+                subdirectories.push(relative);
+            }
+            continue;
+        }
+        if !kind.is_file() && !kind.is_symlink() {
+            return Err(Error::Unsupported(format!("special file at {relative:?}")));
+        }
+        if !untracked_ignored(rules, prior, &path, false) {
+            found.push(Found {
+                relative,
+                path,
+                stat: stat(&meta),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Ignore rules hide only untracked paths; tracked paths and their ancestors stay visible.
+fn untracked_ignored(
+    rules: &IgnoreRules,
+    prior: &Manifest,
+    path: &RepoPath,
+    directory: bool,
+) -> bool {
+    if !rules.ignored(path.as_str()) {
         return false;
     }
     let tracked = if directory {
@@ -267,6 +381,37 @@ fn untracked_ignored(prior: &Manifest, path: &RepoPath, directory: bool) -> bool
         prior.entries().contains_key(path)
     };
     !tracked
+}
+
+/// Reads `.javelinignore` at the Layer root: a bounded UTF-8 regular file, never a link.
+fn ignore_rules(root: &Path) -> Result<IgnoreRules> {
+    let invalid = |why: &str| Error::InvalidInput(format!("{CONFIG} {why}"));
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(
+        &mut options,
+        libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    );
+    let path = root.join(CONFIG);
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return Err(invalid("must be a regular file")),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(IgnoreRules::default()),
+        Err(e) => return Err(e.into()),
+    }
+    let file = options
+        .open(&path)
+        .map_err(|_| invalid("must be a regular file"))?;
+    if !file.metadata()?.is_file() {
+        return Err(invalid("must be a regular file"));
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > LIMIT {
+        return Err(invalid("exceeds 64 KiB"));
+    }
+    IgnoreRules::parse(&String::from_utf8(bytes).map_err(|_| invalid("must be UTF-8"))?)
 }
 
 enum Hashed {

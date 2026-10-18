@@ -325,6 +325,37 @@ fn the_store_directory_is_never_captured() {
 }
 
 #[test]
+fn ignore_rules_hide_only_untracked_outputs() {
+    let (_dir, mut repo, layer, root) =
+        setup(&[("build/keep.txt", b"tracked"), ("notes.txt", b"n")]);
+    write(&root, ".javelinignore", b"build/\nnotes.txt\nlogs\n");
+    write(&root, "build/output.o", b"private");
+    write(&root, "build/keep.txt", b"tracked edit");
+    write(&root, "logs/today", b"private");
+    write(&root, "notes.txt", b"tracked edit");
+    write(&root, "src/lib.rs", b"visible");
+    applied(&repo.capture_directory(&layer, &root).unwrap());
+    let paths: Vec<_> = content(&repo, &layer).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(
+        paths,
+        [
+            ".javelinignore",
+            "build/keep.txt",
+            "notes.txt",
+            "src/lib.rs"
+        ]
+    );
+
+    for bad in [&b"*.o\n"[..], &[0xff][..]] {
+        write(&root, ".javelinignore", bad);
+        assert!(matches!(
+            repo.capture_directory(&layer, &root),
+            Err(javelin::Error::InvalidInput(_))
+        ));
+    }
+}
+
+#[test]
 fn concurrent_rewrites_never_capture_a_mixed_version() {
     let (_dir, mut repo, layer, root) = setup(&[]);
     let (a, b) = (vec![b'a'; 64 * 1024], vec![b'b'; 64 * 1024]);
@@ -336,7 +367,7 @@ fn concurrent_rewrites_never_capture_a_mixed_version() {
         std::thread::spawn(move || {
             let mut i = 0usize;
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                let bytes = if i % 2 == 0 { &b } else { &a };
+                let bytes = if i.is_multiple_of(2) { &b } else { &a };
                 let _ = fs::write(root.join("next.tmp"), bytes);
                 // Windows refuses to replace a file another handle has open.
                 let _ = fs::rename(root.join("next.tmp"), root.join("atomic.bin"));
