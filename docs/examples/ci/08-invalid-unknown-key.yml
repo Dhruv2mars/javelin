@@ -1,0 +1,8 @@
+# Expected: validator rejects with unknown_key at jobs.test.runson.
+name: invalid-unknown-key
+on: workflow_dispatch
+jobs:
+  test:
+    runson: ubuntu-latest
+    steps:
+      - run: echo hi

@@ -1,0 +1,24 @@
+# Planned CLI: `javelin revision fetch` (not implemented yet; see docs/ci-execution.md).
+name: fetch-by-tree
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Javelin repository
+        required: true
+        type: string
+      tree:
+        description: Root tree hash of the Publish Request revision
+        required: true
+        type: string
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      JAVELIN_CI_TOKEN: ${{ secrets.JAVELIN_CI_TOKEN }}
+    steps:
+      - name: Fetch revision by tree hash into an empty directory
+        run: javelin revision fetch --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}" --into work
+      - name: Test
+        working-directory: work
+        run: ./scripts/test.sh

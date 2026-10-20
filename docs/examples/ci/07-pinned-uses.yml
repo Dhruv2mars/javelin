@@ -1,0 +1,14 @@
+name: pinned-uses
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.javelin/actions/setup
+        with:
+          toolchain: stable
+      - uses: actions/cache@0000000000000000000000000000000000000000 # placeholder SHA
+        with:
+          path: target
+          key: target-${{ runner.os }}
+      - run: cargo build --locked

@@ -1,0 +1,30 @@
+# Planned CLI: `javelin check report` (not implemented yet).
+name: report-check
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        required: true
+        type: string
+      tree:
+        required: true
+        type: string
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      JAVELIN_CI_TOKEN: ${{ secrets.JAVELIN_CI_TOKEN }}
+    steps:
+      - name: Fetch
+        run: javelin revision fetch --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}" --into work
+      - name: Test
+        id: test
+        working-directory: work
+        run: ./scripts/test.sh
+      - name: Report ci/unit
+        if: always()
+        run: >
+          javelin check report --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}"
+          --name ci/unit --conclusion "${{ steps.test.outcome == 'success' && 'success' || 'failure' }}"
