@@ -274,7 +274,7 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
 - [x] Collision radar (PR #48, format 8 after #51).
-- [x] Trace blame (PR #49, stacked on #48).
+- [x] Trace blame (PR #49, format 8 on main after #48).
   - Evidence: checkpoint provenance
     from `JAVELIN_*`/flags, per-path attribution through Publish into `blame`,
     `javelin blame PATH [--lines]`, rebuilt and compared by `check()`. Evidence:
@@ -307,7 +307,7 @@ Wave 1, done except #52:
 
 Wave 2, commissioned 2026-10-20 after #51 merged (radar and blame; rolling base and
 reclaim; Stack-head refresh and Publish; robustness proofs):
-- [ ] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
+- [x] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
 - [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
 - [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
 - [ ] Reclaim a published Layer's directory.
