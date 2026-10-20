@@ -820,7 +820,7 @@ impl Repository {
         let (update, operation) = if &changes == checkpoint.changes() {
             (None, None)
         } else {
-            let operation = operation_id(&head, &changes);
+            let operation = operation_id(&head, &changes, self.provenance.as_ref());
             let update = self.capture_layer(&operation, &head, &changes)?;
             (Some(update), Some(operation))
         };
@@ -868,7 +868,13 @@ fn store_blob(conn: &Connection, bytes: &[u8]) -> Result<ObjectId> {
     crate::repository::insert_object(conn, ObjectKind::Blob, bytes)
 }
 
-fn operation_id(head: &LayerHead, changes: &SparseChanges) -> OperationId {
+/// Provenance is hashed too: the same edit captured for another session is a
+/// different checkpoint, so it must not replay this operation.
+fn operation_id(
+    head: &LayerHead,
+    changes: &SparseChanges,
+    provenance: Option<&crate::Provenance>,
+) -> OperationId {
     let mut hash = Sha256::new();
     hash.update(b"javelin-capture-v1\0");
     hash.update(head.layer().as_str());
@@ -882,6 +888,10 @@ fn operation_id(head: &LayerHead, changes: &SparseChanges) -> OperationId {
         hash.update(b"\0");
         hash.update(serde_json::to_vec(entry).expect("entry encoding"));
         hash.update(b"\0");
+    }
+    if let Some(provenance) = provenance {
+        hash.update(b"provenance\0");
+        hash.update(provenance.bytes());
     }
     let id = ObjectId::from_bytes(hash.finalize().into());
     OperationId::parse(&format!("capture-{id}")).expect("generated operation ID")

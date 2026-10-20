@@ -273,7 +273,15 @@ dependency order. Each is done when its PR is merged with the checks it names.
   measurements in `docs/architecture.md`).
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
-- [x] Collision radar (PR #48, format 8 after #51). Trace blame: PR #49.
+- [x] Collision radar (PR #48, format 8 after #51).
+- [x] Trace blame (PR #49, format 8 on main after #48).
+  - Evidence: checkpoint provenance
+    from `JAVELIN_*`/flags, per-path attribution through Publish into `blame`,
+    `javelin blame PATH [--lines]`, rebuilt and compared by `check()`. Evidence:
+    multi-Layer, multi-session, rename, conflict-then-resolve, clone and Stack tests;
+    path blame 0.015 ms flat, line blame 63 ms at 1,000 versions of a 1,000-line file.
+  - [ ] Follow-up: a cross-platform `layer publish` CLI for clone-backed Layers
+    (Publish is library-only off Linux, so CLI blame needs it end to end).
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
   queue and replay, and the quorum-replicated World log.
   Note 2026-10-20: decisions D1, D2, D5 and D23 are recorded in `docs/online-design.md`
@@ -299,7 +307,7 @@ Wave 1, done except #52:
 
 Wave 2, commissioned 2026-10-20 after #51 merged (radar and blame; rolling base and
 reclaim; Stack-head refresh and Publish; robustness proofs):
-- [ ] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
+- [x] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
 - [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
 - [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
 - [ ] Reclaim a published Layer's directory.

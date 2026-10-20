@@ -1,19 +1,23 @@
 //! Collision radar: which paths would make a Layer's Publish conflict, found before
 //! Publish. `layer_paths` indexes every live Layer's changed paths by path. It is
 //! derived data, maintained in the same transaction as each Layer head change and
-//! cleared by Publish and discard; `check()` rebuilds it and compares.
+//! cleared by Publish and discard; `check()` rebuilds it and compares. Each row
+//! also names the checkpoint, and its provenance, that last set the entry, which
+//! Publish copies into trace blame.
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
 use crate::{
-    Error, FileEntry, LayerHead, LayerId, LayerState, RepoPath, Repository, Result, SparseChanges,
-    VersionNumber,
+    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, ObjectId, RepoPath, Repository,
+    Result, VersionNumber,
     domain::{LiveIndex, LivePath, collisions},
-    layer::{CheckpointReader, checkpoint_in},
+    layer::{Candidate, CheckpointReader, attribution_in, checkpoint_in},
     publish::layer_state_in,
-    repository::{Index, decode_entry, decode_path, encode_entry, head_in, validate_format},
+    repository::{
+        Index, decode_entry, decode_id, decode_path, encode_entry, head_in, validate_format,
+    },
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -22,6 +26,8 @@ CREATE TABLE layer_paths (
     layer TEXT NOT NULL,
     kind INTEGER CHECK(kind IN (1,2,3)),
     content TEXT REFERENCES objects(id),
+    checkpoint TEXT NOT NULL REFERENCES objects(id),
+    provenance TEXT REFERENCES objects(id),
     PRIMARY KEY(path,layer),
     CHECK((kind IS NULL)=(content IS NULL))
 ) STRICT, WITHOUT ROWID;
@@ -149,30 +155,70 @@ fn stored_layer(layer: &str) -> Result<LayerId> {
     LayerId::parse(layer).map_err(|_| Error::CorruptRepository("invalid indexed Layer".into()))
 }
 
-/// This Layer's indexed changes, read through `layer_paths_by_layer`.
-fn tracked_in(conn: &Connection, layer: &LayerId) -> Result<BTreeMap<String, Option<FileEntry>>> {
+type Tracked = (Option<FileEntry>, CheckpointId, Option<ObjectId>);
+
+/// This Layer's indexed changes and attribution, read through `layer_paths_by_layer`.
+fn tracked_in(conn: &Connection, layer: &LayerId) -> Result<BTreeMap<String, Tracked>> {
     let rows = conn
-        .prepare_cached("SELECT path,kind,content FROM layer_paths WHERE layer=?1")?
+        .prepare_cached(
+            "SELECT path,kind,content,checkpoint,provenance FROM layer_paths WHERE layer=?1",
+        )?
         .query_map([layer.as_str()], |r| {
-            Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     rows.into_iter()
-        .map(|(path, kind, content)| Ok((path, decode_entry(kind, content)?)))
+        .map(|(path, kind, content, checkpoint, provenance)| {
+            let checkpoint = CheckpointId::parse(&checkpoint)
+                .map_err(|_| Error::CorruptRepository("invalid indexed checkpoint".into()))?;
+            let provenance = provenance.as_deref().map(decode_id).transpose()?;
+            Ok((path, (decode_entry(kind, content)?, checkpoint, provenance)))
+        })
         .collect()
 }
 
+/// Each path's attributing checkpoint and provenance, for Publish to record.
+pub(crate) fn attributed_in(
+    conn: &Connection,
+    layer: &LayerId,
+) -> Result<BTreeMap<String, (CheckpointId, Option<ObjectId>)>> {
+    Ok(tracked_in(conn, layer)?
+        .into_iter()
+        .map(|(path, (_, checkpoint, provenance))| (path, (checkpoint, provenance)))
+        .collect())
+}
+
 /// Sets the Layer's indexed changes to its new head's, writing only differences.
-pub(crate) fn track_in(conn: &Connection, layer: &LayerId, changes: &SparseChanges) -> Result<()> {
+/// A changed or new entry is attributed to the new head checkpoint; an unchanged
+/// one keeps the checkpoint that set it.
+pub(crate) fn track_in(conn: &Connection, layer: &LayerId, head: &Candidate) -> Result<()> {
     let mut stale = tracked_in(conn, layer)?;
     let mut upsert = conn.prepare_cached(
-        "INSERT INTO layer_paths(path,layer,kind,content) VALUES(?1,?2,?3,?4) \
-         ON CONFLICT(path,layer) DO UPDATE SET kind=excluded.kind,content=excluded.content",
+        "INSERT INTO layer_paths(path,layer,kind,content,checkpoint,provenance) \
+         VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(path,layer) DO UPDATE SET \
+         kind=excluded.kind,content=excluded.content,checkpoint=excluded.checkpoint,\
+         provenance=excluded.provenance",
     )?;
-    for (path, entry) in changes.entries() {
-        if stale.remove(path.as_str()).as_ref() != Some(entry) {
+    for (path, entry) in head.changes.entries() {
+        if stale
+            .remove(path.as_str())
+            .is_none_or(|(before, ..)| &before != entry)
+        {
             let (kind, content) = encode_entry(entry);
-            upsert.execute(params![path.as_str(), layer.as_str(), kind, content])?;
+            upsert.execute(params![
+                path.as_str(),
+                layer.as_str(),
+                kind,
+                content,
+                head.id.object().to_string(),
+                head.provenance.map(|p| p.to_string())
+            ])?;
         }
     }
     let mut delete = conn.prepare_cached("DELETE FROM layer_paths WHERE path=?1 AND layer=?2")?;
@@ -189,8 +235,8 @@ pub(crate) fn untrack_in(conn: &Connection, layer: &LayerId) -> Result<()> {
     Ok(())
 }
 
-/// Rebuilds the index from every live Layer's head checkpoint and compares it with
-/// the stored rows.
+/// Rebuilds the index, attribution included, from every live Layer's history
+/// and compares it with the stored rows.
 pub(crate) fn check_radar(checkpoints: &mut CheckpointReader<'_>) -> Result<()> {
     let conn = checkpoints.conn;
     let layers = conn
@@ -200,20 +246,16 @@ pub(crate) fn check_radar(checkpoints: &mut CheckpointReader<'_>) -> Result<()> 
     let mut expected = 0;
     for layer in layers {
         let layer = stored_layer(&layer)?;
-        let changes = match layer_state_in(conn, &layer)? {
-            LayerState::Active { head } => checkpoints
-                .read(head.checkpoint().object())?
-                .changes()
-                .clone(),
-            _ => SparseChanges::default(),
+        let derived = match layer_state_in(conn, &layer)? {
+            LayerState::Active { head } => attribution_in(checkpoints, &layer, head.revision())?,
+            _ => Default::default(),
         };
         let tracked = tracked_in(conn, &layer)?;
-        expected += changes.entries().len();
-        if tracked.len() != changes.entries().len()
-            || changes
-                .entries()
+        expected += derived.len();
+        if tracked.len() != derived.len()
+            || derived
                 .iter()
-                .any(|(path, entry)| tracked.get(path.as_str()) != Some(entry))
+                .any(|(path, row)| tracked.get(path.as_str()) != Some(row))
         {
             return Err(Error::CorruptRepository(format!(
                 "Layer path index disagrees with Layer {}",

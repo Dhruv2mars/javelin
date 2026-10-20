@@ -1,12 +1,13 @@
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 use javelin::{
-    Capture, CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId,
-    OperationId, PublicationReceipt, PublishOutcome, Radar, Repository, Result, VersionNumber,
+    Actor, Capture, CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId,
+    OperationId, Origin, Provenance, PublicationReceipt, PublishOutcome, Radar, RepoPath,
+    Repository, Result, VersionNumber,
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -86,7 +87,7 @@ pub(super) fn captured(capture: Option<Capture>, mut output: Output) -> Output {
     output
 }
 
-struct Args {
+pub(super) struct Args {
     positionals: Vec<OsString>,
     options: BTreeMap<String, OsString>,
 }
@@ -106,7 +107,7 @@ impl Args {
                         "unknown or repeated option {key}"
                     )));
                 }
-                if key == "--allow-missing-trace" {
+                if key == "--allow-missing-trace" || key == "--lines" {
                     parsed.options.insert(key.into(), "true".into());
                     continue;
                 }
@@ -281,7 +282,7 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
     } else {
         None
     };
-    let mut repo = Repository::open(args.root()?)?;
+    let mut repo = open(&args)?;
     let capture = repo.capture_workspace(&id)?;
     let command = format!("layer {action}");
     let output = match action {
@@ -471,9 +472,10 @@ fn publication(command: &str, receipt: PublicationReceipt) -> Output {
 
 /// Daemonless capture: scan the Layer directory and checkpoint any difference.
 pub fn checkpoint(args: Vec<OsString>) -> Result<Output> {
-    let args = Args::parse(args, &["--repo", "--path"], 1)?;
+    let allowed = [&["--repo", "--path"][..], PROVENANCE].concat();
+    let args = Args::parse(args, &allowed, 1)?;
     let id = args.layer()?;
-    let mut repo = Repository::open(args.root()?)?;
+    let mut repo = open(&args)?;
     // Never default to a subdirectory of the Layer: everything outside it would read
     // as deleted. A clone-backed Layer captures its own directory.
     let workspace = repo.workspace_root(&id)?;
@@ -565,17 +567,18 @@ fn radar_text(radar: &Radar) -> String {
 }
 
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {
-    let args = Args::parse(
-        args,
-        &["--repo", "--revision", "--source", "--operation"],
-        1,
-    )?;
+    let allowed = [
+        &["--repo", "--revision", "--source", "--operation"][..],
+        PROVENANCE,
+    ]
+    .concat();
+    let args = Args::parse(args, &allowed, 1)?;
     let id = args.layer()?;
     args.required("--revision")?;
     let revision = args.number("--revision")?.unwrap();
     let source = CheckpointId::parse(text(args.required("--source")?)?)?;
     let operation = args.operation()?;
-    let mut repo = Repository::open(args.root()?)?;
+    let mut repo = open(&args)?;
     let capture = repo.capture_workspace(&id)?;
     let target = historical_head(&repo, &id, revision)?;
     let outcome = javelin_stack::stack_layer(&mut repo, &operation, &target, source)?;
@@ -617,4 +620,123 @@ pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError
         source.object()
     );
     Ok(captured(capture, (reply, text, code)))
+}
+
+const PROVENANCE: &[&str] = &["--actor", "--agent", "--session", "--reference"];
+
+/// Opens the repository acting for the declared provenance, so every capture and
+/// Stack the command runs records it.
+pub(super) fn open(args: &Args) -> Result<Repository> {
+    let mut repo = Repository::open(args.root()?)?;
+    repo.set_provenance(provenance(Some(args))?);
+    Ok(repo)
+}
+
+/// Each field comes from its flag, else its `JAVELIN_*` variable. Nothing declared
+/// leaves checkpoints unattributed.
+pub(super) fn provenance(args: Option<&Args>) -> Result<Option<Provenance>> {
+    let field = |flag: &str, variable: &str| -> Result<Option<String>> {
+        match args.and_then(|a| a.options.get(flag)) {
+            Some(value) => Ok(Some(text(value)?.to_owned())),
+            None => match std::env::var(variable) {
+                Ok(value) if !value.is_empty() => Ok(Some(value)),
+                Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(_) => Err(Error::InvalidInput(format!("{variable} must be UTF-8"))),
+            },
+        }
+    };
+    let actor = field("--actor", "JAVELIN_ACTOR")?;
+    let agent = field("--agent", "JAVELIN_AGENT")?;
+    let session = field("--session", "JAVELIN_SESSION")?;
+    let reference = field("--reference", "JAVELIN_REFERENCE")?;
+    let actor = match actor.as_deref() {
+        Some("human") => Actor::Human,
+        Some("agent") => Actor::Agent,
+        Some(_) => return Err(Error::InvalidInput("actor must be human or agent".into())),
+        None if agent.is_some() => Actor::Agent,
+        None if session.is_some() || reference.is_some() => Actor::Human,
+        None => return Ok(None),
+    };
+    Provenance::new(actor, agent, session, reference).map(Some)
+}
+
+fn who(origin: &Origin) -> String {
+    match (&origin.checkpoint, &origin.provenance) {
+        (None, _) => "no Layer".into(),
+        (Some(_), None) => "unattributed".into(),
+        (Some(_), Some(p)) => {
+            let mut parts = vec![match p.actor {
+                Actor::Human => "human".to_string(),
+                Actor::Agent => p.agent.clone().unwrap_or_else(|| "agent".into()),
+            }];
+            parts.extend(p.session.as_ref().map(|s| format!("session {s}")));
+            parts.extend(p.reference.as_ref().map(|r| format!("ref {r}")));
+            parts.join(" ")
+        }
+    }
+}
+
+fn origin_text(origin: &Origin) -> String {
+    let mut text = format!("World {}", origin.version.number);
+    if let Some(layer) = &origin.layer {
+        text.push_str(&format!(" Layer {}", layer.as_str()));
+    }
+    if let Some(checkpoint) = &origin.checkpoint {
+        text.push_str(&format!(" checkpoint {}", checkpoint.object()));
+    }
+    format!("{text}: {}", who(origin))
+}
+
+/// `javelin blame PATH [--world N] [--lines]`: World provenance, read-only.
+pub fn blame(args: Vec<OsString>) -> Result<Output> {
+    let args = Args::parse(args, &["--repo", "--world", "--lines"], 1)?;
+    let path = RepoPath::parse(text(&args.positionals[0])?)?;
+    let world = args
+        .number("--world")?
+        .map(VersionNumber::new)
+        .transpose()?;
+    let repo = Repository::open(args.root()?)?;
+    let quoted = quoted(&path);
+    if args.options.contains_key("--lines") {
+        let blame = repo.blame_lines(&path, world)?;
+        let text = match &blame {
+            None => format!("No file at {quoted}"),
+            Some(blame) => blame
+                .lines
+                .iter()
+                .map(|line| {
+                    let origin = &blame.origins[line.origin];
+                    format!(
+                        "{:>5} {:<32} {:>5}| {}",
+                        origin.version.number,
+                        who(origin),
+                        line.number,
+                        line.text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        return Ok(success(
+            json!({"ok": true, "command": "blame", "lines": blame}),
+            text,
+        ));
+    }
+    let blame = repo.blame(&path, world)?;
+    let text = match &blame {
+        None => format!("No history for {quoted}"),
+        Some(blame) => format!(
+            "{quoted} {} in {}",
+            if blame.entry.is_some() {
+                "last changed"
+            } else {
+                "deleted"
+            },
+            origin_text(&blame.origin)
+        ),
+    };
+    Ok(success(
+        json!({"ok": true, "command": "blame", "blame": blame}),
+        text,
+    ))
 }

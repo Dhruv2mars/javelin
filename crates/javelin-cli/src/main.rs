@@ -88,6 +88,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "stack") {
         return cli::stack(args.into_iter().skip(2).collect());
     }
+    if args.first().is_some_and(|a| a == "blame") {
+        return cli::blame(args.into_iter().skip(1).collect()).map_err(Into::into);
+    }
     if args.first().is_some_and(|a| a == "checkpoint") {
         return cli::checkpoint(args.into_iter().skip(1).collect()).map_err(Into::into);
     }
@@ -109,7 +112,7 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
         .ok_or_else(|| Error::InvalidInput(HELP.into()))?;
     if command != "init" && command != "history" && command != "check" {
         return Err(Error::InvalidInput(format!(
-            "unknown command {:?}; expected init, history, check, checkpoint, layer, or workspace",
+            "unknown command {:?}; expected init, history, check, blame, checkpoint, layer, or workspace",
             command
         )));
     }

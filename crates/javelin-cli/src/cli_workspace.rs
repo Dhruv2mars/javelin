@@ -42,7 +42,7 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         .then(|| args.operation())
         .transpose()?;
     let attribution = AttributionInput::parse(&args)?;
-    let mut repo = Repository::open(args.root()?)?;
+    let mut repo = super::open(&args)?;
     let command = format!("workspace {action}");
     if action == "recover" {
         let recovery = repo.recover_workspaces()?;

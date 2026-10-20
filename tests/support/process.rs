@@ -766,6 +766,13 @@ fn indexed(repo: &Repository) -> i64 {
         .unwrap()
 }
 
+/// Rows of World trace blame.
+fn blamed(repo: &Repository) -> i64 {
+    repo.conn
+        .query_row("SELECT count(*) FROM blame", [], |r| r.get(0))
+        .unwrap()
+}
+
 fn publish_fixture(overlap: bool, count: usize) -> (TempDir, Vec<crate::LayerHead>) {
     let root = TempDir::new().unwrap();
     let mut repo = Repository::init(root.path()).unwrap();
@@ -979,6 +986,7 @@ fn whole_publish_kill_before_commit_readers_see_no_partial_references() {
     );
     assert_eq!(repo.check().unwrap().objects, before);
     assert_eq!(indexed(&repo), 1, "the Layer stays live in the radar");
+    assert_eq!(blamed(&repo), 0);
     drop(repo);
     let mut retry = publisher(root.path(), head, "interrupted", "");
     retry.release();
@@ -986,6 +994,7 @@ fn whole_publish_kill_before_commit_readers_see_no_partial_references() {
     let repo = Repository::open(root.path()).unwrap();
     assert_eq!(repo.check().unwrap().versions, 2);
     assert_eq!(indexed(&repo), 0, "Publish clears the Layer");
+    assert_eq!(blamed(&repo), 1, "Publish attributes its one change");
     assert!(matches!(
         repo.layer_state(head.layer()).unwrap(),
         crate::LayerState::Published { .. }
@@ -1023,6 +1032,7 @@ fn whole_publish_lost_and_received_ack_survive_kill_and_later_world() {
         assert_eq!(read["history"][1], read["receipt"]["outcome"]["version"]);
         let mut repo = Repository::open(root.path()).unwrap();
         assert_eq!(indexed(&repo), 0, "the committed Publish cleared the Layer");
+        assert_eq!(blamed(&repo), 1);
         let later = candidate(&mut repo, b"later");
         repo.compare_and_advance(
             &OperationId::parse("later").unwrap(),

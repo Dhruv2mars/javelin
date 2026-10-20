@@ -86,6 +86,8 @@ pub struct IntegrityReport {
 /// The project root must exist. No parent-directory search or working-file ingestion.
 pub struct Repository {
     pub(crate) conn: Connection,
+    /// Recorded in every checkpoint this handle captures or stacks.
+    pub(crate) provenance: Option<crate::Provenance>,
 }
 
 impl Repository {
@@ -135,6 +137,7 @@ impl Repository {
             tx.execute_batch(crate::publish::SCHEMA)?;
             tx.execute_batch(crate::stack::SCHEMA)?;
             tx.execute_batch(crate::radar::SCHEMA)?;
+            tx.execute_batch(crate::blame::SCHEMA)?;
             for table in [
                 "objects",
                 "versions",
@@ -145,6 +148,7 @@ impl Repository {
                 "layer_attempts",
                 "publications",
                 "stacks",
+                "blame",
             ] {
                 for action in ["UPDATE", "DELETE"] {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
@@ -168,7 +172,10 @@ impl Repository {
         sync_directory(&root)?;
         #[cfg(test)]
         test_boundary("init_after_commit");
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            provenance: None,
+        })
     }
 
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -194,7 +201,16 @@ impl Repository {
         }
         validate_format(&tx)?;
         tx.commit()?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            provenance: None,
+        })
+    }
+
+    /// Declares who and what this handle acts for. Later captures and Stacks
+    /// record it in their checkpoints; None leaves them unattributed.
+    pub fn set_provenance(&mut self, provenance: Option<crate::Provenance>) {
+        self.provenance = provenance;
     }
 
     pub fn put_blob(&mut self, bytes: &[u8]) -> Result<ObjectId> {
@@ -503,6 +519,7 @@ fn validate_state_with_checkpoints(
     crate::stack::check_stacks(conn)?;
     crate::publish::check_publications(conn)?;
     crate::radar::check_radar(checkpoints)?;
+    crate::blame::check_blame(checkpoints)?;
     Ok(history)
 }
 
