@@ -1,6 +1,6 @@
-//! `javelin-protocol serve <project>` speaks version 1 on stdin/stdout.
-//! `javelin-protocol push <project> <manifest> <operation> <expected>` speaks it
-//! on stdin/stdout and reports the outcome on stderr. Transport is the caller's job.
+//! `javelin-protocol serve <project>` speaks version 2 on stdin/stdout.
+//! `javelin-protocol push <project> <tree> <operation> <expected>` speaks it on
+//! stdin/stdout and reports the outcome on stderr. Transport is the caller's job.
 
 use std::{io, process::ExitCode};
 
@@ -18,12 +18,12 @@ fn main() -> ExitCode {
         ["serve", project] => Repository::open(project)
             .map_err(ProtocolError::from)
             .and_then(|mut repo| serve(&mut repo, io::stdin().lock(), io::stdout().lock())),
-        ["push", project, manifest, operation, expected] => {
-            run_push(project, manifest, operation, expected)
+        ["push", project, tree, operation, expected] => {
+            run_push(project, tree, operation, expected)
         }
         _ => Err(ProtocolError::new(
             "usage",
-            "javelin-protocol serve <project> | push <project> <manifest> <operation> <expected>",
+            "javelin-protocol serve <project> | push <project> <tree> <operation> <expected>",
         )),
     };
     match result {
@@ -37,7 +37,7 @@ fn main() -> ExitCode {
 
 fn run_push(
     project: &str,
-    manifest: &str,
+    tree: &str,
     operation: &str,
     expected: &str,
 ) -> Result<(), ProtocolError> {
@@ -49,18 +49,16 @@ fn run_push(
         io::stdin().lock(),
         io::stdout().lock(),
         &repo,
-        ObjectId::parse(manifest)?,
+        ObjectId::parse(tree)?,
         &OperationId::parse(operation)?,
         VersionNumber::new(expected)?,
     )?;
     match outcome {
         Outcome::Accepted {
             number,
-            manifest,
+            tree,
             operation,
-        } => {
-            eprintln!("accepted {number} {manifest} {operation}")
-        }
+        } => eprintln!("accepted {number} {tree} {operation}"),
         Outcome::Stale { actual } => eprintln!("stale {actual}"),
     }
     Ok(())

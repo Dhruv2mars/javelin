@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     Error, FileEntry, ObjectId, RepoPath, Result, SparseChanges,
-    domain::{MAX_PATH, ObjectKind, valid_name},
+    domain::{MAX_DEPTH, MAX_PATH, ObjectKind, valid_name},
 };
 
 /// Expected encoded chunk size in bytes.
@@ -183,9 +183,45 @@ impl Chunk {
         Ok(Self { level, items })
     }
 
+    /// Child chunk IDs, for a chunk above the leaves.
+    pub fn children(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.items
+            .iter()
+            .filter(|item| item.tag == CHILD)
+            .map(|item| item.id)
+    }
+
+    /// Directory entries, for a leaf chunk.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, Node)> + '_ {
+        self.items
+            .iter()
+            .filter(|item| item.tag != CHILD)
+            .map(|item| (item.name.as_str(), item.node()))
+    }
+
+    /// The child chunk that holds `name` if anything does, for a chunk above the
+    /// leaves: the first whose last name is at least `name`.
+    pub fn child_for(&self, name: &str) -> Option<ObjectId> {
+        let index = self.items.partition_point(|item| item.name.as_str() < name);
+        self.items
+            .get(index)
+            .filter(|i| i.tag == CHILD)
+            .map(|i| i.id)
+    }
+
     fn last(&self) -> &str {
         self.items.last().map_or("", |item| item.name.as_str())
     }
+}
+
+/// `prefix + name`, refused beyond the native path limits so a deep stored or
+/// received tree cannot exhaust the stack.
+fn joined(prefix: &str, name: &str) -> Result<String> {
+    let path = format!("{prefix}{name}");
+    if path.len() > MAX_PATH || path.matches('/').count() >= MAX_DEPTH {
+        return Err(Error::InvalidInput("tree path exceeds path limits".into()));
+    }
+    Ok(path)
 }
 
 /// The root of the empty World.
@@ -629,7 +665,7 @@ impl<S: Store> Trees<S> {
         let mut items = Vec::new();
         self.leaves(&*self.chunk(dir, false)?, &mut items)?;
         for item in items {
-            let path = format!("{prefix}{}", item.name);
+            let path = joined(prefix, &item.name)?;
             match item.node() {
                 Node::File(entry) => f(RepoPath(path), entry),
                 Node::Dir(id) => self.walk(id, &format!("{path}/"), f)?,
@@ -669,7 +705,7 @@ impl<S: Store> Trees<S> {
             return Ok(());
         }
         for (name, before, after) in self.diff_items(from, to)? {
-            let path = format!("{prefix}{name}");
+            let path = joined(prefix, &name)?;
             let file = after.as_ref().and_then(Node::file);
             if before.as_ref().and_then(Node::file) != file {
                 out.insert(RepoPath(path.clone()), file);

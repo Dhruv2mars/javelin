@@ -1,31 +1,51 @@
-//! Version 1 wire format: `u32` big-endian body length, then a body whose first
+//! Version 2 wire format: `u32` big-endian body length, then a body whose first
 //! byte is the message tag. Integers are big-endian; IDs are raw 32-byte values.
+//! Snapshots travel as content-addressed tree chunks and blobs, root first.
 
 use std::io::{self, Read, Write};
 
-use javelin::{FileEntry, Manifest, ObjectId, OperationId, RepoPath, VersionNumber};
+use javelin::{ObjectId, OperationId, VersionNumber, tree::Chunk};
 
 use crate::{ProtocolError, limits::*};
 
 pub const MAGIC: &[u8; 4] = b"JVLP";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 const HELLO: u8 = 0x01;
 const HELLO_OK: u8 = 0x02;
 const WANT: u8 = 0x10;
 const MISSING: u8 = 0x11;
-const BLOBS: u8 = 0x20;
-const MANIFESTS: u8 = 0x21;
+const GET: u8 = 0x12;
+const OBJECTS: u8 = 0x20;
 const STORED: u8 = 0x22;
 const PUBLISH: u8 = 0x30;
 const OUTCOME: u8 = 0x31;
+const RESOLVE: u8 = 0x40;
+const RESOLVED: u8 = 0x41;
 const ERROR: u8 = 0x7f;
 
 /// Object IDs are kind-separated; every reference names the expected kind.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Kind {
     Blob = 1,
-    Manifest = 2,
+    Tree = 4,
+}
+
+impl Kind {
+    /// Largest encoded object of this kind.
+    pub fn limit(self) -> usize {
+        match self {
+            Self::Blob => MAX_BLOB,
+            Self::Tree => MAX_TREE,
+        }
+    }
+    /// The object ID of `bytes` as this kind.
+    pub fn id(self, bytes: &[u8]) -> ObjectId {
+        match self {
+            Self::Blob => ObjectId::for_blob(bytes),
+            Self::Tree => ObjectId::for_tree(bytes),
+        }
+    }
 }
 
 /// Wire DTO for the native `AdvanceOutcome`. Built only from validated wire values.
@@ -33,7 +53,7 @@ pub enum Kind {
 pub enum Outcome {
     Accepted {
         number: VersionNumber,
-        manifest: ObjectId,
+        tree: ObjectId,
         operation: OperationId,
     },
     Stale {
@@ -42,16 +62,13 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Adapts a native outcome of advancing to `manifest`. Accepted native versions
-    /// always carry their operation; a replayed operation is bound to its manifest.
-    pub fn from_native(
-        outcome: &javelin::AdvanceOutcome,
-        manifest: ObjectId,
-    ) -> Result<Self, ProtocolError> {
+    /// Adapts a native outcome of advancing to `tree`. Accepted native versions
+    /// always carry their operation and root.
+    pub fn from_native(outcome: &javelin::AdvanceOutcome) -> Result<Self, ProtocolError> {
         match outcome {
             javelin::AdvanceOutcome::Accepted { version } => Ok(Self::Accepted {
                 number: version.number,
-                manifest,
+                tree: version.tree,
                 operation: version.operation.clone().ok_or_else(|| {
                     ProtocolError::new("invalid_input", "accepted World lacks operation")
                 })?,
@@ -70,19 +87,32 @@ pub enum Message {
     HelloOk {
         version: u16,
     },
+    /// Push: which of these does the receiver lack?
     Want(Vec<(Kind, ObjectId)>),
     Missing(Vec<(Kind, ObjectId)>),
-    Blobs(Vec<(ObjectId, Vec<u8>)>),
-    Manifests(Vec<(ObjectId, Manifest)>),
+    /// Fetch: send these objects.
+    Get(Vec<(Kind, ObjectId)>),
+    /// Object bytes, each bounded by its kind's limit. Push sends children before
+    /// parents; a fetch reply answers a prefix of its `Get`.
+    Objects(Vec<(Kind, ObjectId, Vec<u8>)>),
     Stored {
         count: u32,
     },
     Publish {
         operation: OperationId,
         expected: VersionNumber,
-        manifest: ObjectId,
+        tree: ObjectId,
     },
     Outcome(Outcome),
+    /// Fetch: the version to read, or the head.
+    Resolve {
+        version: Option<VersionNumber>,
+    },
+    Resolved {
+        number: VersionNumber,
+        id: ObjectId,
+        tree: ObjectId,
+    },
     Error {
         code: String,
         detail: String,
@@ -90,7 +120,7 @@ pub enum Message {
 }
 
 /// Encodes one body after checking every count, length and the total against the
-/// version 1 limits, so an oversize message is refused before its buffer exists.
+/// version 2 limits, so an oversize message is refused before its buffer exists.
 pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
     let mut out = Vec::with_capacity(encoded_len(message)?);
     match message {
@@ -104,11 +134,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.push(HELLO_OK);
             out.extend_from_slice(&version.to_be_bytes());
         }
-        Message::Want(items) | Message::Missing(items) => {
-            out.push(if matches!(message, Message::Want(_)) {
-                WANT
-            } else {
-                MISSING
+        Message::Want(items) | Message::Missing(items) | Message::Get(items) => {
+            out.push(match message {
+                Message::Want(_) => WANT,
+                Message::Missing(_) => MISSING,
+                _ => GET,
             });
             put_u32(&mut out, items.len());
             for (kind, id) in items {
@@ -116,39 +146,14 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                 put_id(&mut out, id);
             }
         }
-        Message::Blobs(blobs) => {
-            out.push(BLOBS);
-            put_u32(&mut out, blobs.len());
-            for (id, bytes) in blobs {
+        Message::Objects(objects) => {
+            out.push(OBJECTS);
+            put_u32(&mut out, objects.len());
+            for (kind, id, bytes) in objects {
+                out.push(*kind as u8);
                 put_id(&mut out, id);
                 put_u32(&mut out, bytes.len());
                 out.extend_from_slice(bytes);
-            }
-        }
-        Message::Manifests(manifests) => {
-            out.push(MANIFESTS);
-            put_u32(&mut out, manifests.len());
-            for (id, manifest) in manifests {
-                put_id(&mut out, id);
-                put_u32(&mut out, manifest.entries().len());
-                for (path, entry) in manifest.entries() {
-                    let path = path.as_str().as_bytes();
-                    out.extend_from_slice(&(path.len() as u16).to_be_bytes());
-                    out.extend_from_slice(path);
-                    let (tag, content) = match entry {
-                        FileEntry::Regular {
-                            content,
-                            executable: false,
-                        } => (0, content),
-                        FileEntry::Regular {
-                            content,
-                            executable: true,
-                        } => (1, content),
-                        FileEntry::Symlink { target } => (2, target),
-                    };
-                    out.push(tag);
-                    put_id(&mut out, content);
-                }
             }
         }
         Message::Stored { count } => {
@@ -158,26 +163,37 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
         Message::Publish {
             operation,
             expected,
-            manifest,
+            tree,
         } => {
             out.push(PUBLISH);
             put_short(&mut out, operation.as_str());
             out.extend_from_slice(&expected.get().to_be_bytes());
-            put_id(&mut out, manifest);
+            put_id(&mut out, tree);
         }
         Message::Outcome(Outcome::Accepted {
             number,
-            manifest,
+            tree,
             operation,
         }) => {
             out.extend_from_slice(&[OUTCOME, 0]);
             out.extend_from_slice(&number.get().to_be_bytes());
-            put_id(&mut out, manifest);
+            put_id(&mut out, tree);
             put_short(&mut out, operation.as_str());
         }
         Message::Outcome(Outcome::Stale { actual }) => {
             out.extend_from_slice(&[OUTCOME, 1]);
             out.extend_from_slice(&actual.get().to_be_bytes());
+        }
+        Message::Resolve { version } => {
+            out.push(RESOLVE);
+            out.push(u8::from(version.is_some()));
+            out.extend_from_slice(&version.map_or(0, VersionNumber::get).to_be_bytes());
+        }
+        Message::Resolved { number, id, tree } => {
+            out.push(RESOLVED);
+            out.extend_from_slice(&number.get().to_be_bytes());
+            put_id(&mut out, id);
+            put_id(&mut out, tree);
         }
         Message::Error { code, detail } => {
             out.push(ERROR);
@@ -191,50 +207,25 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
 }
 
 fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
-    let ids = |n: usize, max: usize| {
-        if n > max {
-            Err(limit("count exceeds limit"))
-        } else {
-            Ok(5 + n * 33)
-        }
-    };
     let len = match message {
         Message::Hello { .. } => 9,
         Message::HelloOk { .. } => 3,
-        Message::Want(items) | Message::Missing(items) => ids(items.len(), MAX_WANT)?,
-        Message::Blobs(blobs) => {
-            if blobs.len() > MAX_BLOBS {
+        Message::Want(items) | Message::Missing(items) | Message::Get(items) => {
+            if items.len() > MAX_WANT {
                 return Err(limit("count exceeds limit"));
             }
-            let mut len = 5usize;
-            for (_, bytes) in blobs {
-                if bytes.len() > MAX_BLOB {
-                    return Err(limit("blob exceeds size limit"));
-                }
-                len = len.saturating_add(36 + bytes.len());
-            }
-            len
+            5 + items.len() * 33
         }
-        Message::Manifests(manifests) => {
-            if manifests.len() > MAX_MANIFESTS {
+        Message::Objects(objects) => {
+            if objects.len() > MAX_OBJECTS {
                 return Err(limit("count exceeds limit"));
             }
             let mut len = 5usize;
-            for (_, manifest) in manifests {
-                if manifest.entries().len() > MAX_ENTRIES {
-                    return Err(limit("count exceeds limit"));
+            for (kind, _, bytes) in objects {
+                if bytes.len() > kind.limit() {
+                    return Err(limit("object exceeds size limit"));
                 }
-                len = len.saturating_add(36);
-                for path in manifest.entries().keys() {
-                    let path = path.as_str();
-                    if path.len() > MAX_PATH {
-                        return Err(limit("path exceeds length limit"));
-                    }
-                    if path.matches('/').count() >= MAX_DEPTH {
-                        return Err(limit("path exceeds depth limit"));
-                    }
-                    len = len.saturating_add(35 + path.len());
-                }
+                len = len.saturating_add(OBJECT_OVERHEAD + bytes.len());
             }
             len
         }
@@ -242,6 +233,8 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         Message::Publish { operation, .. } => 42 + operation.as_str().len(),
         Message::Outcome(Outcome::Accepted { operation, .. }) => 43 + operation.as_str().len(),
         Message::Outcome(Outcome::Stale { .. }) => 10,
+        Message::Resolve { .. } => 10,
+        Message::Resolved { .. } => 73,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -255,8 +248,12 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
     Ok(len)
 }
 
+/// Encoded bytes of one `Objects` item besides its payload: kind, ID and length.
+pub const OBJECT_OVERHEAD: usize = 37;
+
 /// Decodes one complete frame body. Every count and length is checked against its
 /// fixed limit, and every field against the remaining bytes, before it is copied.
+/// Tree chunks must be canonically encoded.
 pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
     if body.len() > MAX_FRAME {
         return Err(limit("frame exceeds size limit"));
@@ -274,61 +271,68 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             Message::Hello { min, max }
         }
         HELLO_OK => Message::HelloOk { version: r.u16()? },
-        tag @ (WANT | MISSING) => {
+        tag @ (WANT | MISSING | GET) => {
             let n = r.count(MAX_WANT)?;
             let mut items = Vec::new();
             for _ in 0..n {
-                let kind = match r.u8()? {
-                    1 => Kind::Blob,
-                    2 => Kind::Manifest,
-                    _ => return Err(malformed("unknown object kind")),
-                };
-                items.push((kind, r.id()?));
+                items.push((r.kind()?, r.id()?));
             }
-            if tag == WANT {
-                Message::Want(items)
-            } else {
-                Message::Missing(items)
+            match tag {
+                WANT => Message::Want(items),
+                MISSING => Message::Missing(items),
+                _ => Message::Get(items),
             }
         }
-        BLOBS => {
-            let n = r.count(MAX_BLOBS)?;
-            let mut blobs = Vec::new();
+        OBJECTS => {
+            let n = r.count(MAX_OBJECTS)?;
+            let mut objects = Vec::new();
             for _ in 0..n {
+                let kind = r.kind()?;
                 let id = r.id()?;
                 let len = r.u32()? as usize;
-                if len > MAX_BLOB {
-                    return Err(limit("blob exceeds size limit"));
+                if len > kind.limit() {
+                    return Err(limit("object exceeds size limit"));
                 }
-                blobs.push((id, r.take(len)?.to_vec()));
+                let bytes = r.take(len)?;
+                if kind == Kind::Tree {
+                    Chunk::decode(bytes).map_err(|e| malformed(&e.to_string()))?;
+                }
+                objects.push((kind, id, bytes.to_vec()));
             }
-            Message::Blobs(blobs)
-        }
-        MANIFESTS => {
-            let n = r.count(MAX_MANIFESTS)?;
-            let mut manifests = Vec::new();
-            for _ in 0..n {
-                let id = r.id()?;
-                manifests.push((id, r.manifest()?));
-            }
-            Message::Manifests(manifests)
+            Message::Objects(objects)
         }
         STORED => Message::Stored { count: r.u32()? },
         PUBLISH => Message::Publish {
             operation: r.operation()?,
             expected: r.version()?,
-            manifest: r.id()?,
+            tree: r.id()?,
         },
         OUTCOME => match r.u8()? {
             0 => Message::Outcome(Outcome::Accepted {
                 number: r.version()?,
-                manifest: r.id()?,
+                tree: r.id()?,
                 operation: r.operation()?,
             }),
             1 => Message::Outcome(Outcome::Stale {
                 actual: r.version()?,
             }),
             _ => return Err(malformed("unknown outcome")),
+        },
+        RESOLVE => {
+            let flag = r.u8()?;
+            let version = r.version()?;
+            Message::Resolve {
+                version: match flag {
+                    0 if version.get() == 0 => None,
+                    1 => Some(version),
+                    _ => return Err(malformed("invalid version selector")),
+                },
+            }
+        }
+        RESOLVED => Message::Resolved {
+            number: r.version()?,
+            id: r.id()?,
+            tree: r.id()?,
         },
         ERROR => {
             let code = r.short_str()?.to_owned();
@@ -416,6 +420,13 @@ impl<'a> Reader<'a> {
     fn id(&mut self) -> Result<ObjectId, ProtocolError> {
         Ok(ObjectId::from_bytes(self.take(32)?.try_into().unwrap()))
     }
+    fn kind(&mut self) -> Result<Kind, ProtocolError> {
+        match self.u8()? {
+            1 => Ok(Kind::Blob),
+            4 => Ok(Kind::Tree),
+            _ => Err(malformed("unknown object kind")),
+        }
+    }
     /// Checks a count against its fixed limit. Collections grow only as elements are
     /// actually decoded, so memory stays proportional to the received frame.
     fn count(&mut self, max: usize) -> Result<usize, ProtocolError> {
@@ -431,40 +442,6 @@ impl<'a> Reader<'a> {
     }
     fn operation(&mut self) -> Result<OperationId, ProtocolError> {
         Ok(OperationId::parse(self.short_str()?)?)
-    }
-    fn manifest(&mut self) -> Result<Manifest, ProtocolError> {
-        let n = self.count(MAX_ENTRIES)?;
-        let mut entries = Vec::new();
-        let mut previous: Option<&[u8]> = None;
-        for _ in 0..n {
-            let len = self.u16()? as usize;
-            if len > MAX_PATH {
-                return Err(limit("path exceeds length limit"));
-            }
-            let raw = self.take(len)?;
-            if raw.iter().filter(|&&b| b == b'/').count() >= MAX_DEPTH {
-                return Err(limit("path exceeds depth limit"));
-            }
-            // Strict byte order matches the native manifest's sorted map and rejects duplicates.
-            if previous.is_some_and(|p| p >= raw) {
-                return Err(malformed("manifest paths are not strictly ascending"));
-            }
-            previous = Some(raw);
-            let path = std::str::from_utf8(raw).map_err(|_| malformed("path is not UTF-8"))?;
-            let path = RepoPath::parse(path)?;
-            let tag = self.u8()?;
-            let id = self.id()?;
-            let entry = match tag {
-                0 | 1 => FileEntry::Regular {
-                    content: id,
-                    executable: tag == 1,
-                },
-                2 => FileEntry::Symlink { target: id },
-                _ => return Err(malformed("unknown file entry kind")),
-            };
-            entries.push((path, entry));
-        }
-        Ok(Manifest::new(entries)?)
     }
 }
 

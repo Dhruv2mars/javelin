@@ -8,7 +8,7 @@ use std::{
 };
 
 use javelin::ObjectId;
-use javelin_protocol::{Message, codec, limits::*};
+use javelin_protocol::{Kind, Message, codec, limits::*};
 
 struct Counting;
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
@@ -35,7 +35,7 @@ fn allocated_by<T>(f: impl FnOnce() -> T) -> (T, usize) {
 #[test]
 fn refusal_allocations_follow_the_fixture_and_outer_frame_budget() {
     let id = ObjectId::parse(&"ab".repeat(32)).unwrap();
-    let blobs = Message::Blobs(vec![(id, vec![7; MAX_BLOB]); 3]);
+    let blobs = Message::Objects(vec![(Kind::Blob, id, vec![7; MAX_BLOB]); 3]);
     let mut sink = Vec::new();
     let (result, bytes) = allocated_by(|| codec::write_frame(&mut sink, &blobs));
     assert_eq!(result.unwrap_err().code, "limit_exceeded");
@@ -72,6 +72,7 @@ fn refusal_allocations_follow_the_fixture_and_outer_frame_budget() {
     // A legal outer frame is buffered before its oversized inner blob is checked.
     let mut body = vec![0x20];
     body.extend(1_u32.to_be_bytes());
+    body.push(Kind::Blob as u8);
     body.extend([0; 32]);
     body.extend(((MAX_BLOB + 1) as u32).to_be_bytes());
     body.resize(MAX_FRAME, 0);
