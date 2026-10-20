@@ -1,6 +1,7 @@
 # Online design: roadmap item 7 and the hosting phase
 
-Status: proposed design, not accepted. Written 2026-10-20 on `docs/online-design`.
+Status: decisions recorded 2026-10-20 (section 7). Not accepted, not implemented. Written on
+`docs/online-design`; decisions on `docs/online-decisions`.
 Nothing here is implemented or run. Claims about current code cite `docs/architecture.md`
 or PR #52 (protocol v2 on trees, open, unmerged). Claims about the provider are marked
 where they rest on search results rather than provider documentation.
@@ -25,11 +26,12 @@ unchecked). Items 7 depends on 5, so attach waits for it (see units U4).
 - Every piece in the brief has: stored data, wire messages, outage behavior, first slice,
   and tests.
 - Each contract point the design relies on is cited.
-- Every open point is in "Decisions for the user" with a recommended default.
+- Every open point is in "Decisions for the user", with a decision recorded 2026-10-20.
 - Ordered PR-sized units with owned paths and dependencies are in "Implementation units".
 
 This design is verified by reading only. Its acceptance is the hub's review and the
-units' own tests.
+units' own tests. Provider claims cite Cloudflare documentation read on 2026-10-20 (section 9);
+anything else is unverified until its unit runs.
 
 ## 1. Contract tensions the hub must reconcile
 
@@ -39,8 +41,10 @@ These are not settled by the contract or G§. The design picks a reading and fla
   World publication coordinator" for Cloudflare. `C§Hosting ownership` says the World
   authority "is a quorum-replicated log, so no single node failure stops Publish." A single
   coordinator is not quorum-replicated unless the provider's storage replicates each
-  acknowledged write across failure domains. G§Open questions records this as UNCONFIRMED.
-  The design uses one ordering primitive for both cases (section 4.5). Decision D2.
+  acknowledged write across failure domains. G§Open questions recorded this as UNCONFIRMED;
+  Cloudflare's 2024 SQLite-in-Durable-Objects post now supports the replication claim (section 9).
+  Decision D2: one coordinator per repository, with durability from the storage layer. The
+  contract's quorum wording needs the hub's amendment.
 - **T2. "Upload as captured" vs. no daemon.** `C§Version control` says checkpoints "upload as
   they are captured; there is no push." G§Rejected rules out "a client daemon," and `A§Overview`
   says capture runs at Javelin commands and agent lifecycle events. Checkpoints are durable
@@ -65,11 +69,13 @@ These are not settled by the contract or G§. The design picks a reading and fla
 - **Repository node** (one logical node per repository, on one provider, `C§Hosting ownership`).
   It owns objects, the World log, Layer state, Publish Requests, revisions, approvals,
   checks, traces, applied permissions and operation IDs. Its core is a Rust crate,
-  `javelin-node`, behind storage traits. Tests use file-backed stores. The first provider
-  uses object storage and a Worker adapter (units U12 and U13).
+  `javelin-node`, behind storage traits. Self-hosting runs the `javelin-node` binary on
+  file-backed stores (U2). The first managed provider is Cloudflare: a Worker, and one
+  SQLite-backed Durable Object per repository (U12, U13; D1).
 - **Control plane** (central, not self-hosted, `C§Hosting ownership`). It owns identity, orgs,
   memberships, discovery, provisioning, and the signing keys for tokens. It is a separate
-  service in front of the node, not a node component.
+  service in front of the node, not a node component on managed hosting. Self-hosting runs the
+  same control-plane code inside the node (D1).
 - **Client** (`javelin` CLI). Captures locally, keeps a bounded object cache and a rolling base
   (`G§4`), queues remote work in an outbox (section 4.4), and talks to the node directly
   after authentication.
@@ -77,12 +83,12 @@ These are not settled by the contract or G§. The design picks a reading and fla
   message per request, with the same encoded body as today. The HTTP `Content-Length`
   replaces the `u32` length prefix. Each message is `POST /v2/r/{repo}` with a bearer token;
   the response is one message. Notifications stay optional and are deferred (D27).
-- **One ordering primitive.** Every ordered sequence on the node is a chain of immutable
-  slots. A slot is written with a create-if-absent precondition, which is a
-  compare-and-swap on "the next number." The World log, each Layer's checkpoint chain, and
-  each Publish Request's revision list use this. Each sequence is its own partition, so only
-  World advancement is repository-wide (`C§Protocol and first provider`: "Only final World
-  advancement needs repository-wide total ordering.").
+- **One ordering point per repository.** Each repository has one coordinator (D2): a process
+  lock on the node when self-hosted, or the repository's Durable Object when managed. Every
+  ordered sequence is a chain of immutable rows, each written in one transaction with a
+  unique-key precondition: the World log, each Layer's checkpoint chain, and each Publish
+  Request's revision list. Only World advancement is repository-wide (`C§Protocol and first
+  provider`: "Only final World advancement needs repository-wide total ordering.").
 - **Idempotency.** Every mutation carries an operation ID. The node records
   `(operation, request digest, outcome)`. Same ID and same digest return the recorded
   outcome. Same ID and a different digest return `operation_id_reused` (`A§Layers and
@@ -137,7 +143,7 @@ Error codes used across messages: `unsupported_version`, `unauthorized` (bad, ex
 revoked token), `forbidden` (scope or role), `stale_permissions`, `operation_id_reused`,
 `id_mismatch`, `missing_object` (lists the ids), `layer_stale`, `conflict`, `not_open`,
 `not_author`, `self_approval`, `stale_revision`, `unknown_revision`, `not_enough_approvals`,
-`missing_agent_trace`, `layer_published`. Client-side outcomes that never come from the wire:
+`missing_agent_trace`, `layer_published`, `storage_full`. Client-side outcomes that never come from the wire:
 `node_unavailable` (provider or network) and `control_plane_unavailable`. They must stay
 distinct (`C§Verification gates` 4).
 
@@ -176,7 +182,7 @@ existing full fetch. No base cache of its own: use the rolling base once roadmap
 ### 4.2 Streaming checkpoints
 
 **Stores.**
-- Node: checkpoint objects (Checkpoint kind); Layer partition slots `layers/{L}/seq/{k}` with
+- Node: checkpoint objects (Checkpoint kind); Layer sequence rows `layer_seq(layer, seq)` with
   `{ seq, parent, checkpoint, operation }`; derived `live_paths` index (path → Layer, from
   each checkpoint's changed paths) for collision radar (`G§1`, `G§6`). The index is derived
   and rebuildable.
@@ -188,7 +194,7 @@ existing full fetch. No base cache of its own: use the rolling base once roadmap
 **Ordering.** Upload every blob and the checkpoint object first. The node checks each one
 (hash, kind, canonical form) before it commits the reference (`C§Protocol and first provider`:
 "Objects must be readable and verified before committing references."). Then `LayerAppend`
-creates slot `seq = head + 1` with `If-None-Match`. The parent must equal the current head
+inserts row `seq = head + 1` in one transaction; the unique key on `(layer, seq)` makes it a conditional create. The parent must equal the current head
 (`stale` otherwise).
 
 **Outage.** Local capture is complete and durable first. Upload is inline with a bounded
@@ -218,7 +224,7 @@ yet.
 and materializes.
 
 **Store and data.** Inputs: checkpoints and blobs in the object store. Output: a new
-checkpoint object and a `seq` slot on the target Layer, or structured conflicts. Nothing is
+checkpoint object and a `seq` row on the target Layer, or structured conflicts. Nothing is
 written on conflict.
 
 **Invariants.**
@@ -289,74 +295,90 @@ harness in the in-process node (drop reply after commit, refuse connection, dela
 - Control plane down, token valid: `PublishLayer` succeeds. Token expired: record stays
   queued with `control_plane_unavailable`.
 
-### 4.5 Quorum-replicated World log
+### 4.5 World log: one coordinator per repository
 
 **Requirement.** Append-only changeset log, one head, compare-and-swap advancement
-(`G§3(b)`). Quorum replication, so no single node failure stops Publish (`C§Hosting
-ownership`, `G§1`). Acknowledgement only after the write is durable (`C§Protocol and first
-provider`: successful Publishes survive restart).
+(`G§3(b)`). Acknowledgement only after the write is durable (`C§Protocol and first
+provider`: successful Publishes survive restart). On managed hosting, durability comes from the
+storage layer (D2).
 
-**Data.** One slot per version: `repo/{id}/w/{N}` holding canonical bytes of
-`{ N, parent id, changeset id, root tree id, id, operation, attribution }`. The version `id`
-is the hash chain of `A§Storage` (`D3` decides whether the root tree hash enters the chain).
-A head hint `repo/{id}/head` holds the last known `N`; readers probe forward from the hint. An
-operation record `repo/{id}/ops/{sha256(operation)}` holds the request digest and, after
-commit, the version `N`.
+**Coordinator (D2).** One per repository. Self-hosted: the `javelin-node` process holds a lock
+on the repository's data directory; a second process refuses to start. Managed: the
+repository's Durable Object (one per repository, D1). Every World, Layer and review write for
+the repository goes through it, and it serializes them.
 
-**Commit path** (`PublishLayer` and `PublishRequest`):
-1. Read the head `H`. Compose onto `H` (section 4.6, the boundary check happens here).
-2. Create `ops/{op}` with `If-None-Match` as pending, with the digest.
-3. Create slot `w/{H+1}` with `If-None-Match`.
-   - On 412, read slot `H+1`. If its operation is ours, the commit already happened:
-     return the recorded outcome. Otherwise re-prepare on `H+1`; this is the rebase path of
-     `A§Publish`. Intersecting changes conflict.
-4. Update `ops/{op}` to committed `N` (with `If-Match`), then the head hint.
+**Data.** Tables in the coordinator's store (file-backed when self-hosted, DO SQLite when
+managed):
+- `world(n PRIMARY KEY, parent, changeset, root_tree, id, operation, attribution)`: one row per
+  version. `n` is the ordering point. The version `id` is the hash chain of `A§Storage`, with
+  the root tree hash in it (D3).
+- `ops(operation PRIMARY KEY, digest, n)`: the operation record. `n` is set in the same
+  transaction that creates the version.
+- `layer_seq(layer, seq, parent, checkpoint, operation)` with key `(layer, seq)`, and the review
+  revision rows (4.8): same pattern.
+- `objects(id, kind, index, bytes)` with key `(id, index)`. Blobs and checkpoints are split into
+  segments of at most 2 MB, because a DO SQLite row is limited to 2 MB (section 9). A read
+  reassembles the segments and checks the whole-object hash.
+
+The head is the largest `n`, read inside the transaction. There is no head hint.
+
+**Commit path** (`PublishLayer` and `PublishRequest`), one transaction:
+1. Read the head `H`. Compose onto `H` (section 4.6; the boundary checks are read here).
+2. Insert `ops(operation)`. If it exists, compare the digest: the same digest returns the
+   recorded outcome; a different digest returns `operation_id_reused`.
+3. Insert `world(H+1)`. A unique-key violation means another writer committed first: roll back
+   and re-prepare on the new head. This is the rebase path of `A§Publish`; intersecting changes
+   conflict.
+4. Set `ops(operation).n = H+1` and commit.
 5. Reply `Published`.
 
-**Replay.** Read `ops/{op}`. Committed: return. Pending: if slot `w/{N}` exists for the
-pending operation, finish step 4; otherwise continue at step 3. Digest mismatch returns
-`operation_id_reused`.
+A transaction either commits or leaves nothing, so there is no pending state. The reply is sent
+after commit. On managed hosting the storage layer confirms the write before the reply leaves
+(section 9).
 
-**Why this shape.** Only the slot create is the ordering point. The head hint and the ops
-record are recoverable from slots. Layer and review partitions reuse the same slot primitive,
-so no per-repository coordinator is needed for ordering. Whether this counts as a quorum is
-D2's question. Its durability rests on the object store's replication, which this design has
-not verified.
+**Replay.** Read `ops(operation)`. Found with `n`: return the recorded outcome. Not found: run
+the commit path. Digest mismatch: `operation_id_reused`.
 
-**Provider evidence.** Two search results (2026-10-20, standard mode):
-- Cloudflare's R2 S3-compatibility docs describe `If-None-Match: *` on PutObject as an
-  atomic create, where one of many concurrent writers succeeds and the rest get 412 (CONFIRMED
-  in search summary; the official page was not read in full).
-- Miniflare had reversed `etagMatches` / `etagDoesNotMatch` behavior with `*` in an issue
-  (github.com/cloudflare/miniflare/issues/774). Local emulators are not valid evidence for
-  conditional writes. The spike must use a real bucket.
-- Durable Objects: the 2024 SQLite-in-DO post says responses are held until their storage
-  writes are confirmed (output gating). It does not state the replica count or failure domains.
-  The replication claim is UNCONFIRMED.
+**Why this shape.** One coordinator serializes writes, so a unique key is the whole ordering
+mechanism; no compare-and-swap protocol is needed. Replication is the provider's job on managed
+hosting. The 2024 Cloudflare post says a write is confirmed once three of five follower replicas
+respond (section 9). U12 re-checks this against current docs and records the citation.
+Self-hosted, the node is one machine: durability is local fsync, with no replica. The contract's
+"no single node failure stops Publish" therefore holds only for managed hosting, and the hub's
+amendment must say so (T1).
 
-**Spike (part of U12, before any production code).** On a real R2 bucket: 50 concurrent
-publishers on one repository; exactly one per slot; ETag-conditional update of the ops record;
-crash between steps 3 and 4 and between 4 and the reply. Record results in the PR.
+**Limits (managed).** A row is at most 2 MB, so objects are segmented (above). A SQL statement is
+at most 100 KB and binds at most 100 parameters, so large writes are batched. At the storage cap,
+writes fail with `SQLITE_FULL`; the node refuses the whole commit with `storage_full`, and
+nothing is written. Read-only requests still succeed.
 
-**Outage.** Object store unavailable: Publish returns `node_unavailable`; the client queues it
-(section 4.4). Nothing is written partially, because a slot is either created or not.
+**Outage.** Coordinator unreachable: Publish returns `node_unavailable`, and the client queues it
+(section 4.4). Nothing is written partially, because the transaction commits or does not.
 
-**First slice (U2 and U12).** `WorldLog` trait with a file-backed implementation and the
-contract tests (uniqueness, replay, pending recovery). The R2 implementation follows the spike.
+**Spike (part of U12, before production code).** On a real Cloudflare Durable Object on the
+Free plan, deployed, not Miniflare: 50 concurrent publishers on one repository; exactly one per
+version; a process kill inside a commit leaves no partial version; a kill after commit and before
+the reply replays to the same version. Re-check the replication citation against current docs.
+Record results and citations in the PR.
+
+**First slice (U2, then U12).** `WorldLog` trait with a file-backed implementation (U2) and
+contract tests (uniqueness, replay, crash recovery). U12 runs the same tests against the Durable
+Object implementation.
 
 **Tests.**
-- Concurrent publishers: one winner per slot; the rest rebase or conflict.
-- Lost reply after slot create: replay returns the same version.
-- Crash between slot and ops update: replay finishes the record.
-- Stale head hint: readers find the true head.
-- Corrupt slot (bad bytes or wrong `N`): refused, never served.
+- Concurrent publishers: one version per `n`; the rest rebase or conflict.
+- Lost reply after commit: replay returns the same version.
+- Kill before commit: nothing visible; the retry commits once.
+- Corrupt or missing segment: refused (`id_mismatch` or `missing_object`), never served.
+- Second coordinator on a self-hosted repository: refused.
+- Storage cap reached: `storage_full`, nothing written.
 
 ### 4.6 Repository authority, idempotent Publish, immutable transfers
 
 **Authority.** `javelin-node` holds the World log (4.5), Layer partitions, review partitions,
 traces and applied permissions behind traits. The in-process authority and the hosted node
 use the same protocol and the same core code, with no separate path (`G§Open questions`,
-recommended default).
+recommended default, adopted 2026-10-20).
 
 **Immutable transfers.**
 - `Objects` writes are verified before they are stored: the bytes hash to the claimed ID, the
@@ -374,12 +396,12 @@ attribution }`:
 2. Authorization at the correctness boundary: current applied permissions for the caller
    (`publish` scope and role, epoch), the policy (`required_approvals`, Publish setting),
    and for `PublishRequest` the approval state (4.8). These are read after compose and before
-   the slot create, so a change that lands before the commit point is seen (`C§Contributions
+   the commit transaction, so a change that lands before the commit point is seen (`C§Contributions
    and reviews`).
 3. Compose onto the head. Conflict returns `Conflict` and writes nothing.
-4. Slot create (4.5).
+4. Commit transaction (4.5).
 5. Layer state moves to `Published` (read-only, `C§Version control`). If the node crashes
-   before this, the replay finds the committed slot and finishes it.
+   before this, the replay finds the committed version and returns it.
 
 **Tests.**
 - Lost reply after commit: one version; the retry returns the same version.
@@ -419,8 +441,12 @@ one Layer, D26), `iat`, `exp`, `jti`.
   (`stale_permissions` otherwise). During a control-plane outage, a role removal is not applied
   until the plane returns or the token expires (D8).
 
-**Device login.** A device flow against the control plane, with the IdP chosen in D5. The
-device's refresh token is stored in `~/.javelin/credentials` (0600), not sent to the node.
+**Login (D5).** No email. Bootstrap: the first admin token is printed once when a node or
+repository is created; the node stores only its hash. The token grants the creator's Maintain
+role and enrolls the first passkey. Routine login: `javelin login` asks the control plane for a
+device code and prints a short code and URL; the user approves it in a browser session signed in
+with a passkey (WebAuthn). The device's refresh token is stored in `~/.javelin/credentials`
+(0600), not sent to the node.
 
 **Outage.** With the plane down and a valid token, node operations work (`C§Hosting
 ownership`). Refresh fails with `control_plane_unavailable`.
@@ -440,10 +466,10 @@ node, using test keys. No control plane yet.
 
 ### 4.8 Author-owned Publish Request revisions and exact approvals
 
-**Stores** (review partition, slot chains per request):
+**Stores** (review partition, row chains per request):
 - `request` `{ id, repository, author, layer, base, state: Open | Published | Closed,
   operation }`.
-- `revision n` (slot `requests/{R}/rev/{n}`), immutable: `{ n, checkpoint, base, context:
+- `revision n` (row `rev(request, n)`), immutable: `{ n, checkpoint, base, context:
   Option<ObjectId>, author, operation }`. Written only by the author.
 - `approval` `{ request, revision n, approver, operation, epoch }`. Approvals stay in history.
   A revision n+1 does not inherit them.
@@ -512,7 +538,7 @@ forking principal's token. The source node does not learn the fork's identity.
 
 **Outage.** Fork needs the control plane for the identity and the source node for the copy.
 Either being down refuses the request with the matching code; the fork is not queued. A crash
-mid-copy leaves `Creating`; retry resumes. Object copies and slot creates are idempotent, so
+mid-copy leaves `Creating`; retry resumes. Object copies and row inserts are idempotent, so
 resuming is safe.
 
 **First slice (U11).** Fork of a version on the in-process node, two file-backed stores, no
@@ -529,24 +555,28 @@ trace restrictions yet (traces come in U10).
 
 ### 4.10 First hosting provider and creation flow
 
-**Provider.** Cloudflare is the provisional first provider (`C§Protocol and first provider`).
-Mapping: Worker (node HTTP API and `javelin-node` logic compiled for the adapter), R2 (objects,
-and slots if D2 = B), and the ordering coordinator only if D2 = A or C. Whether the control
-plane also runs there is D1. This design has not verified Worker compatibility with the Rust
-core; that is the first step of U13.
+**Provider** (`C§Protocol and first provider`; D1). Two paths. Self-hosted: the `javelin-node`
+binary with file-backed stores, runnable free anywhere; the reference implementation and test
+target. Managed (first): Cloudflare Workers Free, with one SQLite-backed Durable Object per
+repository as both coordinator and object store (rows of at most 2 MB, section 4.5). No R2. The
+Worker runs the Rust core compiled to wasm via workers-rs (D23). If that spike fails, a thin
+TypeScript Worker (bun-managed) speaks the same protocol and is tested against the Rust node.
+U13's first step verifies the Free-plan limits (section 9); until then they are unverified.
 
 **Creation flow** (`C§Hosting ownership`: "name, visibility, Publish setting, provider, and
 create"):
 
 ```
 javelin repo create <owner>/<name> --visibility public|private \
-  --publish direct|requests --provider cloudflare
+  --publish direct|requests --provider cloudflare|self
 ```
 
-1. The CLI authenticates with a token carrying `repo:create`.
+1. The CLI authenticates with a token carrying `repo:create` (the admin token from bootstrap, or
+   a device session).
 2. The control plane validates the name and creates the record `state = Provisioning` with an
    operation ID.
-3. It provisions the node: object namespace, slot store, Worker route.
+3. It provisions the node: the repository's Durable Object (managed) or data directory
+   (self-host), and the Worker route.
 4. It writes applied permissions at epoch 1 (creator = Maintain) and version 0 (empty World).
 5. It marks `Ready` and returns the repository URL. No secret is echoed.
 
@@ -557,7 +587,7 @@ and a retry resumes it. The CLI then runs `javelin attach`.
 and is not queued. A provider outage during provisioning leaves `Provisioning` until retry.
 
 **First slice (U8, after U7).** `repo create` against the in-process node with the in-process
-control plane. No Cloudflare yet. U13 adds the Worker and R2 adapter.
+control plane. No Cloudflare yet. U13 adds the Worker and Durable Object adapter.
 
 **Tests.**
 - Create twice with the same operation ID: one repository.
@@ -585,8 +615,9 @@ control plane. No Cloudflare yet. U13 adds the Worker and R2 adapter.
   (drop reply after commit, refuse, delay, expire token, bump epoch at the boundary).
 - **Git stand-in.** Every acceptance run uses a failing `git` on PATH with a marker, plus a
   positive control that proves the stand-in fires (`C§Verification gates`).
-- **Provider evidence.** The conditional-write behavior is tested only against a real R2 bucket
-  (4.5). Emulators are not accepted for it.
+- **Provider evidence.** The coordinator's transaction behavior (4.5) is tested only against a
+  real Cloudflare Durable Object (U12, U13). Miniflare and other local emulators are not accepted
+  for it.
 - **Contract gate 4 assertions** (`C§Verification gates` 4), in one rerunnable script (U14):
   exact revision authorization; immutable prior revisions; one durable outcome after a lost
   reply; inherited fork data without inherited credentials; no access to restricted traces;
@@ -596,83 +627,96 @@ control plane. No Cloudflare yet. U13 adds the Worker and R2 adapter.
 
 ## 7. Decisions for the user
 
-Each is open. The recommended default applies unless the user says otherwise. Defaults do not
-change any contract text.
+Decided 2026-10-20 by the hub, from the user's delegation. Each entry has the decision and a
+one-line rationale. Where a decision needs the contract changed, the entry says so; this design
+does not change contract text.
 
-- **D1. First provider and control plane.** Default: Cloudflare for the node, and the control
-  plane also on Cloudflare (`C§Protocol and first provider` is provisional). Alternatives: a
-  different provider, or a separate control-plane host.
-- **D2. World log quorum (T1).** Options: (A) one coordinator per repository; not quorum unless
-  the provider confirms replica confirmation before ack. (B) R2 create-if-absent slots (section
-  4.5); quorum rests on R2 durability, unverified. (C) N coordinators with a consensus protocol
-  of our own; highest complexity. Default: B, with the spike in U12. If the spike fails or the
-  hub does not accept B as quorum, use C. Either way, the contract's quorum wording needs the
-  hub's decision.
-- **D3. Version identity.** Include the root tree hash in the version ID chain (`G§Open
-  questions`). Default: yes. This changes the hash chain format. Pre-GA, so no migration.
-- **D4. CI execution.** Default for this phase: no Javelin-run runners. Checks are results posted
-  by external runners and stored by the node with the reporter's identity. No check gates Publish
-  by default (`C§Version control`: optional policy). Runners and required-check policy are
-  decided in unit U15. Alternatives: Javelin-operated runners on the provider (compute
-  availability on the provider is UNCONFIRMED), or external CI only.
-- **D5. Login method.** Default: email magic link for the browser plus device code for the CLI,
-  both through the control plane. Alternatives: passkeys (later), or an external OAuth provider.
-- **D6. Credential lifetimes.** Default: access token 1 hour, refresh token 30 days,
-  refresh through the control plane only. Revocation lag is at most the access TTL.
-- **D7. What queues.** Default: checkpoint uploads, `LayerAppend`, `PublishLayer`,
-  `PublishRequest`, and `Revise` queue. Approvals, comments, OpenRequest, Stack, attach, repo
-  create and fork never queue. `C§Hosting ownership` names only checkpoints and Publishes;
-  revisions are an added choice.
-- **D8. Role removal during a control-plane outage.** Default: follow the contract literally.
-  A role removal applies when the control plane returns or the token expires, not earlier. If
-  the user wants faster removal, the alternative is bounded permission staleness that pauses
-  writes after a set age, which the contract does not allow for "continue" outcomes.
-- **D9. Server-side Stack during outage.** Default: refuse (`node_unavailable`). Alternative:
-  a local fallback Stack. That produces results the node did not compose, so it is not the
-  default.
-- **D10. Approval survives non-intersecting World advances.** Default: yes. The approval binds
-  revision content and context, not the base version. This follows `C§Version control`:
-  "Nonintersecting World advances do not force a Layer refresh." Confirm.
-- **D11. Approval defaults.** `required_approvals` default 1. Self-approval refused. Approvers:
-  Review or Maintain role. Maintainers never rewrite an author's revision (`C§Contributions and
-  reviews`).
-- **D12. Publish setting (T5).** Default: `direct` (members with Maintain may Publish directly;
-  others submit requests) for private repositories, and `requests` for public. Alternatives:
-  `direct` for everyone with Publish scope, or `requests` only.
-- **D13. Fork permission.** Default: anyone with read access to the source may fork; a public
-  repository is forkable by any signed-in user. Restricted traces are omitted with a marker.
-- **D14. Fork storage.** Default: copy objects into the fork's namespace (duplicates bytes;
-  deleting the source cannot affect the fork). Alternative: one content store with per-repo
-  access rules. Deduplication can come later.
-- **D15. Object transfer path.** Default: through the node in slice 1. Scoped presigned direct
-  transfers come later, because the contract's direction is "scoped direct object transfers."
-- **D16. Upload model.** Default: no daemon. Inline upload with a bounded budget (2 s, to be
-  measured); failures stay in the outbox; a later command or `javelin sync` replays. This
-  rejects a background flusher, which `G§Rejected` rules out. Confirm (T2).
-- **D17. Outbox storage.** Default: append-only checksummed journal file, not SQLite. Alternative:
-  a SQLite table. The outbox is primary state, not a rebuildable index (`G§3`).
-- **D18. Local cache bound and eviction (`G§Open questions`).** Default: LRU over objects not
-  referenced by the rolling base, live Layers or unacknowledged outbox records. Cap default
-  5 GiB, to be measured under gate 6.
-- **D19. Attach materialization.** Default: full rolling base, because offline Layer create
-  needs it. Alternative: sparse attach, which needs a separate offline design.
-- **D20. Offline Layer create from the last-known base.** Default: allowed (`C§Version
-  control`: Layer work continues during an outage). Publish composes later.
-- **D21. Second writer on a Layer.** Default: refuse; one owning machine per Layer.
-- **D22. Protocol versioning.** Default: extend v2 additively until the first deployed node,
-  then bump. PR #52 treats version 1 as non-authoritative, so this is consistent.
-- **D23. Node runtime.** Default: the Rust core crate plus a Worker adapter, if the spike shows
-  the core compiles for the Worker target (UNCONFIRMED). Fallback: a TypeScript shim calling
-  Rust compiled to WebAssembly. JS tooling uses bun (`CLAUDE.md`).
-- **D24. Anonymous read of public repositories.** Default: yes for attach and fetch. Publish,
-  OpenRequest, Revise, Approve and Comment need identity.
-- **D25. Trace visibility.** Default: a trace inherits repository visibility. A `restricted`
-  trace is readable by Maintain only.
-- **D26. Agent identities.** Default: none in this phase. Agents use the owning device's token,
-  narrowed by the `layer` claim when the harness supplies one.
-- **D27. Notifications.** Default: deferred. Clients poll `LayerHead` and `ReadRequest`.
-- **D28. Out of scope.** Repository deletion, data export and retention are not designed here.
-  Add a unit when the hub asks.
+- **D1. First provider and control plane.** Decided 2026-10-20: the self-hosted `javelin-node`
+  binary with file-backed stores (U2) is the reference implementation and test target, runnable
+  free anywhere. The first managed provider is Cloudflare Workers Free with one SQLite-backed
+  Durable Object per repository; objects are DO SQLite rows of at most 2 MB, with no R2 (R2 needs
+  a payment method, per the user; not checked here). U13 verifies the Free-plan limits first, and
+  they stay unverified until then. The control plane's location is a derived default, not a user
+  decision: embedded in the node when self-hosted, on Workers when managed. Rationale: only starts
+  that need no paid tier, no card and no extra signup.
+- **D2. World log quorum (T1).** Decided 2026-10-20: one coordinator per repository, the node's
+  process lock when self-hosted or the repository's Durable Object when managed, with durability
+  from the storage layer. Cloudflare's 2024 post says a write is confirmed once three of five
+  follower replicas respond (verified; U12 re-checks it against current docs). Own quorum (option
+  C) is a later option. Rationale: one coordinator makes ordering a single transaction, and the
+  provider supplies replication. The contract's quorum wording needs the hub's amendment, since
+  self-hosting is one machine.
+- **D3. Version identity.** Decided 2026-10-20: the root tree hash is in the version ID chain.
+  Rationale: pre-GA, so the format change needs no migration.
+- **D4. CI execution.** Decided 2026-10-20: no Javelin-run runners in this phase. External runners
+  post results, stored with the reporter's identity, and no check gates Publish by default.
+  Rationale: nothing here needs provider compute, which is unverified; U15 decides runners and
+  required-check policy.
+- **D5. Login method.** Decided 2026-10-20: no email dependency. The first admin token is printed
+  once at node or repository creation. The CLI uses a device-code flow, approved from a browser
+  session signed in with a passkey (WebAuthn). Magic links are deferred. Rationale: needs no email
+  provider or signup.
+- **D6. Credential lifetimes.** Decided 2026-10-20: access token 1 hour; refresh token 30 days,
+  refreshed through the control plane only. Rationale: revocation lag is bounded by the access
+  TTL, with no live lookup.
+- **D7. What queues.** Decided 2026-10-20: checkpoint uploads, `LayerAppend`, `PublishLayer`,
+  `PublishRequest` and `Revise` queue; approvals, comments, `OpenRequest`, Stack, attach, repo
+  create and fork never queue. Rationale: the contract names only checkpoints and Publishes;
+  revisions are the one added queued action, and the rest need a live answer.
+- **D8. Role removal during a control-plane outage.** Decided 2026-10-20: follow the contract
+  literally; a role removal applies when the control plane returns or the token expires.
+  Rationale: the contract allows no faster removal for "continue" outcomes.
+- **D9. Server-side Stack during outage.** Decided 2026-10-20: refuse with `node_unavailable`.
+  Rationale: a local Stack would produce results the node did not compose.
+- **D10. Approval survives non-intersecting World advances.** Decided 2026-10-20: yes. Rationale:
+  `C§Version control` says those advances do not force a Layer refresh; the approval binds content
+  and context, not the base.
+- **D11. Approval defaults.** Decided 2026-10-20: `required_approvals` defaults to 1; self-approval
+  is refused; approvers hold Review or Maintain. Rationale: matches `C§Contributions and reviews`,
+  under which maintainers never rewrite an author's revision.
+- **D12. Publish setting (T5).** Decided 2026-10-20: `direct` for private repositories, `requests`
+  for public ones. Rationale: public work goes through review by default.
+- **D13. Fork permission.** Decided 2026-10-20: anyone with read access may fork; a public
+  repository is forkable by any signed-in user; restricted traces are omitted with a marker.
+  Rationale: a fork never gets more than the forker could read.
+- **D14. Fork storage.** Decided 2026-10-20: copy objects into the fork's namespace. Rationale:
+  deleting the source cannot affect the fork; deduplication can come later.
+- **D15. Object transfer path.** Decided 2026-10-20: transfers go through the node in slice 1;
+  scoped presigned direct transfers come later. Rationale: one path to build and test first.
+- **D16. Upload model.** Decided 2026-10-20: no daemon. Inline upload with a bounded budget (2 s,
+  to measure); failures stay in the outbox, and a later command or `javelin sync` replays them.
+  Rationale: `G§Rejected` rules out a client daemon.
+- **D17. Outbox storage.** Decided 2026-10-20: an append-only checksummed journal file, not
+  SQLite. Rationale: the outbox is primary state that the server cannot rebuild.
+- **D18. Local cache bound and eviction.** Decided 2026-10-20: LRU over objects not referenced by
+  the rolling base, live Layers or unacknowledged outbox records; cap 5 GiB, to measure under gate
+  6. Rationale: bounded disk without evicting live data.
+- **D19. Attach materialization.** Decided 2026-10-20: full rolling base. Rationale: offline Layer
+  create needs it; sparse attach needs its own design.
+- **D20. Offline Layer create.** Decided 2026-10-20: allowed from the last-known base; Publish
+  composes later. Rationale: `C§Version control` says Layer work continues during an outage.
+- **D21. Second writer on a Layer.** Decided 2026-10-20: refuse; one owning machine per Layer.
+  Rationale: no forced writes.
+- **D22. Protocol versioning.** Decided 2026-10-20: extend v2 additively until the first deployed
+  node, then bump. Rationale: PR #52 treats version 1 as non-authoritative, so nothing deployed
+  needs migrating.
+- **D23. Node runtime.** Decided 2026-10-20: the self-hosted node is native Rust. Managed: U13 tries
+  the Rust core compiled to wasm in a Worker (workers-rs). If that spike fails, use a thin
+  TypeScript Worker (bun-managed) that speaks the same protocol and is tested against the Rust
+  node. Rationale: one core for both paths, with a fallback if wasm does not build.
+- **D24. Anonymous read of public repositories.** Decided 2026-10-20: yes for attach and fetch;
+  Publish, OpenRequest, Revise, Approve and Comment need identity. Rationale: public reads need no
+  account.
+- **D25. Trace visibility.** Decided 2026-10-20: a trace inherits repository visibility; a
+  `restricted` trace is readable by Maintain only. Rationale: the narrowest rule that protects
+  restricted traces.
+- **D26. Agent identities.** Decided 2026-10-20: none in this phase; agents use the owning device's
+  token, narrowed by the `layer` claim. Rationale: no new identity model before the first provider
+  works.
+- **D27. Notifications.** Decided 2026-10-20: deferred; clients poll `LayerHead` and `ReadRequest`.
+  Rationale: polling works with the wire already designed.
+- **D28. Out of scope.** Decided 2026-10-20: repository deletion, data export and retention stay
+  out of this design; add a unit when the hub asks. Rationale: none blocks the first hosted slice.
 
 ## 8. Implementation units
 
@@ -688,24 +732,53 @@ merged first, or a verified unmerged base with the dependent PR naming it (`C§W
 | U5 | `feat: streaming checkpoints through LayerAppend` (checkpoint upload in capture, `LayerAppend`, `live_paths` index) | `src/capture.rs` (call site only), `crates/javelin-node/` (layer partition), `crates/javelin-protocol/src/sender.rs`, `tests/checkpoints*.rs` | U2, U3, U4 |
 | U6 | `feat: server-side Stack and refresh from head` (`LayerStack`, golden test, CLI refresh) | `crates/javelin-stack/`, `src/stack.rs`, `crates/javelin-node/` (stack handler), `crates/javelin-cli` (refresh) | U5 |
 | U7 | `feat: scoped tokens, applied permissions and revocation on the node` (verifier, scopes, epochs, revocation set, test keys) | new `crates/javelin-identity/`, `crates/javelin-node/src/auth.rs` | U2 |
-| U8 | `feat: control plane minimum: repo create and applied-permission push` (in-process control plane, idempotent create, device login behind the D5 decision) | new `crates/javelin-control/`, `crates/javelin-cli` (repo create) | U7; D5 for login |
+| U8 | `feat: control plane minimum: admin-token bootstrap, device-code API, CLI login, repo create` (in-process control plane, idempotent create, applied-permission push; no passkeys yet) | new `crates/javelin-control/`, `crates/javelin-cli` (login, repo create) | U7; D5 |
+| U8b | `feat: passkey sign-in for device approval` (WebAuthn enrollment and sign-in on the control plane; browser approval page for device codes; no email) | `crates/javelin-control/src/passkey.rs`, `crates/javelin-control/src/device.rs` | U8 (the code lives in the crate U8 creates); D5 |
 | U9 | `feat: author-owned revisions and exact approvals` (`PublishRequest`, review partition, tree IDs in collaboration) | `crates/javelin-collaboration/`, `crates/javelin-node/src/review.rs` | U2, U7 |
 | U10 | `feat: restricted agent traces` (trace store, visibility, `missing_agent_trace` at node) | `crates/javelin-node/src/trace.rs` | U2, U7; D25 |
 | U11 | `feat: forks with inherited history` (log copy, object copy, provenance, trace omission) | `crates/javelin-node/src/fork.rs`, `crates/javelin-control/` (fork op) | U2, U7, U10; D13, D14 |
-| U12 | `feat: quorum-replicated World log on object storage` (spike results in PR, then R2 `WorldLog`) | `crates/javelin-node/src/log_r2.rs`, `tools/spike-r2/` | U2; D2 |
-| U13 | `feat: Cloudflare node adapter and provisioning` (Worker shim, R2 object store, `repo create` end to end) | new `tools/node-cloudflare/` (bun-managed) | U8, U12; D1, D23 |
+| U12 | `feat: World log in one Durable Object per repository` (`WorldLog` on DO SQLite transactions; spike on a real DO in the PR: 50 concurrent publishers, kill inside a commit, replication citation re-checked against current docs) | `crates/javelin-node/src/log_do.rs`, `tools/spike-do/` (bun-managed) | U2; D1, D2 |
+| U13 | `feat: Cloudflare managed node: Free-plan check, Worker, Durable Object, repo create` (step 1: verify Free-plan limits from Cloudflare docs and record citations, else mark unverified; step 2: Rust core to wasm via workers-rs, or the fallback thin TypeScript Worker, bun-managed, tested against the Rust node; step 3: `repo create` end to end) | `crates/javelin-node-worker/` (workers-rs entry), `tools/node-cloudflare/` (fallback only, bun-managed) | U8, U12; D1, D23 |
 | U14 | `test: hosted acceptance suite` (contract gate 4 assertions, outage matrix, git stand-in with positive control) | new `tools/acceptance/`, `tests/hosted_*.rs` | U3, U5, U9, U11, U13 |
 | U15 | `docs: CI execution design` (docs only; check ingestion and runner options) | new `docs/ci-execution.md` | D4 (can start now; no code) |
 | U16 | `test: hosting measurements` (gate 6 fixtures, limits, cost) | `tools/` | U14; measurements committed before the run (`C§Verification gates` 6) |
 
 Order that gets working behavior fastest: U1 → U2 → U3 → U5 (checkpoints and publish on a
-local node) with U4 as soon as the rolling base merges; then U7 → U8 → U9; then U10 → U11; then
+local node) with U4 as soon as the rolling base merges; then U7 → U8 → U8b → U9; then U10 → U11; then
 U12 → U13; then U14. U15 runs in parallel at any time.
 
 ## 9. Sources
 
-- Cloudflare R2 S3 API compatibility, conditional PutObject: https://developers.cloudflare.com/r2/platform/s3-compatibility/api/ (read through search excerpt, not in full).
-- Cloudflare R2 release notes (bindings `onlyIf`, ETag conditions): https://developers.cloudflare.com/r2/platform/release-notes/ (search excerpt).
-- Cloudflare SQLite in Durable Objects, GA: https://developers.cloudflare.com/changelog/2025-04-07-sqlite-in-durable-objects-ga and the 2024 post https://blog.cloudflare.com/sqlite-in-durable-objects (search excerpts; replica count and failure domains NOT FOUND).
-- Miniflare conditional-ETag behavior report: https://github.com/cloudflare/miniflare/issues/774 (archived repository; behavior not confirmed against production R2).
-- Not checked: Worker compatibility with the Rust core (D23), Cloudflare compute for CI (D4), Cloudflare control-plane hosting (D1).
+Read 2026-10-20 (WebFetch unless noted):
+- Cloudflare Durable Objects limits, https://developers.cloudflare.com/durable-objects/platform/limits/.
+  SQLite-backed objects are available on Workers Free. Row and value size 2 MB; SQL statement
+  100 KB; 100 bound parameters; CPU 30 s default, `limits.cpu_ms` up to 300,000 ms; soft limit
+  1,000 requests/s per object; writes fail with `SQLITE_FULL` at the cap, reads still succeed.
+  Free storage is 5 GB per account in the table but 1 GB in the FAQ. UNRESOLVED; U13 checks.
+- Cloudflare Workers limits, https://developers.cloudflare.com/workers/platform/limits/. Free:
+  100,000 requests/day; 10 ms CPU per HTTP request; 128 MB memory; 50 subrequests per invocation;
+  64 MiB Worker size. The page does not say whether Durable Object requests or CPU count against
+  these. UNRESOLVED.
+- Cloudflare Durable Objects pricing, https://developers.cloudflare.com/durable-objects/platform/pricing/.
+  SQLite storage is included on Free for SQLite-backed objects; 5 GB total on Free. No statement
+  about a payment method.
+- Cloudflare blog, "SQLite in Durable Objects" (2024), https://blog.cloudflare.com/sqlite-in-durable-objects.
+  Writes go to five follower replicas in different data centers; a write is confirmed once at
+  least three of five respond; the output gate holds responses until confirmation. The post does
+  not use the word "quorum" and is dated. U12 re-checks against current docs.
+- Cloudflare changelog, SQLite in Durable Objects GA (2025-04-07),
+  https://developers.cloudflare.com/changelog/2025-04-07-sqlite-in-durable-objects-ga (search
+  excerpt): available on Free with no commitment.
+
+Not verified (marked unverified until checked):
+- A Free plan without a payment method. No official Cloudflare text was found (search,
+  2026-10-20); third-party pages say no card is needed; the official plans text lists a $5/month
+  minimum for Paid. U13 checks at signup.
+- Whether R2 needs a payment method. From the user's account; not checked. R2 is not used.
+- Whether Durable Object CPU counts against the Free 10 ms CPU per request.
+- Whether the 100,000 requests/day is shared by Workers and Durable Object requests.
+- The Rust core compiled to wasm via workers-rs (D23). U13 spike.
+- Cloudflare compute for CI (D4). Control-plane location (D1, derived default).
+
+Dropped: the R2 conditional-write search results and the Miniflare issue #774 from the first
+draft. No decision rests on them now.
