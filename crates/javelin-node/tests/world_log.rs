@@ -180,3 +180,99 @@ fn second_node_on_the_same_directory_is_refused() {
         Err(Error::Busy(_))
     ));
 }
+
+#[test]
+fn a_stale_refusal_replays_after_the_layer_is_published_by_another_operation() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, first) = seeded(&dir);
+    let current = write(&mut log, "write-2", "work", "b.txt", b"two");
+    let stale = PublishOutcome::LayerStale { head: current };
+    assert_eq!(publish(&mut log, "publish-1", "work", first, 0), stale);
+
+    assert!(matches!(
+        publish(&mut log, "publish-2", "work", current, 0),
+        PublishOutcome::Published { .. }
+    ));
+    // The identical retry replays the recorded refusal, not what the Layer is now.
+    assert_eq!(publish(&mut log, "publish-1", "work", first, 0), stale);
+    assert_eq!(log.head().unwrap().number, v(1));
+}
+
+#[test]
+fn a_stale_refusal_replays_after_a_restart() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, first) = seeded(&dir);
+    let current = write(&mut log, "write-2", "work", "b.txt", b"two");
+    let stale = PublishOutcome::LayerStale { head: current };
+    assert_eq!(publish(&mut log, "publish-1", "work", first, 0), stale);
+    drop(log);
+
+    // After the restart another operation publishes the Layer, so the refusal can only
+    // come back from the persisted record.
+    let mut reopened = FileWorldLog::open(dir.path()).unwrap();
+    assert!(matches!(
+        publish(&mut reopened, "publish-2", "work", current, 0),
+        PublishOutcome::Published { .. }
+    ));
+    assert_eq!(publish(&mut reopened, "publish-1", "work", first, 0), stale);
+    assert_eq!(
+        reopened
+            .publish_layer(
+                &op("publish-1"),
+                &layer("work"),
+                first,
+                v(0),
+                &PublishAttribution::Agent {
+                    context: None,
+                    allow_missing_trace: false,
+                },
+            )
+            .unwrap(),
+        refused(code::OPERATION_ID_REUSED)
+    );
+    assert_eq!(reopened.head().unwrap().number, v(1));
+}
+
+#[test]
+fn a_recorded_operation_refuses_each_changed_request_field() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, expected) = seeded(&dir);
+    log.create_layer(&layer("other"), v(0)).unwrap();
+    let reused = refused(code::OPERATION_ID_REUSED);
+    let published = publish(&mut log, "publish-1", "work", expected, 0);
+    assert!(matches!(published, PublishOutcome::Published { .. }));
+
+    let other_expected = write(&mut log, "write-2", "other", "b.txt", b"two");
+    let agent = PublishAttribution::Agent {
+        context: None,
+        allow_missing_trace: false,
+    };
+    let variants = [
+        ("layer", "other", expected, 0, PublishAttribution::Human),
+        (
+            "expected",
+            "work",
+            other_expected,
+            0,
+            PublishAttribution::Human,
+        ),
+        ("base", "work", expected, 1, PublishAttribution::Human),
+        ("attribution", "work", expected, 0, agent),
+    ];
+    for (field, layer_name, expected, base, attribution) in variants {
+        let outcome = log
+            .publish_layer(
+                &op("publish-1"),
+                &layer(layer_name),
+                expected,
+                v(base),
+                &attribution,
+            )
+            .unwrap();
+        assert_eq!(outcome, reused, "changing {field} must reuse the operation");
+    }
+    assert_eq!(
+        publish(&mut log, "publish-1", "work", expected, 0),
+        published
+    );
+}

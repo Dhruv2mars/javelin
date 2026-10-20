@@ -1,6 +1,8 @@
 //! The self-hosted World log: one SQLite-backed `Repository` in a data directory, behind
 //! an exclusive process lock. The repository's transactions give the ordering: a unique
-//! head per version, recorded operations, and a Layer's one successful Publish.
+//! head per version, recorded publications, and a Layer's one successful Publish.
+//! Every decided `PublishLayer` is also recorded in `node.db`, so a retry replays it
+//! even when the Layer has moved on since.
 
 use std::{
     fs::{self, File, OpenOptions, TryLockError},
@@ -13,16 +15,23 @@ use javelin::{
     VersionNumber, WorldVersion,
 };
 use javelin_protocol::{
-    ProtocolError,
-    codec::{PublishOutcome, code},
+    Message, ProtocolError,
+    codec::{PublishOutcome, code, decode, encode},
     receiver::{WorldLog, refusal},
 };
+use rusqlite::{Connection, OptionalExtension, params};
+
+/// A decided request's bytes, and the outcome it was decided with.
+type Decided = (Vec<u8>, Vec<u8>);
 
 /// Held for the node's lifetime. A second node on the same directory is refused.
 const LOCK: &str = "node.lock";
+/// Decided `PublishLayer` requests and their outcomes, keyed by operation ID.
+const RECORDS: &str = "node.db";
 
 pub struct FileWorldLog {
     repo: Repository,
+    records: Connection,
     _lock: File,
 }
 
@@ -48,7 +57,19 @@ impl FileWorldLog {
             }
             Err(TryLockError::Error(e)) => return Err(e.into()),
         }
-        Ok(Self { repo, _lock: lock })
+        let records = Connection::open(dir.join(RECORDS))?;
+        records.execute_batch(
+            "CREATE TABLE IF NOT EXISTS decided (
+                operation TEXT PRIMARY KEY,
+                request BLOB NOT NULL,
+                outcome BLOB NOT NULL
+            );",
+        )?;
+        Ok(Self {
+            repo,
+            records,
+            _lock: lock,
+        })
     }
 
     /// Read access to the repository, for checks and inspection.
@@ -102,8 +123,10 @@ impl FileWorldLog {
         }
     }
 
-    /// One `PublishLayer`. A recorded operation replays its outcome before the Layer is
-    /// read, so a retry after a lost reply succeeds even once the Layer is Published.
+    /// One `PublishLayer`. A decided operation replays its recorded outcome when the
+    /// request is identical, and is refused as reused otherwise. Only an undecided
+    /// operation reads the Layer, so a retry after a lost reply is answered the same way
+    /// however the Layer has changed since.
     fn publish(
         &mut self,
         operation: &OperationId,
@@ -112,41 +135,58 @@ impl FileWorldLog {
         base: VersionNumber,
         attribution: &PublishAttribution,
     ) -> std::result::Result<PublishOutcome, ProtocolError> {
-        let head = match self.repo.publication(operation)? {
-            // A recorded operation keeps the head it was prepared on. Only the same
-            // input replays; anything else reuses the ID.
+        let request = encode(&Message::PublishLayer {
+            operation: operation.clone(),
+            layer: layer.clone(),
+            expected,
+            base,
+            attribution: attribution.clone(),
+        })?;
+        if let Some((recorded, outcome)) = self.decided(operation)? {
+            return if recorded == request {
+                replay(&outcome)
+            } else {
+                Ok(refused(code::OPERATION_ID_REUSED))
+            };
+        }
+        let outcome = match self.repo.publication(operation)? {
+            // Published before the record was written, when the node stopped between the
+            // two writes. The library's receipt decides, and is recorded from here on.
             Some(receipt) => {
-                let same = receipt.expected.layer() == layer
-                    && receipt.expected.checkpoint().object() == expected
-                    && receipt.attribution == *attribution;
-                if !same {
+                if !self.receipt_matches(&receipt, layer, expected, base, attribution)? {
                     return Ok(refused(code::OPERATION_ID_REUSED));
                 }
-                receipt.expected
+                outcome(receipt.outcome)?
             }
-            None => match self.repo.layer_state(layer) {
-                Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
-                state => match state? {
-                    LayerState::Active { head } if head.checkpoint().object() == expected => head,
-                    LayerState::Active { head } => {
-                        return Ok(PublishOutcome::LayerStale {
-                            head: head.checkpoint().object(),
-                        });
-                    }
-                    LayerState::Published { .. } => return Ok(refused(code::LAYER_PUBLISHED)),
-                    LayerState::Discarded { .. } => {
-                        return Ok(refused(refusal::LAYER_DISCARDED));
-                    }
-                },
+            None => self.decide(operation, layer, expected, base, attribution)?,
+        };
+        self.record(operation, &request, &outcome)?;
+        Ok(outcome)
+    }
+
+    /// Decides an undecided operation against the Layer as it is now.
+    fn decide(
+        &mut self,
+        operation: &OperationId,
+        layer: &LayerId,
+        expected: ObjectId,
+        base: VersionNumber,
+        attribution: &PublishAttribution,
+    ) -> std::result::Result<PublishOutcome, ProtocolError> {
+        let head = match self.repo.layer_state(layer) {
+            Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
+            state => match state? {
+                LayerState::Active { head } if head.checkpoint().object() == expected => head,
+                LayerState::Active { head } => {
+                    return Ok(PublishOutcome::LayerStale {
+                        head: head.checkpoint().object(),
+                    });
+                }
+                LayerState::Published { .. } => return Ok(refused(code::LAYER_PUBLISHED)),
+                LayerState::Discarded { .. } => return Ok(refused(refusal::LAYER_DISCARDED)),
             },
         };
-        if self
-            .repo
-            .read_checkpoint(head.checkpoint())?
-            .base()
-            .version()
-            != base
-        {
+        if self.base_of(&head)? != base {
             return Ok(refused(code::INVALID_INPUT));
         }
         match self
@@ -163,6 +203,58 @@ impl FileWorldLog {
                 _ => Err(error.into()),
             },
         }
+    }
+
+    fn base_of(&self, head: &LayerHead) -> Result<VersionNumber> {
+        Ok(self
+            .repo
+            .read_checkpoint(head.checkpoint())?
+            .base()
+            .version())
+    }
+
+    fn receipt_matches(
+        &self,
+        receipt: &PublicationReceipt,
+        layer: &LayerId,
+        expected: ObjectId,
+        base: VersionNumber,
+        attribution: &PublishAttribution,
+    ) -> Result<bool> {
+        Ok(receipt.expected.layer() == layer
+            && receipt.expected.checkpoint().object() == expected
+            && receipt.attribution == *attribution
+            && self.base_of(&receipt.expected)? == base)
+    }
+
+    fn decided(
+        &self,
+        operation: &OperationId,
+    ) -> std::result::Result<Option<Decided>, ProtocolError> {
+        self.records
+            .query_row(
+                "SELECT request, outcome FROM decided WHERE operation = ?1",
+                [operation.as_str()],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(storage)
+    }
+
+    fn record(
+        &self,
+        operation: &OperationId,
+        request: &[u8],
+        outcome: &PublishOutcome,
+    ) -> std::result::Result<(), ProtocolError> {
+        let bytes = encode(&Message::PublishOutcome(outcome.clone()))?;
+        self.records
+            .execute(
+                "INSERT INTO decided (operation, request, outcome) VALUES (?1, ?2, ?3)",
+                params![operation.as_str(), request, bytes],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 }
 
@@ -203,6 +295,21 @@ fn outcome(outcome: NativeOutcome) -> std::result::Result<PublishOutcome, Protoc
     })
 }
 
+fn replay(bytes: &[u8]) -> std::result::Result<PublishOutcome, ProtocolError> {
+    match decode(bytes)? {
+        Message::PublishOutcome(outcome) => Ok(outcome),
+        _ => Err(storage_detail("recorded outcome is not a publish outcome")),
+    }
+}
+
 fn refused(code: &str) -> PublishOutcome {
     PublishOutcome::Refused { code: code.into() }
+}
+
+fn storage(error: rusqlite::Error) -> ProtocolError {
+    storage_detail(&error.to_string())
+}
+
+fn storage_detail(detail: &str) -> ProtocolError {
+    ProtocolError::new("storage", detail)
 }
