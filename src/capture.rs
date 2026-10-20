@@ -36,7 +36,7 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Error, FileEntry, IgnoreRules, LayerHead, LayerId, LayerState, LayerUpdate, Manifest, ObjectId,
+    Error, FileEntry, IgnoreRules, LayerHead, LayerId, LayerUpdate, Manifest, ObjectId,
     OperationId, RepoPath, Repository, Result, SparseChanges,
     domain::ObjectKind,
     ignore::{CONFIG, LIMIT},
@@ -765,20 +765,6 @@ impl Capture {
 }
 
 impl Repository {
-    /// Captures the Layer's directory into a checkpoint when it differs from the head.
-    ///
-    /// The operation ID is derived from the Layer, the expected head and the exact
-    /// changes, so a retry after a lost reply or crash replays the original outcome,
-    /// and concurrent identical captures agree on one revision. Blobs are committed
-    /// before the cache is saved, so the cache never references missing content.
-    pub fn capture_directory(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
-        match self.layer_state(layer)? {
-            LayerState::Active { head } if self.stacked(&head)? => Capture::behind(head),
-            LayerState::Active { head } => self.capture_at(head, root),
-            _ => Err(Error::InvalidInput("Layer is not active".into())),
-        }
-    }
-
     /// Whether Stack produced the head. Stack changes only native state, so a Layer's
     /// directory lacks the stacked work until it is refreshed to the head.
     pub(crate) fn stacked(&self, head: &LayerHead) -> Result<bool> {

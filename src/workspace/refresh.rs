@@ -12,7 +12,7 @@
 //! content matches the head, so re-running after an interruption applies only what
 //! remains and converges. The sync record is written last.
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -20,10 +20,10 @@ use std::{
 
 use serde::Serialize;
 
-use super::{Store, WorkspaceRecovery, native, remove_entry, representable, sync_dir};
+use super::{Store, WorkspaceRecovery, clone, native, remove_entry, representable, sync_dir};
 use crate::{
-    CheckpointId, Error, FileEntry, LayerId, LayerState, LayerUpdate, RepoPath, Repository, Result,
-    SparseChanges,
+    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
+    Repository, Result, SparseChanges,
     capture::{Capture, StatCache, changes_from, scan, store_blob, write_atomic},
 };
 
@@ -72,10 +72,33 @@ impl Repository {
             LayerState::Active { head } => head,
             _ => return Ok(None),
         };
+        self.capture_synced(layer, head, &root, true).map(Some)
+    }
+
+    /// Captures the Layer's directory at `root` into a checkpoint when it differs from the
+    /// head. A stacked head is captured only once the directory is synced with it. Only
+    /// the Layer's own directory moves its sync record.
+    pub fn capture_directory(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
+        let _store = Store::lock(self)?;
+        let head = match self.layer_state(layer)? {
+            LayerState::Active { head } => head,
+            _ => return Err(Error::InvalidInput("Layer is not active".into())),
+        };
+        let workspace = self.workspace_root(layer)?;
+        self.capture_synced(layer, head, root, root == workspace.as_path())
+    }
+
+    fn capture_synced(
+        &mut self,
+        layer: &LayerId,
+        head: LayerHead,
+        root: &Path,
+        workspace: bool,
+    ) -> Result<Capture> {
         if self.stacked(&head)? && self.synced(layer)? != Some(head.checkpoint()) {
-            return Capture::behind(head).map(Some);
+            return Capture::behind(head);
         }
-        let capture = self.capture_at(head, &root)?;
+        let capture = self.capture_at(head, root)?;
         // The directory now matches the captured head. A stale update leaves the record as
         // it was, because the directory still matches the checkpoint it was synced with.
         let synced = match &capture.update {
@@ -85,10 +108,12 @@ impl Repository {
             }) => Some(head.checkpoint()),
             _ => None,
         };
-        if let Some(checkpoint) = synced {
+        if let Some(checkpoint) = synced
+            && workspace
+        {
             self.write_sync(layer, checkpoint)?;
         }
-        Ok(Some(capture))
+        Ok(capture)
     }
 
     /// Brings the Layer's directory to its current head, keeping local edits that the
@@ -165,6 +190,8 @@ impl Repository {
             }
         }
         plan.conflicts.extend(blocked(&root, &plan.apply)?);
+        plan.conflicts
+            .extend(occupied(&root, &plan.apply, &scanned.entries)?);
         if !plan.conflicts.is_empty() {
             return Err(Error::RefreshConflict(plan.conflicts.into_iter().collect()));
         }
@@ -175,16 +202,23 @@ impl Repository {
                 Some(entry) => place(&store, &root, path, entry, self)?,
             }
         }
-        let mut parents = BTreeSet::new();
-        for (path, change) in &plan.apply {
-            if change.is_some()
-                && let Some(parent) = native(&root, path.as_str()).parent()
-            {
-                parents.insert(parent.to_path_buf());
+        // The sync record names the head only once every write it depends on is durable.
+        // Each changed directory entry lives in its parent, so sync every directory on the
+        // way to each applied path. A directory a removal emptied and deleted is already gone.
+        clone::barrier(&root)?;
+        let mut dirs = BTreeSet::from([root.clone()]);
+        for (path, _) in &plan.apply {
+            let mut dir = path.as_str();
+            while let Some((parent, _)) = dir.rsplit_once('/') {
+                dirs.insert(native(&root, parent));
+                dir = parent;
             }
         }
-        for parent in parents {
-            sync_dir(&parent)?;
+        for dir in dirs {
+            match sync_dir(&dir) {
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                other => other?,
+            }
         }
         self.write_sync(layer, head.checkpoint())?;
         report.refreshed = true;
@@ -293,6 +327,29 @@ fn blocked(root: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec<S
     blocked.sort();
     blocked.dedup();
     Ok(blocked)
+}
+
+/// Head paths that a file on disk already occupies but the scan did not see: an ignored
+/// untracked file, or a name that matches a local one only by case or normalization on this
+/// volume. Writing over them would lose their bytes, so the refresh refuses.
+fn occupied(
+    root: &Path,
+    apply: &[(RepoPath, Option<FileEntry>)],
+    scanned: &BTreeMap<RepoPath, FileEntry>,
+) -> Result<Vec<String>> {
+    let mut occupied = Vec::new();
+    for (path, change) in apply {
+        if change.is_none() || scanned.contains_key(path) {
+            continue;
+        }
+        match fs::symlink_metadata(native(root, path.as_str())) {
+            Ok(meta) if !meta.is_dir() => occupied.push(path.as_str().to_owned()),
+            Ok(_) => {}
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(occupied)
 }
 
 /// Removes a path the head deletes, then the parents it leaves empty. A path already gone

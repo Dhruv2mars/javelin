@@ -285,6 +285,90 @@ fn publish_after_refresh_publishes_the_stacked_work_and_local_edits() {
     assert_eq!(changed, ["shared", "stacked.txt"]);
 }
 
+#[test]
+fn checkpoint_after_refresh_captures_the_directory() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("shared", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("stacked.txt", b"new")],
+        "checkpoint",
+    );
+    repo.refresh_workspace(&id("work")).unwrap();
+
+    // The `checkpoint` command captures through this path, which must accept a synced head.
+    let capture = repo.capture_directory(&id("work"), &dir).unwrap();
+    assert!(!capture.behind, "a synced stacked head must capture");
+    assert!(capture.update.is_none(), "{capture:?}");
+}
+
+#[test]
+fn refresh_refuses_to_overwrite_an_ignored_file_the_head_adds() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("shared", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::write(dir.join(".javelinignore"), b"new.txt\n").unwrap();
+    fs::write(dir.join("new.txt"), b"local").unwrap();
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("new.txt", b"theirs")],
+        "ignored",
+    );
+
+    let error = repo.refresh_workspace(&id("work")).unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["new.txt"]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        contents(&dir),
+        expected(&[
+            ("shared", b"base"),
+            (".javelinignore", b"new.txt\n"),
+            ("new.txt", b"local"),
+        ]),
+        "a refused refresh must not write"
+    );
+}
+
+#[test]
+fn refresh_refuses_a_name_that_aliases_a_local_file() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("shared", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::write(dir.join("NEW.txt"), b"local").unwrap();
+    if !dir.join("new.txt").exists() {
+        // A case-sensitive volume keeps both names, so there is no alias to refuse.
+        return;
+    }
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("new.txt", b"theirs")],
+        "alias",
+    );
+
+    let error = repo.refresh_workspace(&id("work")).unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["new.txt"]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        contents(&dir),
+        expected(&[("shared", b"base"), ("NEW.txt", b"local")]),
+        "the local file must keep its bytes"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn refresh_interrupted_midway_converges_when_run_again() {

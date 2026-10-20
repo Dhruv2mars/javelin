@@ -104,6 +104,8 @@ workflow may invoke or interpret Git.
     command that names a Layer; never capture over a Stack-produced head.
   - [x] Refresh a clone-backed directory from a Stack-produced head (`workspace refresh`
     three-way merges local edits; conflicts change nothing).
+  - [x] Refresh refuses head paths that an ignored or case-aliased file occupies, flushes
+    before the sync record moves, and lets `checkpoint` capture a synced stacked head.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
