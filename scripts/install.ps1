@@ -86,9 +86,16 @@ try {
     if (-not $binary) { Fail "archive $name has no bin\javelin.exe" }
 
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+    $BinDir = (Resolve-Path -LiteralPath $BinDir).Path
+    $dest = Join-Path $BinDir 'javelin.exe'
     $staged = Join-Path $BinDir ('javelin.exe.' + [guid]::NewGuid().ToString('N') + '.new')
     Copy-Item -LiteralPath $binary.FullName -Destination $staged
-    Move-Item -LiteralPath $staged -Destination (Join-Path $BinDir 'javelin.exe') -Force
+    # Move-Item -Force deletes the old file before moving; File.Replace swaps it in one step.
+    if (Test-Path -LiteralPath $dest -PathType Leaf) {
+        [System.IO.File]::Replace($staged, $dest, [NullString]::Value)
+    } else {
+        Move-Item -LiteralPath $staged -Destination $dest
+    }
 
     Write-Output "Installed javelin ($name) to $(Join-Path $BinDir 'javelin.exe')"
     if (-not (($env:Path -split ';') -contains $BinDir)) {

@@ -103,7 +103,10 @@ jobs:
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           export SOURCE_DATE_EPOCH
-          $PACK build --source . --out work/build
+          # Windows links the C runtime statically, so the archive needs no VC++ redistributable.
+          flags=()
+          [ "$RUNNER_OS" = Windows ] && flags=(--rustflag "-Ctarget-feature=+crt-static")
+          $PACK build --source . --out work/build "${flags[@]}"
           $PACK package --build work/build --source . --source-sha "$(git rev-parse HEAD)" --out work/dist
 
       - name: Record the binary's platform requirements
@@ -114,7 +117,13 @@ jobs:
           case "$RUNNER_OS" in
             macOS) otool -l "$bin" | grep -A4 -E 'LC_(BUILD_VERSION|VERSION_MIN_MACOSX)' || echo "no macOS platform load command found" ;;
             Linux) ldd "$bin"; echo "highest GLIBC symbol version: $(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)" ;;
-            Windows) echo "PE inspection not performed; minimum Windows version unconfirmed" ;;
+            Windows)
+              # The archive ships only javelin.exe, so it must not import the VC++ runtime.
+              if grep -a -q -i 'VCRUNTIME140' "$bin"; then
+                echo "::error::javelin.exe imports the VC++ runtime (VCRUNTIME140.dll)"
+                exit 1
+              fi
+              echo "no VCRUNTIME140 import; minimum Windows version unconfirmed" ;;
           esac
 
       - name: Build and package the previous commit (upgrade source)
@@ -128,7 +137,9 @@ jobs:
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$prev_sha")
           export SOURCE_DATE_EPOCH
           echo "PREV_SHA=$prev_sha" >> "$GITHUB_ENV"
-          $PACK build --source "$prev_src" --out work/build-previous
+          flags=()
+          [ "$RUNNER_OS" = Windows ] && flags=(--rustflag "-Ctarget-feature=+crt-static")
+          $PACK build --source "$prev_src" --out work/build-previous "${flags[@]}"
           $PACK package --build work/build-previous --source "$prev_src" --source-sha "$prev_sha" --out work/dist-previous
 
       - name: Name archives and write per-platform SHA256SUMS
