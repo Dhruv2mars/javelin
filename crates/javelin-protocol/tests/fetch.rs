@@ -259,3 +259,37 @@ fn refuses_replies_that_do_not_answer_the_request() {
     store.save(root, &real).unwrap();
     assert_eq!(store.load(root).unwrap(), real);
 }
+
+#[test]
+fn refuses_a_child_filed_under_a_name_its_last_name_does_not_match() {
+    // The parent files an empty leaf (last name "") under "a".
+    let leaf = javelin::tree::Chunk::decode(&[0]).unwrap().encode();
+    let leaf_id = javelin_protocol::Kind::Tree.id(&leaf);
+    let mut parent = vec![1, 0, 0, 1, b'a'];
+    parent.extend_from_slice(leaf_id.as_bytes());
+    let root = javelin_protocol::Kind::Tree.id(&parent);
+    let result = against(move |message| match message {
+        Message::Hello { .. } => Message::HelloOk { version: 2 },
+        Message::Resolve { .. } => Message::Resolved {
+            number: v(1),
+            id: root,
+            tree: root,
+        },
+        Message::Get(request) => Message::Objects(
+            request
+                .iter()
+                .filter_map(|(kind, id)| {
+                    if *id == root {
+                        Some((*kind, root, parent.clone()))
+                    } else if *id == leaf_id {
+                        Some((*kind, leaf_id, leaf.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        ),
+        _ => Message::Objects(Vec::new()),
+    });
+    assert_eq!(result.unwrap_err().code, "malformed");
+}
