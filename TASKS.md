@@ -108,12 +108,11 @@ workflow may invoke or interpret Git.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
     seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
-- [ ] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
-  The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PR #46)
-  passes 34/34 with the real binary on APFS, btrfs, XFS and ext4 (copy fallback) in run
-  `39127272473` at `c0865c6`. NTFS and ReFS pass 33/34: Windows capture misses a
-  same-size rewrite that restores mtime (no ChangeTime in the stat cache), listed in
-  `gate2-known-failures.json`. Check this item when that list is empty. Worlds are seeded
+- [x] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
+  The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PRs #46 and #57)
+  passes 34/34 with the real binary on APFS, btrfs, XFS, ext4 (copy fallback), NTFS and ReFS
+  in run `39438052570` at `39653a6`. Windows capture now reads ChangeTime (PR #57), which
+  closed the last failure, so `gate2-known-failures.json` is `{}`. Worlds are seeded
   through the library; `workspace publish` now exists, so the probe may switch to it.
 - [x] Retire the macOS and Windows sparse-backend proof tracks (2026-10-17).
 - [x] Retire the OverlayFS helper once clone-backed Layers reach parity (2026-10-18,
@@ -187,7 +186,9 @@ collisions are rejected; and CI exercises APFS, btrfs, XFS, ext4, ReFS and NTFS.
 - [x] Tests: tree equality, isolation, derived bases, checkpoint apply, discard and
   recovery, collisions, and exact data sharing (APFS private size, FIEMAP).
 - [x] Local APFS, 100k files: warm clone 1.15–1.21 s, 0 bytes copied.
-- [ ] CI green on all six filesystems.
+- [x] CI green on all six filesystems (run `39438057484` at `39653a6`, Workspace jobs apfs, ext4, xfs, btrfs, ntfs, refs).
+- [x] Make the settled-scan capture test independent of wall-clock time: a slow Windows runner
+  (run `39436475593`) passed the racy window before the second scan (PR #57).
 - [x] Wire capture into every workspace and layer command, whichever of this PR
   and daemonless capture merges second (done in daemonless capture).
 
