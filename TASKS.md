@@ -131,7 +131,7 @@ workflow may invoke or interpret Git.
   automatic capture remain separate unchecked requirements.
 - [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
-- [ ] Bind supplied agent traces to immutable work, with missing-trace override.
+- [x] Bind supplied agent traces to immutable work, with missing-trace override.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
 - [ ] Verify the complete workflow on each supported operating system.
@@ -318,7 +318,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 Wave 3, after wave 2:
 - [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
 - [ ] Adopt existing non-Git project files through a Layer.
-- [ ] Bind agent traces to immutable work, with a missing-trace override.
+- [x] Bind agent traces to immutable work, with a missing-trace override.
 - [ ] Online units from `docs/online-design.md`, in its order.
 - [ ] Release packaging and clean-machine installs on three OSes; then docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.

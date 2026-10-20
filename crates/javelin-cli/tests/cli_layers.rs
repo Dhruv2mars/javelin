@@ -313,6 +313,20 @@ fn binary_rejects_bad_grammar_before_mutation_and_explains_help() {
             "--allow-missing-trace",
             "--allow-missing-trace",
         ],
+        vec![
+            "--actor",
+            "agent",
+            "--trace",
+            "missing",
+            "--allow-missing-trace",
+        ],
+        vec![
+            "--actor",
+            "agent",
+            "--context",
+            &"a".repeat(64),
+            "--allow-missing-trace",
+        ],
     ] {
         let mut args = vec!["workspace", "publish", "work", "--operation", "publish"];
         args.extend(extra);

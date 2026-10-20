@@ -407,6 +407,11 @@ impl AttributionInput {
                     .into(),
             ));
         }
+        if allow_missing_trace && (context.is_some() || trace.is_some()) {
+            return Err(Error::InvalidInput(
+                "--allow-missing-trace applies only without --context or --trace".into(),
+            ));
+        }
         Ok(Self {
             agent,
             context,
