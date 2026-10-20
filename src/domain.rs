@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
@@ -435,4 +438,62 @@ pub(crate) fn normalize(
         }
     }
     Ok(SparseChanges(delta))
+}
+
+/// One live, unpublished Layer's changed path and its entry there (None: deleted).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LivePath {
+    pub(crate) layer: crate::LayerId,
+    pub(crate) path: RepoPath,
+    pub(crate) entry: Option<FileEntry>,
+}
+
+/// Every live Layer's changed paths, indexed by path. The storage engine supplies
+/// it, locally from the Layer index and on a server from streamed checkpoints.
+pub(crate) trait LiveIndex {
+    /// Live changes at exactly `path`, or strictly below it when `below` is set.
+    fn live(&self, path: &RepoPath, below: bool) -> Result<Vec<LivePath>>;
+}
+
+/// Path pairs (ours, theirs) on which `changes`, over World `base`, would conflict
+/// if each other live Layer published first, grouped by that Layer. It applies
+/// compose's rule: a pair is the same path or an ancestor/descendant, and their
+/// entry differs from ours at `base`. Work is O(changed paths x depth) indexed
+/// lookups plus matches, independent of the number of live Layers.
+pub(crate) fn collisions(
+    world: &impl WorldIndex,
+    live: &impl LiveIndex,
+    layer: &crate::LayerId,
+    changes: &SparseChanges,
+    base: VersionNumber,
+) -> Result<BTreeMap<crate::LayerId, BTreeSet<(RepoPath, RepoPath)>>> {
+    let mut found = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut at_base = BTreeMap::<RepoPath, Option<FileEntry>>::new();
+    for path in changes.0.keys() {
+        let mut hits = live.live(path, false)?;
+        hits.extend(live.live(path, true)?);
+        for ancestor in path.ancestors() {
+            hits.extend(live.live(&ancestor, false)?);
+        }
+        for hit in hits {
+            if &hit.layer == layer {
+                continue;
+            }
+            let before = match at_base.get(&hit.path) {
+                Some(entry) => entry.clone(),
+                None => {
+                    let entry = world.entry_at(&hit.path, base)?;
+                    at_base.insert(hit.path.clone(), entry.clone());
+                    entry
+                }
+            };
+            if before != hit.entry {
+                found
+                    .entry(hit.layer)
+                    .or_default()
+                    .insert((path.clone(), hit.path));
+            }
+        }
+    }
+    Ok(found)
 }

@@ -199,8 +199,8 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        let checkpoint = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[])?;
-        let head = create_in(&tx, layer, checkpoint)?;
+        let (checkpoint, changes) = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[])?;
+        let head = create_in(&tx, layer, checkpoint, &changes)?;
         tx.commit()?;
         Ok(head)
     }
@@ -211,8 +211,8 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        checkpoint_in(&tx, checkpoint.0)?;
-        let head = create_in(&tx, layer, checkpoint)?;
+        let frozen = checkpoint_in(&tx, checkpoint.0)?;
+        let head = create_in(&tx, layer, checkpoint, &frozen.changes)?;
         tx.commit()?;
         Ok(head)
     }
@@ -279,8 +279,8 @@ impl Repository {
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let before = checkpoint_in(&tx, expected.checkpoint.0)?;
-        let checkpoint = prepare_checkpoint(&tx, &before.base, changes, &before.sources)?;
-        let outcome = update_in(&tx, operation, expected, checkpoint, false, None)?;
+        let candidate = prepare_checkpoint(&tx, &before.base, changes, &before.sources)?;
+        let outcome = update_in(&tx, operation, expected, candidate, false, None)?;
         #[cfg(test)]
         crate::repository::test_boundary("layer_before_commit");
         tx.commit()?;
@@ -301,7 +301,9 @@ impl Repository {
         validate_format(&tx)?;
         verify_head(&tx, expected)?;
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
-        let outcome = update_in(&tx, operation, expected, expected.checkpoint, true, None)?;
+        // A discard untracks the Layer, so its changes are not needed.
+        let candidate = (expected.checkpoint, SparseChanges::default());
+        let outcome = update_in(&tx, operation, expected, candidate, true, None)?;
         tx.commit()?;
         Ok(outcome)
     }
@@ -369,19 +371,21 @@ fn checkpoint_bytes(
     .expect("checkpoint encoding")
 }
 
+/// Stores the normalized checkpoint and returns it with its exact changes.
 pub(crate) fn prepare_checkpoint(
     conn: &Connection,
     base: &LayerBase,
     changes: &SparseChanges,
     sources: &[CheckpointId],
-) -> Result<CheckpointId> {
+) -> Result<(CheckpointId, SparseChanges)> {
     validate_base(conn, base)?;
     let changes = crate::domain::normalize(&Index::new(conn), base.version, changes)?;
-    Ok(CheckpointId(insert_object(
+    let id = insert_object(
         conn,
         ObjectKind::Checkpoint,
         &checkpoint_bytes(base, &changes, sources),
-    )?))
+    )?;
+    Ok((CheckpointId(id), changes))
 }
 
 /// Scoped to one validation transaction; never stored on a Repository handle.
@@ -565,7 +569,12 @@ pub(crate) fn verify_head(conn: &Connection, head: &LayerHead) -> Result<()> {
     Ok(())
 }
 
-fn create_in(conn: &Connection, layer: &LayerId, checkpoint: CheckpointId) -> Result<LayerHead> {
+fn create_in(
+    conn: &Connection,
+    layer: &LayerId,
+    checkpoint: CheckpointId,
+    changes: &SparseChanges,
+) -> Result<LayerHead> {
     let exists = conn
         .prepare("SELECT 1 FROM layer_heads WHERE layer=?1")?
         .exists([layer.as_str()])?;
@@ -580,6 +589,7 @@ fn create_in(conn: &Connection, layer: &LayerId, checkpoint: CheckpointId) -> Re
             "INSERT INTO layer_heads(layer,revision,checkpoint,discarded) VALUES(?1,0,?2,0)",
             params![layer.as_str(), checkpoint.0.to_string()],
         )?;
+        crate::radar::track_in(conn, layer, changes)?;
     }
     Ok(LayerHead {
         repository: identity_in(conn)?,
@@ -589,14 +599,17 @@ fn create_in(conn: &Connection, layer: &LayerId, checkpoint: CheckpointId) -> Re
     })
 }
 
+/// `candidate` is the new head checkpoint and its changes. An applied update also
+/// moves the Layer's entries in the radar index, in the same transaction.
 pub(crate) fn update_in(
     conn: &Connection,
     operation: &OperationId,
     expected: &LayerHead,
-    checkpoint: CheckpointId,
+    candidate: (CheckpointId, SparseChanges),
     discard: bool,
     source: Option<CheckpointId>,
 ) -> Result<LayerUpdate> {
+    let (checkpoint, changes) = candidate;
     let prior = conn
         .query_row(
             "SELECT layer,expected,checkpoint,discard FROM layer_attempts WHERE id=?1",
@@ -637,6 +650,11 @@ pub(crate) fn update_in(
     if accepted {
         conn.execute("INSERT INTO layer_heads(layer,revision,checkpoint,discarded,operation) VALUES(?1,?2,?3,?4,?5)",
             params![expected.layer.as_str(),result,checkpoint.0.to_string(),discard,operation.as_str()])?;
+        if discard {
+            crate::radar::untrack_in(conn, &expected.layer)?;
+        } else {
+            crate::radar::track_in(conn, &expected.layer, &changes)?;
+        }
     }
     if let Some(source) = source {
         let state = event_in(conn, &expected.layer, result)?.state(identity_in(conn)?);

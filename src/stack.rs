@@ -57,8 +57,8 @@ impl Repository {
         sources.push(source);
         sources.sort();
         sources.dedup();
-        let checkpoint = prepare_checkpoint(&tx, before.base(), changes, &sources)?;
-        let outcome = update_in(&tx, operation, expected, checkpoint, false, Some(source))?;
+        let candidate = prepare_checkpoint(&tx, before.base(), changes, &sources)?;
+        let outcome = update_in(&tx, operation, expected, candidate, false, Some(source))?;
         #[cfg(test)]
         crate::repository::test_boundary("stack_before_commit");
         tx.commit()?;

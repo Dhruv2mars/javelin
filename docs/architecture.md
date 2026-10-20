@@ -14,8 +14,8 @@ Code: src/lib.rs, src/layer.rs, src/stack.rs, src/publish.rs, src/tree.rs
 
 ## Storage
 
-- The repository is `.javelin/repository.sqlite3`. Format is `7`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
-- Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, index `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten.
+- The repository is `.javelin/repository.sqlite3`. Format is `8`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
+- Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, index `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten. The derived radar index `layer_paths` (`src/radar.rs`) is the one mutable table.
 
 World versions (changesets, not snapshots):
 
@@ -79,7 +79,7 @@ Code: src/tree.rs, src/repository.rs
 - Operations: `create_layer`, `capture_layer`, `discard_layer`, `clone_layer`, `layer_diff`, `layer_history`, `check_layers`.
 - Each mutating call goes through `update_in`, which records its operation id in `layer_attempts`. `attempt_outcome_in` returns the recorded outcome when an id is replayed.
 - Recorded outcomes include accepted, stale, conflict, and `LayerStale`. ID reuse surfaces as the error code `operation_id_reused`.
-- CLI: `javelin layer` has subcommands create, state, history, publication, diff, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
+- CLI: `javelin layer` has subcommands create, state, history, publication, diff, radar, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
 - There is one Layer runtime on every platform: a plain directory cloned from the Layer's World base, captured without a daemon. No mount, helper or background process is involved.
 
 - Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. `capture_workspace` captures `.javelin/layers/<id>` and runs first in every `layer` and `workspace` command that names a Layer. A head produced by Stack is never captured over (`Capture::behind`), because the directory lacks the stacked work. The CLI hook is `javelin checkpoint ID [--path DIR]`.
@@ -95,6 +95,16 @@ directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-c
 - Root `.javelinignore` rules (`IgnoreRules`, `src/ignore.rs`) hide untracked paths from capture; tracked paths are always visited.
 
 Code: src/layer.rs, src/capture.rs, src/ignore.rs, src/workspace.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_workspace.rs
+
+## Collision radar
+
+- `Repository::radar(layer)` (`src/radar.rs`) reports what would make an active Layer's Publish conflict, in one read snapshot: `world` is `intersections()` against the current head, exactly the paths Publish would report now; `layers` lists every other live Layer that would make it conflict by publishing first, with `(ours, theirs)` path pairs.
+- The Layer rule is compose's: a pair is the same path or an ancestor/descendant, and the other Layer's entry differs from this Layer's entry at its base. It lives in `collisions()` in `src/domain.rs` over the engine-neutral `LiveIndex` trait, next to `WorldIndex`, so a hosted World fed by streamed checkpoints can serve the same report.
+- Table `layer_paths(path, layer, kind, content)`, primary key `(path, layer)`, `WITHOUT ROWID`, plus index `layer_paths_by_layer`, holds each live Layer's head changes. Exact and ancestor lookups are point reads; descendants are one range scan. Cost is O(changed paths × depth × log) plus matches, independent of the number of live Layers.
+- It is derived data, written in the same transaction as the head change: `create_in` and `update_in` (`src/layer.rs`) set it for create, clone, capture and Stack, writing only differing rows; an applied discard and a successful Publish delete the Layer's rows. A crash on either side of a commit leaves it consistent with the Layer heads. `check()` (and `history()`) rebuild it from every live Layer's head checkpoint and refuse a mismatch with `corrupt_repository`.
+- CLI: `javelin layer radar ID`, and a `radar` object in `checkpoint` output.
+
+Code: src/radar.rs, src/domain.rs, src/layer.rs, src/publish.rs
 
 ## Stack and mechanical merge
 

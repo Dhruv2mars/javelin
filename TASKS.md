@@ -273,7 +273,7 @@ dependency order. Each is done when its PR is merged with the checks it names.
   Trees merged 2026-10-20 (#51); the protocol (#52) is being rebased.
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
-- [ ] Collision radar and trace blame (PRs #48, #49; rebase to format 8 after #51).
+- [x] Collision radar (PR #48, format 8 after #51). Trace blame: PR #49.
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
   queue and replay, and the quorum-replicated World log.
   Note 2026-10-20: decisions D1, D2, D5 and D23 are recorded in `docs/online-design.md`
