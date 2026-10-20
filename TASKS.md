@@ -257,14 +257,15 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [x] Changeset World (shipped as format 6): O(change) Publish and shallow hot-path
   validation (PR #47).
 - [x] Record the Git 3.0 decision and amend the contract and workspace docs (PR #45).
-- [ ] Storage benchmark, blob files vs SQLite (PR #50; APFS no-go): apply the go/no-go
+- [x] Storage benchmark, blob files vs SQLite (PR #50; APFS no-go): apply the go/no-go
   criterion recorded in `docs/git3-direction.md`.
   - Result (2026-10-20, PR #50): blobs stay in SQLite on every measured platform.
     Both criteria are no-go on APFS, btrfs and XFS reflink=1; ext4 is a copy control
     and fails every gate. Runs: Linux CI 39130520311 (head `8d78768`); APFS
     2026-10-18 local. Details: `docs/storage-benchmark.md`, "Final decision".
-- [ ] Tree objects as derived data (PR #51, format 7): Merkle trees with prolly chunking, then the
+- [x] Tree objects as derived data (PR #51, format 7): Merkle trees with prolly chunking, then the
   protocol on trees (PR #52), which drops the 65,536-entry `MAX_ENTRIES` cap.
+  Trees merged 2026-10-20 (#51); the protocol (#52) is being rebased.
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
 - [ ] Collision radar and trace blame (PRs #48, #49; rebase to format 8 after #51).
@@ -282,14 +283,17 @@ owner threads on `claude-haiku-5-5` (high effort) on Claude, one PR per thread a
 merges green PRs in dependency order. Delegates and computer use are Haiku.
 A 30-minute continuation runs in the hub.
 
-Wave 1, running now:
-- [ ] Finish the storage benchmark with the Linux verdicts (#50).
-- [ ] Rebase and land tree objects (#51), then protocol v2 on trees (#52).
-- [ ] Windows ChangeTime in the stat cache: gate 2 34/34 on all six filesystems.
-- [ ] OSS hygiene: CONTRIBUTING, SECURITY, SUPPORT, cargo-deny license check.
-- [ ] `docs/online-design.md`: online and hosting design, PR-sized units, open decisions.
+Wave 1, done except #52:
+- [x] Finish the storage benchmark with the Linux verdicts (#50).
+- [ ] Rebase and land tree objects (#51, merged), then protocol v2 on trees (#52).
+- [x] Windows ChangeTime in the stat cache: gate 2 34/34 on all six filesystems (#57).
+- [x] OSS hygiene: CONTRIBUTING, SECURITY, SUPPORT, cargo-deny license check (#56);
+  private vulnerability reporting enabled.
+- [x] `docs/online-design.md`: online and hosting design, PR-sized units, open decisions
+  (#58, decisions #60; CI execution design #59).
 
-Wave 2, after #51 merges:
+Wave 2, commissioned 2026-10-20 after #51 merged (radar and blame; rolling base and
+reclaim; Stack-head refresh and Publish; robustness proofs):
 - [ ] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
 - [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
 - [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
