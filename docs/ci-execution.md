@@ -142,6 +142,11 @@ CheckOutcome = Accepted { id, seq } | Refused { code }
   applied.
 - **Reporter identity:** the token's device or service identity (`O§7 D26` is the agent-identity
   default; a CI reporter is a service identity, decided in U7). It is stored with each result.
+- **Keep the reporting token out of revision-executing jobs.** A token in the same job as code from the
+  revision (for example `./scripts/test.sh`) can be stolen by that code and used to forge results under the
+  trusted reporter identity. Reporting runs in a separate job that executes no revision code. It reads the
+  test outcome from `needs.<job>.result`. The example in `docs/examples/ci/03-report-check.yml` does this.
+  The validator does not enforce this in slice 1; it is a review rule.
 - **Required checks name a reporter** (§7). A result from another identity does not satisfy the
   requirement, even if the name matches. This blocks any member from forging a green `ci/unit`.
 
@@ -244,8 +249,11 @@ the hub decides (CI4).
 ## 10. Validator spec (workflow syntax)
 
 A later PR builds it, as a bun script under `tools/ci-validate/` (JS tooling uses bun, `CLAUDE.md`).
-It parses with `Bun.YAML.parse` (bun 1.3.13 has it; checked locally 2026-10-20). Duplicate keys are a
-parse error.
+**Parser.** Use the `yaml` package, v2 (eemeli), whose default `uniqueKeys` rejects duplicate keys.
+Checked 2026-10-20 in a scratch directory outside the repo: `yaml@2` throws "Map keys must be unique"
+for `a: 1` / `a: 2`. Do not use `Bun.YAML.parse`. Checked the same day: bun 1.3.13 returns `{"a":2}`
+silently, so the duplicate is lost before any rule runs. The validator PR adds the dependency and a
+duplicate-key fixture.
 
 **Interface.** `bun tools/ci-validate/validate.ts <file.yml>...`. Output: one JSON line per finding,
 `{ "file", "path", "code", "message" }`. Exit `0` valid, `1` invalid, `2` usage or unreadable input.
@@ -328,7 +336,10 @@ with a failing `git` on PATH. Item 16 belongs to the fetch unit, and item 17 to 
   say).
 - **Cloudflare Containers** (WebSearch, 2026-10-20, search excerpts only; not a primary docs page): limits in
   §5. **UNCONFIRMED.**
-- **Bun YAML:** `Bun.YAML.parse` exists in bun 1.3.13 (local check). Parsing of the examples passed.
+- **Bun YAML:** `Bun.YAML.parse` exists in bun 1.3.13 (local check). Parsing of the examples passed. It
+  silently keeps the last of duplicate keys (local check, 2026-10-20), so §10 does not use it.
+- **`yaml` v2:** rejects duplicate keys by default (local check, 2026-10-20, scratch install outside the
+  repo). Its version and API are not otherwise verified here.
 - **Not checked:** GitHub's `workflow_dispatch` input limits; Cloudflare Workers compute for runners; any
   external CI other than GitHub Actions.
 

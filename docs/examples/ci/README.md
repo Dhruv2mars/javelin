@@ -5,7 +5,7 @@ They use GitHub Actions workflow YAML, the working reading of the contract's "CI
 compatibility" (see `docs/ci-execution.md` §1). Nothing here runs yet.
 
 The `javelin revision fetch` and `javelin check report` commands are planned, not implemented.
-Each file parses as YAML (checked with `Bun.YAML` in bun 1.3.13). None has been run through GitHub.
+Each file parses as YAML (checked with `Bun.YAML` in bun 1.3.13; that parser keeps the last of duplicate keys, so the validator uses `yaml` v2 instead, see `docs/ci-execution.md` §10). None has been run through GitHub.
 
 | File | Purpose | Expected validator result |
 | --- | --- | --- |
