@@ -208,6 +208,26 @@ fn refuses_chunks_before_what_they_name_and_wrong_kinds() {
 }
 
 #[test]
+fn checkpoint_in_a_mixed_batch_refuses_the_whole_batch() {
+    // Checkpoints are not stored yet, so a batch holding one stores none of it.
+    let (_d, mut dest) = repo();
+    let bytes = b"a blob that must not be stored".to_vec();
+    let blob = Kind::Blob.id(&bytes);
+    let checkpoint = b"{}".to_vec();
+    let mut input = hello();
+    input.extend(msg(&Message::Objects(vec![
+        (Kind::Blob, blob, bytes),
+        (
+            Kind::Checkpoint,
+            Kind::Checkpoint.id(&checkpoint),
+            checkpoint,
+        ),
+    ])));
+    refused(&mut dest, &input, "malformed");
+    assert!(!dest.has_blob(blob).unwrap());
+}
+
+#[test]
 fn refuses_malformed_tree_chunks() {
     let (_s, mut source) = repo();
     let (_, blobs, _) = fixture(&mut source);

@@ -448,6 +448,16 @@ fn invalid_enum_codes_are_malformed() {
 }
 
 #[test]
+fn request_ids_follow_the_collaboration_rule() {
+    // Colons are allowed, as in the collaboration crate's RequestId.
+    let colon = RequestId::parse("req:1").unwrap();
+    roundtrip(Message::ReadRequest { request: colon });
+    assert!(RequestId::parse(&"a".repeat(128)).is_ok());
+    assert!(RequestId::parse(&"a".repeat(129)).is_err());
+    assert!(RequestId::parse("a/b").is_err());
+}
+
+#[test]
 fn invalid_identifiers_are_malformed() {
     assert_eq!(refused(&[0x35, 0]), code::MALFORMED, "empty Layer ID");
     let mut body = vec![0x56, 3];

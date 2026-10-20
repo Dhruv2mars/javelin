@@ -78,6 +78,10 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             Ok(Message::Missing(missing))
         }
         Message::Objects(objects) => {
+            // Refused before anything is stored, so a mixed batch is all or nothing.
+            if objects.iter().any(|(kind, _, _)| *kind == Kind::Checkpoint) {
+                return Err(checkpoint_unserved());
+            }
             for (kind, claimed, bytes) in &objects {
                 let actual = kind.id(bytes);
                 if actual != *claimed {
