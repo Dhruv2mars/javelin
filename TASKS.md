@@ -120,7 +120,7 @@ workflow may invoke or interpret Git.
 - [x] Clone-backed `workspace publish`: capture, then Publish the whole Layer, with
   exact retries; refuses busy, uncertain or `behind` captures.
 - [ ] Publish from a workspace whose head came from Stack (waits on directory refresh).
-- [ ] Reclaim a published Layer's directory; today it stays until `workspace discard`.
+- [x] Reclaim a published Layer's directory; a successful Publish reclaims it, and recovery finishes interrupted reclaims.
 - [x] Independently verify committed filesystem-probe controls and negative cases
   at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
 - [x] Rerun final probe source `bce352e`, including termination of a stalled external
@@ -271,8 +271,10 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [x] Tree objects as derived data: Merkle trees with prolly chunking, then the
   protocol on trees, which drops the 65,536-entry `MAX_ENTRIES` cap (PRs #51 and #52;
   measurements in `docs/architecture.md`).
-- [ ] Rolling base: one base per repository per machine, advanced in place under
+- [x] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
+  - [ ] Measure rewinding a Layer far behind the base (reverse changeset, O(distance)) at 100k files; add a bound or a cold fallback if it is slow.
+  - [ ] Process-kill tests for an advance and a reclaim; the current tests seed partial state instead of killing a process.
 - [x] Collision radar (PR #48, format 8 after #51).
 - [x] Trace blame (PR #49, format 8 on main after #48).
   - Evidence: checkpoint provenance
@@ -310,7 +312,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 - [x] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
 - [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
 - [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
-- [ ] Reclaim a published Layer's directory.
+- [x] Reclaim a published Layer's directory.
 - [ ] Process concurrency, crash recovery, retries and corruption proofs.
 
 Wave 3, after wave 2:

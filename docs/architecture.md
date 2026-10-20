@@ -88,11 +88,11 @@ Code: src/tree.rs, src/repository.rs
 Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
 directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
 
-- `open_workspace` clones `.javelin/bases/<N>` into `.javelin/layers/<id>` and applies the checkpoint changes, checking existing files and directories with tree lookups. `layer_workspace` returns the root and base paths.
+- `open_workspace` brings the rolling base `.javelin/bases/rolling` to the Layer's World under the lock, clones it into `.javelin/layers/<id>` and applies the checkpoint changes, checking existing files and directories with tree lookups. `layer_workspace` returns the root and base paths.
 - `CloneStrategy` is the strategy that worked: `DirectoryClone`, `Snapshot`, `FileClone` or `Copy`. `CloneReport` adds the fallback reason and copied bytes.
-- Bases derive from the nearest cached base plus the tree diff between the two versions, applied with tree lookups: O(change), not O(repo). A base with no cached neighbour is materialized from the full snapshot. The cache keeps two bases and pins the World head.
+- One rolling base per repository, recorded in `.javelin/base.json`. A Layer at a newer World advances it in place by the tree diff between the two versions, applied with tree lookups: O(change), not O(repo). A Layer at an older World clones the base and rewinds the clone by the reverse diff. An absent or partial base is materialized from the full snapshot. Per-version bases are gone.
 - `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
-- CLI `workspace` has subcommands create, open, path, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_layer` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. A published Layer's directory stays in place and is no longer captured.
+- CLI `workspace` has subcommands create, open, path, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_workspace` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. `publish_workspace` runs `publish_layer` under the lock and, on success, renames the Layer's directory into trash and reclaims it, with the same budget as discard.
 - Root `.javelinignore` rules (`IgnoreRules`, `src/ignore.rs`) hide untracked paths from capture; tracked paths are always visited.
 
 Code: src/layer.rs, src/capture.rs, src/ignore.rs, src/workspace.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_workspace.rs

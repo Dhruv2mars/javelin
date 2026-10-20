@@ -82,8 +82,9 @@ Format 3 repositories can also contain published Layers. `state` reports the
 published World, operation ID, and final head. `history` retains the active
 revisions followed by the terminal publication record. Diff and clone continue
 to use the final immutable checkpoint. New native discard operations on a
-published Layer return `layer_published`. Its workspace directory stays in place
-but is no longer captured. Further edits require a new Layer.
+published Layer return `layer_published`. A successful `workspace publish` reclaims
+the Layer's directory, and a retry or the next workspace command finishes an
+interrupted reclaim. Further edits require a new Layer.
 
 `layer clone` starts a separate Layer from the specified immutable checkpoint.
 Later edits to either Layer cannot change that source checkpoint. Creating or
@@ -194,7 +195,7 @@ involved, and it works on macOS, Linux and Windows. See
 
 JSON reports `clone.strategy` (`directory_clone`, `snapshot`, `file_clone` or
 `copy`), `clone.fallback` (why faster strategies failed), `clone.copied_bytes`,
-the base `source` (`cached`, `derived` or `materialized`) and separate base and
+the base `source` (`cached`, `advanced`, `derived` or `materialized`) and separate base and
 Layer timings. Plain output prints the strategy, and a copy adds a warning that
 unchanged data was duplicated. A World whose paths collide on the volume (case,
 Unicode normalization, or Windows reserved names) fails with `unsupported`.
@@ -280,8 +281,9 @@ receipt context hash. A refusal without a durable receipt reserves no operation.
 platform; unknown IDs return success with `receipt: null`. Conflict/stale
 inspection retains exit 3. Receipt inspection never publishes.
 
-After success the Layer is published: its directory stays readable, later edits
-are not captured, and further work needs a new Layer (`workspace create`, or
+After success the Layer is published and its directory is reclaimed: the files
+leave the workspace, `workspace open` returns `layer_published`, and `workspace path`
+reports `exists: false`. Further work needs a new Layer (`workspace create`, or
 `layer clone --checkpoint HASH` then `workspace open`). Publishing it again under
 a new operation ID records a `layer_stale` receipt.
 

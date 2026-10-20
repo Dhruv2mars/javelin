@@ -116,10 +116,12 @@ SQLite. The criterion is fixed here, before the result:
   under a short lock, by applying changesets, so the cost is O(change).
 - **Layer create is lock, clone, unlock.** A clone does not depend on its source
   afterwards, so advancing the base never affects an existing Layer.
-- **Crash safety.** An advance records its target version before writing.
-  Recovery reapplies the same changeset, which is idempotent.
-- **This replaces per-version bases** (`.javelin/bases/<N>`, two cached), whose
-  disk use grows with the number of versions in use.
+- **Crash safety.** An advance records its target version before writing. A crash
+  leaves that record set, and recovery drops the partial base; the next create
+  rebuilds it cold. Reapplying over a partial base was rejected, because a half-written
+  path cannot be told apart from a case-folding collision.
+- **Replaces per-version bases** (`.javelin/bases/<N>`, two cached), whose disk use
+  grew with the number of versions in use. Implemented in `src/workspace.rs`.
 - Anything that reads a base after Layer creation must read the stored World
   version instead, because the base moves.
 
@@ -166,9 +168,9 @@ Recorded so they are not reopened without new evidence.
   exist.
 - **Chunk target and per-directory limits.** Exact sizes come with the tree PR,
   backed by measurement.
-- **Layers at older versions.** With one rolling base, a Layer at version V < head
-  is a base clone with reverse changesets applied, at O(distance) cost. Measure it
-  before adding anything else.
+- **Layers at older versions.** Done: a Layer at version V < base is a clone of the
+  rolling base with the reverse changeset applied, at O(distance) cost. The distance
+  is not measured at scale yet; see TASKS.md.
 - **Local cache bound.** Pick the eviction policy. Blobs referenced by the base,
   live Layers or unuploaded checkpoints are never evicted.
 - **Fully local repositories.** Before hosting exists, the local store is the
