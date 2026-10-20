@@ -15,7 +15,7 @@ mod stack;
 pub mod tree;
 mod workspace;
 
-pub use adopt::{ADOPTION_LAYER, Adoption};
+pub use adopt::Adoption;
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::Capture;
 pub use domain::{

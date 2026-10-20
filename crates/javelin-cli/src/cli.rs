@@ -599,12 +599,12 @@ pub fn adopt(args: Vec<OsString>) -> Result<Output> {
     };
     let adoption = Repository::adopt(&root, &operation)?;
     let files = adoption.files;
+    let layer = adoption.layer.as_str().to_owned();
     let (mut value, mut text, code) = publication("adopt", adoption.receipt);
     value["files"] = json!(files);
     if let (Some(files), 0) = (files, code) {
         text = format!(
-            "Adopted {files} files through Layer {}; the project directory was not changed.\n{text}",
-            javelin::ADOPTION_LAYER
+            "Adopted {files} files through Layer {layer}; the project directory was not changed.\n{text}"
         );
     }
     Ok((value, text, code))
