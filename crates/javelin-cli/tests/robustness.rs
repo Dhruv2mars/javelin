@@ -321,3 +321,25 @@ fn workspace_discard_crash_before_trash_is_finished_by_recovery_and_retry_is_ide
     assert_eq!(retry["trashed"], false);
     valid(root);
 }
+
+/// A writer holding the repository past the 5 second busy timeout gets `busy`, and the
+/// refused Publish changes nothing: the retry after release publishes exactly once.
+#[test]
+fn lock_held_past_the_timeout_is_busy_and_retry_publishes_once() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path();
+    layer_with(root, "one", "a.txt", b"a");
+    let holder = rusqlite::Connection::open(root.join(".javelin/repository.sqlite3")).unwrap();
+    holder.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let command = publish("one", "publish-1");
+    let refused = javelin(root, &args(&command));
+    assert_eq!(refused.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "busy", "{error}");
+    holder.execute_batch("ROLLBACK").unwrap();
+    drop(holder);
+    assert_eq!(versions(root), [0]);
+    ok(&javelin(root, &args(&command)));
+    assert_eq!(versions(root), [0, 1]);
+    valid(root);
+}

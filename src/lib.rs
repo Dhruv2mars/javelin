@@ -72,7 +72,7 @@ pub enum Error {
     #[error(
         "storage error: {0}; if publication was attempted, reopen and retry the same operation ID and input"
     )]
-    Storage(#[from] rusqlite::Error),
+    Storage(rusqlite::Error),
     #[error("filesystem error: {0}")]
     Io(#[from] std::io::Error),
     #[error("busy: {0}; nothing changed, retry after writers close")]
@@ -84,6 +84,19 @@ pub enum Error {
         .0.join(", ")
     )]
     RefreshConflict(Vec<String>),
+}
+
+/// Lock contention is reported as `busy`: SQLite rolls back the refused transaction,
+/// so nothing changed and a retry is safe. Other SQLite failures stay `storage_error`.
+impl From<rusqlite::Error> for Error {
+    fn from(error: rusqlite::Error) -> Self {
+        match error.sqlite_error_code() {
+            Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
+                Self::Busy(error.to_string())
+            }
+            _ => Self::Storage(error),
+        }
+    }
 }
 
 impl Error {
