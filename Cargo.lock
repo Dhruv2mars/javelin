@@ -208,6 +208,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "javelin-node"
+version = "0.1.0"
+dependencies = [
+ "javelin",
+ "javelin-protocol",
+ "tempfile",
+]
+
+[[package]]
 name = "javelin-protocol"
 version = "0.1.0"
 dependencies = [
