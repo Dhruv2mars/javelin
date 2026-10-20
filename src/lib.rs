@@ -86,13 +86,25 @@ pub enum Error {
     RefreshConflict(Vec<String>),
 }
 
-/// Lock contention is reported as `busy`: SQLite rolls back the refused transaction,
-/// so nothing changed and a retry is safe. Other SQLite failures stay `storage_error`.
+/// Lock contention is `busy`: SQLite rolls back the refused transaction, so nothing
+/// changed and a retry is safe. A damaged database or undecodable stored text is
+/// `corrupt_repository`, since retrying cannot help. Other SQLite failures stay
+/// `storage_error`, which tells the caller a Publish may have been attempted.
 impl From<rusqlite::Error> for Error {
     fn from(error: rusqlite::Error) -> Self {
         match error.sqlite_error_code() {
             Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) => {
                 Self::Busy(error.to_string())
+            }
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
+                Self::CorruptRepository(error.to_string())
+            }
+            // A header that names a format this repository never uses (WAL) is damage.
+            _ if error.to_string().contains("unsupported file format") => {
+                Self::CorruptRepository(error.to_string())
+            }
+            _ if matches!(error, rusqlite::Error::Utf8Error(..)) => {
+                Self::CorruptRepository(error.to_string())
             }
             _ => Self::Storage(error),
         }

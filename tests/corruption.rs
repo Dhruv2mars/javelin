@@ -271,7 +271,17 @@ fn every_sampled_sqlite_file_byte_flip_fails_or_returns_original_content() {
                 "byte {offset} flipped: content read back differs without an error"
             ),
             Err(error) => {
-                assert_ne!(error.code(), "io_error", "byte {offset}: {error}");
+                // A damaged database is corruption, never a retryable storage failure.
+                assert!(
+                    matches!(
+                        error.code(),
+                        "corrupt_repository"
+                            | "corrupt_object"
+                            | "missing_object"
+                            | "unsupported_format"
+                    ),
+                    "byte {offset}: {error}"
+                );
                 detected += 1;
             }
         }
