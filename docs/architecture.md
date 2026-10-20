@@ -12,6 +12,8 @@ Current-state reference for the Javelin code. Claims were checked against `src/`
 
 Code: src/lib.rs, src/layer.rs, src/stack.rs, src/publish.rs, src/tree.rs
 
+Concurrency, crash recovery, retries and corruption guarantees, and the tests that prove them: `docs/robustness.md`.
+
 ## Storage
 
 - The repository is `.javelin/repository.sqlite3`. Format is `8`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
