@@ -1,0 +1,37 @@
+# cargo-deny policy: licenses, advisories, banned crates and dependency sources.
+# Local: `cargo deny check`. CI: .github/workflows/licenses.yml.
+
+[graph]
+all-features = true
+# The platforms in docs/build-contract.md. Platform-specific crates (libc, windows-sys,
+# linux-raw-sys) are checked on each.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+
+[advisories]
+ignore = []
+
+[licenses]
+# Licenses present in Cargo.lock today. Add one only after reading its terms;
+# copyleft (GPL, AGPL, LGPL-only) is not allowed for a crate that is linked in.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
