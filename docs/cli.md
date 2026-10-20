@@ -249,14 +249,18 @@ javelin workspace create next
 
 Publish refuses rather than leave edits behind. Files that keep changing during
 capture return `busy`; a Layer whose head came from Stack returns `invalid_input`
-(see "Stack"). Ignored untracked files stay in the directory and are not published.
+(see "Stack"). Ignored untracked files are not published, and a successful Publish
+reclaims the directory, so they are deleted with it.
 Edits made after the capture, while Publish runs, are not part of it. A Layer with
 no workspace directory publishes its latest checkpoint.
 
 The default attribution is human and requires no trace. For agent work use
 `--actor agent --context HASH` to reference an existing native Blob, or
 `--actor agent --trace FILE` to store exact opaque bytes through the native Blob
-API. Trace files are read into memory; this is not a streaming importer. No
+API. Keep a trace file outside the Layer: a successful Publish reclaims the
+directory, so a retry that reads a trace from inside it fails with `io_error`.
+Retry with the receipt's `--context HASH` instead. Trace files are read into memory;
+this is not a streaming importer. No
 interpretation, identity authentication, hosted permission, or credential is
 invented. Missing agent context refuses with `missing_agent_trace` (exit 1);
 retry with explicit `--allow-missing-trace` to accept a durable
