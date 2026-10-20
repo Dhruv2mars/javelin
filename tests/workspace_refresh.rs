@@ -386,6 +386,27 @@ fn refresh_finishes_an_interrupted_write_to_an_ignored_file() {
 }
 
 #[test]
+fn refresh_refuses_an_identical_head_name_that_aliases_a_tracked_file() {
+    for (tracked, alias) in [("Foo", "foo"), ("\u{e9}", "e\u{301}")] {
+        let root = scratch();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let version = world(&mut repo, &[(tracked, b"same")]);
+        let dir = open(&mut repo, "work", version);
+        if !dir.join(alias).exists() {
+            continue;
+        }
+        stack(&mut repo, "work", version, &[(alias, b"same")], "alias");
+
+        let error = repo.refresh_workspace(&id("work")).unwrap_err();
+        match error {
+            Error::RefreshConflict(paths) => assert_eq!(paths, [alias]),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(contents(&dir), expected(&[(tracked, b"same")]));
+    }
+}
+
+#[test]
 fn refresh_refuses_a_name_that_aliases_a_local_file() {
     let root = scratch();
     let mut repo = Repository::init(root.path()).unwrap();

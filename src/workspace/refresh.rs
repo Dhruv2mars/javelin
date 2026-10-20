@@ -501,7 +501,11 @@ fn occupied(
                         ..
                     }
                 );
-                if entry_at(&full, executable)?.as_ref() != Some(entry) {
+                // Only the exact name can be an interrupted write. Matching bytes under another
+                // spelling are an alias of a tracked file, which the head must not claim.
+                let interrupted = listed_exactly(root, path.as_str())?
+                    && entry_at(&full, executable)?.as_ref() == Some(entry);
+                if !interrupted {
                     occupied.push(path.as_str().to_owned());
                 }
             }
@@ -511,6 +515,24 @@ fn occupied(
         }
     }
     Ok(occupied)
+}
+
+/// Whether the parent's listing names `path`'s leaf exactly. A name that only resolves on this
+/// volume is not listed, so it is an alias of an entry the listing names differently.
+fn listed_exactly(root: &Path, path: &str) -> Result<bool> {
+    let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+    match fs::read_dir(native(root, parent)) {
+        Ok(entries) => {
+            for entry in entries {
+                if entry?.file_name() == OsStr::new(name) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Removes a path the head deletes, then the parents it leaves empty. A path already gone
