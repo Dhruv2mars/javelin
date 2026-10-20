@@ -85,7 +85,11 @@ impl Repository {
             _ => return Err(Error::InvalidInput("Layer is not active".into())),
         };
         let workspace = self.workspace_root(layer)?;
-        self.capture_synced(layer, head, root, root == workspace.as_path())
+        let same = matches!(
+            (fs::canonicalize(root), fs::canonicalize(&workspace)),
+            (Ok(a), Ok(b)) if a == b
+        );
+        self.capture_synced(layer, head, root, same)
     }
 
     fn capture_synced(
@@ -189,25 +193,42 @@ impl Repository {
                 plan.conflicts.insert(path.as_str().to_owned());
             }
         }
-        plan.conflicts.extend(blocked(&root, &plan.apply)?);
+        let folds = folds_case(&store)?;
+        let gone = plan
+            .apply
+            .iter()
+            .filter(|(_, change)| change.is_none())
+            .map(|(path, _)| volume_key(folds, path.as_str()))
+            .collect();
+        let volume = Volume { folds, gone };
+        plan.conflicts.extend(blocked(&root, &plan.apply, &volume)?);
         plan.conflicts
-            .extend(occupied(&root, &plan.apply, &scanned.entries)?);
+            .extend(occupied(&root, &plan.apply, &scanned.entries, &volume)?);
+        plan.conflicts.extend(aliased(&plan.apply, &volume));
         if !plan.conflicts.is_empty() {
             return Err(Error::RefreshConflict(plan.conflicts.into_iter().collect()));
         }
 
+        // Removals come first: a head that deletes `Foo` and adds `foo` on a folding volume
+        // would otherwise overwrite the file it is about to delete.
         for (path, change) in &plan.apply {
-            match change {
-                None => remove(&root, path)?,
-                Some(entry) => place(&store, &root, path, entry, self)?,
+            if change.is_none() {
+                remove(&root, path)?;
+            }
+        }
+        for (path, change) in &plan.apply {
+            if let Some(entry) = change {
+                place(&store, &root, path, entry, self)?;
             }
         }
         // The sync record names the head only once every write it depends on is durable.
         // Each changed directory entry lives in its parent, so sync every directory on the
-        // way to each applied path. A directory a removal emptied and deleted is already gone.
+        // way to each head change. Changes an interrupted run already applied are head
+        // changes too, so they are walked as well. A directory a removal emptied and deleted
+        // is already gone.
         clone::barrier(&root)?;
         let mut dirs = BTreeSet::from([root.clone()]);
-        for (path, _) in &plan.apply {
+        for path in theirs.entries().keys() {
             let mut dir = path.as_str();
             while let Some((parent, _)) = dir.rsplit_once('/') {
                 dirs.insert(native(&root, parent));
@@ -295,10 +316,78 @@ fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
     plan
 }
 
+/// How this volume names paths, and which entries this refresh removes before it writes.
+struct Volume {
+    folds: bool,
+    /// Keys of the paths the head deletes.
+    gone: BTreeSet<String>,
+}
+
+impl Volume {
+    fn key(&self, path: &str) -> String {
+        volume_key(self.folds, path)
+    }
+
+    /// Whether the entry at `path` is one the refresh removes first, so it is already free.
+    fn is_gone(&self, path: &str) -> bool {
+        self.gone.contains(&self.key(path))
+    }
+}
+
+/// The name the volume compares: two paths with one key reach one entry.
+fn volume_key(folds: bool, path: &str) -> String {
+    if folds {
+        path.to_lowercase()
+    } else {
+        path.to_owned()
+    }
+}
+
+/// Whether this volume folds case, so a name and its upper-case twin reach one entry.
+fn folds_case(store: &Store) -> Result<bool> {
+    let tmp = store.dir.join("tmp");
+    let probe = tmp.join("case-probe");
+    fs::write(&probe, b"")?;
+    let folds = tmp.join("CASE-PROBE").exists();
+    fs::remove_file(&probe)?;
+    Ok(folds)
+}
+
+/// Head paths that name one entry on this volume with another head path, or that sit below
+/// a head file they fold onto. Writing them would overwrite one with the other.
+fn aliased(apply: &[(RepoPath, Option<FileEntry>)], volume: &Volume) -> Vec<String> {
+    let adds: Vec<&str> = apply
+        .iter()
+        .filter(|(_, change)| change.is_some())
+        .map(|(path, _)| path.as_str())
+        .collect();
+    let mut owners = BTreeMap::<String, usize>::new();
+    for path in &adds {
+        *owners.entry(volume.key(path)).or_default() += 1;
+    }
+    let mut aliased = Vec::new();
+    for path in adds {
+        let mut conflict = owners[&volume.key(path)] > 1;
+        let mut dir = path;
+        while let Some((parent, _)) = dir.rsplit_once('/') {
+            conflict |= owners.contains_key(&volume.key(parent));
+            dir = parent;
+        }
+        if conflict {
+            aliased.push(path.to_owned());
+        }
+    }
+    aliased
+}
+
 /// Paths a file or directory on disk already blocks: a non-directory where the head needs
 /// a parent, or a directory where it needs a file. Symlinked parents also count, because
-/// writes never go through links.
-fn blocked(root: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec<String>> {
+/// writes never go through links. A file the head deletes does not block its children.
+fn blocked(
+    root: &Path,
+    apply: &[(RepoPath, Option<FileEntry>)],
+    volume: &Volume,
+) -> Result<Vec<String>> {
     let mut blocked = Vec::new();
     for (path, change) in apply {
         if change.is_none() {
@@ -307,7 +396,9 @@ fn blocked(root: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec<S
         let mut dir = path.as_str();
         while let Some((parent, _)) = dir.rsplit_once('/') {
             match fs::symlink_metadata(native(root, parent)) {
-                Ok(meta) if !meta.is_dir() => blocked.push(parent.to_owned()),
+                Ok(meta) if !meta.is_dir() && !volume.is_gone(parent) => {
+                    blocked.push(parent.to_owned());
+                }
                 Ok(_) => {}
                 // A file above `parent` blocks it too, and the loop reaches that file next.
                 Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
@@ -336,10 +427,11 @@ fn occupied(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
     scanned: &BTreeMap<RepoPath, FileEntry>,
+    volume: &Volume,
 ) -> Result<Vec<String>> {
     let mut occupied = Vec::new();
     for (path, change) in apply {
-        if change.is_none() || scanned.contains_key(path) {
+        if change.is_none() || scanned.contains_key(path) || volume.is_gone(path.as_str()) {
             continue;
         }
         match fs::symlink_metadata(native(root, path.as_str())) {
