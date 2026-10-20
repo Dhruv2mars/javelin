@@ -223,6 +223,7 @@ version = "0.1.0"
 dependencies = [
  "javelin",
  "javelin-merge",
+ "serde_json",
  "tempfile",
 ]
 
