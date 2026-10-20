@@ -1,0 +1,21 @@
+name: defaults-concurrency
+on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  CI: "true"
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - run: cargo fmt --all -- --check
+        working-directory: work
+        continue-on-error: false

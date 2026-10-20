@@ -1,0 +1,10 @@
+# Expected: validator rejects with git_checkout at jobs.test.steps[0].uses.
+# Javelin revisions have no Git history; fetch with `javelin revision fetch` instead.
+name: invalid-checkout
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/test.sh

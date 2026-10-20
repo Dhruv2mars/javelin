@@ -1,0 +1,23 @@
+name: needs-outputs
+on: workflow_dispatch
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.split.outputs.shards }}
+    steps:
+      - id: split
+        run: echo "shards=4" >> "$GITHUB_OUTPUT"
+  test:
+    needs: plan
+    if: needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: echo "running ${{ needs.plan.outputs.shards }} shards"
+  report:
+    needs: [plan, test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "report"

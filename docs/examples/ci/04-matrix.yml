@@ -1,0 +1,23 @@
+name: matrix
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        required: true
+        type: string
+      tree:
+        required: true
+        type: string
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: javelin revision fetch --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}" --into work
+        shell: bash
+      - run: ./scripts/test.sh
+        shell: bash
+        working-directory: work

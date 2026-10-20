@@ -1,0 +1,35 @@
+# Planned CLI: `javelin check report` (not implemented yet).
+# The reporting token is only in the `report` job, which runs no revision code.
+# The `unit` job runs revision code with no token, so it cannot forge a result.
+name: report-check
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        required: true
+        type: string
+      tree:
+        required: true
+        type: string
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch
+        run: javelin revision fetch --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}" --into work
+      - name: Test
+        working-directory: work
+        run: ./scripts/test.sh
+  report:
+    needs: unit
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      JAVELIN_CI_TOKEN: ${{ secrets.JAVELIN_CI_TOKEN }}
+    steps:
+      - name: Report ci/unit
+        run: >
+          javelin check report --repo "${{ inputs.repo }}" --tree "${{ inputs.tree }}"
+          --name ci/unit --conclusion "${{ needs.unit.result == 'success' && 'success' || 'failure' }}"
