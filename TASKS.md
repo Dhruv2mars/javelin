@@ -129,7 +129,7 @@ workflow may invoke or interpret Git.
 - [x] Verify the bounded native Layer state API, immutable sparse checkpoints,
   reference clones, retained history and exact retries. Ordinary-path binding and
   automatic capture remain separate unchecked requirements.
-- [x] Adopt existing non-Git project files through a Layer without accepting edits outside it.
+- [x] Adopt existing non-Git project files through a Layer without accepting edits outside it. (PR #61)
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [x] Bind supplied agent traces to immutable work, with missing-trace override.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
