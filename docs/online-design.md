@@ -401,7 +401,7 @@ attribution }`:
 2. Authorization at the correctness boundary: current applied permissions for the caller
    (`publish` scope and role, epoch), the policy (`required_approvals`, Publish setting),
    and for `PublishRequest` the approval state (4.8). All of these are read inside the commit
-   transaction (4.5), after compose, so a change that commits before it is seen (`C§Contributions
+   transaction (4.5), with the compose in step 3, so a change that commits before it is seen (`C§Contributions
    and reviews`).
 3. Compose onto the head. Conflict returns `Conflict` and writes nothing.
 4. Commit transaction (4.5), which also sets the Layer to `Published`.
