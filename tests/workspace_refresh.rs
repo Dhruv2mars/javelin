@@ -110,10 +110,6 @@ fn stack(
     files: &[(&str, &[u8])],
     label: &str,
 ) -> LayerHead {
-    let base = repo.layer_base(version).unwrap();
-    let source = repo
-        .create_layer(&id(&format!("source-{label}")), &base)
-        .unwrap();
     let changes = SparseChanges::new(files.iter().map(|(p, bytes)| {
         let entry = FileEntry::Regular {
             content: repo.put_blob(bytes).unwrap(),
@@ -122,6 +118,22 @@ fn stack(
         (RepoPath::parse(p).unwrap(), Some(entry))
     }))
     .unwrap();
+    stack_changes(repo, target, version, changes, label)
+}
+
+/// Stack `changes` onto Layer `target`, which must still be at `version`. A `None` entry
+/// deletes its path.
+fn stack_changes(
+    repo: &mut Repository,
+    target: &str,
+    version: VersionNumber,
+    changes: SparseChanges,
+    label: &str,
+) -> LayerHead {
+    let base = repo.layer_base(version).unwrap();
+    let source = repo
+        .create_layer(&id(&format!("source-{label}")), &base)
+        .unwrap();
     let source = applied(
         repo.capture_layer(&op(&format!("{label}-source")), &source, &changes)
             .unwrap(),
@@ -416,4 +428,100 @@ fn refresh_interrupted_midway_converges_when_run_again() {
     assert!(matches!(capture.update, Some(LayerUpdate::Applied { .. })));
     let again = repo.capture_workspace(&id("work")).unwrap().unwrap();
     assert!(again.update.is_none(), "{again:?}");
+}
+
+#[test]
+fn refresh_applies_a_head_that_turns_a_file_into_a_directory() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("keep", b"keep"), ("x", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    let entry = FileEntry::Regular {
+        content: repo.put_blob(b"new").unwrap(),
+        executable: false,
+    };
+    let changes = SparseChanges::new(vec![
+        (RepoPath::parse("x").unwrap(), None),
+        (RepoPath::parse("x/y").unwrap(), Some(entry)),
+    ])
+    .unwrap();
+    stack_changes(&mut repo, "work", version, changes, "file-to-dir");
+
+    let refresh = repo.refresh_workspace(&id("work")).unwrap();
+    assert!(refresh.refreshed);
+    assert_eq!(
+        contents(&dir),
+        expected(&[("keep", b"keep"), ("x/y", b"new")])
+    );
+}
+
+#[test]
+fn refresh_refuses_head_names_that_alias_each_other_on_this_volume() {
+    let root = scratch();
+    fs::write(root.path().join("case"), b"").unwrap();
+    let folds = root.path().join("CASE").exists();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("shared", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("Foo", b"a"), ("foo", b"b")],
+        "pair",
+    );
+
+    if !folds {
+        // A case-sensitive volume keeps both names, so both are applied.
+        assert!(repo.refresh_workspace(&id("work")).unwrap().refreshed);
+        assert_eq!(
+            contents(&dir),
+            expected(&[("shared", b"base"), ("Foo", b"a"), ("foo", b"b")])
+        );
+        return;
+    }
+    let error = repo.refresh_workspace(&id("work")).unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["Foo", "foo"]),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        contents(&dir),
+        expected(&[("shared", b"base")]),
+        "a refused refresh must not write"
+    );
+}
+
+#[test]
+fn capture_through_a_relative_path_to_the_workspace_advances_its_sync_record() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("keep", b"keep")]);
+    let dir = open(&mut repo, "work", version);
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("stacked.txt", b"new")],
+        "relative",
+    );
+    repo.refresh_workspace(&id("work")).unwrap();
+
+    fs::write(dir.join("keep"), b"edited").unwrap();
+    let capture = repo.capture_directory(&id("work"), &dir.join(".")).unwrap();
+    assert!(!capture.behind);
+    let captured = head(&repo, "work").checkpoint();
+
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("stacked.txt", b"new"), ("more.txt", b"more")],
+        "relative-again",
+    );
+    let refresh = repo.refresh_workspace(&id("work")).unwrap();
+    assert_eq!(
+        refresh.from, captured,
+        "the capture must move the sync record"
+    );
 }
