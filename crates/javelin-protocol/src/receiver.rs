@@ -69,6 +69,7 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                 let found = match kind {
                     Kind::Blob => repo.has_blob(id),
                     Kind::Tree => repo.has_tree(id),
+                    Kind::Checkpoint => return Err(checkpoint_unserved()),
                 }?;
                 if !found {
                     missing.push((kind, id));
@@ -77,6 +78,10 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             Ok(Message::Missing(missing))
         }
         Message::Objects(objects) => {
+            // Refused before anything is stored, so a mixed batch is all or nothing.
+            if objects.iter().any(|(kind, _, _)| *kind == Kind::Checkpoint) {
+                return Err(checkpoint_unserved());
+            }
             for (kind, claimed, bytes) in &objects {
                 let actual = kind.id(bytes);
                 if actual != *claimed {
@@ -85,6 +90,7 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                 match kind {
                     Kind::Blob => repo.put_blob(bytes)?,
                     Kind::Tree => repo.put_tree(bytes)?,
+                    Kind::Checkpoint => return Err(checkpoint_unserved()),
                 };
             }
             Ok(Message::Stored {
@@ -119,6 +125,7 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                 let bytes = match kind {
                     Kind::Blob => repo.read_blob_bounded(id, MAX_BLOB)?,
                     Kind::Tree => repo.tree_bytes_bounded(id, MAX_TREE)?,
+                    Kind::Checkpoint => return Err(checkpoint_unserved()),
                 };
                 size += OBJECT_OVERHEAD + bytes.len();
                 if !objects.is_empty() && size > MAX_FRAME {
@@ -143,6 +150,15 @@ fn mismatch(claimed: javelin::ObjectId, stored: javelin::ObjectId) -> ProtocolEr
     ProtocolError::new(
         "id_mismatch",
         format!("claimed {claimed} but content has ID {stored}"),
+    )
+}
+
+/// Checkpoint objects decode but have no store on this path yet. Refused as the
+/// version 2 receiver always refused kind 3: `malformed`.
+fn checkpoint_unserved() -> ProtocolError {
+    ProtocolError::new(
+        "malformed",
+        "checkpoint objects are not served on this path",
     )
 }
 
