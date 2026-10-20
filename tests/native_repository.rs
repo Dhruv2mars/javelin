@@ -23,6 +23,13 @@ fn snapshot(repo: &mut Repository, bytes: &[u8]) -> (ObjectId, ObjectId) {
     .unwrap();
     (blob, repo.put_manifest(&manifest).unwrap())
 }
+/// The derived tree root a manifest's World version records.
+fn tree_of(repo: &Repository, manifest: ObjectId) -> ObjectId {
+    let manifest = repo.read_manifest(manifest).unwrap();
+    javelin::tree::Trees::new(javelin::tree::MemoryStore::default())
+        .build(manifest.entries())
+        .unwrap()
+}
 fn raw(root: &TempDir) -> Connection {
     Connection::open(root.path().join(".javelin/repository.sqlite3")).unwrap()
 }
@@ -64,7 +71,7 @@ fn immutable_bytes_and_manifests_survive_reopen() {
         repo.read_manifest(blob),
         Err(Error::WrongObjectKind(_))
     ));
-    assert_eq!(repo.check().unwrap().objects, 3);
+    assert_eq!(repo.check().unwrap().objects, 6); // with the empty and accepted trees
 }
 
 #[test]
@@ -320,14 +327,18 @@ fn init_preserves_existing_files_and_never_clobbers_a_store() {
 
 #[test]
 fn accepted_graph_damage_never_falls_back_to_an_older_world() {
-    for damage_manifest in [false, true] {
+    for damage_tree in [false, true] {
         for delete in [false, true] {
             let root = TempDir::new().unwrap();
             let mut repo = Repository::init(root.path()).unwrap();
             let (blob, manifest) = snapshot(&mut repo, b"accepted bytes");
             repo.compare_and_advance(&op("first"), version(0), manifest)
                 .unwrap();
-            let damaged = if damage_manifest { manifest } else { blob };
+            let damaged = if damage_tree {
+                tree_of(&repo, manifest)
+            } else {
+                blob
+            };
             let db = raw(&root);
             db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER objects_no_UPDATE; DROP TRIGGER objects_no_DELETE;").unwrap();
             if delete {
@@ -342,17 +353,26 @@ fn accepted_graph_damage_never_falls_back_to_an_older_world() {
             }
             assert!(repo.history().is_err());
             assert!(repo.check().is_err());
+            let versions = |db: &Connection| {
+                db.query_row("SELECT count(*) FROM versions", [], |r| r.get::<_, i64>(0))
+                    .unwrap()
+            };
+            if damage_tree && delete {
+                // Trees are derived: rebuilding the candidate's tree restores the
+                // missing chunk with verified bytes, and the World stays valid.
+                repo.compare_and_advance(&op("retry"), version(1), manifest)
+                    .unwrap();
+                repo.check().unwrap();
+                assert_eq!(versions(&db), 3);
+                continue;
+            }
             assert!(
                 repo.compare_and_advance(&op("retry"), version(1), manifest)
                     .is_err()
             );
             assert!(repo.check().is_err());
             assert!(Repository::init(root.path()).is_err());
-            assert_eq!(
-                db.query_row("SELECT count(*) FROM versions", [], |r| r.get::<_, i64>(0))
-                    .unwrap(),
-                2
-            );
+            assert_eq!(versions(&db), 2);
         }
     }
 }
@@ -413,13 +433,13 @@ fn manifest_preparation_rejects_missing_or_wrong_kind_references() {
         repo.compare_and_advance(&op("future"), version(1), initial)
             .is_err()
     );
-    assert_eq!(repo.check().unwrap().objects, 1);
+    assert_eq!(repo.check().unwrap().objects, 2); // with the empty World tree
     assert_eq!(repo.check().unwrap().attempts, 0);
 }
 
 #[test]
 fn stale_only_candidate_graph_corruption_is_rejected_by_every_history_validator() {
-    for damage_manifest in [false, true] {
+    for damage_tree in [false, true] {
         for delete in [false, true] {
             let root = TempDir::new().unwrap();
             let mut repo = Repository::init(root.path()).unwrap();
@@ -431,7 +451,11 @@ fn stale_only_candidate_graph_corruption_is_rejected_by_every_history_validator(
                 .unwrap();
             let db = raw(&root);
             db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER objects_no_UPDATE; DROP TRIGGER objects_no_DELETE;").unwrap();
-            let damaged = if damage_manifest { stale } else { blob };
+            let damaged = if damage_tree {
+                tree_of(&repo, stale)
+            } else {
+                blob
+            };
             if delete {
                 db.execute("DELETE FROM objects WHERE id=?1", [damaged.to_string()])
                     .unwrap();
@@ -445,6 +469,13 @@ fn stale_only_candidate_graph_corruption_is_rejected_by_every_history_validator(
             assert!(repo.history().is_err());
             assert!(repo.check().is_err());
             assert!(Repository::init(root.path()).is_err());
+            if damage_tree && delete {
+                // Replaying the stale attempt rebuilds its derived tree.
+                repo.compare_and_advance(&op("stale"), version(0), stale)
+                    .unwrap();
+                repo.check().unwrap();
+                continue;
+            }
             assert!(
                 repo.compare_and_advance(&op("stale"), version(0), stale)
                     .is_err()

@@ -223,10 +223,11 @@ fn want_refuses_damaged_bytes_and_wrong_kinds_without_advancing() {
 fn sender_refuses_over_cap_manifest_before_payload_allocation() {
     let (_dir, mut repo) = repo();
     let blob = repo.put_blob(b"small").unwrap();
-    let manifest = Manifest::new([(
-        RepoPath::parse(&"p".repeat(MAX_FRAME)).unwrap(),
-        regular(blob),
-    )])
+    // Native paths are at most 4 KiB, so exceed the frame with many of them.
+    let manifest = Manifest::new((0..MAX_FRAME / 4000).map(|i| {
+        let path = format!("{i:08}{}", "p".repeat(4000));
+        (RepoPath::parse(&path).unwrap(), regular(blob))
+    }))
     .unwrap();
     let id = repo.put_manifest(&manifest).unwrap();
     let replies = message(Message::HelloOk { version: 1 });

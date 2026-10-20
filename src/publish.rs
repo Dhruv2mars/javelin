@@ -8,11 +8,11 @@ use serde::Serialize;
 use crate::{
     Error, LayerHead, LayerId, LayerState, ObjectId, OperationId, RepoPath, Repository, Result,
     SparseChanges, VersionNumber, WorldVersion,
-    domain::{ObjectKind, intersections, version_id},
+    domain::{ObjectKind, version_id},
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        Index, append_version_in, changeset_in, decode_id, head_in as world_head_in, insert_object,
-        read_object, validate_format, version_in,
+        Index, Sql, append_version_in, changeset_in, decode_id, head_in as world_head_in,
+        insert_object, read_object, validate_format, version_in,
     },
 };
 
@@ -159,16 +159,23 @@ impl Repository {
                     actual: actual.clone(),
                 },
                 Some(Err(paths)) => PublishOutcome::Conflict { paths },
-                Some(Ok(candidate)) => {
+                Some(Ok(Candidate {
+                    changes,
+                    tree,
+                    chunks,
+                })) => {
                     let guard = guard.take().expect("guard runs at most once");
-                    guard(&against, &candidate)?;
+                    guard(&against, &changes)?;
                     let number = crate::repository::next_number(against.number)?;
                     tx.execute(
                         "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
                         params![operation.as_str(), against.number.sql(), number.sql()],
                     )?;
+                    for (_, bytes) in &chunks {
+                        insert_object(&tx, ObjectKind::Tree, bytes)?;
+                    }
                     PublishOutcome::Published {
-                        version: append_version_in(&tx, &against, operation, &candidate)?,
+                        version: append_version_in(&tx, &against, operation, &changes, tree)?,
                     }
                 }
             };
@@ -231,7 +238,15 @@ struct Plan {
     against: WorldVersion,
     actual: LayerState,
     warnings: Vec<PublishWarning>,
-    composed: Option<std::result::Result<SparseChanges, Vec<RepoPath>>>,
+    composed: Option<std::result::Result<Candidate, Vec<RepoPath>>>,
+}
+
+/// The new version's changeset and its derived tree. New chunks are computed
+/// outside the lock and written in the short transaction.
+struct Candidate {
+    changes: SparseChanges,
+    tree: ObjectId,
+    chunks: Vec<(ObjectId, Vec<u8>)>,
 }
 
 /// Cost scales with the Layer's own records and its changeset, not with history.
@@ -326,28 +341,35 @@ fn revision(state: &LayerState) -> u64 {
     }
 }
 
-/// Uses end-to-end base/head differences, not intervening World attempts. The
-/// candidate is the Layer's changeset, which is canonical relative to `world`
-/// whenever nothing intersects. Indexed lookups only; no snapshot is loaded.
+/// Uses end-to-end base/head differences, not intervening World attempts: the
+/// base and head trees are walked only along the Layer's changed paths, and any
+/// subtree with the same hash on both sides is skipped. The candidate is the
+/// Layer's changeset, which is canonical relative to `world` whenever nothing
+/// intersects; its tree is the head tree plus that changeset. O(change x depth).
 fn compose_in(
     conn: &Connection,
     head: &LayerHead,
     world: &WorldVersion,
-) -> Result<std::result::Result<SparseChanges, Vec<RepoPath>>> {
+) -> Result<std::result::Result<Candidate, Vec<RepoPath>>> {
     let checkpoint = checkpoint_in(conn, head.checkpoint().object())?;
     if checkpoint.base().version() > world.number {
         return Err(corrupt("publication World precedes Layer base"));
     }
-    let found = intersections(
-        &Index(conn),
-        checkpoint.changes(),
-        checkpoint.base().version(),
-        world.number,
-    )?;
+    let index = Index::over(Sql::buffer(conn));
+    let base = index.root(checkpoint.base().version())?;
+    let found = index
+        .trees
+        .intersections(base, world.tree, checkpoint.changes())?;
     if !found.is_empty() {
         return Ok(Err(found.into_iter().collect()));
     }
-    Ok(Ok(checkpoint.changes().clone()))
+    let changes = checkpoint.changes().clone();
+    let tree = index.trees.apply(world.tree, &changes)?;
+    Ok(Ok(Candidate {
+        changes,
+        tree,
+        chunks: index.trees.into_store().buffered(),
+    }))
 }
 
 struct PublicationRow {
@@ -550,8 +572,9 @@ fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationRece
                 .map_err(|_| corrupt("successful publication intersects World changes"))?;
             let version = world_at(conn, result)?;
             if version.operation.as_ref() != Some(&operation)
-                || version.id != version_id(Some(against.id), &candidate)
-                || changeset_in(conn, version.number)? != candidate
+                || version.tree != candidate.tree
+                || version.id != version_id(Some(against.id), candidate.tree, &candidate.changes)
+                || changeset_in(conn, version.number)? != candidate.changes
             {
                 return Err(corrupt(
                     "published World disagrees with complete Layer composition",

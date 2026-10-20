@@ -227,13 +227,16 @@ fn receiver_process_refuses_unsupported_version() {
 fn invalid_native_manifest_fails_before_object_negotiation() {
     let (src_dir, mut source) = repo();
     let blob = source.put_blob(b"must never reach the receiver").unwrap();
-    let manifest = Manifest::new([(
-        RepoPath::parse(&"p".repeat(MAX_PATH + 1)).unwrap(),
-        FileEntry::Regular {
-            content: blob,
-            executable: false,
-        },
-    )])
+    // Native paths stay within the wire's path limits; entry counts do not.
+    let manifest = Manifest::new((0..=MAX_ENTRIES).map(|n| {
+        (
+            RepoPath::parse(&format!("p{n}")).unwrap(),
+            FileEntry::Regular {
+                content: blob,
+                executable: false,
+            },
+        )
+    }))
     .unwrap();
     let id = source.put_manifest(&manifest).unwrap();
     let (dst_dir, dest) = repo();

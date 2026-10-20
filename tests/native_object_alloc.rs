@@ -190,10 +190,13 @@ fn stored_payload_allocation_evidence() {
     assert!(matches!(result, Err(Error::ObjectTooLarge { .. })));
     small(a, 4096);
 
-    let huge = Manifest::new([(
-        RepoPath::parse(&"x".repeat(32 * 1024 * 1024)).unwrap(),
-        regular(accepted_id),
-    )])
+    // Native paths are at most 4 KiB, so exceed 32 MiB with many of them. Each
+    // entry's blob is validated, so they refer to a small one.
+    let small_id = repo.put_blob(b"small").unwrap();
+    let huge = Manifest::new((0..32 * 1024 * 1024 / 4000 + 1).map(|i| {
+        let path = format!("{i:08}{}", "x".repeat(4000));
+        (RepoPath::parse(&path).unwrap(), regular(small_id))
+    }))
     .unwrap();
     let huge_id = repo.put_manifest(&huge).unwrap();
     drop(huge);
@@ -208,15 +211,16 @@ fn stored_payload_allocation_evidence() {
     assert!(matches!(result, Err(Error::ObjectTooLarge { size, .. }) if size > 32 * 1024 * 1024));
     small(a, 4096);
 
-    let capped = Manifest::new([(
-        RepoPath::parse(&"m".repeat(1024 * 1024)).unwrap(),
-        regular(id),
-    )])
+    // About 1 MiB of paths.
+    let capped = Manifest::new((0..256).map(|i| {
+        let path = format!("{i:04}{}", "m".repeat(4000));
+        (RepoPath::parse(&path).unwrap(), regular(small_id))
+    }))
     .unwrap();
     let capped_id = repo.put_manifest(&capped).unwrap();
     let encoded = capped.canonical_bytes();
     drop(capped);
-    let (bytes, a) = measure("manifest_1mib_path_exact_limit_32mib_ref", || {
+    let (bytes, a) = measure("manifest_1mib_paths_exact_limit", || {
         repo.manifest_bytes_bounded(capped_id, encoded.len())
             .unwrap()
     });

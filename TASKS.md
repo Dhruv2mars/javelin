@@ -217,6 +217,36 @@ CI, and is merged.
 
 PR #36 tracks required CI, review handling and the final merge through T3 monitoring.
 
+### Tree objects as derived data (feat/tree-objects)
+
+Done means: World versions carry a derived Merkle root computed eagerly at
+Publish in O(change x depth); directories are prolly trees with name-determined
+chunk boundaries; snapshots, base derivation and conflict checks read trees, not
+history; `check()` recomputes every root from changesets; a randomized test
+proves history independence; differential tests match the flat-manifest
+reference; the bench reports the required numbers; fmt, clippy (host and Linux
+zig cross-check) and all tests pass; CI is green; the protocol moves to trees in
+a stacked PR without the 65,536-entry cap.
+
+- [x] `src/tree.rs`: canonical chunk encoding (`ObjectKind::Tree`), prolly
+  chunking with a size-aware boundary rule (mean 2 KiB), incremental apply,
+  lookup, walk, diff, tree intersections.
+- [x] Format 7: `versions.tree`, version id covers the root, eager derivation in
+  Publish (computed in prepare, written in the short transaction), `attempts.tree`.
+- [x] Snapshots, Layer normalize/diff, compose and workspace bases read trees.
+- [x] `check()`/`history()` recompute every root and verify chunk presence.
+- [x] Tests (`tests/tree_objects.rs`): history independence over shuffled edits
+  and random batches in 6,000-entry directories, differential snapshot, diff,
+  lookup and intersection checks against flat snapshots, subtree skipping,
+  refusals, corruption detection.
+- [x] Bench at 100k and synthetic 1M files (`docs/architecture.md`, Measurements):
+  1-file change 0.03 ms / 5.6 KB (100k) and 0.035 ms / 7.0 KB (1M); one edit in a
+  50k-entry directory 6.5 KB; snapshot flat at 76–86 ms over 10–300 versions x
+  1,000-file churn where format 6 grew to 176 ms; Publish unchanged at 14–15 ms.
+- [x] Docs (`architecture.md`).
+- [ ] Stacked PR: protocol v2 on trees (have/want by hash, root-down fetch,
+  sparse prefix fetch, per-chunk bounds).
+
 ## Git 3.0 roadmap, accepted 2026-10-18
 
 The user accepted the Git 3.0 direction (`docs/git3-direction.md`): online-first

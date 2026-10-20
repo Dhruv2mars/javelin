@@ -262,7 +262,7 @@ fn concurrent_initializers_share_one_immutable_world() {
     assert!(results.iter().all(|r| r == &results[0]));
     let repo = Repository::open(root.path()).unwrap();
     assert_eq!(repo.check().unwrap().versions, 1);
-    assert_eq!(repo.check().unwrap().objects, 0);
+    assert_eq!(repo.check().unwrap().objects, 1); // the empty World tree
     assert_eq!(
         std::fs::read(root.path().join("existing")).unwrap(),
         [0, 255]
@@ -492,7 +492,7 @@ fn initialization_recovers_on_both_sides_of_commit() {
         assert_eq!(retry.result()["initial"]["number"], 0);
         let repo = Repository::open(root.path()).unwrap();
         assert_eq!(repo.check().unwrap().versions, 1);
-        assert_eq!(repo.check().unwrap().objects, 0);
+        assert_eq!(repo.check().unwrap().objects, 1); // the empty World tree
     }
 }
 
@@ -622,7 +622,7 @@ fn simultaneous_independent_layer_heads_do_not_invalidate_each_other() {
     let repo = Repository::open(root.path()).unwrap();
     let report = repo.check().unwrap();
     assert_eq!(report.layers, 9);
-    assert_eq!(report.objects, 3); // empty checkpoint, blob, changed checkpoint
+    assert_eq!(report.objects, 4); // empty tree and checkpoint, blob, changed checkpoint
     assert_eq!(report.versions, 1);
 }
 
@@ -682,7 +682,7 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
     writer.release();
     writer.marker("BOUNDARY layer_before_commit");
     let repo = Repository::open(root.path()).unwrap();
-    assert_eq!(repo.check().unwrap().objects, 2);
+    assert_eq!(repo.check().unwrap().objects, 3); // with the empty World tree
     match repo
         .layer_state(&crate::LayerId::parse("shared").unwrap())
         .unwrap()
@@ -708,7 +708,7 @@ fn layer_capture_killed_before_commit_has_no_partial_graph_and_retries() {
             .check()
             .unwrap()
             .objects,
-        3
+        4
     );
 }
 

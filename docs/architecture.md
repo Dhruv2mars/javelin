@@ -4,39 +4,38 @@ Current-state reference for the Javelin code. Claims were checked against `src/`
 
 ## Overview
 
-- **World**: the ordered, immutable sequence of repository versions. Each version's primary record is a changeset: the paths it changed relative to the previous version. Full snapshots are derived on demand. Advancing the World is a compare-and-advance on the current version number.
+- **World**: the ordered, immutable sequence of repository versions. Each version's primary record is a changeset: the paths it changed relative to the previous version. Each version also records the root of its derived Merkle tree, computed from the parent's tree plus the changeset. Advancing the World is a compare-and-advance on the current version number.
 - **Layer**: a durable, sparse head over a frozen World base. It records only the paths it changes. Layers are created, captured into, diffed, cloned, stacked, discarded, and published.
 - **Checkpoint**: an immutable sparse delta, stored as canonical JSON, recorded against a Layer.
 - **Stack**: imports a source checkpoint into a target Layer through a three-way merge against the common base.
 - **Publish**: composes a whole Layer onto the current World in one atomic step, or reports a conflict or staleness.
 
-Code: src/lib.rs, src/layer.rs, src/stack.rs, src/publish.rs
+Code: src/lib.rs, src/layer.rs, src/stack.rs, src/publish.rs, src/tree.rs
 
 ## Storage
 
-- The repository is `.javelin/repository.sqlite3`. Format is `6`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
-- Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, indexes `changes_by_version` and `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten.
+- The repository is `.javelin/repository.sqlite3`. Format is `7`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
+- Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, index `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten.
 
 World versions (changesets, not snapshots):
 
-- `changes(path, version, kind, content)` holds one row per path a version changed. `kind` is 1 regular, 2 executable, 3 symlink; NULL `kind` and `content` mean deletion. It is a `WITHOUT ROWID` table with primary key `(path, version)`.
-- The primary key serves per-path point reads at any version (`entry_at`: the latest row with `version <= V`) and descendant range scans (`path >= 'p/' AND path < 'p0'`). `changes_by_version` reads one version's changeset.
-- `versions(number, id, operation)`. `id` is a hash chain: `SHA-256("javelin-version-v1\0" || id(V-1) || canonical changeset bytes)`, with 32 zero bytes before World 0. Computing it is O(change). `WorldVersion` is `{ number, id, operation }`.
+- `changes(version, path, kind, content)` holds one row per path a version changed. `kind` is 1 regular, 2 executable, 3 symlink; NULL `kind` and `content` mean deletion. It is a `WITHOUT ROWID` table with primary key `(version, path)`, which reads one version's changeset. Point reads at a version go through trees, not this table.
+- `versions(number, id, tree, operation)`. `tree` is the root of the version's derived tree. `id` is a hash chain: `SHA-256("javelin-version-v2\0" || id(V-1) || tree(V) || canonical changeset bytes)`, with 32 zero bytes before World 0. Computing it is O(change), and one comparison of `id` or `tree` verifies a version's full content. `WorldVersion` is `{ number, id, tree, operation }`.
 - The changeset type is `SparseChanges` (`src/domain.rs`), shared with Layer checkpoint deltas. Its canonical bytes are the JSON map of path to entry or `null`.
-- Snapshots are derived data: `Repository::manifest_at(version)` and `Repository::checkpoint_manifest(checkpoint)` scan change rows (O(rows up to that version)). Publish never derives one. `Repository::changeset(version)` returns the stored changeset; `Repository::head()` reads the head row.
-- `attempts.manifest` is set for `compare_and_advance` (the protocol's full-manifest input) and NULL for Layer publications, which bind their candidate through the `publications` row. `compare_and_advance` derives the head snapshot to compute its changeset, so it is O(repo).
-- Composition and normalization are engine-neutral (`intersections`, `normalize` over the `WorldIndex` trait in `src/domain.rs`). The SQLite implementation is `Index` in `src/repository.rs`.
+- Snapshots are derived data: `Repository::manifest_at(version)` walks the version's tree and `Repository::checkpoint_manifest(checkpoint)` walks its base tree and applies the checkpoint's changes. Both are O(snapshot) and independent of history length. Publish never derives one. `Repository::changeset(version)` returns the stored changeset; `Repository::head()` reads the head row.
+- `attempts.tree` is the candidate root for `compare_and_advance` (the protocol's full-manifest input) and NULL for Layer publications, which bind their candidate through the `publications` row. `compare_and_advance` builds the manifest's tree (O(manifest)) and records the tree diff against the head as the changeset, which skips shared subtrees.
+- Normalization is engine-neutral (`normalize` over the `WorldIndex` trait in `src/domain.rs`). The implementation is `Index` in `src/repository.rs`, which reads trees.
 - `connect()` sets `foreign_keys=ON`, `synchronous=EXTRA`, `fullfsync=ON`, and a 5 second `busy_timeout`. Writes run in `BEGIN IMMEDIATE` transactions.
 - `fullfsync` is set unconditionally. It only has effect on Apple platforms.
 - `sync_directory` is a no-op off Unix.
 
 Object kinds and IDs:
 
-- Kinds: `Blob` = 1, `Manifest` = 2, `Checkpoint` = 3. Manifest objects exist only for protocol and `put_manifest` input; World versions do not store them.
+- Kinds: `Blob` = 1, `Manifest` = 2, `Checkpoint` = 3, `Tree` = 4. Manifest objects exist only for protocol and `put_manifest` input; World versions do not store them.
 - `ObjectId` is SHA-256 over `b"javelin-object-v1\0"`, the kind byte, and the bytes. Constructors: `ObjectId::for_blob`, `for_manifest`, `from_bytes`, `parse`.
 - `Manifest::new` builds the entry set; `canonical_bytes` encodes it; `Manifest::decode` re-encodes the parsed value and rejects input that is not in canonical form.
 - `FileEntry` is `Regular` or `Symlink`.
-- `RepoPath::parse` validates repository-relative paths (rules in `src/domain.rs`).
+- `RepoPath::parse` validates repository-relative paths (rules in `src/domain.rs`): at most `MAX_PATH` (4,096) bytes and `MAX_DEPTH` (256) components, equal to the protocol's wire limits.
 - `VersionNumber` is bounded by `i64::MAX`.
 - `OperationId::parse` accepts 1 to 128 characters from ASCII alphanumerics and `-_.`.
 
@@ -50,9 +49,25 @@ Integrity and bounded reads:
 Validation scope:
 
 - Commands validate only what they read or write: the head row, the Layer rows and checkpoints they touch (without walking Stack ancestry), the Layer's successful publication receipt, and new objects. Their cost does not grow with repository size or history length.
-- Full-graph validation runs in `check()`, `history()`, `init()` on an existing store, `read_checkpoint` (with its Stack ancestry), and `layer_history` (that Layer's events and attempts). It verifies the hash chain, that every changeset is canonical against its parent snapshot, that accepted manifests equal derived snapshots, and all Layer, Stack and publication bindings.
+- Full-graph validation runs in `check()`, `history()`, `init()` on an existing store, `read_checkpoint` (with its Stack ancestry), and `layer_history` (that Layer's events and attempts). It verifies the hash chain, that every changeset is canonical against its parent tree, that every stored root equals the root recomputed from the parent root plus the changeset (each derived chunk must be stored with the same bytes), that accepted candidates equal derived roots, and all Layer, Stack and publication bindings. Work is O(total change x depth); no full snapshot is held. `check()` also decodes every stored tree chunk.
 
 Code: src/domain.rs, src/repository.rs, src/lib.rs
+
+## Trees (derived data)
+
+`src/tree.rs`. A version's tree is derived from its parent's tree plus its changeset; changesets stay the source of truth, and `check()` rebuilds every root from them.
+
+- Each directory is a prolly tree over its entries sorted by name. Items are cut into chunks at content-defined boundaries; each level above the leaves lists its child chunks by last name, up to one root chunk per directory. A directory entry names a file (regular, executable, symlink) or a subdirectory by its root chunk, so unchanged subtrees are shared by hash.
+- Boundary rule (`boundary`): after an item, cut when the first 4 bytes of `SHA-256("javelin-tree-v1\0" || level || name)` fall below `len · size / SPREAD`, where `len` is the item's encoded bytes and `size` the chunk's bytes so far. The rising hazard gives Rayleigh-distributed chunk sizes with mean `TARGET` (2 KiB; 4 KiB wrote about 40% more per edit in `tree_bench`). A chunk is also cut at `FORCE` (64 KiB). Every input depends only on names, so:
+  - the same entries give the same root whatever the edit order (history independence);
+  - a content edit rewrites exactly one chunk per level of each directory on its path;
+  - an insert or delete re-cuts only the chunks around it, until a new boundary meets an old one (`update_level`).
+- Encoding (`Chunk`): `level u8`, then per item `tag u8, name length u16 BE, name, 32-byte ID`, names strictly ascending. Leaf tags: 1 regular, 2 executable, 3 symlink, 4 directory. Internal items have tag 0. The empty World is the empty leaf `[0]`; no other chunk is empty. `Chunk::decode` refuses anything else, including chunks over `MAX_CHUNK` bytes or above `MAX_LEVEL` (32). IDs are `ObjectId` over kind `Tree`.
+- Operations on `Trees<S: Store>`, with a decoded-chunk cache: `apply` (O(changed paths x depth)), `build`, `lookup`, `entries`, `files_under`, `diff` (drops chunks present on both sides before expanding, so work follows the difference), and `intersections`.
+- Derivation is eager. Publish computes the new root in its prepare phase, outside the lock, buffering new chunks (`Sql::buffer`); the short write transaction inserts them with the version row. The cost is O(change x depth) and small (see Measurements), and eager roots let the version ID cover the content, give every reader an O(1) root, and avoid a catch-up path that would write on reads.
+- Storage: chunks are rows in `objects`. `Sql` writes them (`write`), buffers them for a later transaction (`buffer`), or, for `check()`, verifies each recomputed chunk is stored with identical bytes (`read`).
+
+Code: src/tree.rs, src/repository.rs
 
 ## Layers and checkpoints
 
@@ -72,9 +87,9 @@ Code: src/domain.rs, src/repository.rs, src/lib.rs
 Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
 directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
 
-- `open_workspace` clones `.javelin/bases/<N>` into `.javelin/layers/<id>` and applies the checkpoint changes. `layer_workspace` returns the root and base paths.
+- `open_workspace` clones `.javelin/bases/<N>` into `.javelin/layers/<id>` and applies the checkpoint changes, checking existing files and directories with tree lookups. `layer_workspace` returns the root and base paths.
 - `CloneStrategy` is the strategy that worked: `DirectoryClone`, `Snapshot`, `FileClone` or `Copy`. `CloneReport` adds the fallback reason and copied bytes.
-- Bases derive from the nearest cached base plus the changeset between derived snapshots. The cache keeps two bases and pins the World head.
+- Bases derive from the nearest cached base plus the tree diff between the two versions, applied with tree lookups: O(change), not O(repo). A base with no cached neighbour is materialized from the full snapshot. The cache keeps two bases and pins the World head.
 - `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
 - CLI `workspace` has subcommands create, open, path, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_layer` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. A published Layer's directory stays in place and is no longer captured.
 - Root `.javelinignore` rules (`IgnoreRules`, `src/ignore.rs`) hide untracked paths from capture; tracked paths are always visited.
@@ -116,9 +131,9 @@ Code: src/stack.rs, crates/javelin-stack/src/lib.rs, crates/javelin-merge/src/li
 - A partial unique index allows at most one successful publication per Layer.
 - `publish_layer(operation, expected, attribution, guard)` is the entry point. `operation` is the idempotency key. `expected` is a `LayerHead`: the exact latest Active checkpoint of the Layer being published, not a World version.
 - Prepare (`prepare_in`) runs in a read snapshot without the write lock. It replays an existing receipt, refuses operation-id reuse, verifies the head and trace, validates only the records the advance builds on (the head World's receipt and this Layer's earlier receipts), and composes the candidate.
-- `compose_in` applies the whole Layer onto the current World with indexed lookups only. For each Layer-changed path it compares the entry at the Layer's base and at the head for the path itself, each ancestor prefix, and each descendant with a change row in `(base, head]`. A difference is an exact-path or ancestor/descendant collision. Differences are end-to-end, so a World change that was reverted is not a collision. Work is O(changed paths × depth) plus descendant ranges; no snapshot is loaded.
-- Without collisions, the new version's changeset is the Layer's changeset unchanged (it is canonical relative to the head). The guard receives `(&WorldVersion, &SparseChanges)`.
-- Advance is a short `BEGIN IMMEDIATE` transaction in `publish_layer` itself, not `Repository::compare_and_advance`. It rechecks that the operation id is unused, that the World head is still the prepared `against`, and that the Layer state is unchanged. On a mismatch it re-prepares, so compatible concurrent Publishes rebase and intersecting ones record a conflict. It then runs the guard, inserts the `attempts`, `versions`, `changes` and `publications` rows, and commits.
+- `compose_in` applies the whole Layer onto the current World by walking the base and head trees along the Layer's changed paths (`Trees::intersections`). Any directory whose subtree hash is equal at base and head is skipped with every changed path below it. Otherwise it compares the file at the path itself and at each ancestor, and diffs the subtrees below a changed path. A difference is an exact-path or ancestor/descendant collision. Differences are end-to-end, so a World change that was reverted is not a collision. Work is O(changed paths × depth) chunk reads plus the differing subtrees below changed paths; no snapshot is loaded.
+- Without collisions, the new version's changeset is the Layer's changeset unchanged (it is canonical relative to the head), and its tree is the head tree plus that changeset. The guard receives `(&WorldVersion, &SparseChanges)`.
+- Advance is a short `BEGIN IMMEDIATE` transaction in `publish_layer` itself, not `Repository::compare_and_advance`. It rechecks that the operation id is unused, that the World head is still the prepared `against`, and that the Layer state is unchanged. On a mismatch it re-prepares, so compatible concurrent Publishes rebase and intersecting ones record a conflict. It then runs the guard, inserts the new tree chunks and the `attempts`, `versions`, `changes` and `publications` rows, and commits.
 - Every lookup inside that transaction uses a key or index (`attempts_result`, `publications_layer`, the one-success index), so its cost does not grow with history. The cost test in `tests/support/publish_cost.rs` measured 521 SQLite VM instructions at both 1 and 1,000 prior Worlds.
 - Full history, Layer, Stack and publication validation stays in `Repository::check` (see Validation scope).
 - `publication()` returns the stored receipt when an operation id is replayed, validating that receipt's own bindings.
@@ -183,13 +198,37 @@ Code: crates/javelin-protocol/src/lib.rs, src/codec.rs, src/receiver.rs, src/sen
 
 Code: crates/javelin-collaboration/src/lib.rs, crates/javelin-collaboration/examples/review_flow.rs
 
+## Measurements
+
+Release builds on an Apple M1 (8 cores, APFS), 2026-10-18, with nothing else running.
+
+`tests/tree_bench.rs` (chunks in memory, cold decoded cache per operation; `src/m<k>/` holds 1,000 files):
+
+| Files | Build | Chunks / bytes | 1-file change | 100-file change | Add + delete | Full walk |
+| --- | --- | --- | --- | --- | --- | --- |
+| 100k | 0.05 s | 2,340 / 4.5 MB | 0.03 ms, 5.6 KB | 1.7 ms, 347 KB | 0.04 ms, 7.4 KB | 35 ms |
+| 1M | 0.57 s | 24,017 / 46 MB | 0.035 ms, 7.0 KB | 2.0 ms, 388 KB | 0.04 ms, 8.4 KB | 382 ms |
+
+One entry in a 50,000-entry directory (2.5 MB listing): edit 0.029 ms and 6.5 KB written, insert 0.031 ms and 6.8 KB, delete 0.033 ms and 6.7 KB. A 4 KiB `TARGET` wrote 11–12 KB for the same edits.
+
+`tests/publish_bench.rs` (SQLite end to end, 100k files, median of 20 one-file Publishes; snapshot is the median of three `manifest_at` reads of the head). Churn is files changed per history step:
+
+| History x churn | Publish, trees | Publish, format 6 | DB growth, trees / format 6 | Snapshot, trees | Snapshot, format 6 |
+| --- | --- | --- | --- | --- | --- |
+| 10 x 1 | 14.5 ms | 13.2 ms | 5.3 KB / 1.0 KB | 76 ms | 169 ms (noisy) |
+| 1,000 x 1 | 15.2 ms | 13.8 ms | 5.5 KB / 1.2 KB | 78 ms | 82 ms |
+| 10 x 1,000 | 14.3 ms | 16.7 ms | 5.5 KB / 1.6 KB | 84 ms | 85 ms |
+| 300 x 1,000 | 14.4 ms | 16.3 ms | 4.9 KB / 0.6 KB | 86 ms | 176 ms |
+
+Snapshots no longer depend on history: format 6 scanned every change row up to the version (about 400,000 rows in the last case); trees read only the snapshot. Publish latency is unchanged; each Publish now also stores about 4 KB of chunks for the directories on the changed path.
+
 ## Known limits
 
 - A Stack-produced head cannot be published from its workspace until directory refresh exists.
-- Capture and base materialization derive full snapshots (`manifest_at`, `checkpoint_manifest`), which scan every change row up to the base. They already walk the whole tree, so this is not their dominant cost. Commands no longer re-validate full state.
+- Capture and first-time base materialization read full snapshots (`manifest_at`, `checkpoint_manifest`) by walking a tree: O(snapshot), independent of history length. They already walk the whole directory, so this is not their dominant cost. Commands no longer re-validate full state.
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.
-- Protocol frames and item counts are capped by the `limits` constants. Only protocol version 1 exists.
+- Protocol frames and item counts are capped by the `limits` constants. Only protocol version 1 exists. It still moves full manifests (capped at 65,536 entries); the stacked protocol change moves trees.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
 
 Code: src/capture.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs

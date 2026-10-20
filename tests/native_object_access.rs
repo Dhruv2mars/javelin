@@ -93,7 +93,7 @@ fn downstream_caller_checks_claims_before_storing_and_uses_typed_availability() 
     let claimed = ObjectId::for_blob(b"expected");
     assert!(receive_blob(&mut repo, *claimed.as_bytes(), b"different").is_err());
     assert!(!repo.has_blob(ObjectId::for_blob(b"different")).unwrap());
-    assert_eq!(repo.check().unwrap().objects, 0);
+    assert_eq!(repo.check().unwrap().objects, 1); // the empty World tree
     assert_eq!(
         receive_blob(&mut repo, *claimed.as_bytes(), b"expected").unwrap(),
         claimed
@@ -103,7 +103,7 @@ fn downstream_caller_checks_claims_before_storing_and_uses_typed_availability() 
     let wrong_claim = ObjectId::from_bytes([0; 32]);
     assert_ne!(manifest_id, wrong_claim);
     assert!(!repo.has_manifest(wrong_claim).unwrap());
-    assert_eq!(repo.check().unwrap().objects, 1);
+    assert_eq!(repo.check().unwrap().objects, 2);
     assert_eq!(repo.put_manifest(&m).unwrap(), manifest_id);
     let requested = [claimed.as_bytes(), manifest_id.as_bytes()];
     assert!(repo.has_blob(ObjectId::from_bytes(*requested[0])).unwrap());
@@ -162,7 +162,7 @@ fn missing_kind_and_cap_boundaries_are_explicit() {
         raw(&root)
             .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
 }
 

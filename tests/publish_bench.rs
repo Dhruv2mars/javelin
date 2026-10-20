@@ -4,14 +4,16 @@
 //! ```text
 //! cargo test --release --test publish_bench -- --ignored --nocapture
 //! JAVELIN_BENCH_CASES=1000x10,100000x1000 JAVELIN_BENCH_SAMPLES=20 cargo test ...
+//! JAVELIN_BENCH_CHURN=1000 changes 1,000 files per history step instead of one.
 //! ```
 //!
 //! Each case builds World 1 with `files` paths, then `history - 1` one-file
 //! publishes, then measures `samples` more one-file publishes. Blob storage is
 //! outside the measured step. It reports the median `publish_layer` latency, the
 //! mean database growth, and the mean bytes of 4 KiB database pages the publish
-//! rewrote (journal writes are not counted). It uses only APIs that exist both
-//! before and after World changesets, so it runs unchanged on either.
+//! rewrote (journal writes are not counted), and the median time to read the full
+//! snapshot (`manifest_at`) of the head and of World 1. It uses only APIs that
+//! exist before and after World changesets and derived trees, so it runs on each.
 use std::time::{Duration, Instant};
 
 use javelin::{
@@ -116,8 +118,21 @@ fn run(files: usize, history: usize, samples: usize) {
     .unwrap();
     let head = bench.prepare(import);
     bench.publish(&head);
+    // Each history step changes `churn` files (JAVELIN_BENCH_CHURN, default 1).
+    let churn: usize = std::env::var("JAVELIN_BENCH_CHURN")
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
     for step in 1..history {
-        let head = bench.one_file(step % files, format!("history {step}\n").as_bytes());
+        let content = bench
+            .repo
+            .put_blob(format!("history {step}\n").as_bytes())
+            .unwrap();
+        let entry = FileEntry::Regular {
+            content,
+            executable: false,
+        };
+        let changes = (0..churn).map(|k| (path((step * churn + k) % files), Some(entry.clone())));
+        let head = bench.prepare(SparseChanges::new(changes).unwrap());
         bench.publish(&head);
     }
     let setup = started.elapsed();
@@ -134,10 +149,28 @@ fn run(files: usize, history: usize, samples: usize) {
     }
     latencies.sort();
     let median: Duration = latencies[latencies.len() / 2];
+    // Snapshot-at-version: the full manifest of the head and of World 1.
+    let snapshot = |n: u64| {
+        let mut times: Vec<_> = (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                let manifest = bench
+                    .repo
+                    .manifest_at(VersionNumber::new(n).unwrap())
+                    .unwrap();
+                assert_eq!(manifest.entries().len(), files);
+                start.elapsed()
+            })
+            .collect();
+        times.sort();
+        times[1].as_secs_f64() * 1e3
+    };
+    let (snapshot_head_ms, snapshot_first_ms) = (snapshot(bench.head), snapshot(1));
     println!(
         "{}",
         serde_json::json!({
             "files": files,
+            "churn": churn,
             "history": history,
             "samples": samples,
             "head": bench.head,
@@ -146,6 +179,8 @@ fn run(files: usize, history: usize, samples: usize) {
             "mean_db_growth_bytes": growth / samples as i64,
             "mean_rewritten_page_bytes": rewritten / samples,
             "db_bytes": std::fs::metadata(&bench.database).unwrap().len(),
+            "snapshot_head_ms": snapshot_head_ms,
+            "snapshot_world1_ms": snapshot_first_ms,
             "setup_s": setup.as_secs_f64(),
         })
     );

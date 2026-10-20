@@ -381,7 +381,7 @@ fn version_identity_is_a_stable_hash_chain_verified_by_check() {
             "id" => format!("UPDATE versions SET id='{}' WHERE number=1", "0".repeat(64)),
             "content" => "UPDATE changes SET content=(SELECT content FROM changes WHERE version=2 AND path='x') WHERE version=1 AND path='x'".into(),
             "path" => "UPDATE changes SET path='w' WHERE version=1 AND path='x'".into(),
-            "extra" => "INSERT INTO changes SELECT 'q',2,kind,content FROM changes WHERE version=1 AND path='x'".into(),
+            "extra" => "INSERT INTO changes(path,version,kind,content) SELECT 'q',2,kind,content FROM changes WHERE version=1 AND path='x'".into(),
             "delete" => "DELETE FROM changes WHERE version=2 AND path='y/z'".into(),
             _ => unreachable!(),
         };

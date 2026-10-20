@@ -5,7 +5,7 @@
 //! - `workspace.lock` serializes workspace changes between processes.
 //! - `bases/<N>` holds World N, written once and sealed. Unix seals it with root mode
 //!   000, so ordinary tools cannot open it, and briefly reopens it, under the lock,
-//!   to clone it. `base(N+1)` is `clone(base N)` plus the N→N+1 changeset.
+//!   to clone it. `base(M)` is `clone(base N)` plus the N→M tree diff, O(change).
 //! - `layers/<id>` is the Layer's writable directory.
 //! - `tmp/` holds staging. Anything still there at recovery is abandoned work.
 //! - `trash/` holds renamed-away Layers, bases and staging, reclaimed in bounded steps.
@@ -29,8 +29,8 @@ use serde::Serialize;
 pub use clone::{CloneReport, CloneStrategy};
 
 use crate::{
-    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
-    OperationId, RepoPath, Repository, Result, VersionNumber,
+    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, OperationId,
+    RepoPath, Repository, Result, VersionNumber, domain::WorldIndex, repository::Index,
 };
 
 /// Materialized bases kept, besides any pinned for the current command.
@@ -181,7 +181,7 @@ impl Repository {
             let (applied, _) = if changes.is_empty() {
                 (0, 0)
             } else {
-                let before = self.manifest_at(checkpoint.base().version())?;
+                let before = At(Index::new(&self.conn), checkpoint.base().version());
                 let changes = changes.iter().map(|(p, e)| (p, e.as_ref()));
                 self.apply(&staging, &before, changes)?
             };
@@ -249,11 +249,6 @@ impl Repository {
         VersionNumber::decode(head)
     }
 
-    /// The derived snapshot of a World version.
-    fn world_manifest(&self, version: VersionNumber) -> Result<Manifest> {
-        self.manifest_at(version)
-    }
-
     /// Layers with a terminal discard event, in one query.
     fn discarded_layers(&self) -> Result<HashSet<String>> {
         let mut statement = self
@@ -280,7 +275,6 @@ impl Repository {
             return Ok((target, report));
         }
         let started = Instant::now();
-        let manifest = self.world_manifest(version)?;
         let nearest = store
             .bases_cached()?
             .into_iter()
@@ -289,22 +283,22 @@ impl Repository {
         let built = (|| {
             let (changed, written) = match &nearest {
                 Some((from, path)) => {
-                    let before = self.world_manifest(*from)?;
+                    // The tree diff skips shared subtrees: O(change), not O(repo).
+                    let index = Index::new(&self.conn);
+                    let changes = index.trees.diff(index.root(*from)?, index.root(version)?)?;
                     report.clone = Some(unsealed(path, || clone::clone_tree(path, &staging))?);
                     open_root(&staging)?;
                     report.source = BaseSource::Derived;
                     report.derived_from = Some(*from);
-                    self.apply(&staging, &before, changeset(&before, &manifest))?
+                    let changes = changes.entries().iter().map(|(p, e)| (p, e.as_ref()));
+                    self.apply(&staging, &At(index, *from), changes)?
                 }
                 None => {
+                    let manifest = self.manifest_at(version)?;
                     clone::create_base_dir(&staging)?;
                     report.source = BaseSource::Materialized;
                     let entries = manifest.entries().iter();
-                    self.apply(
-                        &staging,
-                        &Manifest::new([])?,
-                        entries.map(|(p, e)| (p, Some(e))),
-                    )?
+                    self.apply(&staging, &Nothing, entries.map(|(p, e)| (p, Some(e))))?
                 }
             };
             clone::barrier(&staging)?;
@@ -327,13 +321,13 @@ impl Repository {
     fn apply<'a>(
         &self,
         root: &Path,
-        before: &Manifest,
+        before: &impl Before,
         changes: impl Iterator<Item = (&'a RepoPath, Option<&'a FileEntry>)>,
     ) -> Result<(usize, u64)> {
         let changes: Vec<_> = changes.collect();
         let mut removed = HashSet::new();
         for (path, _) in &changes {
-            if !before.entries().contains_key(*path) {
+            if !before.file(path)? {
                 continue;
             }
             remove_entry(&native(root, path.as_str()))?;
@@ -355,7 +349,7 @@ impl Repository {
             representable(path)?;
             for (index, _) in path.as_str().match_indices('/') {
                 let dir = &path.as_str()[..index];
-                if dirs.contains(dir) || (!removed.contains(dir) && has_dir(before, dir)) {
+                if dirs.contains(dir) || (!removed.contains(dir) && before.dir(dir)?) {
                     continue;
                 }
                 match fs::create_dir(native(root, dir)) {
@@ -428,35 +422,34 @@ impl Repository {
     }
 }
 
-/// The exact changes turning `before` into `after`, in path order.
-fn changeset<'a>(
-    before: &'a Manifest,
-    after: &'a Manifest,
-) -> impl Iterator<Item = (&'a RepoPath, Option<&'a FileEntry>)> {
-    let removed = before
-        .entries()
-        .keys()
-        .filter(|p| !after.entries().contains_key(*p))
-        .map(|p| (p, None));
-    let changed = after
-        .entries()
-        .iter()
-        .filter(|(p, e)| before.entries().get(*p) != Some(e))
-        .map(|(p, e)| (p, Some(e)));
-    removed.chain(changed)
+/// What a directory held before changes are applied to it.
+trait Before {
+    fn file(&self, path: &RepoPath) -> Result<bool>;
+    fn dir(&self, dir: &str) -> Result<bool>;
 }
 
-/// Whether some path in the manifest lies under the directory `dir`.
-fn has_dir(manifest: &Manifest, dir: &str) -> bool {
-    let prefix = format!("{dir}/");
-    manifest
-        .entries()
-        .range::<str, _>((
-            std::ops::Bound::Included(prefix.as_str()),
-            std::ops::Bound::Unbounded,
-        ))
-        .next()
-        .is_some_and(|(p, _)| p.as_str().starts_with(&prefix))
+/// A new, empty directory.
+struct Nothing;
+
+impl Before for Nothing {
+    fn file(&self, _: &RepoPath) -> Result<bool> {
+        Ok(false)
+    }
+    fn dir(&self, _: &str) -> Result<bool> {
+        Ok(false)
+    }
+}
+
+/// A World snapshot, read through its tree: O(depth) per lookup.
+struct At<'a>(Index<'a>, VersionNumber);
+
+impl Before for At<'_> {
+    fn file(&self, path: &RepoPath) -> Result<bool> {
+        Ok(self.0.entry_at(path, self.1)?.is_some())
+    }
+    fn dir(&self, dir: &str) -> Result<bool> {
+        self.0.is_dir(&RepoPath(dir.into()), self.1)
+    }
 }
 
 fn collision(path: &str) -> Error {

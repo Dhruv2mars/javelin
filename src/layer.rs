@@ -11,9 +11,7 @@ use crate::{
     Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, Result, SparseChanges,
     VersionNumber,
     domain::{ObjectKind, WorldIndex},
-    repository::{
-        Index, decode_id, insert_object, read_object, snapshot_in, validate_format, version_in,
-    },
+    repository::{Index, decode_id, insert_object, read_object, validate_format, version_in},
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -240,7 +238,8 @@ impl Repository {
     pub fn checkpoint_manifest(&self, checkpoint: CheckpointId) -> Result<Manifest> {
         let tx = self.conn.unchecked_transaction()?;
         let frozen = checkpoint_in(&tx, checkpoint.0)?;
-        let mut entries = snapshot_in(&tx, frozen.base.version)?;
+        let index = Index::new(&tx);
+        let mut entries = index.trees.entries(index.root(frozen.base.version)?)?;
         frozen.changes.apply(&mut entries);
         tx.commit()?;
         Manifest::new(entries)
@@ -312,7 +311,7 @@ impl Repository {
         let tx = self.conn.unchecked_transaction()?;
         verify_head(&tx, head)?;
         let frozen = checkpoint_in(&tx, head.checkpoint.0)?;
-        let index = Index(&tx);
+        let index = Index::new(&tx);
         let diff = frozen
             .changes
             .entries()
@@ -377,7 +376,7 @@ pub(crate) fn prepare_checkpoint(
     sources: &[CheckpointId],
 ) -> Result<CheckpointId> {
     validate_base(conn, base)?;
-    let changes = crate::domain::normalize(&Index(conn), base.version, changes)?;
+    let changes = crate::domain::normalize(&Index::new(conn), base.version, changes)?;
     Ok(CheckpointId(insert_object(
         conn,
         ObjectKind::Checkpoint,
@@ -469,7 +468,7 @@ fn checkpoint_node(conn: &Connection, id: ObjectId) -> Result<LayerCheckpoint> {
     .map_err(|_| Error::CorruptObject(id))?;
     validate_base(conn, &base)
         .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint base: {e}")))?;
-    let normalized = crate::domain::normalize(&Index(conn), base.version, &changes)
+    let normalized = crate::domain::normalize(&Index::new(conn), base.version, &changes)
         .map_err(|e| Error::CorruptRepository(format!("invalid checkpoint graph: {e}")))?;
     if normalized != changes
         || encoded.sources.windows(2).any(|pair| pair[0] >= pair[1])

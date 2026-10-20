@@ -446,14 +446,16 @@ fn encoder_refuses_messages_the_receiver_would_refuse() {
     let id = ObjectId::parse(&"ab".repeat(32)).unwrap();
     let big = Message::Blobs(vec![(id, vec![0; MAX_BLOB + 1])]);
     assert_eq!(encode(&big).map(|_| ()).unwrap_err().code, "limit_exceeded");
-    let deep = vec!["d"; MAX_DEPTH + 1].join("/");
-    let manifest = Manifest::new([(
-        RepoPath::parse(&deep).unwrap(),
-        FileEntry::Regular {
-            content: id,
-            executable: false,
-        },
-    )])
+    // Native paths stay within the wire's path limits; entry counts do not.
+    let manifest = Manifest::new((0..=MAX_ENTRIES).map(|n| {
+        (
+            RepoPath::parse(&format!("f{n}")).unwrap(),
+            FileEntry::Regular {
+                content: id,
+                executable: false,
+            },
+        )
+    }))
     .unwrap();
     let message = Message::Manifests(vec![(id, manifest)]);
     assert_eq!(
