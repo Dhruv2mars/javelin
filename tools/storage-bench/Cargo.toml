@@ -1,0 +1,18 @@
+[package]
+name = "javelin-storage-bench"
+version = "0.1.0"
+edition = "2024"
+description = "Measures SQLite versus content-addressed blob files; not product code"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "storage-bench"
+path = "src/main.rs"
+
+[dependencies]
+javelin = { path = "../.." }
+rusqlite = { version = "0.40.2", features = ["bundled", "blob"] }
+sha2 = "0.11.1"
+libc = "0.2.190"

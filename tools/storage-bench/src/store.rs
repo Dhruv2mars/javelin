@@ -1,0 +1,335 @@
+use crate::{Result, corpus::Blob, platform};
+use javelin::{ObjectId, Repository};
+use rusqlite::{Connection, params};
+use std::collections::BTreeSet;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Kind {
+    Real,
+    Tuned,
+    Files,
+}
+#[derive(Clone)]
+pub struct Store {
+    pub root: PathBuf,
+    pub kind: Kind,
+    pub durable: bool,
+    pub page: usize,
+    pub incremental: bool,
+}
+
+const SCHEMA: &str = "CREATE TABLE objects (
+ id TEXT PRIMARY KEY CHECK(length(id)=64),
+ kind INTEGER NOT NULL CHECK(kind IN (1,2,3)), bytes BLOB NOT NULL) STRICT;
+ CREATE TRIGGER objects_no_UPDATE BEFORE UPDATE ON objects BEGIN SELECT RAISE(ABORT,'immutable'); END;
+ CREATE TRIGGER objects_no_DELETE BEFORE DELETE ON objects BEGIN SELECT RAISE(ABORT,'immutable'); END;";
+
+impl Store {
+    pub fn db(&self) -> PathBuf {
+        if self.kind == Kind::Real {
+            self.root.join(".javelin/repository.sqlite3")
+        } else {
+            self.root.join("objects.sqlite3")
+        }
+    }
+    pub fn object(&self, id: ObjectId) -> PathBuf {
+        let id = id.to_string();
+        self.root.join("objects").join(&id[..2]).join(&id[2..])
+    }
+    pub fn conn(&self) -> Result<Connection> {
+        let c = Connection::open(self.db())?;
+        c.execute_batch(&format!("PRAGMA mmap_size=2147483648; PRAGMA cache_size=-65536; PRAGMA fullfsync=OFF; PRAGMA synchronous={};", if self.durable {"FULL"} else {"OFF"}))?;
+        Ok(c)
+    }
+    pub fn init(&self) -> Result<()> {
+        fs::create_dir(&self.root)?;
+        match self.kind {
+            Kind::Real => {
+                Repository::init(&self.root)?;
+            }
+            Kind::Tuned => {
+                // Apply the selected durability before schema creation too.
+                let c = self.conn()?;
+                c.execute_batch(&format!(
+                    "PRAGMA page_size={}; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL;",
+                    self.page
+                ))?;
+                c.execute_batch(SCHEMA)?;
+                for (pragma, expected) in [
+                    ("page_size", self.page as i64),
+                    ("synchronous", if self.durable { 2 } else { 0 }),
+                ] {
+                    let actual = c.pragma_query_value(None, pragma, |r| r.get::<_, i64>(0))?;
+                    if actual != expected {
+                        return Err(format!("{pragma}: expected {expected}, got {actual}").into());
+                    }
+                }
+                let journal =
+                    c.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))?;
+                if journal != "wal" {
+                    return Err(format!("expected WAL, got {journal}").into());
+                }
+            }
+            Kind::Files => {
+                fs::create_dir(self.root.join("objects"))?;
+                fs::create_dir(self.root.join("tmp"))?;
+                // Precreate all fanouts; initialize and durably publish store topology.
+                for i in 0..256 {
+                    fs::create_dir(self.root.join("objects").join(format!("{i:02x}")))?;
+                }
+                if self.durable {
+                    platform::fsync(&File::open(self.root.join("objects"))?)?;
+                    platform::fsync(&File::open(&self.root)?)?;
+                    platform::fsync(&File::open(self.root.parent().unwrap())?)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Hashing is inside the measured region, even though read IDs are precomputed.
+    /// Limit is checked after each committed object for the real-store 100k budget.
+    pub fn ingest(&self, blobs: &[Blob], limit: Option<f64>) -> Result<bool> {
+        let t = Instant::now();
+        let kill_stage = std::env::var("STORAGE_BENCH_KILL_STAGE").ok();
+        match self.kind {
+            Kind::Real => {
+                let mut repo = Repository::open(&self.root)?;
+                for b in blobs {
+                    assert_eq!(repo.put_blob(&b.bytes)?, b.id);
+                    if limit.is_some_and(|s| t.elapsed().as_secs_f64() > s) {
+                        return Ok(false);
+                    }
+                }
+            }
+            Kind::Tuned => {
+                let mut c = self.conn()?;
+                for batch in blobs.chunks(1000) {
+                    let tx =
+                        c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    {
+                        let mut insert = tx.prepare("INSERT INTO objects(id,kind,bytes) VALUES(?1,1,?2) ON CONFLICT(id) DO NOTHING")?;
+                        for (index, b) in batch.iter().enumerate() {
+                            let id = ObjectId::for_blob(&b.bytes);
+                            insert.execute(params![id.to_string(), b.bytes])?;
+                            if index == 9
+                                && let Some(target) = &kill_stage
+                            {
+                                crate::extras::writer_stage(
+                                    &self.root,
+                                    target,
+                                    "sqlite-mid-transaction",
+                                    10,
+                                )?;
+                            }
+                        }
+                    }
+                    tx.commit()?;
+                    if let Some(target) = &kill_stage {
+                        crate::extras::writer_stage(
+                            &self.root,
+                            target,
+                            "sqlite-after-commit",
+                            batch.len() as u64,
+                        )?;
+                    }
+                }
+                // Include draining WAL in ingest, so deferred checkpoint work is not hidden.
+                c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+            }
+            Kind::Files => {
+                for batch in blobs.chunks(1000) {
+                    let mut dirs = BTreeSet::new();
+                    for (i, b) in batch.iter().enumerate() {
+                        let target = self.object(ObjectId::for_blob(&b.bytes));
+                        if target.try_exists()? {
+                            continue;
+                        }
+                        let temp = self
+                            .root
+                            .join("tmp")
+                            .join(format!("{}-{i}", std::process::id()));
+                        let mut f = OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&temp)?;
+                        if let Some(target) = &kill_stage
+                            && b.bytes.len() >= 2 * 1024 * 1024
+                        {
+                            let half = b.bytes.len() / 2;
+                            f.write_all(&b.bytes[..half])?;
+                            crate::extras::writer_stage(
+                                &self.root,
+                                target,
+                                "files-mid-payload",
+                                half as u64,
+                            )?;
+                            f.write_all(&b.bytes[half..])?;
+                        } else {
+                            f.write_all(&b.bytes)?;
+                        }
+                        f.set_permissions(fs::Permissions::from_mode(0o444))?;
+                        if self.durable {
+                            platform::fsync(&f)?;
+                        }
+                        if b.bytes.len() >= 2 * 1024 * 1024
+                            && let Some(stage) = &kill_stage
+                        {
+                            crate::extras::writer_stage(
+                                &self.root,
+                                stage,
+                                "files-pre-rename",
+                                f.metadata()?.len(),
+                            )?;
+                        }
+                        fs::rename(&temp, &target)?;
+                        dirs.insert(target.parent().unwrap().to_path_buf());
+                    }
+                    if self.durable {
+                        for d in dirs {
+                            platform::fsync(&File::open(d)?)?;
+                        }
+                        platform::fsync(&File::open(self.root.join("tmp"))?)?;
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+    /// Only for the budgeted 100k real-store read context. This is untimed setup,
+    /// not Repository::put_blob ingest: preserve the actual schema and DELETE
+    /// journal, then let production reads verify every canonical object hash.
+    pub fn seed_real_read_context(&self, blobs: &[Blob]) -> Result<()> {
+        assert!(self.kind == Kind::Real);
+        let mut c = Connection::open(self.db())?;
+        c.execute_batch("PRAGMA synchronous=OFF; PRAGMA fullfsync=OFF;")?;
+        let tx = c.transaction()?;
+        {
+            let mut insert = tx.prepare("INSERT INTO objects(id,kind,bytes) VALUES(?1,1,?2)")?;
+            for b in blobs {
+                insert.execute(params![b.id.to_string(), b.bytes])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+    /// Reproduce B's actual temp+rename insertion order and durability on the
+    /// measured volume. SQLite keeps its logical page layout in a closed copy.
+    pub fn seed_from(&self, source: &Path, blobs: &[Blob]) -> Result<()> {
+        if self.kind == Kind::Files {
+            self.init()?;
+            self.ingest(blobs, None)?;
+        } else {
+            platform::tree(source, &self.root, false)?;
+        }
+        Ok(())
+    }
+    pub fn reader(&self) -> Result<Reader> {
+        Ok(match self.kind {
+            Kind::Real => Reader::Real(Repository::open(&self.root)?),
+            Kind::Tuned => Reader::Tuned(self.conn()?, self.incremental),
+            Kind::Files => Reader::Files(self.clone()),
+        })
+    }
+    pub fn materialize(&self, blobs: &[Blob], dst: &Path, clones: bool) -> Result<()> {
+        let reader = self.reader()?;
+        self.materialize_from(blobs, dst, clones, &reader)
+    }
+    pub fn materialize_from(
+        &self,
+        blobs: &[Blob],
+        dst: &Path,
+        clones: bool,
+        reader: &Reader,
+    ) -> Result<()> {
+        fs::create_dir(dst)?;
+        let mut last = PathBuf::new();
+        for b in blobs {
+            let to = dst.join(&b.path);
+            let parent = to.parent().unwrap();
+            if parent != last {
+                fs::create_dir_all(parent)?;
+                last = parent.to_path_buf();
+            }
+            if self.kind == Kind::Files {
+                if clones {
+                    platform::clone_file(&self.object(b.id), &to)?;
+                } else {
+                    platform::copy_bytes(&self.object(b.id), &to)?;
+                }
+            } else {
+                fs::write(to, reader.read(b.id)?)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn evict(&self, ids: &[ObjectId]) -> Result<()> {
+        match self.kind {
+            Kind::Tuned => {
+                let mut c = self.conn()?;
+                let tx = c.transaction()?;
+                tx.execute_batch("DROP TRIGGER objects_no_DELETE")?;
+                {
+                    let mut delete = tx.prepare("DELETE FROM objects WHERE id=?1")?;
+                    for id in ids {
+                        delete.execute([id.to_string()])?;
+                    }
+                }
+                tx.execute_batch("CREATE TRIGGER objects_no_DELETE BEFORE DELETE ON objects BEGIN SELECT RAISE(ABORT,'immutable'); END;")?;
+                tx.commit()?;
+                c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+            }
+            Kind::Files => {
+                let mut dirs = BTreeSet::new();
+                for id in ids {
+                    let p = self.object(*id);
+                    fs::remove_file(&p)?;
+                    dirs.insert(p.parent().unwrap().to_path_buf());
+                }
+                if self.durable {
+                    for d in dirs {
+                        platform::fsync(&File::open(d)?)?;
+                    }
+                }
+            }
+            Kind::Real => return Err("real immutable store is not evicted".into()),
+        }
+        Ok(())
+    }
+}
+
+pub enum Reader {
+    Real(Repository),
+    Tuned(Connection, bool),
+    Files(Store),
+}
+impl Reader {
+    pub fn read(&self, id: ObjectId) -> Result<Vec<u8>> {
+        Ok(match self {
+            Self::Real(r) => r.read_blob(id)?,
+            Self::Tuned(c, incremental) => sqlite_read(c, id, *incremental)?,
+            Self::Files(s) => fs::read(s.object(id))?,
+        })
+    }
+}
+
+pub fn sqlite_read(c: &Connection, id: ObjectId, incremental: bool) -> Result<Vec<u8>> {
+    if incremental {
+        let rowid: i64 = c
+            .prepare_cached("SELECT rowid FROM objects WHERE id=?1 AND kind=1")?
+            .query_row([id.to_string()], |r| r.get(0))?;
+        let mut blob = c.blob_open("main", "objects", "bytes", rowid, true)?;
+        let mut bytes = Vec::with_capacity(blob.len());
+        blob.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    } else {
+        Ok(
+            c.prepare_cached("SELECT bytes FROM objects WHERE id=?1 AND kind=1")?
+                .query_row([id.to_string()], |r| r.get(0))?,
+        )
+    }
+}

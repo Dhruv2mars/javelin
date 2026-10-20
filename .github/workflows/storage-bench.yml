@@ -1,0 +1,115 @@
+name: Storage bench
+
+# Measurements only: no performance threshold gates CI.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/storage-bench/**"
+      - ".github/workflows/storage-bench.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    name: Storage / ${{ matrix.fs }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        fs: [btrfs, ext4, xfs]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+
+      - name: Build
+        working-directory: tools/storage-bench
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo build --release --locked
+          cargo test --locked
+
+      - name: Dedicated filesystem and machine details
+        env:
+          FS: ${{ matrix.fs }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq btrfs-progs xfsprogs e2fsprogs
+          truncate -s 16G "$RUNNER_TEMP/storage.img"
+          if [[ "$FS" == xfs ]]; then
+            sudo mkfs.xfs -q -m reflink=1 "$RUNNER_TEMP/storage.img"
+          elif [[ "$FS" == ext4 ]]; then
+            sudo mkfs.ext4 -F -q "$RUNNER_TEMP/storage.img"
+          else
+            sudo mkfs."$FS" -q "$RUNNER_TEMP/storage.img"
+          fi
+          sudo mkdir -p /mnt/storage-bench
+          sudo mount -o loop "$RUNNER_TEMP/storage.img" /mnt/storage-bench
+          sudo chown "$(id -u):$(id -g)" /mnt/storage-bench
+          mkdir -p "$RUNNER_TEMP/storage-results"
+          {
+            echo "## Storage benchmark: $FS, 16 GiB loop image"
+            echo '```text'
+            uname -a
+            cat /etc/os-release
+            nproc
+            free -g
+            lscpu
+            mkfs.btrfs --version
+            mkfs.xfs -V
+            mke2fs -V 2>&1
+            if [[ "$FS" == xfs ]]; then xfs_info /mnt/storage-bench; fi
+            findmnt /mnt/storage-bench
+            echo '```'
+          } | tee "$RUNNER_TEMP/storage-results/machine.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Measure (unprivileged; cache drop and btrfs accounting reads use sudo)
+        env:
+          FS: ${{ matrix.fs }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/storage-results"
+          time tools/storage-bench/target/release/storage-bench \
+            --dir /mnt/storage-bench/run --files 1000,10000,100000 --reps 5 \
+            --label "$FS (16 GiB loop image, hosted ubuntu-24.04)" \
+            --drop-caches-cmd "sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'" \
+            --json "$RUNNER_TEMP/storage-results/$FS.json" \
+            > "$RUNNER_TEMP/storage-results/$FS.stdout.md"
+          cat "$RUNNER_TEMP/storage-results/$FS.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compact summary and raw hash
+        if: always()
+        env:
+          FS: ${{ matrix.fs }}
+        run: |
+          if [[ -f "$RUNNER_TEMP/storage-results/$FS.json" ]]; then
+            python3 tools/storage-bench/summarize.py "$RUNNER_TEMP/storage-results/$FS.json" \
+              --location "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} (storage-bench-$FS artifact)"
+            sha256sum "$RUNNER_TEMP/storage-results/$FS.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload raw samples and Markdown (including partial runs)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: storage-bench-${{ matrix.fs }}
+          path: ${{ runner.temp }}/storage-results/
+          if-no-files-found: warn
+
+      - name: Unmount
+        if: always()
+        run: |
+          if mountpoint -q /mnt/storage-bench; then sudo umount /mnt/storage-bench; fi
