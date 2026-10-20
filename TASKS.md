@@ -160,7 +160,9 @@ workflow may invoke or interpret Git.
 
 - [ ] Verify installation and upgrades from clean machines on supported platforms.
 - [ ] Publish tutorials, command reference, hosting setup, and recovery documentation.
-- [ ] Add contribution guidance, support policy, security reporting, and license checks.
+- [x] Add contribution guidance, support policy, security reporting, and license checks
+  (PR #56; `licenses.yml` run `39434261246` passed at `51fd153`). Private vulnerability
+  reporting still needs enabling in repo settings.
 - [ ] Verify security and correctness with appropriate checks and fix material defects.
 - [ ] Set measured release limits and performance requirements before claiming scale.
 - [ ] Commit fixed workload shapes and numeric pass/fail thresholds before the
