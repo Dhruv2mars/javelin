@@ -83,7 +83,7 @@ Code: src/tree.rs, src/repository.rs
 - CLI: `javelin layer` has subcommands create, state, history, publication, diff, radar, clone, stack, and discard (help text in `crates/javelin-cli/src/cli.rs`). `stack` calls `javelin_stack::stack_layer`.
 - There is one Layer runtime on every platform: a plain directory cloned from the Layer's World base, captured without a daemon. No mount, helper or background process is involved.
 
-- Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. `capture_workspace` captures `.javelin/layers/<id>` and runs first in every `layer` and `workspace` command that names a Layer. A head produced by Stack is never captured over (`Capture::behind`), because the directory lacks the stacked work. The CLI hook is `javelin checkpoint ID [--path DIR]`.
+- Daemonless capture (`src/capture.rs`): `scan` walks a plain directory against a `StatCache` stored at `.javelin/capture/<sha256(layer id)>` and hashes only changed or untrusted entries. `changes_from` turns the result into `SparseChanges` against the base World. `Repository::capture_directory` stores blobs, saves the cache and calls `capture_layer` with a generated `capture-<hash>` operation ID. `capture_workspace` captures `.javelin/layers/<id>` and runs first in every `layer` and `workspace` command that names a Layer, except `workspace refresh`. The directory's sync record (`.javelin/capture/<sha256(layer id)>.sync`) names the checkpoint it last matched. A stacked head that differs from that record is never captured over (`Capture::behind`), because the directory lacks the stacked work. The CLI hook is `javelin checkpoint ID [--path DIR]`.
 
 Layer workspaces: see [workspace-approach.md](workspace-approach.md). Clone-backed
 directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-cli/src/cli_workspace.rs`):
@@ -92,7 +92,8 @@ directories (`src/workspace.rs`, `src/workspace/clone.rs`, CLI `crates/javelin-c
 - `CloneStrategy` is the strategy that worked: `DirectoryClone`, `Snapshot`, `FileClone` or `Copy`. `CloneReport` adds the fallback reason and copied bytes.
 - One rolling base per repository, recorded in `.javelin/base.json`. A Layer at a newer World advances it in place by the tree diff between the two versions, applied with tree lookups: O(change), not O(repo). A Layer at an older World clones the base and rewinds the clone by the reverse diff. An absent or partial base is materialized from the full snapshot. Per-version bases are gone.
 - `discard_workspace` writes the terminal event, then renames the directory into `trash/`. `recover_workspaces` and every command's bounded recovery finish interrupted steps.
-- CLI `workspace` has subcommands create, open, path, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_workspace` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. `publish_workspace` runs `publish_layer` under the lock and, on success, renames the Layer's directory into trash and reclaims it, with the same budget as discard.
+- `refresh_workspace` (`src/workspace/refresh.rs`) brings a directory to a stacked head. It plans from three states: the sync record `S`, the directory, and the head. Each path is planned before any write, so a conflict writes nothing and fails with `RefreshConflict`. Writes are per-path atomic renames, and the sync record moves last.
+- CLI `workspace` has subcommands create, open, path, refresh, discard, publish and recover. `workspace publish` captures the directory, then calls `publish_workspace` with the latest Active head; it refuses a Stack-produced head (`Capture::behind`) and files still changing during capture. `publish_workspace` runs `publish_layer` under the lock and, on success, renames the Layer's directory into trash and reclaims it, with the same budget as discard.
 - Root `.javelinignore` rules (`IgnoreRules`, `src/ignore.rs`) hide untracked paths from capture; tracked paths are always visited.
 
 Code: src/layer.rs, src/capture.rs, src/ignore.rs, src/workspace.rs, crates/javelin-cli/src/cli.rs, crates/javelin-cli/src/cli_workspace.rs
@@ -268,7 +269,8 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 
 ## Known limits
 
-- A Stack-produced head cannot be published from its workspace until directory refresh exists.
+- A workspace whose sync record is missing (created before refresh existed) is refused by `workspace refresh` with `invalid_input`, and its stacked head stays `behind`. Recreate that workspace to use Stack.
+- A crash between a capture's head commit and its sync write can make the next refresh report a false `refresh_conflict`. Nothing is lost; resolve it by capturing and refreshing again.
 - Capture and first-time base materialization read full snapshots (`manifest_at`, `checkpoint_manifest`) by walking a tree: O(snapshot), independent of history length. They already walk the whole directory, so this is not their dominant cost. Commands no longer re-validate full state.
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.

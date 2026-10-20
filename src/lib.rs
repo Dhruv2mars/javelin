@@ -31,7 +31,7 @@ pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 pub use workspace::{
     BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,
-    WorkspaceRecovery, WorkspaceReport,
+    WorkspaceRecovery, WorkspaceRefresh, WorkspaceReport,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -79,6 +79,11 @@ pub enum Error {
     Busy(String),
     #[error("unsupported: {0}")]
     Unsupported(String),
+    #[error(
+        "local edits conflict with the head at {}; nothing was changed. Resolve these paths, then refresh again",
+        .0.join(", ")
+    )]
+    RefreshConflict(Vec<String>),
 }
 
 impl Error {
@@ -100,6 +105,7 @@ impl Error {
             Self::Io(_) => "io_error",
             Self::Busy(_) => "busy",
             Self::Unsupported(_) => "unsupported",
+            Self::RefreshConflict(_) => "refresh_conflict",
         }
     }
 }

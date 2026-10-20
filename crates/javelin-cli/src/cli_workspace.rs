@@ -3,7 +3,7 @@ use std::ffi::OsString;
 
 use javelin::{
     CloneReport, CloneStrategy, Error, LayerHead, LayerId, LayerState, LayerUpdate, Repository,
-    Result, VersionNumber, WorkspaceReport,
+    Result, VersionNumber, WorkspaceRefresh, WorkspaceReport,
 };
 use serde_json::json;
 
@@ -12,7 +12,7 @@ use super::{Args, AttributionInput, BEHIND, Output, captured, publication, succe
 pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
     let (allowed, count): (&[&str], usize) = match action {
         "create" => (&["--repo", "--world"], 1),
-        "open" | "path" => (&["--repo"], 1),
+        "open" | "path" | "refresh" => (&["--repo"], 1),
         "discard" => (&["--repo", "--operation"], 1),
         "publish" => (
             &[
@@ -29,7 +29,7 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         _ => {
             return Err(Error::InvalidInput(format!(
                 "unknown workspace command {action}; clone-backed workspaces support \
-                 create, open, path, discard, publish and recover"
+                 create, open, path, refresh, discard, publish and recover"
             )));
         }
     };
@@ -56,8 +56,21 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         ));
     }
     let layer = args.layer()?;
-    let capture = repo.capture_workspace(&layer)?;
+    // Refresh merges against the directory's sync record, so local edits must not be
+    // captured into the head first.
+    let capture = match action {
+        "refresh" => None,
+        _ => repo.capture_workspace(&layer)?,
+    };
     let output = match action {
+        "refresh" => {
+            let report = repo.refresh_workspace(&layer)?;
+            let text = refresh_text(&report);
+            success(
+                json!({"ok": true, "command": command, "refresh": report}),
+                text,
+            )
+        }
         "create" | "open" => {
             if action == "create" {
                 let version = match world {
@@ -148,6 +161,19 @@ fn latest_active(repo: &Repository, layer: &LayerId) -> Result<LayerHead> {
             _ => None,
         })
         .ok_or_else(|| Error::InvalidInput("Layer has no active history".into()))
+}
+
+fn refresh_text(report: &WorkspaceRefresh) -> String {
+    if !report.refreshed {
+        return format!("Layer {} is already at its head", report.layer.as_str());
+    }
+    format!(
+        "Refreshed Layer {} to {}: {} paths applied, {} local edits kept",
+        report.layer.as_str(),
+        report.to.object(),
+        report.applied,
+        report.kept
+    )
 }
 
 fn report_text(report: &WorkspaceReport) -> String {

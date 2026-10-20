@@ -108,32 +108,38 @@ impl StatCache {
         if !self.dirty {
             return Ok(());
         }
-        let parent = path
-            .parent()
-            .ok_or_else(|| Error::InvalidInput("cache path needs a parent".into()))?;
-        fs::create_dir_all(parent)?;
-        let mut name = path.file_name().unwrap_or_default().to_os_string();
-        static SAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = SAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        name.push(format!(".{}-{n}.tmp", std::process::id()));
-        let temporary = parent.join(name);
-        let result: std::io::Result<_> = (|| {
-            let mut file = fs::File::create(&temporary)?;
-            std::io::Write::write_all(&mut file, &encode(&self.entries))?;
-            file.sync_all()?;
-            drop(file);
-            fs::rename(&temporary, path)?;
-            #[cfg(unix)]
-            fs::File::open(parent)?.sync_all()?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result?;
+        write_atomic(path, &encode(&self.entries))?;
         self.dirty = false;
         Ok(())
     }
+}
+
+/// Atomic replace: write a temporary sibling, sync it, rename it into place and sync the
+/// directory. A reader sees the old bytes or the new bytes, never a mix.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::InvalidInput("cache path needs a parent".into()))?;
+    fs::create_dir_all(parent)?;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    static SAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    name.push(format!(".{}-{n}.tmp", std::process::id()));
+    let temporary = parent.join(name);
+    let result: std::io::Result<_> = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary, path)?;
+        #[cfg(unix)]
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    Ok(result?)
 }
 
 /// The Layer directory's complete current entries.
@@ -447,6 +453,17 @@ enum Hashed {
     Stable(Stat, FileEntry),
     Gone,
     Unstable,
+}
+
+/// The entry a path holds on disk, hashed the way a scan hashes it. `None` when the path is
+/// no longer a file or symlink, or keeps changing.
+pub(crate) fn entry_at(full: &Path, executable: bool) -> Result<Option<FileEntry>> {
+    Ok(
+        match read_stable(full, executable, &mut |bytes| Ok(ObjectId::for_blob(bytes)))? {
+            Hashed::Stable(_, entry) => Some(entry),
+            Hashed::Gone | Hashed::Unstable => None,
+        },
+    )
 }
 
 fn read_stable(
@@ -766,17 +783,23 @@ pub struct Capture {
     pub behind: bool,
 }
 
-impl Repository {
-    /// Captures the Layer's directory into a checkpoint when it differs from the head.
-    ///
-    /// The operation ID is derived from the Layer, the expected head and the exact
-    /// changes, so a retry after a lost reply or crash replays the original outcome,
-    /// and concurrent identical captures agree on one revision. Blobs are committed
-    /// before the cache is saved, so the cache never references missing content.
-    pub fn capture_directory(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
-        self.capture_source(layer, root, Source::Layer)
+impl Capture {
+    /// The result for a directory that lacks the head's work: nothing was scanned.
+    pub(crate) fn behind(head: LayerHead) -> Result<Self> {
+        Ok(Self {
+            update: None,
+            operation: None,
+            head,
+            changes: SparseChanges::new([])?,
+            hashed: 0,
+            uncertain: Vec::new(),
+            rebuilt: false,
+            behind: true,
+        })
     }
+}
 
+impl Repository {
     /// Captures an existing project directory into an active Layer for adoption.
     pub(crate) fn capture_project(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
         self.capture_source(layer, root, Source::Project)
@@ -789,23 +812,9 @@ impl Repository {
         }
     }
 
-    /// Captures the Layer's clone-backed directory (`.javelin/layers/<id>`) before a
-    /// command reads Layer state. `None` when there is no directory or the Layer is
-    /// no longer active, so there is nothing to capture.
-    pub fn capture_workspace(&mut self, layer: &LayerId) -> Result<Option<Capture>> {
-        let root = self.workspace_root(layer)?;
-        if !root.try_exists()? {
-            return Ok(None);
-        }
-        match self.layer_state(layer)? {
-            LayerState::Active { head } => self.capture_at(head, &root, Source::Layer).map(Some),
-            _ => Ok(None),
-        }
-    }
-
-    /// Whether Stack produced the head. Stack changes only native state, so the Layer's
-    /// directory lacks the stacked work until it is refreshed.
-    fn stacked(&self, head: &LayerHead) -> Result<bool> {
+    /// Whether Stack produced the head. Stack changes only native state, so a Layer's
+    /// directory lacks the stacked work until it is refreshed to the head.
+    pub(crate) fn stacked(&self, head: &LayerHead) -> Result<bool> {
         Ok(self
             .conn
             .query_row(
@@ -823,24 +832,19 @@ impl Repository {
         Ok(self.store_path()?.join("layers").join(layer.as_str()))
     }
 
-    fn capture_at(&mut self, head: LayerHead, root: &Path, source: Source) -> Result<Capture> {
+    /// Scans `root` against the head and commits any difference. The caller decides
+    /// whether the directory may be captured at all (see `capture_workspace`).
+    pub(crate) fn capture_at(
+        &mut self,
+        head: LayerHead,
+        root: &Path,
+        source: Source,
+    ) -> Result<Capture> {
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
         let base = self.manifest_at(checkpoint.base().version())?;
         let cache_path = self.capture_cache(head.layer())?;
         let mut cache = StatCache::load(&cache_path);
         let rebuilt = cache.rebuilt();
-        if self.stacked(&head)? {
-            return Ok(Capture {
-                update: None,
-                operation: None,
-                head,
-                changes: SparseChanges::new([])?,
-                hashed: 0,
-                uncertain: Vec::new(),
-                rebuilt,
-                behind: true,
-            });
-        }
         let manifest = self.checkpoint_manifest(checkpoint.id())?;
         let tx = self.conn.unchecked_transaction()?;
         let scan = scan_source(
@@ -874,7 +878,7 @@ impl Repository {
     }
 
     /// `.javelin/capture/<sha256(layer)>`: fixed-width and case-insensitive safe.
-    fn capture_cache(&self, layer: &LayerId) -> Result<PathBuf> {
+    pub(crate) fn capture_cache(&self, layer: &LayerId) -> Result<PathBuf> {
         let name = ObjectId::from_bytes(Sha256::digest(layer.as_str().as_bytes()).into());
         Ok(self.store_path()?.join("capture").join(name.to_string()))
     }
@@ -889,7 +893,7 @@ impl Repository {
 }
 
 /// Stores new content; existing blobs are not re-read (`check` verifies them).
-fn store_blob(conn: &Connection, bytes: &[u8]) -> Result<ObjectId> {
+pub(crate) fn store_blob(conn: &Connection, bytes: &[u8]) -> Result<ObjectId> {
     let id = ObjectId::for_blob(bytes);
     let exists = conn
         .query_row(

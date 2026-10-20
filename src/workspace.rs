@@ -19,6 +19,7 @@
 //! crash interrupted. Only trash for terminal Layers, dropped bases and abandoned staging
 //! is ever deleted.
 mod clone;
+mod refresh;
 
 use std::{
     collections::HashSet,
@@ -32,6 +33,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 pub use clone::{CloneReport, CloneStrategy};
+pub use refresh::WorkspaceRefresh;
 
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, OperationId,
@@ -224,6 +226,7 @@ impl Repository {
             clone::barrier(&staging)?;
             fs::rename(&staging, &root)?;
             sync_dir(&store.layers())?;
+            self.write_sync(layer, head.checkpoint())?;
             Ok::<_, Error>((clone, applied))
         })();
         let (clone, applied) = built.inspect_err(|_| store.abandon(&staging))?;
@@ -727,8 +730,11 @@ impl Store {
 
     /// Atomically renames `path` into trash under a name recording what it was.
     fn trash(&self, path: &Path, kind: &str) -> io::Result<()> {
-        // Moving a directory to a new parent needs write permission on it.
-        set_mode(path, 0o700)?;
+        // Moving a directory to a new parent needs write permission on it. A symlink is moved
+        // as a link, and chmod would change its target outside the store.
+        if !path.is_symlink() {
+            set_mode(path, 0o700)?;
+        }
         fs::rename(
             path,
             self.dir.join("trash").join(format!("{kind}~{}", nonce())),
@@ -907,6 +913,34 @@ fn nonce() -> String {
 #[cfg(test)]
 mod tests {
     use super::windows_unrepresentable as bad;
+
+    #[cfg(unix)]
+    #[test]
+    fn abandoning_a_staged_symlink_leaves_its_target_alone() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let scratch = tempfile::TempDir::new().unwrap();
+        let dir = scratch.path().join("store");
+        fs::create_dir_all(dir.join("tmp")).unwrap();
+        fs::create_dir_all(dir.join("trash")).unwrap();
+        let outside = scratch.path().join("outside");
+        fs::write(&outside, b"x").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o644)).unwrap();
+        let link = dir.join("tmp").join("link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let store = super::Store {
+            dir: dir.clone(),
+            _lock: fs::File::create(dir.join("lock")).unwrap(),
+        };
+
+        store.abandon(&link);
+
+        let mode = fs::metadata(&outside).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "the link's target must keep its mode");
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "the link must be trashed"
+        );
+    }
 
     #[test]
     fn windows_names() {

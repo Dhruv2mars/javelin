@@ -52,6 +52,7 @@ javelin layer discard ID --revision N --operation ID
 javelin workspace create ID [--world N]
 javelin workspace open ID
 javelin workspace path ID
+javelin workspace refresh ID
 javelin workspace discard ID --operation ID
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
@@ -225,8 +226,14 @@ native Layer or World. The CLI never resolves a conflict for its owner.
 
 Stack changes only native state. The target's workspace directory does not receive
 the stacked work, and capture never reverts it (see "Daemonless checkpoint").
-Refreshing a directory from a stacked head is not implemented yet, so a Layer whose
-head came from Stack cannot be published through `workspace publish` until then.
+`javelin workspace refresh ID` brings the directory to the stacked head. It three-way
+merges local edits against the head and writes only paths the head changed. Local edits
+that do not touch those paths are kept, and the next capture includes them. When a local
+edit and a head change touch the same path or a file and directory collide, refresh
+reports `refresh_conflict` with the paths and changes nothing. Each path is replaced by
+an atomic rename, so an interrupted refresh leaves whole files and running refresh again
+converges. Refresh does not capture first. Afterwards `workspace publish` publishes the
+stacked work with the local edits.
 
 Stack success and stale retries return the original native outcome even after
 later edits or Publish. Reusing an operation ID with another target revision or
@@ -289,7 +296,8 @@ World or conflict/stale result, exact checkpoint, and warnings. Conflicts and
 stale receipts return exit 3 with `ok: false` on stdout; World and private edits
 are retained. Conflict paths are JSON-quoted in plain output. Compatible World
 advances compose using native rules; intersecting edits never silently clobber.
-There is no refresh or conflict-resolution command yet.
+`workspace refresh` reports conflicts and changes nothing. There is no
+conflict-resolution command yet; resolve the paths by editing the directory.
 
 Reuse the same operation, Layer and attribution after uncertainty. A completed
 retry returns the original receipt, even after later checkpoints or World
@@ -350,7 +358,7 @@ command.
 Stack changes only native state, so after `layer stack` the target's directory
 lacks the stacked work. Capture never reverts it: `checkpoint` refuses with
 `invalid_input` and other commands skip the capture with `capture.behind: true`.
-Refreshing the directory from a stacked head is not implemented yet.
+Run `javelin workspace refresh ID` to bring the directory to the stacked head.
 
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within

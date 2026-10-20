@@ -102,8 +102,14 @@ workflow may invoke or interpret Git.
   - [x] Measure the real capture path at 100k files (`examples/capture_bench.rs`).
   - [x] Capture the clone-backed workspace first in every `layer` and `workspace`
     command that names a Layer; never capture over a Stack-produced head.
-  - [ ] Refresh a clone-backed directory from a Stack-produced head (today capture
-    refuses with `behind` until this exists).
+  - [x] Refresh a clone-backed directory from a Stack-produced head (`workspace refresh`
+    three-way merges local edits; conflicts change nothing).
+  - [x] Refresh refuses head paths that an ignored or case-aliased file occupies, flushes
+    before the sync record moves, and lets `checkpoint` capture a synced stacked head.
+  - [x] Refresh refuses head paths that alias each other on the volume (case or Unicode
+    normalization, probed on the volume), applies head deletions before additions so a file
+    can become a directory, syncs only directories that still exist, and a capture through a
+    relative path to the workspace moves its sync record.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
@@ -119,7 +125,7 @@ workflow may invoke or interpret Git.
   PR `refactor/retire-overlayfs`). Clone-backed Layers are the only runtime.
 - [x] Clone-backed `workspace publish`: capture, then Publish the whole Layer, with
   exact retries; refuses busy, uncertain or `behind` captures.
-- [ ] Publish from a workspace whose head came from Stack (waits on directory refresh).
+- [x] Publish from a workspace whose head came from Stack (after `workspace refresh`).
 - [x] Reclaim a published Layer's directory; a successful Publish reclaims it, and recovery finishes interrupted reclaims.
 - [x] Independently verify committed filesystem-probe controls and negative cases
   at `0f15db2`. This verifies the probe only, not a sparse Layer backend.
@@ -313,7 +319,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 - [x] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
 - [x] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock
   (#66).
-- [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
+- [x] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
 - [x] Reclaim a published Layer's directory (#66).
 - [ ] Process concurrency, crash recovery, retries and corruption proofs.
 
