@@ -109,7 +109,12 @@ impl From<rusqlite::Error> for Error {
             {
                 Self::CorruptRepository(error.to_string())
             }
-            _ if matches!(error, rusqlite::Error::Utf8Error(..)) => {
+            // A stored value whose type the schema does not allow is damage too.
+            _ if matches!(
+                error,
+                rusqlite::Error::Utf8Error(..) | rusqlite::Error::InvalidColumnType(..)
+            ) =>
+            {
                 Self::CorruptRepository(error.to_string())
             }
             _ => Self::Storage(error),

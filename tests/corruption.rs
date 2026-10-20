@@ -253,6 +253,27 @@ fn a_damaged_schema_is_corrupt_repository_not_storage_error() {
     assert_detected(dir.path(), "corrupt_repository", "damaged schema");
 }
 
+#[test]
+fn a_stored_value_of_the_wrong_type_is_corrupt_repository_not_storage_error() {
+    let dir = fixture();
+    let conn = raw(dir.path());
+    unlock(&conn);
+    // Dropping STRICT lets a BLOB sit where the schema promises TEXT, which is the stored
+    // type a bit flip in the record header produces.
+    conn.execute_batch(
+        "PRAGMA writable_schema=ON;
+         UPDATE sqlite_master SET sql=replace(sql,'STRICT','') WHERE name='versions';
+         PRAGMA writable_schema=OFF;",
+    )
+    .unwrap();
+    drop(conn);
+    let conn = raw(dir.path());
+    conn.execute("UPDATE versions SET id=CAST(id AS BLOB) WHERE number=2", [])
+        .unwrap();
+    drop(conn);
+    assert_detected(dir.path(), "corrupt_repository", "wrong stored type");
+}
+
 /// Every whole-file byte flip in the SQLite database is either detected or leaves the
 /// content exactly as it was. The first 100 bytes (header) are always covered; the rest
 /// is sampled on a stride so the sweep stays fast.
