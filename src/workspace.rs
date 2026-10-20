@@ -19,6 +19,7 @@
 //! crash interrupted. Only trash for terminal Layers, dropped bases and abandoned staging
 //! is ever deleted.
 mod clone;
+mod refresh;
 
 use std::{
     collections::HashSet,
@@ -32,6 +33,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 pub use clone::{CloneReport, CloneStrategy};
+pub use refresh::WorkspaceRefresh;
 
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, OperationId,
@@ -224,6 +226,7 @@ impl Repository {
             clone::barrier(&staging)?;
             fs::rename(&staging, &root)?;
             sync_dir(&store.layers())?;
+            self.write_sync(layer, head.checkpoint())?;
             Ok::<_, Error>((clone, applied))
         })();
         let (clone, applied) = built.inspect_err(|_| store.abandon(&staging))?;
