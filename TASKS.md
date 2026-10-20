@@ -235,6 +235,8 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [ ] Collision radar and trace blame (PRs #48, #49; rebase to format 8 after #51).
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
   queue and replay, and the quorum-replicated World log.
+  Note 2026-10-20: decisions D1, D2, D5 and D23 are recorded in `docs/online-design.md`
+  section 7; Free-plan limits stay unverified until U13.
 - [ ] Later, not GA: optional `javelin mount` (FUSE, lazy fetch) for cloud agent
   runners and Linux CI.
 
