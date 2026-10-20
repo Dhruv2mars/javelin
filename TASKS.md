@@ -106,9 +106,10 @@ workflow may invoke or interpret Git.
     three-way merges local edits; conflicts change nothing).
   - [x] Refresh refuses head paths that an ignored or case-aliased file occupies, flushes
     before the sync record moves, and lets `checkpoint` capture a synced stacked head.
-  - [x] Refresh refuses head paths that alias each other on a case-folding volume, applies
-    head deletions before additions so a file can become a directory, and a capture through
-    a relative path to the workspace moves its sync record.
+  - [x] Refresh refuses head paths that alias each other on the volume (case or Unicode
+    normalization, probed on the volume), applies head deletions before additions so a file
+    can become a directory, syncs only directories that still exist, and a capture through a
+    relative path to the workspace moves its sync record.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs

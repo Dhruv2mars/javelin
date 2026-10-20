@@ -457,38 +457,74 @@ fn refresh_applies_a_head_that_turns_a_file_into_a_directory() {
 
 #[test]
 fn refresh_refuses_head_names_that_alias_each_other_on_this_volume() {
-    let root = scratch();
-    fs::write(root.path().join("case"), b"").unwrap();
-    let folds = root.path().join("CASE").exists();
-    let mut repo = Repository::init(root.path()).unwrap();
-    let version = world(&mut repo, &[("shared", b"base")]);
-    let dir = open(&mut repo, "work", version);
-    stack(
-        &mut repo,
-        "work",
-        version,
-        &[("Foo", b"a"), ("foo", b"b")],
-        "pair",
-    );
+    // The volume decides which pairs alias: a case fold on one, a Unicode normalization on another.
+    for (first, second) in [("Foo", "foo"), ("\u{e9}", "e\u{301}")] {
+        let root = scratch();
+        fs::write(root.path().join(first), b"").unwrap();
+        let aliases = root.path().join(second).exists();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let version = world(&mut repo, &[("shared", b"base")]);
+        let dir = open(&mut repo, "work", version);
+        stack(
+            &mut repo,
+            "work",
+            version,
+            &[(first, b"a"), (second, b"b")],
+            "pair",
+        );
 
-    if !folds {
-        // A case-sensitive volume keeps both names, so both are applied.
-        assert!(repo.refresh_workspace(&id("work")).unwrap().refreshed);
+        if !aliases {
+            // A volume that keeps both names applies both.
+            assert!(repo.refresh_workspace(&id("work")).unwrap().refreshed);
+            assert_eq!(
+                contents(&dir),
+                expected(&[("shared", b"base"), (first, b"a"), (second, b"b")])
+            );
+            continue;
+        }
+        let error = repo.refresh_workspace(&id("work")).unwrap_err();
+        // The later of the two in path order is refused; the earlier one already claims the entry.
+        match error {
+            Error::RefreshConflict(paths) => {
+                assert_eq!(paths.len(), 1, "{paths:?}");
+                assert!([first, second].contains(&paths[0].as_str()), "{paths:?}");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(
             contents(&dir),
-            expected(&[("shared", b"base"), ("Foo", b"a"), ("foo", b"b")])
+            expected(&[("shared", b"base")]),
+            "a refused refresh must not write"
         );
-        return;
     }
-    let error = repo.refresh_workspace(&id("work")).unwrap_err();
-    match error {
-        Error::RefreshConflict(paths) => assert_eq!(paths, ["Foo", "foo"]),
-        other => panic!("{other:?}"),
-    }
+}
+
+#[test]
+fn refresh_survives_a_head_deletion_under_a_directory_that_became_a_file() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("keep", b"keep"), ("a/b/c", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::remove_dir_all(dir.join("a")).unwrap();
+    fs::write(dir.join("a"), b"file").unwrap();
+    let changes = SparseChanges::new(vec![
+        (RepoPath::parse("a/b/c").unwrap(), None),
+        (
+            RepoPath::parse("new").unwrap(),
+            Some(FileEntry::Regular {
+                content: repo.put_blob(b"new").unwrap(),
+                executable: false,
+            }),
+        ),
+    ])
+    .unwrap();
+    stack_changes(&mut repo, "work", version, changes, "under-file");
+
+    let refresh = repo.refresh_workspace(&id("work")).unwrap();
+    assert!(refresh.refreshed);
     assert_eq!(
         contents(&dir),
-        expected(&[("shared", b"base")]),
-        "a refused refresh must not write"
+        expected(&[("a", b"file"), ("keep", b"keep"), ("new", b"new")])
     );
 }
 

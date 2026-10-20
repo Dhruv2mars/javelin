@@ -193,24 +193,22 @@ impl Repository {
                 plan.conflicts.insert(path.as_str().to_owned());
             }
         }
-        let folds = folds_case(&store)?;
-        let gone = plan
+        let gone: BTreeSet<&str> = plan
             .apply
             .iter()
             .filter(|(_, change)| change.is_none())
-            .map(|(path, _)| volume_key(folds, path.as_str()))
+            .map(|(path, _)| path.as_str())
             .collect();
-        let volume = Volume { folds, gone };
-        plan.conflicts.extend(blocked(&root, &plan.apply, &volume)?);
+        plan.conflicts.extend(blocked(&root, &plan.apply, &gone)?);
         plan.conflicts
-            .extend(occupied(&root, &plan.apply, &scanned.entries, &volume)?);
-        plan.conflicts.extend(aliased(&plan.apply, &volume));
+            .extend(occupied(&root, &plan.apply, &scanned.entries, &gone)?);
+        plan.conflicts.extend(aliased(&store, &plan.apply)?);
         if !plan.conflicts.is_empty() {
             return Err(Error::RefreshConflict(plan.conflicts.into_iter().collect()));
         }
 
-        // Removals come first: a head that deletes `Foo` and adds `foo` on a folding volume
-        // would otherwise overwrite the file it is about to delete.
+        // Removals come first, so every path a removal frees is free before an addition
+        // writes to it.
         for (path, change) in &plan.apply {
             if change.is_none() {
                 remove(&root, path)?;
@@ -236,8 +234,9 @@ impl Repository {
             }
         }
         for dir in dirs {
+            // An ancestor a removal or the head replaced with a file is no longer a directory.
             match sync_dir(&dir) {
-                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
                 other => other?,
             }
         }
@@ -316,68 +315,59 @@ fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
     plan
 }
 
-/// How this volume names paths, and which entries this refresh removes before it writes.
-struct Volume {
-    folds: bool,
-    /// Keys of the paths the head deletes.
-    gone: BTreeSet<String>,
+/// Head additions that reach an entry an earlier addition already made on this volume: a
+/// name that differs only by case or Unicode normalization. The volume decides, so no
+/// folding rule is guessed. The names are created in a scratch tree in the store's staging
+/// area, never in the workspace, and the tree is removed afterwards.
+fn aliased(store: &Store, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec<String>> {
+    let scratch = store.staging("alias");
+    fs::create_dir_all(&scratch)?;
+    let found = probe(&scratch, apply);
+    // Our own scratch tree: a failed removal only leaves files the store's recovery trashes.
+    let _ = fs::remove_dir_all(&scratch);
+    Ok(found)
 }
 
-impl Volume {
-    fn key(&self, path: &str) -> String {
-        volume_key(self.folds, path)
-    }
-
-    /// Whether the entry at `path` is one the refresh removes first, so it is already free.
-    fn is_gone(&self, path: &str) -> bool {
-        self.gone.contains(&self.key(path))
-    }
-}
-
-/// The name the volume compares: two paths with one key reach one entry.
-fn volume_key(folds: bool, path: &str) -> String {
-    if folds {
-        path.to_lowercase()
-    } else {
-        path.to_owned()
-    }
-}
-
-/// Whether this volume folds case, so a name and its upper-case twin reach one entry.
-fn folds_case(store: &Store) -> Result<bool> {
-    let tmp = store.dir.join("tmp");
-    let probe = tmp.join("case-probe");
-    fs::write(&probe, b"")?;
-    let folds = tmp.join("CASE-PROBE").exists();
-    fs::remove_file(&probe)?;
-    Ok(folds)
-}
-
-/// Head paths that name one entry on this volume with another head path, or that sit below
-/// a head file they fold onto. Writing them would overwrite one with the other.
-fn aliased(apply: &[(RepoPath, Option<FileEntry>)], volume: &Volume) -> Vec<String> {
-    let adds: Vec<&str> = apply
-        .iter()
-        .filter(|(_, change)| change.is_some())
-        .map(|(path, _)| path.as_str())
-        .collect();
-    let mut owners = BTreeMap::<String, usize>::new();
-    for path in &adds {
-        *owners.entry(volume.key(path)).or_default() += 1;
-    }
-    let mut aliased = Vec::new();
-    for path in adds {
-        let mut conflict = owners[&volume.key(path)] > 1;
-        let mut dir = path;
-        while let Some((parent, _)) = dir.rsplit_once('/') {
-            conflict |= owners.contains_key(&volume.key(parent));
-            dir = parent;
+/// Creates each addition's components under `scratch`. A component whose exact name is new
+/// but whose entry already exists is an alias of an earlier one. A failure for any other
+/// reason is left to the write, which reports it with the path's own error.
+fn probe(scratch: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Vec<String> {
+    let mut dirs = BTreeMap::<String, PathBuf>::new();
+    let mut found = Vec::new();
+    for (path, change) in apply {
+        if change.is_none() {
+            continue;
         }
-        if conflict {
-            aliased.push(path.to_owned());
+        let names: Vec<&str> = path.as_str().split('/').collect();
+        let mut parent = scratch.to_path_buf();
+        for (i, name) in names.iter().enumerate() {
+            let key = names[..=i].join("/");
+            if let Some(dir) = dirs.get(&key) {
+                parent = dir.clone();
+                continue;
+            }
+            let last = i + 1 == names.len();
+            let child = parent.join(name);
+            let made = if last {
+                fs::File::create_new(&child).map(drop)
+            } else {
+                fs::create_dir(&child)
+            };
+            match made {
+                Ok(()) if last => {}
+                Ok(()) => {
+                    dirs.insert(key, child.clone());
+                    parent = child;
+                }
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                    found.push(path.as_str().to_owned());
+                    break;
+                }
+                Err(_) => break,
+            }
         }
     }
-    aliased
+    found
 }
 
 /// Paths a file or directory on disk already blocks: a non-directory where the head needs
@@ -386,7 +376,7 @@ fn aliased(apply: &[(RepoPath, Option<FileEntry>)], volume: &Volume) -> Vec<Stri
 fn blocked(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
-    volume: &Volume,
+    gone: &BTreeSet<&str>,
 ) -> Result<Vec<String>> {
     let mut blocked = Vec::new();
     for (path, change) in apply {
@@ -396,7 +386,7 @@ fn blocked(
         let mut dir = path.as_str();
         while let Some((parent, _)) = dir.rsplit_once('/') {
             match fs::symlink_metadata(native(root, parent)) {
-                Ok(meta) if !meta.is_dir() && !volume.is_gone(parent) => {
+                Ok(meta) if !meta.is_dir() && !gone.contains(parent) => {
                     blocked.push(parent.to_owned());
                 }
                 Ok(_) => {}
@@ -427,11 +417,11 @@ fn occupied(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
     scanned: &BTreeMap<RepoPath, FileEntry>,
-    volume: &Volume,
+    gone: &BTreeSet<&str>,
 ) -> Result<Vec<String>> {
     let mut occupied = Vec::new();
     for (path, change) in apply {
-        if change.is_none() || scanned.contains_key(path) || volume.is_gone(path.as_str()) {
+        if change.is_none() || scanned.contains_key(path) || gone.contains(path.as_str()) {
             continue;
         }
         match fs::symlink_metadata(native(root, path.as_str())) {
