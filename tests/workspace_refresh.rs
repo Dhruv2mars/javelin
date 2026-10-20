@@ -351,6 +351,41 @@ fn refresh_refuses_to_overwrite_an_ignored_file_the_head_adds() {
 }
 
 #[test]
+fn refresh_finishes_an_interrupted_write_to_an_ignored_file() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("shared", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::write(dir.join(".javelinignore"), b"a/new.txt\n").unwrap();
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("a/new.txt", b"theirs"), ("b/new.txt", b"theirs")],
+        "ignored",
+    );
+    // An interrupted refresh wrote the ignored file, then failed before the next path.
+    fs::create_dir(dir.join("a")).unwrap();
+    fs::write(dir.join("a/new.txt"), b"theirs").unwrap();
+
+    let refresh = repo.refresh_workspace(&id("work")).unwrap();
+    assert!(refresh.refreshed);
+    assert_eq!(
+        refresh.applied, 2,
+        "the ignored path is a head change, not a local edit"
+    );
+    assert_eq!(
+        contents(&dir),
+        expected(&[
+            ("shared", b"base"),
+            (".javelinignore", b"a/new.txt\n"),
+            ("a/new.txt", b"theirs"),
+            ("b/new.txt", b"theirs"),
+        ])
+    );
+}
+
+#[test]
 fn refresh_refuses_a_name_that_aliases_a_local_file() {
     let root = scratch();
     let mut repo = Repository::init(root.path()).unwrap();

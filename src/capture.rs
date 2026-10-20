@@ -431,6 +431,17 @@ enum Hashed {
     Unstable,
 }
 
+/// The entry a path holds on disk, hashed the way a scan hashes it. `None` when the path is
+/// no longer a file or symlink, or keeps changing.
+pub(crate) fn entry_at(full: &Path, executable: bool) -> Result<Option<FileEntry>> {
+    Ok(
+        match read_stable(full, executable, &mut |bytes| Ok(ObjectId::for_blob(bytes)))? {
+            Hashed::Stable(_, entry) => Some(entry),
+            Hashed::Gone | Hashed::Unstable => None,
+        },
+    )
+}
+
 fn read_stable(
     full: &Path,
     executable: bool,

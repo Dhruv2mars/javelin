@@ -13,6 +13,7 @@
 //! remains and converges. The sync record is written last.
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::{OsStr, OsString},
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -24,7 +25,7 @@ use super::{Store, WorkspaceRecovery, clone, native, remove_entry, representable
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
     Repository, Result, SparseChanges,
-    capture::{Capture, StatCache, changes_from, scan, store_blob, write_atomic},
+    capture::{Capture, StatCache, changes_from, entry_at, scan, store_blob, write_atomic},
 };
 
 /// What a refresh did. `refreshed` is false when the directory already matched the head.
@@ -202,6 +203,8 @@ impl Repository {
         plan.conflicts.extend(blocked(&root, &plan.apply, &gone)?);
         plan.conflicts
             .extend(occupied(&root, &plan.apply, &scanned.entries, &gone)?);
+        plan.conflicts
+            .extend(aliased_dirs(&root, &plan.apply, &gone)?);
         plan.conflicts.extend(aliased(&store, &plan.apply)?);
         if !plan.conflicts.is_empty() {
             return Err(Error::RefreshConflict(plan.conflicts.into_iter().collect()));
@@ -370,9 +373,72 @@ fn probe(scratch: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Vec<String>
     found
 }
 
+/// Head additions whose directory components name an existing directory under another spelling
+/// on this volume: `D/new` when the workspace holds `d`. A component that resolves on disk but
+/// is missing from its parent's listing is such an alias, because the listing names entries as
+/// stored. A component the head deletes is removed first, so it is not an alias.
+fn aliased_dirs(
+    root: &Path,
+    apply: &[(RepoPath, Option<FileEntry>)],
+    gone: &BTreeSet<&str>,
+) -> Result<Vec<String>> {
+    let mut listings = BTreeMap::<String, BTreeSet<OsString>>::new();
+    let mut found = Vec::new();
+    for (path, change) in apply {
+        if change.is_none() {
+            continue;
+        }
+        let names: Vec<&str> = path.as_str().split('/').collect();
+        for i in 1..names.len() {
+            let dir = names[..i].join("/");
+            if gone.contains(dir.as_str()) {
+                break;
+            }
+            match fs::symlink_metadata(native(root, &dir)) {
+                Ok(_) => {}
+                Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            }
+            let parent = names[..i - 1].join("/");
+            if !listings.contains_key(&parent) {
+                let listing = match fs::read_dir(native(root, &parent)) {
+                    Ok(entries) => entries
+                        .map(|entry| entry.map(|entry| entry.file_name()))
+                        .collect::<std::io::Result<BTreeSet<OsString>>>()?,
+                    Err(e) if e.kind() == ErrorKind::NotFound => BTreeSet::new(),
+                    Err(e) => return Err(e.into()),
+                };
+                listings.insert(parent.clone(), listing);
+            }
+            if !listings[&parent].contains(OsStr::new(names[i - 1])) {
+                found.push(path.as_str().to_owned());
+                break;
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+/// Whether a head removal of an ancestor frees `path`. The removed ancestor is a file or a
+/// symlink, so nothing under it is reached through it any more.
+fn freed(path: &str, gone: &BTreeSet<&str>) -> bool {
+    let mut dir = path;
+    while let Some((parent, _)) = dir.rsplit_once('/') {
+        if gone.contains(parent) {
+            return true;
+        }
+        dir = parent;
+    }
+    false
+}
+
 /// Paths a file or directory on disk already blocks: a non-directory where the head needs
 /// a parent, or a directory where it needs a file. Symlinked parents also count, because
-/// writes never go through links. A file the head deletes does not block its children.
+/// writes never go through links. A path under a file or symlink the head deletes is free.
 fn blocked(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
@@ -380,15 +446,13 @@ fn blocked(
 ) -> Result<Vec<String>> {
     let mut blocked = Vec::new();
     for (path, change) in apply {
-        if change.is_none() {
+        if change.is_none() || freed(path.as_str(), gone) {
             continue;
         }
         let mut dir = path.as_str();
         while let Some((parent, _)) = dir.rsplit_once('/') {
             match fs::symlink_metadata(native(root, parent)) {
-                Ok(meta) if !meta.is_dir() && !gone.contains(parent) => {
-                    blocked.push(parent.to_owned());
-                }
+                Ok(meta) if !meta.is_dir() => blocked.push(parent.to_owned()),
                 Ok(_) => {}
                 // A file above `parent` blocks it too, and the loop reaches that file next.
                 Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
@@ -412,7 +476,8 @@ fn blocked(
 
 /// Head paths that a file on disk already occupies but the scan did not see: an ignored
 /// untracked file, or a name that matches a local one only by case or normalization on this
-/// volume. Writing over them would lose their bytes, so the refresh refuses.
+/// volume. Writing over them would lose their bytes, so the refresh refuses. An ignored file
+/// that already holds the head's entry is the write of an interrupted refresh, so it is applied.
 fn occupied(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
@@ -421,11 +486,25 @@ fn occupied(
 ) -> Result<Vec<String>> {
     let mut occupied = Vec::new();
     for (path, change) in apply {
-        if change.is_none() || scanned.contains_key(path) || gone.contains(path.as_str()) {
+        let Some(entry) = change else { continue };
+        if scanned.contains_key(path) || gone.contains(path.as_str()) || freed(path.as_str(), gone)
+        {
             continue;
         }
-        match fs::symlink_metadata(native(root, path.as_str())) {
-            Ok(meta) if !meta.is_dir() => occupied.push(path.as_str().to_owned()),
+        let full = native(root, path.as_str());
+        match fs::symlink_metadata(&full) {
+            Ok(meta) if !meta.is_dir() => {
+                let executable = matches!(
+                    entry,
+                    FileEntry::Regular {
+                        executable: true,
+                        ..
+                    }
+                );
+                if entry_at(&full, executable)?.as_ref() != Some(entry) {
+                    occupied.push(path.as_str().to_owned());
+                }
+            }
             Ok(_) => {}
             Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
             Err(e) => return Err(e.into()),
@@ -538,5 +617,61 @@ mod tests {
     fn an_untouched_layer_has_nothing_to_merge() {
         let none = changes(&[]);
         assert_eq!(plan(&none, &none), Plan::default());
+    }
+
+    #[test]
+    fn a_head_addition_under_an_existing_directory_spelling_is_an_alias_only_on_its_volume() {
+        let root = tempfile::TempDir::new().unwrap();
+        fs::create_dir(root.path().join("d")).unwrap();
+        fs::write(root.path().join("d/keep"), b"k").unwrap();
+        let none = BTreeSet::new();
+        let exact = [(path("d/new"), file(b"n"))];
+        assert!(aliased_dirs(root.path(), &exact, &none).unwrap().is_empty());
+        let alias = [(path("D/new"), file(b"n"))];
+        let on_this_volume = root.path().join("D").exists();
+        let found = aliased_dirs(root.path(), &alias, &none).unwrap();
+        assert_eq!(
+            found,
+            if on_this_volume {
+                vec!["D/new".to_owned()]
+            } else {
+                vec![]
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_under_a_head_removed_symlink_is_free() {
+        let root = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        fs::write(outside.path().join("y"), b"external").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("x")).unwrap();
+        let apply = [(path("x"), None), (path("x/y"), file(b"n"))];
+        let gone = BTreeSet::from(["x"]);
+        assert!(blocked(root.path(), &apply, &gone).unwrap().is_empty());
+        assert!(
+            occupied(root.path(), &apply, &BTreeMap::new(), &gone)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_ignored_file_holding_the_head_entry_is_applied_not_occupied() {
+        let root = tempfile::TempDir::new().unwrap();
+        fs::write(root.path().join("new.txt"), b"theirs").unwrap();
+        let none = BTreeSet::new();
+        let same = [(path("new.txt"), file(b"theirs"))];
+        assert!(
+            occupied(root.path(), &same, &BTreeMap::new(), &none)
+                .unwrap()
+                .is_empty()
+        );
+        let differs = [(path("new.txt"), file(b"mine"))];
+        assert_eq!(
+            occupied(root.path(), &differs, &BTreeMap::new(), &none).unwrap(),
+            ["new.txt"]
+        );
     }
 }
