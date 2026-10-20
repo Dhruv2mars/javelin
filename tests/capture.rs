@@ -275,7 +275,10 @@ fn settled_entries_are_reused_and_edits_after_settling_are_seen() {
     // Every entry is racy, so the next scan re-hashes them all.
     assert_eq!(repo.capture_directory(&layer, &root).unwrap().hashed, 20);
     settle();
-    assert_eq!(repo.capture_directory(&layer, &root).unwrap().hashed, 20);
+    // Whether the second scan was still racy depends on wall-clock time: a slow runner can
+    // pass the racy window first, so this scan may trust them. Either way, the scan after
+    // this one must find them old and reuse every entry.
+    repo.capture_directory(&layer, &root).unwrap();
     // Now they are trusted: nothing is hashed.
     let idle = repo.capture_directory(&layer, &root).unwrap();
     assert_eq!((idle.hashed, idle.update.is_none()), (0, true));
