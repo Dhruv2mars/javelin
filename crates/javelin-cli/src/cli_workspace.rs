@@ -101,7 +101,16 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
                 {
                     return Err(Error::OperationIdReused(operation));
                 }
-                Some(receipt) => publication(&command, receipt),
+                // A replay returns the stored receipt and still finishes an interrupted reclaim.
+                Some(receipt) => {
+                    let receipt = repo.publish_workspace(
+                        &operation,
+                        &receipt.expected,
+                        &attribution,
+                        |_, _| Ok(()),
+                    )?;
+                    publication(&command, receipt)
+                }
                 None => {
                     // Publish only what the directory holds, so no edit is silently left out.
                     if let Some(capture) = &capture {
@@ -118,7 +127,7 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
                     }
                     let expected = latest_active(&repo, &layer)?;
                     let receipt =
-                        repo.publish_layer(&operation, &expected, &attribution, |_, _| Ok(()))?;
+                        repo.publish_workspace(&operation, &expected, &attribution, |_, _| Ok(()))?;
                     publication(&command, receipt)
                 }
             }

@@ -3,40 +3,46 @@
 //!
 //! Store layout under `.javelin/`:
 //! - `workspace.lock` serializes workspace changes between processes.
-//! - `bases/<N>` holds World N, written once and sealed. Unix seals it with root mode
-//!   000, so ordinary tools cannot open it, and briefly reopens it, under the lock,
-//!   to clone it. `base(M)` is `clone(base N)` plus the N→M tree diff, O(change).
+//! - `bases/rolling` is the repository's one base, sealed. It holds the World recorded
+//!   in `base.json` and moves forward in place, under the lock, by applying changesets.
+//!   A Layer at a newer World advances it first. A Layer at an older World clones it and
+//!   applies the inverse changeset to the clone, O(distance). Unix seals it with root
+//!   mode 000, so ordinary tools cannot open it, and briefly reopens it under the lock.
+//! - `base.json` records the rolling base's World. An advance writes `advancing` first.
+//!   A crash or failure mid-advance drops the base, and the next Layer rebuilds it.
 //! - `layers/<id>` is the Layer's writable directory.
 //! - `tmp/` holds staging. Anything still there at recovery is abandoned work.
 //! - `trash/` holds renamed-away Layers, bases and staging, reclaimed in bounded steps.
 //!
-//! The database decides first and the directories follow: discard records the
-//! terminal event, then renames the directory into trash. Recovery finishes any step
-//! a crash interrupted. Only trash for terminal Layers, evicted bases and abandoned
-//! staging is ever deleted.
+//! The database decides first and the directories follow: discard and Publish record the
+//! terminal event, then rename the directory into trash. Recovery finishes any step a
+//! crash interrupted. Only trash for terminal Layers, dropped bases and abandoned staging
+//! is ever deleted.
 mod clone;
 
 use std::{
     collections::HashSet,
     fs, io,
+    io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use clone::{CloneReport, CloneStrategy};
 
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, OperationId,
-    RepoPath, Repository, Result, VersionNumber, domain::WorldIndex, repository::Index,
+    PublicationReceipt, PublishAttribution, PublishOutcome, RepoPath, Repository, Result,
+    SparseChanges, VersionNumber, WorldVersion, domain::WorldIndex, repository::Index,
 };
 
-/// Materialized bases kept, besides any pinned for the current command.
-const BASE_CACHE: usize = 2;
 /// Filesystem entries each ordinary command may delete from trash.
 const RECLAIM_BUDGET: usize = 4096;
+/// The repository's one materialized base, under `bases/`.
+const ROLLING: &str = "rolling";
 
 /// Where a Layer's directory and its base live. Paths exist only once opened.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -46,34 +52,49 @@ pub struct LayerWorkspace {
     pub root: PathBuf,
     pub exists: bool,
     pub base_version: VersionNumber,
-    /// The sealed base directory, `.javelin/bases/<N>`. It may be evicted at any time
-    /// and is not readable on Unix while sealed; capture should compare the Layer with
-    /// its checkpoint and stat cache instead.
+    /// The repository's rolling base, `.javelin/bases/rolling`. It holds the World that
+    /// `base.json` records, which is not necessarily this Layer's World. It is sealed on
+    /// Unix, so capture should compare the Layer with its checkpoint and stat cache.
     pub base_root: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BaseSource {
-    /// Already materialized.
+    /// The rolling base already held this World.
     Cached,
-    /// Cloned from another materialized base, plus the changeset between them.
+    /// The rolling base was ahead of this World: the Layer's clone was rewound to it by
+    /// the changeset between the two, and the rolling base was left alone.
     Derived,
-    /// Written from stored objects (cold).
+    /// The rolling base was behind this World and moved forward in place, by the
+    /// changeset between the two.
+    Advanced,
+    /// Written from stored objects (cold): the rolling base was absent or partial.
     Materialized,
 }
 
-/// How a base was obtained. `elapsed_ms` is the cold or derive cost alone.
+/// How the rolling base was brought to a World. `elapsed_ms` is that cost alone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BaseReport {
+    /// The World the Layer was opened at.
     pub version: VersionNumber,
     pub source: BaseSource,
+    /// The World the rolling base held before an advance or rewind.
     pub derived_from: Option<VersionNumber>,
-    /// Paths written or removed on top of the clone, or all paths when materialized.
+    /// Paths written or removed on top of the base, or all paths when materialized.
     pub changed_paths: usize,
     pub written_bytes: u64,
+    /// The clone of the rolling base, when a Layer's clone was rewound.
     pub clone: Option<CloneReport>,
     pub elapsed_ms: u64,
+}
+
+/// The rolling base's record in `base.json`. `advancing` names the target of an advance
+/// that has not finished, so a base found with it set is partial and must be dropped.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct RollingState {
+    version: u64,
+    advancing: Option<u64>,
 }
 
 /// The result of opening a Layer's directory.
@@ -130,12 +151,12 @@ impl Repository {
             exists: root.try_exists()?,
             root,
             base_version,
-            base_root: store.join("bases").join(base_version.to_string()),
+            base_root: store.join("bases").join(ROLLING),
         })
     }
 
-    /// Materializes an active Layer's directory by cloning its base and applying its
-    /// checkpoint. Idempotent: an existing directory is returned untouched.
+    /// Materializes an active Layer's directory by cloning the rolling base and applying
+    /// its checkpoint. Idempotent: an existing directory is returned untouched.
     pub fn open_workspace(&mut self, layer: &LayerId) -> Result<WorkspaceReport> {
         let store = Store::lock(self)?;
         let recovery = store.recover(self, Some(RECLAIM_BUDGET))?;
@@ -171,17 +192,32 @@ impl Repository {
         }
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
         let version = checkpoint.base().version();
-        let (base_root, base) = self.ensure_base(&store, version)?;
         let started = Instant::now();
+        let (rolling_at, mut base) = self.ensure_rolling(&store, version)?;
+        let rolling = store.rolling();
         let staging = store.staging(&format!("layer~{}", layer.as_str()));
         let built = (|| {
-            let clone = unsealed(&base_root, || clone::clone_tree(&base_root, &staging))?;
+            let clone = unsealed(&rolling, || clone::clone_tree(&rolling, &staging))?;
             open_root(&staging)?;
+            if rolling_at > version {
+                // The rolling base is ahead of this Layer: rewind the clone to its World.
+                let index = Index::new(&self.conn);
+                let changes = index
+                    .trees
+                    .diff(index.root(rolling_at)?, index.root(version)?)?;
+                let changes = changes.entries().iter().map(|(p, e)| (p, e.as_ref()));
+                let (changed, written) = self.apply(&staging, &At(index, rolling_at), changes)?;
+                base.source = BaseSource::Derived;
+                base.derived_from = Some(rolling_at);
+                base.changed_paths = changed;
+                base.written_bytes = written;
+                base.clone = Some(clone.clone());
+            }
             let changes = checkpoint.changes().entries();
             let (applied, _) = if changes.is_empty() {
                 (0, 0)
             } else {
-                let before = At(Index::new(&self.conn), checkpoint.base().version());
+                let before = At(Index::new(&self.conn), version);
                 let changes = changes.iter().map(|(p, e)| (p, e.as_ref()));
                 self.apply(&staging, &before, changes)?
             };
@@ -191,14 +227,38 @@ impl Repository {
             Ok::<_, Error>((clone, applied))
         })();
         let (clone, applied) = built.inspect_err(|_| store.abandon(&staging))?;
-        let head_version = self.world_head()?;
-        store.evict_bases(&[version, head_version])?;
         report.created = true;
         report.base = Some(base);
         report.clone = Some(clone);
         report.applied_changes = applied;
         report.elapsed_ms = millis(started);
         Ok(report)
+    }
+
+    /// Publishes the Layer and reclaims its directory under the same lock. A crash after
+    /// the publish commits leaves the directory for the next command, because recovery
+    /// treats a published Layer as terminal. A retry replays the receipt and finishes it.
+    pub fn publish_workspace<F>(
+        &mut self,
+        operation: &OperationId,
+        expected: &LayerHead,
+        attribution: &PublishAttribution,
+        guard: F,
+    ) -> Result<PublicationReceipt>
+    where
+        F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
+    {
+        let store = Store::lock(self)?;
+        let receipt = self.publish_layer(operation, expected, attribution, guard)?;
+        if matches!(receipt.outcome, PublishOutcome::Published { .. }) {
+            let layer = expected.layer();
+            let root = store.layers().join(layer.as_str());
+            if root.try_exists()? {
+                store.trash(&root, &format!("layer~{}", layer.as_str()))?;
+            }
+            store.recover(self, Some(RECLAIM_BUDGET))?;
+        }
+        Ok(receipt)
     }
 
     /// Records the terminal discard, then renames the directory into trash for later
@@ -241,27 +301,26 @@ impl Repository {
             .ok_or_else(|| Error::CorruptRepository("repository database has no path".into()))
     }
 
-    // Direct reads: the command already validated full state once through layer_state.
-    fn world_head(&self) -> Result<VersionNumber> {
-        let head: i64 = self
-            .conn
-            .query_row("SELECT max(number) FROM versions", [], |r| r.get(0))?;
-        VersionNumber::decode(head)
-    }
-
-    /// Layers with a terminal discard event, in one query.
-    fn discarded_layers(&self) -> Result<HashSet<String>> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT DISTINCT layer FROM layer_heads WHERE discarded=1")?;
+    /// Layers whose directory is reclaimable: a terminal discard, or a successful Publish.
+    fn terminal_layers(&self) -> Result<HashSet<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT layer FROM layer_heads WHERE discarded=1 \
+             UNION SELECT layer FROM publications WHERE outcome=1",
+        )?;
         let layers = statement
             .query_map([], |r| r.get(0))?
             .collect::<std::result::Result<_, _>>()?;
         Ok(layers)
     }
 
-    fn ensure_base(&self, store: &Store, version: VersionNumber) -> Result<(PathBuf, BaseReport)> {
-        let target = store.bases().join(version.to_string());
+    /// Brings the rolling base to `version` under the lock and returns the World it holds
+    /// afterwards. It advances in place when behind, is rebuilt cold when absent or partial,
+    /// and is left alone when ahead; the caller then rewinds the Layer's own clone.
+    fn ensure_rolling(
+        &self,
+        store: &Store,
+        version: VersionNumber,
+    ) -> Result<(VersionNumber, BaseReport)> {
         let mut report = BaseReport {
             version,
             source: BaseSource::Cached,
@@ -271,48 +330,96 @@ impl Repository {
             clone: None,
             elapsed_ms: 0,
         };
-        if target.try_exists()? {
-            return Ok((target, report));
-        }
         let started = Instant::now();
-        let nearest = store
-            .bases_cached()?
-            .into_iter()
-            .min_by_key(|(v, _)| v.get().abs_diff(version.get()));
-        let staging = store.staging(&format!("base~{version}"));
+        let held = match store.rolling_state()? {
+            Some(RollingState {
+                version: held,
+                advancing: None,
+            }) if store.rolling().try_exists()? => Some(VersionNumber::new(held)?),
+            _ => None,
+        };
+        let at = match held {
+            Some(at) if at >= version => at,
+            Some(at) => {
+                let (changed, written) = self.advance_rolling(store, at, version)?;
+                report.source = BaseSource::Advanced;
+                report.derived_from = Some(at);
+                report.changed_paths = changed;
+                report.written_bytes = written;
+                version
+            }
+            None => {
+                let (changed, written) = self.materialize_rolling(store, version)?;
+                report.source = BaseSource::Materialized;
+                report.changed_paths = changed;
+                report.written_bytes = written;
+                version
+            }
+        };
+        report.elapsed_ms = millis(started);
+        Ok((at, report))
+    }
+
+    /// Moves the rolling base forward from `from` to `to`, in place. The record names the
+    /// target before the first write, so a crash leaves a partial base that is dropped.
+    fn advance_rolling(
+        &self,
+        store: &Store,
+        from: VersionNumber,
+        to: VersionNumber,
+    ) -> Result<(usize, u64)> {
+        let target = store.rolling();
+        store.write_rolling_state(RollingState {
+            version: from.get(),
+            advancing: Some(to.get()),
+        })?;
+        let applied = unsealed(&target, || -> Result<(usize, u64)> {
+            // The tree diff skips shared subtrees: O(change), not O(repo).
+            let index = Index::new(&self.conn);
+            let changes = index.trees.diff(index.root(from)?, index.root(to)?)?;
+            let changes = changes.entries().iter().map(|(p, e)| (p, e.as_ref()));
+            let applied = self.apply(&target, &At(index, from), changes)?;
+            clone::barrier(&target)?;
+            Ok(applied)
+        });
+        match applied {
+            Ok(applied) => {
+                store.write_rolling_state(RollingState {
+                    version: to.get(),
+                    advancing: None,
+                })?;
+                Ok(applied)
+            }
+            Err(error) => {
+                // Best effort: if this also fails, the partial record makes the next command drop it.
+                let _ = store.drop_rolling();
+                Err(error)
+            }
+        }
+    }
+
+    /// Replaces the rolling base with a cold materialization of `version`.
+    fn materialize_rolling(&self, store: &Store, version: VersionNumber) -> Result<(usize, u64)> {
+        store.drop_rolling()?;
+        let target = store.rolling();
+        let staging = store.staging("rolling");
         let built = (|| {
-            let (changed, written) = match &nearest {
-                Some((from, path)) => {
-                    // The tree diff skips shared subtrees: O(change), not O(repo).
-                    let index = Index::new(&self.conn);
-                    let changes = index.trees.diff(index.root(*from)?, index.root(version)?)?;
-                    report.clone = Some(unsealed(path, || clone::clone_tree(path, &staging))?);
-                    open_root(&staging)?;
-                    report.source = BaseSource::Derived;
-                    report.derived_from = Some(*from);
-                    let changes = changes.entries().iter().map(|(p, e)| (p, e.as_ref()));
-                    self.apply(&staging, &At(index, *from), changes)?
-                }
-                None => {
-                    let manifest = self.manifest_at(version)?;
-                    clone::create_base_dir(&staging)?;
-                    report.source = BaseSource::Materialized;
-                    let entries = manifest.entries().iter();
-                    self.apply(&staging, &Nothing, entries.map(|(p, e)| (p, Some(e))))?
-                }
-            };
+            let manifest = self.manifest_at(version)?;
+            clone::create_base_dir(&staging)?;
+            let entries = manifest.entries().iter();
+            let counts = self.apply(&staging, &Nothing, entries.map(|(p, e)| (p, Some(e))))?;
             clone::barrier(&staging)?;
             // Publish first: a sealed directory cannot be renamed to a new parent.
             fs::rename(&staging, &target)?;
             seal(&target)?;
+            store.write_rolling_state(RollingState {
+                version: version.get(),
+                advancing: None,
+            })?;
             sync_dir(&store.bases())?;
-            Ok::<_, Error>((changed, written))
+            Ok::<_, Error>(counts)
         })();
-        let (changed, written) = built.inspect_err(|_| store.abandon(&staging))?;
-        report.changed_paths = changed;
-        report.written_bytes = written;
-        report.elapsed_ms = millis(started);
-        Ok((target, report))
+        built.inspect_err(|_| store.abandon(&staging))
     }
 
     /// Applies exact path changes relative to `before` under `root`. Removals go first;
@@ -375,7 +482,6 @@ impl Repository {
                 content,
                 executable,
             } => {
-                use std::io::Write;
                 let bytes = self.read_blob(*content)?;
                 let mut options = fs::OpenOptions::new();
                 options.write(true).create_new(true);
@@ -558,7 +664,10 @@ fn open_root(root: &Path) -> io::Result<()> {
 }
 
 /// Runs `f` with the base root readable by its owner, resealing it afterwards.
-fn unsealed<T>(root: &Path, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+fn unsealed<T, E: From<io::Error>>(
+    root: &Path,
+    f: impl FnOnce() -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
     set_mode(root, 0o700)?;
     let result = f();
     seal(root)?;
@@ -634,41 +743,48 @@ impl Store {
         }
     }
 
-    fn bases_cached(&self) -> io::Result<Vec<(VersionNumber, PathBuf)>> {
-        let mut bases = Vec::new();
-        for entry in fs::read_dir(self.bases())? {
-            let entry = entry?;
-            let version = entry.file_name().to_str().and_then(|n| n.parse().ok());
-            if let Some(version) = version.and_then(|v| VersionNumber::new(v).ok()) {
-                bases.push((version, entry.path()));
-            }
-        }
-        bases.sort_by_key(|(v, _)| std::cmp::Reverse(*v));
-        Ok(bases)
+    fn rolling(&self) -> PathBuf {
+        self.bases().join(ROLLING)
     }
 
-    /// Keeps pinned bases and the newest others, up to the cache bound.
-    fn evict_bases(&self, pinned: &[VersionNumber]) -> io::Result<()> {
-        let pinned: std::collections::BTreeSet<_> = pinned.iter().copied().collect();
-        let mut room = BASE_CACHE.saturating_sub(pinned.len());
-        for (version, path) in self.bases_cached()? {
-            if pinned.contains(&version) {
-                continue;
-            }
-            if room > 0 {
-                room -= 1;
-                continue;
-            }
-            self.trash(&path, &format!("base~{version}"))?;
+    /// The rolling base's record. A missing or unreadable record means no usable base.
+    fn rolling_state(&self) -> io::Result<Option<RollingState>> {
+        match fs::read(self.dir.join("base.json")) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
         }
-        Ok(())
+    }
+
+    /// Replaces the record atomically and makes it durable before returning.
+    fn write_rolling_state(&self, state: RollingState) -> io::Result<()> {
+        let tmp = self.dir.join("base.json.tmp");
+        let mut file = fs::File::create(&tmp)?;
+        let bytes = serde_json::to_vec(&state).map_err(io::Error::other)?;
+        file.write_all(&bytes)?;
+        flush(&file)?;
+        fs::rename(&tmp, self.dir.join("base.json"))?;
+        sync_dir(&self.dir)
+    }
+
+    /// Trashes the rolling base and then its record. A crash between the two leaves a
+    /// record without a directory, which reads as no usable base.
+    fn drop_rolling(&self) -> io::Result<()> {
+        let rolling = self.rolling();
+        if rolling.try_exists()? {
+            self.trash(&rolling, "base~rolling")?;
+        }
+        match fs::remove_file(self.dir.join("base.json")) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
     }
 
     /// Finishes interrupted steps and reclaims up to `budget` trash entries (or all).
     fn recover(&self, repo: &Repository, budget: Option<usize>) -> Result<WorkspaceRecovery> {
         let mut report = WorkspaceRecovery::default();
-        let discarded = repo.discarded_layers()?;
-        let terminal = |layer: &LayerId| discarded.contains(layer.as_str());
+        let terminal_layers = repo.terminal_layers()?;
+        let terminal = |layer: &LayerId| terminal_layers.contains(layer.as_str());
         for entry in fs::read_dir(self.dir.join("tmp"))? {
             self.trash(&entry?.path(), "tmp")?;
             report.trashed += 1;
@@ -682,16 +798,24 @@ impl Store {
                 report.trashed += 1;
             }
         }
+        // A crash mid-advance leaves the rolling base partial: drop it, and the next
+        // create rebuilds it cold.
+        if let Some(RollingState {
+            advancing: Some(_), ..
+        }) = self.rolling_state()?
+        {
+            self.drop_rolling()?;
+            report.trashed += 1;
+        }
         for entry in fs::read_dir(self.bases())? {
             let entry = entry?;
-            let name = entry.file_name();
-            match name.to_str().and_then(|n| n.parse::<u64>().ok()) {
-                // A crash between publishing and sealing leaves a base open.
-                Some(_) => seal(&entry.path())?,
-                None => {
-                    self.trash(&entry.path(), "tmp")?;
-                    report.trashed += 1;
-                }
+            if entry.file_name() == ROLLING {
+                // A crash between publishing and sealing leaves the base open.
+                seal(&entry.path())?;
+            } else {
+                // Per-version bases from before the rolling base.
+                self.trash(&entry.path(), "base~legacy")?;
+                report.trashed += 1;
             }
         }
         let mut budget = budget.unwrap_or(usize::MAX);

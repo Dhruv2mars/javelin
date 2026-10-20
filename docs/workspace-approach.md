@@ -255,8 +255,9 @@ exposes it as `javelin workspace create|open|path|discard|publish|recover`. It i
 the only Layer runtime.
 
 **Store layout (current code).** Everything lives under `.javelin/`, on the
-repository's volume: `bases/<N>` holds World N, `layers/<id>` holds each Layer, `tmp/` holds staging, and
-`trash/` holds renamed-away directories. `workspace.lock` serializes workspace
+repository's volume: `bases/rolling` holds the repository's one sealed base,
+`base.json` records the World it holds, `layers/<id>` holds each Layer, `tmp/` holds
+staging, and `trash/` holds renamed-away directories. `workspace.lock` serializes workspace
 changes between processes. `Repository::layer_workspace` returns a Layer's root and
 base paths for capture.
 
@@ -268,13 +269,17 @@ copy must share its first cluster (`FSCTL_GET_RETRIEVAL_POINTERS`) before Javeli
 reports `file_clone`. Every result reports the strategy, the reason each faster
 strategy failed, and the bytes copied. Javelin never hardlinks.
 
-**Bases (current code).** The rolling base in `git3-direction.md` replaces the
-per-version bases below; this paragraph describes the code until that lands.
-A cold base is written from stored objects, into a btrfs subvolume
-where possible, flushed, published by rename, then sealed. `base(N)` derives from
-the nearest cached base: one clone plus the exact changeset between the two
-manifests. At most two bases are kept, and the World head and the base in use are
-pinned. Others are renamed into trash.
+**Bases (current code).** One rolling base per repository, per `git3-direction.md`
+§4. Layer create takes the lock, brings the base to the Layer's World, clones it,
+applies the checkpoint and unlocks. Behind the Layer's World, the base advances in
+place by the exact changeset between the two manifests, O(change). Ahead of it, the
+Layer's own clone is rewound by the reverse changeset, and the base stays where it
+is. The base is cold-written from stored objects when absent, into a btrfs
+subvolume where possible, flushed, published by rename, then sealed. An advance writes
+`advancing` to `base.json` first. A crash leaves that record set, and recovery trashes
+the partial base, so the next create rebuilds it cold. Reapplying the changeset over
+a partial base was rejected: a half-written path cannot be told apart from a
+case-folding collision. Per-version bases from earlier builds are trashed by recovery.
 
 **Sealing measured on this laptop** (M1, APFS, 100k files and 661–697 MB):
 
@@ -296,8 +301,13 @@ mode to seal, so base protection there is by convention only.
 
 **Discard and recovery.** Discard records the terminal event in the database
 first, then renames the directory into `trash/`, so a crash between the two steps
-is finished by the next command. Every workspace command first moves abandoned
-staging and discarded Layers into trash. It then deletes at most 4,096 trash
+is finished by the next command. Publish works the same way: under the lock, a
+successful Publish renames the Layer's directory into `trash/`, then reclaims within
+the same budget. Recovery treats a published Layer as terminal, so a crash between
+the publish commit and the rename is finished by the next workspace command. A
+retried Publish replays its receipt and finishes the reclaim too. Every workspace
+command first moves abandoned staging, discarded Layers and published Layers into
+trash. It then deletes at most 4,096 trash
 entries, so a 100k-file discard costs each command a bounded amount of work.
 `workspace recover` reclaims everything. A trash entry for a Layer that is not
 discarded is never deleted. btrfs Layers are deleted by emptying them and calling
