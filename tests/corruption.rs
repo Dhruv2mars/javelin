@@ -228,23 +228,29 @@ fn an_altered_version_row_is_detected() {
     ];
     for (sql, case) in cases {
         let dir = fixture();
-        let expected = original(dir.path());
         let conn = raw(dir.path());
         unlock(&conn);
         conn.execute_batch(sql).unwrap();
         drop(conn);
-        let check = Repository::open(dir.path()).and_then(|repo| repo.check());
-        assert_eq!(
-            check.as_ref().err().map(javelin::Error::code),
-            Some("corrupt_repository"),
-            "{case}: check() accepted an altered row: {sql}"
-        );
-        // Content is read through the trees, so a changeset-only edit may still read
-        // correctly; what it must never do is read different content.
-        if let Ok(content) = read_everything(dir.path()) {
-            assert_eq!(content, expected, "{case}: wrong content read");
-        }
+        // Both the full check and every read start from history(), which re-derives each
+        // World, so each altered row is refused on both paths.
+        assert_detected(dir.path(), "corrupt_repository", case);
     }
+}
+
+#[test]
+fn a_damaged_schema_is_corrupt_repository_not_storage_error() {
+    let dir = fixture();
+    let conn = raw(dir.path());
+    // A bit flip in the stored schema: the column the queries name no longer exists.
+    conn.execute_batch(
+        "PRAGMA writable_schema=ON;
+         UPDATE sqlite_master SET sql=replace(sql,'tree TEXT','uree TEXT') WHERE name='versions';
+         PRAGMA writable_schema=OFF;",
+    )
+    .unwrap();
+    drop(conn);
+    assert_detected(dir.path(), "corrupt_repository", "damaged schema");
 }
 
 /// Every whole-file byte flip in the SQLite database is either detected or leaves the

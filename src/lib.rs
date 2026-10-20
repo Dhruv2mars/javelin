@@ -103,6 +103,12 @@ impl From<rusqlite::Error> for Error {
             _ if error.to_string().contains("unsupported file format") => {
                 Self::CorruptRepository(error.to_string())
             }
+            // The schema is fixed: a missing column or table means it was altered.
+            _ if error.to_string().starts_with("no such column")
+                || error.to_string().starts_with("no such table") =>
+            {
+                Self::CorruptRepository(error.to_string())
+            }
             _ if matches!(error, rusqlite::Error::Utf8Error(..)) => {
                 Self::CorruptRepository(error.to_string())
             }

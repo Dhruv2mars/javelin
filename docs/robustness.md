@@ -26,7 +26,11 @@ is refused as `operation_id_reused`.
   tree, as `corrupt_object`. This holds for unreferenced objects too.
 - Reads go through reachable objects only. A read returns an error with a code, or exactly the
   original content.
-- An altered `versions` or `changes` row is refused as `corrupt_repository`.
+- An altered `versions` or `changes` row is refused as `corrupt_repository` by `history()`,
+  `check()` and every read that starts from them.
+- A single-version read (`manifest_at`) does not re-derive the World. It returns the tree its
+  version row names, so a changed tree pointer is caught by `check()` only. This is a limit,
+  not a guarantee.
 - A damaged SQLite file (header, schema, stored text) is refused as `corrupt_repository`,
   or fails to open, and is never reported as a retryable `storage_error`.
 
