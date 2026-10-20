@@ -27,6 +27,11 @@ impl ObjectId {
         Self::hash(ObjectKind::Tree, bytes)
     }
 
+    /// Hashes checkpoint bytes without decoding or storing them.
+    pub fn for_checkpoint(bytes: &[u8]) -> Self {
+        Self::hash(ObjectKind::Checkpoint, bytes)
+    }
+
     /// Constructs a digest. This does not prove an object exists or is valid.
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)

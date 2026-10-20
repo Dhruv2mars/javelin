@@ -76,3 +76,12 @@ fn binary_is_smaller_than_json_for_the_fixture() {
     assert!(binary_trees < manifest.canonical_bytes().len());
     assert_eq!(binary_blobs, 1 + 4 + 200 * (1 + 32 + 4 + 2048));
 }
+
+#[test]
+fn checkpoint_objects_add_only_their_kind_byte_to_the_fixed_overhead() {
+    // A checkpoint carries the same per-object framing as a blob: kind, ID, length.
+    let bytes = vec![0u8; 4096];
+    let id = javelin::ObjectId::for_checkpoint(&bytes);
+    let body = encode(&Message::Objects(vec![(Kind::Checkpoint, id, bytes)])).unwrap();
+    assert_eq!(body.len(), 1 + 4 + (1 + 32 + 4 + 4096));
+}
