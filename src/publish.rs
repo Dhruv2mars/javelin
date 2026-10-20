@@ -48,6 +48,7 @@ CREATE INDEX publications_layer ON publications(layer);
 ";
 
 /// Caller-declared attribution, not authenticated identity. Context is one opaque Blob.
+/// `allow_missing_trace` is valid only without a context.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PublishAttribution {
@@ -273,6 +274,17 @@ fn prepare_in(
     }
     verify_head(conn, expected)?;
     let warnings = warnings_in(conn, attribution)?;
+    // The override only permits a missing trace; recording it beside a real one would
+    // claim an override that was never used.
+    if let PublishAttribution::Agent {
+        context: Some(_),
+        allow_missing_trace: true,
+    } = attribution
+    {
+        return Err(Error::InvalidInput(
+            "allow_missing_trace applies only when no context is supplied".into(),
+        ));
+    }
     let against = world_head_in(conn)?;
     // The head World's own receipt and this Layer's earlier receipts are what the
     // new outcome builds on; unrelated history is left to `check`.

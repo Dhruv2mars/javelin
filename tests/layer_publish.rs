@@ -625,6 +625,20 @@ fn human_agent_context_override_and_nonreservation_are_enforced() {
         Err(Error::OperationIdReused(_))
     ));
     assert_eq!(snapshot(&raw(&root)), before);
+    // A new operation cannot record the override beside a real trace: refused, nothing reserved.
+    assert!(matches!(
+        repo.publish_layer(
+            &op("both"),
+            &head,
+            &PublishAttribution::Agent {
+                context: Some(trace),
+                allow_missing_trace: true
+            },
+            |_, _| panic!("override beside a trace must not guard")
+        ),
+        Err(Error::InvalidInput(_))
+    ));
+    assert_eq!(snapshot(&raw(&root)), before);
     let missing = ObjectId::for_blob(b"absent");
     for context in [
         missing,

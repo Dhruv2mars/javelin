@@ -260,6 +260,8 @@ interpretation, identity authentication, hosted permission, or credential is
 invented. Missing agent context refuses with `missing_agent_trace` (exit 1);
 retry with explicit `--allow-missing-trace` to accept a durable
 `missing_agent_trace` receipt warning. Human attribution rejects agent options.
+The override is refused with `--context` or `--trace`, so a receipt records it only
+when a trace was actually missing.
 Optional repository checks are not mandatory defaults; this local command
 supplies no additional policy guard.
 
