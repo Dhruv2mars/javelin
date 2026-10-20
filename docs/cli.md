@@ -68,7 +68,8 @@ irrelevant options are errors. Use `./name` for a path that starts with `-`.
 and untracked. It does not adopt an existing project; use `adopt` for that.
 
 `adopt` creates the repository and publishes the directory's files as World 1 through
-the reserved Layer `adoption`. World 0 stays empty, as `init` defines it. Root
+the reserved Layer `adoption-<hash>`, named from the operation ID. World 0 stays empty,
+as `init` defines it. Root
 `.javelinignore` applies, and `.git` is never read or imported. The project directory
 is never written. Later edits reach a World only through a Layer, such as
 `workspace publish`. Retry an interrupted adoption with the same `--operation ID`; a
