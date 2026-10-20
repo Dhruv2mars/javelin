@@ -24,8 +24,8 @@ branch contains checked working components. This does not establish GA.
   - [x] Make Publish incremental: snapshot prepare, short compare-and-swap write
     transaction, full validation only in `check` (write transaction 521 VM
     instructions at 1 and 1,000 prior Worlds; main took 16 ms → 611 ms under the lock).
-  - [ ] Store Worlds as changesets (`base(V+1)` = V + changeset) instead of full
-    manifests. Deferred: it changes the version schema and the protocol.
+  - [x] Store Worlds as changesets (`base(V+1)` = V + changeset) instead of full
+    manifests (PR #47, format 6).
 
 ## Historical user pause for recalibration on 2026-10-15
 
@@ -217,17 +217,46 @@ and outage-tolerant, Bonsai changesets with derived trees, storage split by
 primitive, one rolling base, and no local kernel VFS. These items are in
 dependency order. Each is done when its PR is merged with the checks it names.
 
-- [ ] Format-5 changeset World: O(change) Publish and shallow hot-path
-  validation (in flight, `t3/world-changeset-publish`).
-- [ ] Record the Git 3.0 decision and amend the contract and workspace docs.
-- [ ] Storage benchmark, blob files vs SQLite (in flight): apply the go/no-go
+- [x] Changeset World (shipped as format 6): O(change) Publish and shallow hot-path
+  validation (PR #47).
+- [x] Record the Git 3.0 decision and amend the contract and workspace docs (PR #45).
+- [ ] Storage benchmark, blob files vs SQLite (PR #50; APFS no-go): apply the go/no-go
   criterion recorded in `docs/git3-direction.md`.
-- [ ] Tree objects as derived data: Merkle trees with prolly chunking, then the
-  protocol on trees, which drops the 65,536-entry `MAX_ENTRIES` cap.
+- [ ] Tree objects as derived data (PR #51, format 7): Merkle trees with prolly chunking, then the
+  protocol on trees (PR #52), which drops the 65,536-entry `MAX_ENTRIES` cap.
 - [ ] Rolling base: one base per repository per machine, advanced in place under
   a short lock; Layer create is lock, clone, unlock.
-- [ ] Collision radar and trace blame.
+- [ ] Collision radar and trace blame (PRs #48, #49; rebase to format 8 after #51).
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
   queue and replay, and the quorum-replicated World log.
 - [ ] Later, not GA: optional `javelin mount` (FUSE, lazy fetch) for cloud agent
   runners and Linux CI.
+
+## GA hub plan, started 2026-10-20
+
+The user asked for every remaining phase at full power. The GA hub thread runs
+owner threads on `claude-haiku-5-5` (high effort) on Claude, one PR per thread and worktree, and
+merges green PRs in dependency order. Delegates and computer use are Haiku.
+A 30-minute continuation runs in the hub.
+
+Wave 1, running now:
+- [ ] Finish the storage benchmark with the Linux verdicts (#50).
+- [ ] Rebase and land tree objects (#51), then protocol v2 on trees (#52).
+- [ ] Windows ChangeTime in the stat cache: gate 2 34/34 on all six filesystems.
+- [ ] OSS hygiene: CONTRIBUTING, SECURITY, SUPPORT, cargo-deny license check.
+- [ ] `docs/online-design.md`: online and hosting design, PR-sized units, open decisions.
+
+Wave 2, after #51 merges:
+- [ ] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
+- [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
+- [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
+- [ ] Reclaim a published Layer's directory.
+- [ ] Process concurrency, crash recovery, retries and corruption proofs.
+
+Wave 3, after wave 2:
+- [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
+- [ ] Adopt existing non-Git project files through a Layer.
+- [ ] Bind agent traces to immutable work, with a missing-trace override.
+- [ ] Online units from `docs/online-design.md`, in its order.
+- [ ] Release packaging and clean-machine installs on three OSes; then docs.
+- [ ] Sample application built with external agents and Javelin only; GA acceptance.
