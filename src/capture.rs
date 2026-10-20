@@ -46,14 +46,15 @@ use crate::{
 pub const ATTEMPTS: usize = 3;
 /// Entries modified this close to (or after) the scan start are racy.
 pub const RACY_MARGIN_NS: i128 = 2_000_000_000;
-const MAGIC: &[u8; 8] = b"JVSTAT\x001";
+/// Version 2: Windows `ctime` became ChangeTime (v1 stored creation time), so v1 caches are rebuilt.
+const MAGIC: &[u8; 8] = b"JVSTAT\x002";
 
 /// The fields compared to decide whether an entry may have changed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Stat {
     size: u64,
     mtime: i128,
-    /// Inode change time on Unix; creation time on Windows.
+    /// Inode change time on Unix; ChangeTime on Windows, which NTFS and ReFS advance on every write.
     ctime: i128,
     /// Zero on Windows, where std exposes no stable file index.
     ino: u64,
@@ -192,16 +193,15 @@ pub fn scan(
                 match read_stable(&root.join(&relative), executable, store)? {
                     // The walk's fingerprint is what the next walk compares against;
                     // the stable read's own fingerprint must also be old to trust it.
-                    // Unix walks lstat, so a mismatch means the entry changed after
-                    // the walk; Windows walk data comes from the directory, not the
-                    // handle, and legitimately differs.
+                    // Both fingerprint the entry the same way, so a mismatch means the
+                    // entry changed after the walk.
                     Hashed::Stable(read, entry) => {
                         scan.hashed += 1;
                         let old = |s: Stat| s.mtime < racy && s.ctime < racy;
                         Cached {
                             stat,
                             entry,
-                            trusted: old(stat) && old(read) && (cfg!(windows) || stat == read),
+                            trusted: old(stat) && old(read) && stat == read,
                         }
                     }
                     Hashed::Gone => continue,
@@ -351,10 +351,15 @@ fn list(
             return Err(Error::Unsupported(format!("special file at {relative:?}")));
         }
         if !untracked_ignored(rules, prior, &path, false) {
+            let stat = match fingerprint(&root.join(&relative), &meta) {
+                Ok(stat) => stat,
+                Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.into()),
+            };
             found.push(Found {
                 relative,
                 path,
-                stat: stat(&meta),
+                stat,
             });
         }
     }
@@ -426,7 +431,9 @@ fn read_stable(
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Hashed> {
     let lstat = || match fs::symlink_metadata(full) {
-        Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => Ok(Some(stat(&meta))),
+        Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => {
+            fingerprint(full, &meta).map(Some)
+        }
         Ok(_) => Ok(None),
         Err(e) => Err(e),
     };
@@ -482,7 +489,7 @@ fn read_entry(full: &Path, before: Stat) -> std::io::Result<Option<(bool, Vec<u8
     std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
     let mut file = options.open(full)?;
     let opened = file.metadata()?;
-    if !opened.is_file() || stat(&opened) != before {
+    if !opened.is_file() || open_stat(&file)? != before {
         return Ok(None);
     }
     let mut bytes = Vec::with_capacity(opened.len() as usize);
@@ -513,17 +520,94 @@ fn stat(meta: &Metadata) -> Stat {
     }
 }
 
+/// The fingerprint of `full`, whose directory entry metadata is `meta`.
+#[cfg(unix)]
+fn fingerprint(_full: &Path, meta: &Metadata) -> std::io::Result<Stat> {
+    Ok(stat(meta))
+}
+
+/// Directory listings on Windows omit ChangeTime, so each entry is opened for attributes
+/// only. That takes no data access, so it does not conflict with a writer's share mode.
 #[cfg(windows)]
-fn stat(meta: &Metadata) -> Stat {
+fn fingerprint(full: &Path, _meta: &Metadata) -> std::io::Result<Stat> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new()
+        .access_mode(windows::FILE_READ_ATTRIBUTES)
+        .custom_flags(windows::FILE_FLAG_BACKUP_SEMANTICS | windows::FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(full)?;
+    open_stat(&file)
+}
+
+#[cfg(unix)]
+fn open_stat(file: &fs::File) -> std::io::Result<Stat> {
+    Ok(stat(&file.metadata()?))
+}
+
+/// The fingerprint of an open file. Windows reads ChangeTime from the handle: creation time,
+/// which the old fingerprint used, never changes on a rewrite.
+#[cfg(windows)]
+fn open_stat(file: &fs::File) -> std::io::Result<Stat> {
     use std::os::windows::fs::MetadataExt;
-    // FILETIME counts 100 ns intervals from 1601-01-01.
-    let ns = |t: u64| (t as i128 - 116_444_736_000_000_000) * 100;
-    Stat {
+    let meta = file.metadata()?;
+    Ok(Stat {
         size: meta.file_size(),
-        mtime: ns(meta.last_write_time()),
-        ctime: ns(meta.creation_time()),
+        mtime: filetime_ns(meta.last_write_time()),
+        ctime: filetime_ns(windows::change_time(file)?),
         ino: 0,
         mode: meta.file_attributes(),
+    })
+}
+
+/// FILETIME counts 100 ns intervals from 1601-01-01.
+#[cfg(windows)]
+fn filetime_ns(ticks: u64) -> i128 {
+    (ticks as i128 - 116_444_736_000_000_000) * 100
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::{ffi::c_void, fs, io, os::windows::io::AsRawHandle};
+
+    pub(super) const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    pub(super) const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    pub(super) const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_BASIC_INFO: i32 = 0;
+
+    /// `FILE_BASIC_INFO`: four FILETIMEs, then the attributes.
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicInfo {
+        creation: i64,
+        access: i64,
+        write: i64,
+        change: i64,
+        attributes: u32,
+    }
+
+    unsafe extern "system" {
+        fn GetFileInformationByHandleEx(
+            file: *mut c_void,
+            class: i32,
+            info: *mut c_void,
+            size: u32,
+        ) -> i32;
+    }
+
+    /// The ChangeTime FILETIME of an open file.
+    pub(super) fn change_time(file: &fs::File) -> io::Result<u64> {
+        let mut info = BasicInfo::default();
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FILE_BASIC_INFO,
+                (&mut info as *mut BasicInfo).cast(),
+                size_of::<BasicInfo>() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info.change as u64)
     }
 }
 

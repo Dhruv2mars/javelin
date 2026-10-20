@@ -1,8 +1,1 @@
-{
-  "ntfs": {
-    "capture/mtime-preserving-rewrite": "Windows capture keys files on size, mtime and creation time (ino 0), so a same-size rewrite that restores mtime is never captured; needs ChangeTime (FILE_BASIC_INFO) in src/capture.rs"
-  },
-  "refs": {
-    "capture/mtime-preserving-rewrite": "Windows capture keys files on size, mtime and creation time (ino 0), so a same-size rewrite that restores mtime is never captured; needs ChangeTime (FILE_BASIC_INFO) in src/capture.rs"
-  }
-}
+{}
