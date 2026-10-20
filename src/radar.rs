@@ -79,9 +79,11 @@ impl Repository {
         let base = checkpoint.base().version();
         let version = head_in(&tx)?.number;
         let index = Index::new(&tx);
-        let paths = index
-            .trees
-            .intersections(index.root(base)?, index.root(version)?, checkpoint.changes())?;
+        let paths = index.trees.intersections(
+            index.root(base)?,
+            index.root(version)?,
+            checkpoint.changes(),
+        )?;
         let layers = collisions(&index, &Live(&tx), layer, checkpoint.changes(), base)?;
         tx.commit()?;
         Ok(Radar {
