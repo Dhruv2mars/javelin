@@ -49,11 +49,22 @@ pub struct Fetched {
 
 /// What a pending chunk contributes: everything below it, or only the entries on
 /// the way to the prefix. `dir` is the path of the directory it belongs to.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Want {
     All { dir: String },
     Path { dir: String, rest: Vec<String> },
 }
+
+/// What a parent says about a child chunk: its level, and the last name it is
+/// filed under. The child must match both, as native trees require.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Link {
+    level: u8,
+    last: String,
+}
+
+/// A chunk to read, with its want and the parent's claim (none for a directory root).
+type Pending = (ObjectId, Want, Option<Link>);
 
 /// Fetches `version` (the head when None), or only `prefix` within it. Tree chunks
 /// go to `trees`, which also serves chunks held from earlier fetches.
@@ -95,23 +106,34 @@ pub fn fetch(
         blobs_received: 0,
     };
     let mut wanted_blobs = Vec::new();
-    let mut pending = vec![(root, start)];
+    let mut pending: Vec<Pending> = vec![(root, start, None)];
     while !pending.is_empty() {
+        // The same chunk under the same want, reached by two parents, is read once.
+        let mut seen = HashSet::new();
+        pending.retain(|entry| seen.insert(entry.clone()));
         let missing: Vec<ObjectId> = {
             let mut seen = HashSet::new();
             pending
                 .iter()
-                .map(|(id, _)| *id)
+                .map(|(id, _, _)| *id)
                 .filter(|id| seen.insert(*id) && trees.load(*id).is_err())
                 .collect()
         };
         fetched.trees_received += missing.len();
-        for (id, bytes) in get(&mut call, Kind::Tree, &missing)? {
-            trees.save(id, &bytes)?;
-        }
+        get(&mut call, Kind::Tree, &missing, |id, bytes| {
+            Ok(trees.save(id, &bytes)?)
+        })?;
         let mut next = Vec::new();
-        for (id, want) in pending {
+        for (id, want, link) in pending {
             let chunk = Chunk::decode(&trees.load(id)?)?;
+            if let Some(Link { level, last }) = &link
+                && (chunk.level() != *level || chunk.last() != last)
+            {
+                return Err(ProtocolError::new(
+                    "malformed",
+                    format!("chunk {id} does not match the parent that names it"),
+                ));
+            }
             walk(
                 &chunk,
                 want,
@@ -125,9 +147,9 @@ pub fn fetch(
     let mut seen = HashSet::new();
     wanted_blobs.retain(|id| seen.insert(*id) && !blobs.has(*id));
     fetched.blobs_received = wanted_blobs.len();
-    for (id, bytes) in get(&mut call, Kind::Blob, &wanted_blobs)? {
-        blobs.put(id, bytes)?;
-    }
+    get(&mut call, Kind::Blob, &wanted_blobs, |id, bytes| {
+        blobs.put(id, bytes)
+    })?;
     Ok(fetched)
 }
 
@@ -135,14 +157,22 @@ pub fn fetch(
 fn walk(
     chunk: &Chunk,
     want: Want,
-    next: &mut Vec<(ObjectId, Want)>,
+    next: &mut Vec<Pending>,
     files: &mut BTreeMap<RepoPath, FileEntry>,
     blobs: &mut Vec<ObjectId>,
 ) -> Result<(), ProtocolError> {
     if chunk.level() > 0 {
+        let level = chunk.level() - 1;
+        let claim = |(last, id): (&str, ObjectId)| {
+            let link = Link {
+                level,
+                last: last.to_owned(),
+            };
+            (id, want.clone(), Some(link))
+        };
         match &want {
-            Want::All { .. } => next.extend(chunk.children().map(|id| (id, want.clone()))),
-            Want::Path { rest, .. } => next.extend(chunk.child_for(&rest[0]).map(|id| (id, want))),
+            Want::All { .. } => next.extend(chunk.child_links().map(claim)),
+            Want::Path { rest, .. } => next.extend(chunk.child_for(&rest[0]).map(claim)),
         }
         return Ok(());
     }
@@ -165,30 +195,37 @@ fn walk(
                 files.insert(RepoPath::parse(&path)?, entry);
             }
             (Node::File(_), Some(_)) => {}
-            (Node::Dir(id), None | Some([])) => next.push((id, Want::All { dir: path + "/" })),
+            (Node::Dir(id), None | Some([])) => {
+                next.push((id, Want::All { dir: path + "/" }, None))
+            }
             (Node::Dir(id), Some(rest)) => next.push((
                 id,
                 Want::Path {
                     dir: path + "/",
                     rest: rest.to_vec(),
                 },
+                None,
             )),
         }
     }
     Ok(())
 }
 
-/// Requests `ids` and returns each verified object, re-requesting the rest when a
-/// reply answers only a prefix.
+/// Requests `ids` and hands each verified object to `store` as its reply arrives,
+/// re-requesting the rest when a reply answers only a prefix.
 fn get(
     call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
     kind: Kind,
     ids: &[ObjectId],
-) -> Result<Vec<(ObjectId, Vec<u8>)>, ProtocolError> {
-    let mut out = Vec::with_capacity(ids.len());
-    let mut rest = ids;
-    while !rest.is_empty() {
-        let request: Vec<_> = rest.iter().take(MAX_WANT).map(|id| (kind, *id)).collect();
+    mut store: impl FnMut(ObjectId, Vec<u8>) -> Result<(), ProtocolError>,
+) -> Result<(), ProtocolError> {
+    let mut done = 0;
+    while done < ids.len() {
+        let request: Vec<_> = ids[done..]
+            .iter()
+            .take(MAX_WANT)
+            .map(|id| (kind, *id))
+            .collect();
         let Message::Objects(objects) = call(Message::Get(request.clone()))? else {
             return Err(unexpected());
         };
@@ -205,9 +242,9 @@ fn get(
                     format!("received bytes do not match {id}"),
                 ));
             }
-            out.push((id, bytes));
+            store(id, bytes)?;
+            done += 1;
         }
-        rest = &ids[out.len()..];
     }
-    Ok(out)
+    Ok(())
 }
