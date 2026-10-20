@@ -298,9 +298,10 @@ owner threads on `claude-haiku-5-5` (high effort) on Claude, one PR per thread a
 merges green PRs in dependency order. Delegates and computer use are Haiku.
 A 30-minute continuation runs in the hub.
 
-Wave 1, done except #52:
+Wave 1, done:
 - [x] Finish the storage benchmark with the Linux verdicts (#50).
-- [ ] Rebase and land tree objects (#51, merged), then protocol v2 on trees (#52).
+- [x] Rebase and land tree objects (#51), then protocol v2 on trees (#52); fetch
+  validation (#69).
 - [x] Windows ChangeTime in the stat cache: gate 2 34/34 on all six filesystems (#57).
 - [x] OSS hygiene: CONTRIBUTING, SECURITY, SUPPORT, cargo-deny license check (#56);
   private vulnerability reporting enabled.
@@ -310,15 +311,17 @@ Wave 1, done except #52:
 Wave 2, commissioned 2026-10-20 after #51 merged (radar and blame; rolling base and
 reclaim; Stack-head refresh and Publish; robustness proofs):
 - [x] Rebase collision radar (#48) and trace blame (#49) onto main as format 8.
-- [ ] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock.
+- [x] Rolling base: one base per repository per machine; Layer create is lock, clone, unlock
+  (#66).
 - [ ] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
-- [x] Reclaim a published Layer's directory.
+- [x] Reclaim a published Layer's directory (#66).
 - [ ] Process concurrency, crash recovery, retries and corruption proofs.
 
 Wave 3, after wave 2:
 - [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
 - [x] Adopt existing non-Git project files through a Layer. (PR #61)
-- [x] Bind agent traces to immutable work, with a missing-trace override.
+- [x] Bind agent traces to immutable work, with a missing-trace override (#68).
 - [ ] Online units from `docs/online-design.md`, in its order.
-- [ ] Release packaging and clean-machine installs on three OSes; then docs.
+- [x] Release packaging and clean-machine installs on three OSes (#62).
+- [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
