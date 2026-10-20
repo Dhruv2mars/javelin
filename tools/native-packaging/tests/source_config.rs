@@ -43,6 +43,7 @@ fn build_uses_source_cargo_config_instead_of_caller_config() {
         "javelin-cli",
         "javelin-collaboration",
         "javelin-merge",
+        "javelin-node",
         "javelin-protocol",
         "javelin-stack",
     ] {

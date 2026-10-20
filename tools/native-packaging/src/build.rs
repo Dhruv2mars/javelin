@@ -211,6 +211,7 @@ pub fn source_files(source: &Path) -> Result<Vec<String>> {
         "javelin-cli",
         "javelin-collaboration",
         "javelin-merge",
+        "javelin-node",
         "javelin-protocol",
         "javelin-stack",
     ] {
