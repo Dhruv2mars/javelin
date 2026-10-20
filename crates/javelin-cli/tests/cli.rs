@@ -13,6 +13,19 @@ fn cli(root: &TempDir, args: &[&str]) -> Output {
 }
 
 #[test]
+fn version_flag_prints_the_package_version() {
+    let root = TempDir::new().unwrap();
+    for flag in ["--version", "-V"] {
+        let output = cli(&root, &[flag]);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!("javelin {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}
+
+#[test]
 fn fresh_cli_init_history_and_integrity_are_useful_and_restart_safe() {
     let root = TempDir::new().unwrap();
     std::fs::write(root.path().join("binary"), [0, 255, 42]).unwrap();

@@ -1,0 +1,286 @@
+name: Release
+
+# Builds the native Javelin CLI for five targets with the same development packager as
+# native-packaging.yml (tools/native-packaging), assembles archives and SHA256SUMS,
+# attests build provenance, and checks the install scripts on clean runners.
+#
+# A v* tag publishes a GitHub pre-release. workflow_dispatch is a dry run only: it
+# produces the same artifacts and checks, and never creates a tag, release, or package
+# on any registry. Nothing here touches crates.io, npm, or Homebrew.
+#
+# Linux targets build on the hosted glibc runner (ubuntu-24.04 and its arm image), not
+# musl: the packager builds and inspects only the glibc target, so the tested binary is
+# the one that ships. The binary's glibc requirement is recorded in docs/install.md.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: build, attest and check installs. Dispatch cannot publish; push a v* tag to publish."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Decide release name and whether to publish
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = push ]; then
+            tag=${REF#refs/tags/}
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "version=$tag" >> "$GITHUB_OUTPUT"
+            echo "Publishing $tag"
+          else
+            if [ "$DRY_RUN" != true ]; then
+              echo "::error::workflow_dispatch only dry-runs. Push a v* tag to publish."
+              exit 1
+            fi
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "version=dryrun-${SHA:0:12}" >> "$GITHUB_OUTPUT"
+            echo "Dry run for ${SHA:0:12}; nothing will be published"
+          fi
+
+  build:
+    name: Build / ${{ matrix.target }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-2025, target: x86_64-pc-windows-msvc }
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.0
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+      PACK: cargo run --locked --quiet --manifest-path tools/native-packaging/Cargo.toml --
+      VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Keep LF line endings in the checkout
+        # Developer setup: without this the Windows checkout rewrites sources to CRLF.
+        run: git config --global core.autocrlf false
+
+      - name: Check out the commit and its parent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Build and package the release commit
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          # Windows links the C runtime statically, so the archive needs no VC++ redistributable.
+          flags=()
+          [ "$RUNNER_OS" = Windows ] && flags=(--rustflag "-Ctarget-feature=+crt-static")
+          $PACK build --source . --out work/build "${flags[@]}"
+          $PACK package --build work/build --source . --source-sha "$(git rev-parse HEAD)" --out work/dist
+
+      - name: Record the binary's platform requirements
+        # Informational, as in native-packaging.yml: what the binary declares, not a tested minimum.
+        run: |
+          bin=work/build/target/release/javelin
+          [ "$RUNNER_OS" = Windows ] && bin=$bin.exe
+          case "$RUNNER_OS" in
+            macOS) otool -l "$bin" | grep -A4 -E 'LC_(BUILD_VERSION|VERSION_MIN_MACOSX)' || echo "no macOS platform load command found" ;;
+            Linux) ldd "$bin"; echo "highest GLIBC symbol version: $(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)" ;;
+            Windows)
+              # The archive ships only javelin.exe, so it must not import the VC++ runtime.
+              if grep -a -q -i 'VCRUNTIME140' "$bin"; then
+                echo "::error::javelin.exe imports the VC++ runtime (VCRUNTIME140.dll)"
+                exit 1
+              fi
+              echo "no VCRUNTIME140 import; minimum Windows version unconfirmed" ;;
+          esac
+
+      - name: Build and package the previous commit (upgrade source)
+        # The clean-machine job upgrades from this build. It is built from a copy outside the
+        # checkout so the packager's source hash covers only the release commit.
+        run: |
+          prev_sha=$(git rev-parse HEAD^)
+          prev_src="$RUNNER_TEMP/previous-src"
+          mkdir -p "$prev_src"
+          git archive "$prev_sha" | (cd "$prev_src" && tar -x)
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$prev_sha")
+          export SOURCE_DATE_EPOCH
+          echo "PREV_SHA=$prev_sha" >> "$GITHUB_ENV"
+          flags=()
+          [ "$RUNNER_OS" = Windows ] && flags=(--rustflag "-Ctarget-feature=+crt-static")
+          $PACK build --source "$prev_src" --out work/build-previous "${flags[@]}"
+          $PACK package --build work/build-previous --source "$prev_src" --source-sha "$prev_sha" --out work/dist-previous
+
+      - name: Name archives and write per-platform SHA256SUMS
+        run: |
+          ext=tar.gz
+          [ "$RUNNER_OS" = Windows ] && ext=zip
+          new_name="javelin-$VERSION-$TARGET.$ext"
+          prev_name="javelin-previous-${PREV_SHA:0:12}-$TARGET.$ext"
+          new_archive=$(ls work/dist/javelin-development-*.$ext)
+          prev_archive=$(ls work/dist-previous/javelin-development-*.$ext)
+          mkdir -p work/stage/new work/stage/previous
+          mv "$new_archive" "work/stage/new/$new_name"
+          mv "$prev_archive" "work/stage/previous/$prev_name"
+          sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          (cd work/stage/new && sum "$new_name" > SHA256SUMS)
+          (cd work/stage/previous && sum "$prev_name" > SHA256SUMS)
+          cat work/stage/new/SHA256SUMS work/stage/previous/SHA256SUMS
+
+      - name: Retain staged archives
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: build-${{ matrix.target }}
+          path: work/stage/
+          retention-days: 14
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble and attest
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      # Checkout cleans the workspace, so it must run before the download.
+      - name: Check out the install scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Download staged archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: build-*
+          path: stage
+
+      - name: Assemble dist with one SHA256SUMS
+        run: |
+          mkdir dist
+          find stage -path '*/new/*' \( -name 'javelin-*.tar.gz' -o -name 'javelin-*.zip' \) -exec cp {} dist/ \;
+          cp scripts/install.sh scripts/install.ps1 dist/
+          find stage -path '*/new/SHA256SUMS' -print0 | sort -z | xargs -0 cat > dist/SHA256SUMS
+          (cd dist && sha256sum install.sh install.ps1 >> SHA256SUMS)
+          test "$(wc -l < dist/SHA256SUMS)" -eq 7
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -l dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*"
+
+      - name: Retain release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, Node 24
+        with:
+          name: release-dist
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  clean-machine:
+    name: Clean machine / ${{ matrix.target }}
+    needs: [plan, build, assemble]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-2025, target: x86_64-pc-windows-msvc }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings in the checkout
+        run: git config --global core.autocrlf false
+
+      - name: Check out the install scripts and smoke check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+
+      - name: Download release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Download the previous build for this platform
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-${{ matrix.target }}
+          path: stage
+
+      - name: Install, upgrade, and smoke on a clean runner
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.plan.outputs.version }}
+        run: |
+          expected="javelin $(sed -n 's/^version = "\(.*\)"/\1/p' crates/javelin-cli/Cargo.toml | head -n 1)"
+          bash scripts/clean-machine-check.sh "$PWD/dist" "$PWD/stage/previous" "$TAG" "$expected" "$TARGET"
+
+  publish:
+    name: Publish pre-release
+    needs: [plan, assemble, clean-machine]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Create the GitHub pre-release for the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.version }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --verify-tag \
+            --prerelease \
+            --title "Javelin $TAG (pre-GA)" \
+            --notes "Pre-GA build of the native Javelin CLI. Install and upgrade: docs/install.md. Archives are attested with GitHub build provenance; verify with \`gh attestation verify\`."

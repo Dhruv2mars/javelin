@@ -14,6 +14,10 @@ fn main() -> ExitCode {
         println!("{HELP}");
         return ExitCode::SUCCESS;
     }
+    if args.len() == 1 && (args[0] == "--version" || args[0] == "-V") {
+        println!("javelin {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     match run(args) {
         Ok((value, text, code)) => {
             if structured {
