@@ -11,7 +11,9 @@ use crate::{
     Error, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, Result, SparseChanges,
     VersionNumber,
     domain::{ObjectKind, WorldIndex},
-    repository::{Index, decode_id, insert_object, read_object, validate_format, version_in},
+    repository::{
+        Index, decode_id, failpoint, insert_object, read_object, validate_format, version_in,
+    },
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -215,7 +217,9 @@ impl Repository {
         validate_format(&tx)?;
         let empty = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[], None)?;
         let head = create_in(&tx, layer, &empty)?;
+        failpoint("layer_create_before_commit");
         tx.commit()?;
+        failpoint("layer_create_after_commit");
         Ok(head)
     }
 
@@ -304,7 +308,9 @@ impl Repository {
         let outcome = update_in(&tx, operation, expected, candidate, false, None)?;
         #[cfg(test)]
         crate::repository::test_boundary("layer_before_commit");
+        failpoint("layer_capture_before_commit");
         tx.commit()?;
+        failpoint("layer_capture_after_commit");
         #[cfg(test)]
         crate::repository::test_boundary("layer_after_commit");
         Ok(outcome)
@@ -329,7 +335,9 @@ impl Repository {
             provenance: None,
         };
         let outcome = update_in(&tx, operation, expected, candidate, true, None)?;
+        failpoint("layer_discard_before_commit");
         tx.commit()?;
+        failpoint("layer_discard_after_commit");
         Ok(outcome)
     }
 

@@ -224,6 +224,7 @@ impl Repository {
                 self.apply(&staging, &before, changes)?
             };
             clone::barrier(&staging)?;
+            crate::repository::failpoint("workspace_open_before_rename");
             fs::rename(&staging, &root)?;
             sync_dir(&store.layers())?;
             self.write_sync(layer, head.checkpoint())?;
@@ -278,6 +279,7 @@ impl Repository {
         if matches!(self.layer_state(layer)?, LayerState::Discarded { .. }) {
             let root = store.layers().join(layer.as_str());
             if root.try_exists()? {
+                crate::repository::failpoint("workspace_discard_before_trash");
                 store.trash(&root, &format!("layer~{}", layer.as_str()))?;
                 trashed = true;
             }
