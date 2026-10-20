@@ -562,3 +562,20 @@ fn every_world_version_records_its_derived_root_and_check_recomputes_it() {
     assert!(repo.check().is_err());
     assert!(repo.history().is_err());
 }
+
+#[test]
+fn long_names_in_a_small_directory_still_build() {
+    // Each item is about 2 KB, past the boundary target, so every item alone used to
+    // form a chunk and the levels never shrank.
+    let trees = trees();
+    let names = [
+        format!("{}a", "x".repeat(1990)),
+        format!("{}b", "y".repeat(1990)),
+    ];
+    let snapshot = Snapshot::from([
+        (path(&names[0]), file(1, false)),
+        (path(&names[1]), file(2, false)),
+    ]);
+    let root = build(&trees, &snapshot);
+    assert_eq!(trees.entries(root).unwrap(), snapshot);
+}

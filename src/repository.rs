@@ -981,6 +981,7 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
             ));
         }
         index.pin(version.number, root);
+        index.trees.forget();
         if version.id != version_id(history.last().map(|v| v.id), root, &changes) {
             return Err(Error::CorruptRepository(
                 "World version identity disagrees with its changeset".into(),

@@ -262,6 +262,11 @@ impl<S: Store> Trees<S> {
     pub fn store(&self) -> &S {
         &self.store
     }
+    /// Drops the decoded-chunk cache. Callers that walk a long history call this
+    /// per version so memory stays bounded by one version's chunks.
+    pub fn forget(&self) {
+        self.cache.borrow_mut().clear();
+    }
     pub fn into_store(self) -> S {
         self.store
     }
@@ -822,8 +827,12 @@ impl Chunker {
         }
     }
     fn push(&mut self, item: Item) -> Option<Chunk> {
-        self.size += item.len();
-        let cut = self.size >= FORCE || boundary(self.level, &item.name, item.len(), self.size);
+        let len = item.len();
+        self.size += len;
+        // A chunk holds at least two items, so every level with two or more items
+        // shrinks and the tree converges, even when each item is past TARGET.
+        let cut = !self.items.is_empty()
+            && (self.size >= FORCE || boundary(self.level, &item.name, len, self.size));
         self.items.push(item);
         cut.then(|| self.take())
     }
