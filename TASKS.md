@@ -162,10 +162,10 @@ workflow may invoke or interpret Git.
 ## Deliver OSS GA
 
 - [ ] Verify installation and upgrades from clean machines on supported platforms.
-  - [ ] Release workflow builds 5 targets, attests, and dry-runs on the branch (`release.yml`).
-  - [ ] Install scripts verify SHA-256 before writing; corrupted archive is refused.
-  - [ ] Clean-machine job per target: install previous build, seed repo, upgrade, reopen, smoke, no Git invoked.
-  - [ ] Windows `install.ps1` and PowerShell path verified on `windows-2025`.
+  - [x] Release workflow builds 5 targets, attests, and dry-runs on the branch (`release.yml`).
+  - [x] Install scripts verify SHA-256 before writing; corrupted archive is refused.
+  - [x] Clean-machine job per target: install previous build, seed repo, upgrade, reopen, smoke, no Git invoked.
+  - [x] Windows `install.ps1` and PowerShell path verified on `windows-2025`.
   - [ ] Tag-triggered pre-release publish (not run; needs the user's go-ahead).
 - [ ] Publish tutorials, command reference, hosting setup, and recovery documentation.
 - [x] Add contribution guidance, support policy, security reporting, and license checks
