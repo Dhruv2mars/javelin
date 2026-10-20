@@ -112,7 +112,7 @@ jobs:
           bin=work/build/target/release/javelin
           [ "$RUNNER_OS" = Windows ] && bin=$bin.exe
           case "$RUNNER_OS" in
-            macOS) otool -l "$bin" | grep -A4 LC_BUILD_VERSION ;;
+            macOS) otool -l "$bin" | grep -A4 -E 'LC_(BUILD_VERSION|VERSION_MIN_MACOSX)' || echo "no macOS platform load command found" ;;
             Linux) ldd "$bin"; echo "highest GLIBC symbol version: $(objdump -T "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)" ;;
             Windows) echo "PE inspection not performed; minimum Windows version unconfirmed" ;;
           esac
@@ -124,7 +124,7 @@ jobs:
           prev_sha=$(git rev-parse HEAD^)
           prev_src="$RUNNER_TEMP/previous-src"
           mkdir -p "$prev_src"
-          git archive "$prev_sha" | tar -x -C "$prev_src"
+          git archive "$prev_sha" | (cd "$prev_src" && tar -x)
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$prev_sha")
           export SOURCE_DATE_EPOCH
           echo "PREV_SHA=$prev_sha" >> "$GITHUB_ENV"

@@ -18,8 +18,8 @@ Each release has one archive per platform, built on a native runner of that plat
 | Windows, x86_64 | `x86_64-pc-windows-msvc` | Windows Server 2025 |
 
 Linux binaries are dynamically linked against glibc. They are built on Ubuntu 24.04,
-so they need a glibc at least as new as that build's requirement. The exact symbol
-version is recorded in the build log of each release. Other OS versions and
+and the build of this commit needs glibc 2.34 or newer (its highest `GLIBC_` symbol
+version, read by `objdump -T` in the release build log). Other OS versions and
 architectures are not tested.
 
 ## Install on macOS or Linux
