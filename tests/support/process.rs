@@ -27,6 +27,18 @@ impl Actor {
         expected: u64,
         boundary: &str,
     ) -> Self {
+        Self::spawn_with(root, mode, operation, manifest, expected, boundary, None)
+    }
+
+    fn spawn_with(
+        root: &Path,
+        mode: &str,
+        operation: &str,
+        manifest: Option<ObjectId>,
+        expected: u64,
+        boundary: &str,
+        resolution: Option<ObjectId>,
+    ) -> Self {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -43,6 +55,10 @@ impl Actor {
             )
             .env("JAVELIN_TEST_EXPECTED", expected.to_string())
             .env("JAVELIN_TEST_BOUNDARY", boundary)
+            .env(
+                "JAVELIN_TEST_RESOLUTION",
+                resolution.map(|id| id.to_string()).unwrap_or_default(),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -148,7 +164,17 @@ fn actor() {
         let operation =
             OperationId::parse(&std::env::var("JAVELIN_TEST_OPERATION").unwrap()).unwrap();
         let checkpoint = repo.read_checkpoint(source).unwrap();
-        match repo.commit_stack(&operation, &head, source, checkpoint.changes()) {
+        let resolution = std::env::var("JAVELIN_TEST_RESOLUTION")
+            .ok()
+            .filter(|id| !id.is_empty())
+            .map(|id| ObjectId::parse(&id).unwrap());
+        match repo.commit_stack_resolved(
+            &operation,
+            &head,
+            source,
+            checkpoint.changes(),
+            resolution,
+        ) {
             Ok(outcome) => json!(outcome),
             Err(error) => json!({"error":error.code()}),
         }
@@ -1224,6 +1250,30 @@ fn stacker(root: &Path, source: &crate::LayerHead, boundary: &str) -> Actor {
     )
 }
 
+fn resolved_stacker(
+    root: &Path,
+    source: &crate::LayerHead,
+    resolution: ObjectId,
+    boundary: &str,
+) -> Actor {
+    Actor::spawn_with(
+        root,
+        "stack:shared",
+        "stack",
+        Some(source.checkpoint().object()),
+        0,
+        boundary,
+        Some(resolution),
+    )
+}
+
+/// Writes the canonical resolution object a CLI Stack would name for one `ours` choice.
+fn resolution_object(root: &Path) -> ObjectId {
+    let mut repo = Repository::open(root).unwrap();
+    repo.put_blob(br#"{"resolutions":[{"choice":"ours","path":"binary"}]}"#)
+        .unwrap()
+}
+
 #[test]
 fn stack_kill_before_commit_has_no_partial_checkpoint_ancestry_or_attempt() {
     let (root, target, source) = stack_fixture();
@@ -1371,4 +1421,60 @@ fn simultaneous_stack_retries_append_one_checkpoint_with_one_source_binding() {
         1
     );
     repo.check().unwrap();
+}
+
+#[test]
+fn resolved_stack_killed_before_commit_leaves_no_attempt_and_retries_with_the_same_choice() {
+    let (root, target, source) = stack_fixture();
+    let resolution = resolution_object(root.path());
+    let repo = Repository::open(root.path()).unwrap();
+    let before = repo.check().unwrap().objects;
+    drop(repo);
+    let mut actor = resolved_stacker(root.path(), &source, resolution, "stack_before_commit");
+    actor.release();
+    actor.marker("BOUNDARY stack_before_commit");
+    let repo = Repository::open(root.path()).unwrap();
+    assert_eq!(repo.check().unwrap().objects, before);
+    assert_eq!(
+        repo.stack_operation_resolved(
+            &OperationId::parse("stack").unwrap(),
+            &target,
+            source.checkpoint(),
+            Some(resolution),
+        )
+        .unwrap(),
+        None
+    );
+    drop(repo);
+    actor.kill();
+    let mut retry = resolved_stacker(root.path(), &source, resolution, "");
+    retry.release();
+    let applied = retry.result();
+    assert_eq!(applied["outcome"], "applied");
+    // The same choice replays the applied outcome; a dropped choice is a different input.
+    let mut replay = resolved_stacker(root.path(), &source, resolution, "");
+    replay.release();
+    assert_eq!(replay.result(), applied);
+    let mut other = stacker(root.path(), &source, "");
+    other.release();
+    assert_eq!(other.result()["error"], "operation_id_reused");
+    Repository::open(root.path()).unwrap().check().unwrap();
+}
+
+#[test]
+fn resolved_stack_lost_ack_replays_the_original_choice_after_a_crash() {
+    let (root, _target, source) = stack_fixture();
+    let resolution = resolution_object(root.path());
+    let mut actor = resolved_stacker(root.path(), &source, resolution, "stack_after_commit");
+    actor.release();
+    actor.marker("BOUNDARY stack_after_commit");
+    actor.kill();
+    let mut retry = resolved_stacker(root.path(), &source, resolution, "");
+    retry.release();
+    let applied = retry.result();
+    assert_eq!(applied["outcome"], "applied");
+    let mut replay = resolved_stacker(root.path(), &source, resolution, "");
+    replay.release();
+    assert_eq!(replay.result(), applied);
+    Repository::open(root.path()).unwrap().check().unwrap();
 }
