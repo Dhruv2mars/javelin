@@ -8,10 +8,13 @@ use std::{
 };
 
 use javelin::{RepoPath, Repository, VersionNumber};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(debug_assertions)]
+use serde_json::json;
 use tempfile::TempDir;
 
 /// Exit status of a process stopped by a failpoint (`repository::failpoint`).
+#[cfg(debug_assertions)]
 const CRASHED: i32 = 86;
 /// Exit status of a Publish that lost to a conflicting Publish.
 const CONFLICT: i32 = 3;
@@ -35,6 +38,7 @@ fn spawn(root: &Path, args: &[&str]) -> Child {
         .unwrap()
 }
 
+#[cfg(debug_assertions)]
 /// Runs `args` in a process that exits at `failpoint`. Exiting with `CRASHED` proves
 /// the point was reached; any other status is a test failure.
 fn crash_at(root: &Path, failpoint: &str, args: &[&str]) {
@@ -89,6 +93,7 @@ fn valid(root: &Path) {
 
 /// Reads the library directly: the CLI `layer history` captures the directory first,
 /// which would record an extra revision and hide the crash result being tested.
+#[cfg(debug_assertions)]
 fn layer_events(root: &Path, layer: &str) -> usize {
     let repository = Repository::open(root).unwrap();
     repository
@@ -206,6 +211,7 @@ fn racing_retries_of_one_operation_publish_once_with_identical_receipts() {
     valid(root);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn layer_create_crash_points_leave_no_partial_layer_and_retries_are_idempotent() {
     for (point, committed) in [
@@ -227,6 +233,7 @@ fn layer_create_crash_points_leave_no_partial_layer_and_retries_are_idempotent()
     }
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn workspace_open_crash_before_rename_leaves_no_directory_and_retry_opens() {
     let dir = TempDir::new().unwrap();
@@ -247,6 +254,7 @@ fn workspace_open_crash_before_rename_leaves_no_directory_and_retry_opens() {
     valid(root);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn capture_crash_points_never_leave_a_half_recorded_checkpoint() {
     let dir = TempDir::new().unwrap();
@@ -274,6 +282,7 @@ fn capture_crash_points_never_leave_a_half_recorded_checkpoint() {
     valid(root);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn publish_crash_before_commit_publishes_once_on_retry() {
     let dir = TempDir::new().unwrap();
@@ -287,6 +296,7 @@ fn publish_crash_before_commit_publishes_once_on_retry() {
     valid(root);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn publish_lost_reply_retry_returns_the_same_version_and_never_applies_twice() {
     let dir = TempDir::new().unwrap();
@@ -308,6 +318,7 @@ fn publish_lost_reply_retry_returns_the_same_version_and_never_applies_twice() {
     valid(root);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn layer_discard_crash_points_are_atomic_and_retries_end_discarded_once() {
     for (point, committed) in [
@@ -339,6 +350,7 @@ fn layer_discard_crash_points_are_atomic_and_retries_end_discarded_once() {
     }
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn workspace_discard_crash_before_trash_is_finished_by_recovery_and_retry_is_idempotent() {
     let dir = TempDir::new().unwrap();
