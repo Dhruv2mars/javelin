@@ -571,6 +571,45 @@ fn radar_text(radar: &Radar) -> String {
     lines.join("\n")
 }
 
+/// `adopt [project-directory] --operation ID`: one command from an existing project
+/// directory to a repository whose World 1 holds its files. Retry with the same operation.
+pub fn adopt(args: Vec<OsString>) -> Result<Output> {
+    let mut root = None;
+    let mut operation = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--operation" {
+            let value = args
+                .next()
+                .ok_or_else(|| Error::InvalidInput("--operation needs a value".into()))?;
+            if operation.replace(value).is_some() {
+                return Err(Error::InvalidInput("repeated option --operation".into()));
+            }
+        } else if arg.to_string_lossy().starts_with('-') || root.replace(arg).is_some() {
+            return Err(Error::InvalidInput(
+                "expected adopt [project-directory] --operation ID".into(),
+            ));
+        }
+    }
+    let operation = operation.ok_or_else(|| Error::InvalidInput("missing --operation".into()))?;
+    let operation = OperationId::parse(text(&operation)?)?;
+    let root = match root {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir()?,
+    };
+    let adoption = Repository::adopt(&root, &operation)?;
+    let files = adoption.files;
+    let (mut value, mut text, code) = publication("adopt", adoption.receipt);
+    value["files"] = json!(files);
+    if let (Some(files), 0) = (files, code) {
+        text = format!(
+            "Adopted {files} files through Layer {}; the project directory was not changed.\n{text}",
+            javelin::ADOPTION_LAYER
+        );
+    }
+    Ok((value, text, code))
+}
+
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {
     let allowed = [
         &["--repo", "--revision", "--source", "--operation"][..],
