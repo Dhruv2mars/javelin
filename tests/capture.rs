@@ -3,7 +3,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use javelin::{
@@ -232,6 +232,34 @@ fn racy_same_size_edit_with_restored_mtime_is_caught() {
     assert_eq!(content(&repo, &layer), [("f.txt".into(), b"bbbb".to_vec())]);
 }
 
+/// Unlike the racy case above, the entry here is settled and trusted before the rewrite, so
+/// only the change time can reveal it. Windows once keyed on creation time, which never moves.
+#[test]
+fn settled_same_size_rewrite_with_restored_mtime_is_caught() {
+    let (_dir, mut repo, layer, root) = setup(&[]);
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_577_934_245);
+    let set_mtime = |path: &Path| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap()
+    };
+    write(&root, "f.txt", b"aaaa");
+    set_mtime(&root.join("f.txt"));
+    settle();
+    repo.capture_directory(&layer, &root).unwrap();
+    let settled = repo.capture_directory(&layer, &root).unwrap();
+    assert_eq!(settled.hashed, 0, "a settled entry is trusted");
+    fs::write(root.join("f.txt"), b"bbbb").unwrap();
+    set_mtime(&root.join("f.txt"));
+    let capture = repo.capture_directory(&layer, &root).unwrap();
+    assert_eq!(capture.hashed, 1);
+    applied(&capture);
+    assert_eq!(content(&repo, &layer), [("f.txt".into(), b"bbbb".to_vec())]);
+}
+
 #[test]
 fn settled_entries_are_reused_and_edits_after_settling_are_seen() {
     let (_dir, mut repo, layer, root) = setup(&[]);
@@ -247,7 +275,10 @@ fn settled_entries_are_reused_and_edits_after_settling_are_seen() {
     // Every entry is racy, so the next scan re-hashes them all.
     assert_eq!(repo.capture_directory(&layer, &root).unwrap().hashed, 20);
     settle();
-    assert_eq!(repo.capture_directory(&layer, &root).unwrap().hashed, 20);
+    // Whether the second scan was still racy depends on wall-clock time: a slow runner can
+    // pass the racy window first, so this scan may trust them. Either way, the scan after
+    // this one must find them old and reuse every entry.
+    repo.capture_directory(&layer, &root).unwrap();
     // Now they are trusted: nothing is hashed.
     let idle = repo.capture_directory(&layer, &root).unwrap();
     assert_eq!((idle.hashed, idle.update.is_none()), (0, true));
