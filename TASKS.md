@@ -222,6 +222,10 @@ dependency order. Each is done when its PR is merged with the checks it names.
 - [x] Record the Git 3.0 decision and amend the contract and workspace docs (PR #45).
 - [ ] Storage benchmark, blob files vs SQLite (PR #50; APFS no-go): apply the go/no-go
   criterion recorded in `docs/git3-direction.md`.
+  - Result (2026-10-20, PR #50): blobs stay in SQLite on every measured platform.
+    Both criteria are no-go on APFS, btrfs and XFS reflink=1; ext4 is a copy control
+    and fails every gate. Runs: Linux CI 39130520311 (head `8d78768`); APFS
+    2026-10-18 local. Details: `docs/storage-benchmark.md`, "Final decision".
 - [ ] Tree objects as derived data (PR #51, format 7): Merkle trees with prolly chunking, then the
   protocol on trees (PR #52), which drops the 65,536-entry `MAX_ENTRIES` cap.
 - [ ] Rolling base: one base per repository per machine, advanced in place under

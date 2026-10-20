@@ -212,9 +212,9 @@ image and is not directly comparable to native first-Layer timings elsewhere.
 | 2(4): 10-edit commit ≤1.1× time | 0.870× B/A-tuned with sparse metadata; 1.054× with full-manifest proxy; 0.014× B/A-real sparse | go |
 | 2(5): killed writer has no partial final | 20/20 B kills passed; every final hash checked | go |
 
-**Provisional APFS verdict: no-go under criterion 1 and criterion 2.** The criteria agree: per-file reflinks share data, but the measured layout exceeds both logical-byte disk bounds. Criterion 1 additionally fails its speed/ingest gates as shown above. Criterion 2 uses cold-volume materialization and the sparse-metadata store-cost model for the 10-edit comparison; the full-manifest proxy is context. Current-configuration A-real is shown separately because its stronger Apple durability and per-blob API transactions are not a matched baseline.
+**APFS verdict: no-go under criterion 1 and criterion 2.** The criteria agree: per-file reflinks share data, but the measured layout exceeds both logical-byte disk bounds. Criterion 1 additionally fails its speed/ingest gates as shown above. Criterion 2 uses cold-volume materialization and the sparse-metadata store-cost model for the 10-edit comparison; the full-manifest proxy is context. Current-configuration A-real is shown separately because its stronger Apple durability and per-blob API transactions are not a matched baseline.
 
-These are APFS-image materialization/allocation and native-APFS ingest measurements on one M1 host. Criterion 1's cross-platform decision remains pending btrfs CI. Criterion 2 already misses its required APFS half; btrfs/XFS results remain pending and cannot make this APFS measurement pass. Under the stated criteria, retain SQLite blobs on APFS. No Linux policy is inferred from this host.
+These are APFS-image materialization/allocation and native-APFS ingest measurements on one M1 host. Criterion 1's cross-platform decision is settled by the btrfs run below (no-go). Criterion 2 already misses its required APFS half; the Linux results cannot make this APFS measurement pass. Under the stated criteria, retain SQLite blobs on APFS. No Linux policy is inferred from this host.
 
 ### Disk denominators (100k, same store+base allocation)
 
@@ -353,7 +353,7 @@ clone incremental paths. The changed entries are the first 100 fixture paths, a 
 path set. This tests applying a changeset, not generating one.
 
 Physical allocation is the dedicated volume's available-space delta after sync:
-statfs `f_bavail * f_bsize` on APFS, statvfs `f_bavail * f_frsize` on Linux. It
+statfs `f_bavail * f_bsize` on APFS, statvfs `f_bavail * f_frsize` on Linux, except btrfs: there the harness counts Data + Metadata + System used from `btrfs filesystem usage --raw`, with DUP/RAID1 replication counted, because statfs does not show that layout. It
 waits for consecutive equal readings 200 ms apart, failing after 20 s. Disk states
 (store, +base, +1 Layer, +5 Layers) have five independent allocations, with
 median/p95 reported. Each repetition rebuilds the store and working trees; SQLite
@@ -455,40 +455,61 @@ remove an active writer's temp. Atomic rename does not replace fanout-directory
 fsync or a durable reachability/GC protocol. None of those protocols is implemented
 in production by this measurement PR.
 
-## Linux measurements — pending CI run
+## Linux measurements — CI run 39130520311
 
-The workflow runs btrfs, ext4 and XFS as three parallel ubuntu-24.04 jobs using
+Run [39130520311](https://github.com/Dhruv2mars/javelin/actions/runs/39130520311)
+(head `8d78768`; harness unchanged through the branch head) ran btrfs, ext4 and
+XFS as three parallel ubuntu-24.04 jobs using
 16 GiB sparse loop images, Rust 1.99.0, the full 1k/10k/100k matrix and five reps.
 XFS is formatted with `-m reflink=1`, and xfs_info records proof. The summary
-records kernel/OS, CPU, RAM, core count and formatter versions. Runs are
+records kernel/OS, CPU, RAM, core count and formatter versions. Hosts were 4-vCPU
+AMD EPYC 9V74 VMs with 15 GiB RAM, kernel 6.17.0-1022-azure, Ubuntu 24.04.5.
+Table values are medians of five reps; disk ratios use logical corpus bytes
+(697,364,836). Raw JSON is in the run's artifacts; summaries and full Markdown
+are in `tools/storage-bench/results/linux-{btrfs,ext4,xfs}-2026-10-18.*`. Runs are
 unprivileged after format/mount/chown; only cold-cache dropping uses sudo. JSON
 and Markdown are uploaded even after a partial failure. There are no timing gates.
 
 | FS | 100k A-tuned durable materialize warm/cold | B-clone warm/cold | B-copy warm/cold | durable ingest ratio B/A | store+base | +1/+5 Layers | eviction/read |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| btrfs | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
-| ext4 | pending CI run | expected unsupported; pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
-| XFS reflink=1 | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run |
+| btrfs | 5,396 / 7,020 ms | 4,749 / 6,206 ms | 5,259 / 12,574 ms | 6.17× (112,655 / 18,247 ms) | 1.731× (A-tuned 2.598×) | 2.035× / 3.247× (A-tuned 2.902× / 4.113×) | evict 10%: 494 ms no-base, 457 ms live-base (A-tuned 317 / 309 ms); random read p50 7.4 µs warm, 455 µs cold-start (A-tuned 11.3 / 14.4 µs) |
+| ext4 (copy control) | 3,617 / 5,230 ms | unsupported (no clone, as expected) | 3,255 / 11,153 ms | 9.29× (68,376 / 7,358 ms) | 2.723× (A-tuned 2.553×) | 4.090× / 9.559× (A-tuned 3.920× / 9.389×) | evict 10%: 297 ms no-base, 297 ms live-base (A-tuned 172 / 148 ms); random read p50 7.5 µs warm, 425 µs cold-start (A-tuned 12.6 / 15.4 µs) |
+| XFS reflink=1 | 4,851 / 6,891 ms | 8,531 / 10,917 ms | 4,428 / 11,742 ms | 9.21× (63,825 / 6,930 ms) | 1.532× (A-tuned 2.630×) | 1.639× / 2.065× (A-tuned 2.736× / 3.163×) | evict 10%: 517 ms no-base, 705 ms live-base (A-tuned 175 / 140 ms); random read p50 7.7 µs warm, 586 µs cold-start (A-tuned 11.4 / 16.2 µs) |
 
 The same workflow includes the 20-repetition checkpoint variants and 20 randomized
 writer kills per durable store. No performance cutoff is used.
 
 | FS | C1 speed / disk / ingest | C2 (1) base physical delta / FIEMAP shared fraction | C2 (2) cold speed | C2 (3) ≤1.1× | C2 (4) 10-edit ≤1.1× time | C2 (5) killed writer | Verdicts C1 / C2 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| btrfs | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
-| XFS reflink=1 | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
-| ext4 copy control | pending CI run | pending CI run (clone expected unsupported) | pending CI run | pending CI run | pending CI run | pending CI run | pending CI run / pending CI run |
+| btrfs | warm 1.136× (cold 1.131×) vs ≥5× ✗ · disk 1.731× vs ≤1.2× ✗ · ingest 6.17× vs ≤2× ✗ | 205.8 MB base = 0.30× logical; all 61,639 files ≥4 KiB shared (94.5% of logical bytes); 38.6 MB copied as 38,361 inline files, not certified by the ≥4 KiB rule ✓ | 0.884 ✓ | 1.731× ✗ | sparse 2.83× (16.0 vs 5.7 ms) ✗; full-manifest 1.07× (context) | 20/20 ✓ | no-go / no-go |
+| XFS reflink=1 | warm 0.569× (B-clone slower; cold 0.631×) vs ≥5× ✗ · disk 1.532× vs ≤1.2× ✗ · ingest 9.21× vs ≤2× ✗ | 74.3 MB base = 0.11× logical; all 100,000 files shared, 0 copied ✓ | 1.584× (B slower) ✗ | 1.532× ✗ | sparse 1.99× (9.0 vs 4.5 ms) ✗; full-manifest 1.10× (context) | 20/20 ✓ | no-go / no-go |
+| ext4 copy control | warm 1.11× faster on the copy path (≥5× needed) ✗ · disk 2.723× ✗ · ingest 9.29× ✗ | not evaluable: clone unsupported (control only) | 2.13× (B-copy slower) ✗ | 2.723× ✗ | sparse 2.71× (11.9 vs 4.4 ms) ✗ | 20/20 ✓ | control: no-go / no-go |
 
 Criterion 1 explicitly names APFS or btrfs; its XFS/ext4 columns are diagnostic
 and cannot independently satisfy that cross-platform gate.
 
-Linux timing, shared-extent proof and physical accounting are unmeasured locally;
-no Linux outcome is inferred from APFS. The CI budget estimate is 45–120 minutes per filesystem, with all three jobs
-running in parallel. This is unconfirmed: estimates use the operation count
-(hundreds of thousands of durable commits/fsyncs and millions of file creations)
-and the APFS run, not Linux data. Slow hosted storage can exceed that range;
-the 180-minute timeout keeps the full matrix, and ordinary step failures still
-run artifact upload. Results are saved incrementally.
+Linux results come only from the CI runners. The local M1 measured no Linux
+behavior, and no Linux outcome is inferred from APFS. The earlier CI budget estimate
+(45–120 minutes per filesystem, from the operation count and the APFS run) was too
+low. Observed job times were 127 min (ext4), 167 min (btrfs) and 171 min (XFS),
+with the three jobs in parallel. The 180-minute timeout still covered the full
+matrix, but XFS finished about 9 minutes early, so a slower hosted run could time
+out. Ordinary step failures still run artifact upload. Results are saved incrementally.
+
+## Final decision
+
+**Blobs stay in SQLite on every measured platform.** Both criteria fail on APFS,
+btrfs and XFS reflink=1; ext4 (copy control) fails every gate. Criterion 1 misses
+speed (APFS 1.25× warm, btrfs 1.14×, XFS slower than SQLite; ≥5× required), ingest
+(4.98×, 6.17×, 9.21×; ≤2× required) and disk (store+base 1.48×, 1.73×, 1.53× logical;
+≤1.2× required). Criterion 2 needs an APFS go, and APFS misses on disk (1.48×; ≤1.1×
+required). btrfs and XFS also miss on the 10-edit commit (sparse 2.83× and 1.99×),
+and XFS misses cold-base speed (1.58× slower). Clone sharing and killed-writer
+safety passed everywhere (20/20 kills on every durable blob store), so the failures
+are cost, not correctness. Context only: on the allocated-tree denominator, XFS
+store+base is 1.06× the standalone tree and btrfs 1.23×. That does not change either
+verdict, because the pre-registered denominator is logical bytes and the speed and
+ingest gates fail regardless.
 
 ## Implications to revisit with the completed data
 
@@ -539,3 +560,6 @@ rounding or filesystem-specific inline-storage behavior. Windows, networking,
 concurrent writers, process RSS, file-descriptor pressure and object-store scale
 beyond 100k are unmeasured. Hash verification is outside the tuned/copy hot paths;
 including it would change latency, especially compared with zero-copy cloning.
+btrfs disk values count DUP-replicated metadata, so they are not a pure data-layout
+measure. No Linux verdict depends on that gate: the btrfs speed, ingest and
+10-edit failures stand without it.
