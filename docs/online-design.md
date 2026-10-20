@@ -75,7 +75,8 @@ These are not settled by the contract or G§. The design picks a reading and fla
 - **Control plane** (central, not self-hosted, `C§Hosting ownership`). It owns identity, orgs,
   memberships, discovery, provisioning, and the signing keys for tokens. It is a separate
   service in front of the node, not a node component on managed hosting. Self-hosting runs the
-  same control-plane code inside the node (D1).
+  same control-plane code inside the node (D1). That contradicts `C§Hosting ownership`'s "not
+  self-hosted"; the hub must amend it.
 - **Client** (`javelin` CLI). Captures locally, keeps a bounded object cache and a rolling base
   (`G§4`), queues remote work in an outbox (section 4.4), and talks to the node directly
   after authentication.
@@ -317,19 +318,22 @@ managed):
 - `layer_seq(layer, seq, parent, checkpoint, operation)` with key `(layer, seq)`, and the review
   revision rows (4.8): same pattern.
 - `objects(id, kind, index, bytes)` with key `(id, index)`. Blobs and checkpoints are split into
-  segments of at most 2 MB, because a DO SQLite row is limited to 2 MB (section 9). A read
+  segments of at most 1 MiB, so a whole row (segment plus `id`, `kind` and `index`) stays under
+  the 2 MB row limit (section 9). A read
   reassembles the segments and checks the whole-object hash.
 
 The head is the largest `n`, read inside the transaction. There is no head hint.
 
 **Commit path** (`PublishLayer` and `PublishRequest`), one transaction:
-1. Read the head `H`. Compose onto `H` (section 4.6; the boundary checks are read here).
+1. Read the head `H`. Compose onto `H`, and read the authorization inputs (4.6, step 2), all
+   inside this transaction, so the reads see every change committed before it.
 2. Insert `ops(operation)`. If it exists, compare the digest: the same digest returns the
    recorded outcome; a different digest returns `operation_id_reused`.
 3. Insert `world(H+1)`. A unique-key violation means another writer committed first: roll back
    and re-prepare on the new head. This is the rebase path of `A§Publish`; intersecting changes
    conflict.
-4. Set `ops(operation).n = H+1` and commit.
+4. Set `ops(operation).n = H+1`; for `PublishLayer`, set the Layer to `Published` in the same
+   transaction; commit.
 5. Reply `Published`.
 
 A transaction either commits or leaves nothing, so there is no pending state. The reply is sent
@@ -377,7 +381,8 @@ Object implementation.
 
 **Authority.** `javelin-node` holds the World log (4.5), Layer partitions, review partitions,
 traces and applied permissions behind traits. The in-process authority and the hosted node
-use the same protocol and the same core code, with no separate path (`G§Open questions`,
+use the same protocol. On the wasm path they share the same core code. On the TypeScript
+fallback (D23), parity with the Rust node is a test, not shared code (`G§Open questions`,
 recommended default, adopted 2026-10-20).
 
 **Immutable transfers.**
@@ -395,13 +400,13 @@ attribution }`:
 1. Replay check (4.5) first. A recorded outcome is returned as-is.
 2. Authorization at the correctness boundary: current applied permissions for the caller
    (`publish` scope and role, epoch), the policy (`required_approvals`, Publish setting),
-   and for `PublishRequest` the approval state (4.8). These are read after compose and before
-   the commit transaction, so a change that lands before the commit point is seen (`C§Contributions
+   and for `PublishRequest` the approval state (4.8). All of these are read inside the commit
+   transaction (4.5), after compose, so a change that commits before it is seen (`C§Contributions
    and reviews`).
 3. Compose onto the head. Conflict returns `Conflict` and writes nothing.
-4. Commit transaction (4.5).
-5. Layer state moves to `Published` (read-only, `C§Version control`). If the node crashes
-   before this, the replay finds the committed version and returns it.
+4. Commit transaction (4.5), which also sets the Layer to `Published`.
+5. The Layer is `Published` (read-only, `C§Version control`) from the commit onward, so a
+   replay that finds the committed version also finds the Layer already published.
 
 **Tests.**
 - Lost reply after commit: one version; the retry returns the same version.
@@ -504,8 +509,9 @@ collaboration crate on tree IDs (T4). No browser UI; that is the separate browse
   the stored revision is byte-identical afterwards.
 - Approval for revision 1 does not count for revision 2.
 - Self-approval refused.
-- `PublishRequest` of revision 1 after revision 2 exists: publishes revision 1's content exactly
-  (tree equal to compose of revision 1).
+- `PublishRequest` of revision 1 after revision 2 exists: refused with `stale_revision`
+  (4.8). The exact approved content is tested by advancing the Layer without a new revision:
+  publishing revision 1 still publishes its checkpoint, not the Layer head.
 - Approver's role removed at a newer epoch before publish: refused.
 - Comments on revision 1 remain visible after revision 2.
 - Lost reply on `PublishRequest`: one version.
@@ -578,7 +584,8 @@ javelin repo create <owner>/<name> --visibility public|private \
 3. It provisions the node: the repository's Durable Object (managed) or data directory
    (self-host), and the Worker route.
 4. It writes applied permissions at epoch 1 (creator = Maintain) and version 0 (empty World).
-5. It marks `Ready` and returns the repository URL. No secret is echoed.
+5. It marks `Ready` and returns the repository URL. Ordinary responses echo no secret; the
+   bootstrap admin token is shown once, in the output of node or repository creation (4.7, D5).
 
 Repeating the same operation ID returns the same repository. A crash leaves `Provisioning`,
 and a retry resumes it. The CLI then runs `javelin attach`.
@@ -637,8 +644,10 @@ does not change contract text.
   Durable Object per repository; objects are DO SQLite rows of at most 2 MB, with no R2 (R2 needs
   a payment method, per the user; not checked here). U13 verifies the Free-plan limits first, and
   they stay unverified until then. The control plane's location is a derived default, not a user
-  decision: embedded in the node when self-hosted, on Workers when managed. Rationale: only starts
-  that need no paid tier, no card and no extra signup.
+  decision: embedded in the node when self-hosted, on Workers when managed. Contract tension:
+  `C§Hosting ownership` says the control plane is not self-hosted, so the hub must amend that
+  clause before self-host embeds it. Rationale: only starts that need no paid tier, no card and no
+  extra signup.
 - **D2. World log quorum (T1).** Decided 2026-10-20: one coordinator per repository, the node's
   process lock when self-hosted or the repository's Durable Object when managed, with durability
   from the storage layer. Cloudflare's 2024 post says a write is confirmed once three of five
@@ -754,7 +763,8 @@ Read 2026-10-20 (WebFetch unless noted):
   SQLite-backed objects are available on Workers Free. Row and value size 2 MB; SQL statement
   100 KB; 100 bound parameters; CPU 30 s default, `limits.cpu_ms` up to 300,000 ms; soft limit
   1,000 requests/s per object; writes fail with `SQLITE_FULL` at the cap, reads still succeed.
-  Free storage is 5 GB per account in the table but 1 GB in the FAQ. UNRESOLVED; U13 checks.
+  Account storage on Free is 5 GB (table). Per-object storage is 10 GB in the table but 1 GB on
+  Free in the FAQ. UNRESOLVED; U13 checks.
 - Cloudflare Workers limits, https://developers.cloudflare.com/workers/platform/limits/. Free:
   100,000 requests/day; 10 ms CPU per HTTP request; 128 MB memory; 50 subrequests per invocation;
   64 MiB Worker size. The page does not say whether Durable Object requests or CPU count against
@@ -766,9 +776,12 @@ Read 2026-10-20 (WebFetch unless noted):
   Writes go to five follower replicas in different data centers; a write is confirmed once at
   least three of five respond; the output gate holds responses until confirmation. The post does
   not use the word "quorum" and is dated. U12 re-checks against current docs.
-- Cloudflare changelog, SQLite in Durable Objects GA (2025-04-07),
-  https://developers.cloudflare.com/changelog/2025-04-07-sqlite-in-durable-objects-ga (search
-  excerpt): available on Free with no commitment.
+- Cloudflare changelog, Durable Objects on the Workers Free plan (2025-04-07),
+  https://developers.cloudflare.com/changelog/post/2025-04-07-durable-objects-free-tier/ (fetched
+  2026-10-20): "Durable Objects can now be used with zero commitment on the Workers Free plan";
+  free plan limits apply. The SQLite-in-DO GA changelog
+  (https://developers.cloudflare.com/changelog/2025-04-07-sqlite-in-durable-objects-ga, search
+  excerpt) does not state Free availability.
 
 Not verified (marked unverified until checked):
 - A Free plan without a payment method. No official Cloudflare text was found (search,
