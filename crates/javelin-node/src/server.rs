@@ -11,6 +11,7 @@
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -88,6 +89,9 @@ impl From<io::Error> for Fault {
 }
 
 fn handle_connection(stream: TcpStream, name: &str, log: &mut FileWorldLog) -> io::Result<()> {
+    // Nonblocking, so every read and write returns to `Deadline`, which checks the clock.
+    // Socket timeouts are not used: they do not bound a call that keeps making progress.
+    stream.set_nonblocking(true)?;
     let replies = stream.try_clone()?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
     match read_request(&mut reader, name, log) {
@@ -227,19 +231,37 @@ impl Deadline {
             .filter(|left| !left.is_zero())
             .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "deadline passed"))
     }
+
+    /// Waits one poll interval, or fails once the deadline has passed.
+    fn wait(&self) -> io::Result<()> {
+        self.left()?;
+        thread::sleep(POLL.min(self.left()?));
+        Ok(())
+    }
 }
+
+/// How often a blocked read or write re-checks the deadline.
+const POLL: Duration = Duration::from_millis(5);
 
 impl Read for Deadline {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stream.set_read_timeout(Some(self.left()?))?;
-        self.stream.read(buf)
+        loop {
+            match self.stream.read(buf) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => self.wait()?,
+                done => return done,
+            }
+        }
     }
 }
 
 impl Write for Deadline {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stream.set_write_timeout(Some(self.left()?))?;
-        self.stream.write(buf)
+        loop {
+            match self.stream.write(buf) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => self.wait()?,
+                done => return done,
+            }
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
