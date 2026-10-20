@@ -912,14 +912,12 @@ fn nonce() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::windows_unrepresentable as bad;
 
     #[cfg(unix)]
     #[test]
     fn abandoning_a_staged_symlink_leaves_its_target_alone() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::{fs, os::unix::fs::PermissionsExt};
         let scratch = tempfile::TempDir::new().unwrap();
         let dir = scratch.path().join("store");
         fs::create_dir_all(dir.join("tmp")).unwrap();
