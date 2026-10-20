@@ -609,6 +609,21 @@ pub(crate) fn verify_head(conn: &Connection, head: &LayerHead) -> Result<()> {
     Ok(())
 }
 
+/// Creates `layer` as an empty Layer on `version`, inside the caller's transaction.
+pub(crate) fn create_on_version_in(
+    conn: &Connection,
+    layer: &LayerId,
+    version: VersionNumber,
+) -> Result<LayerHead> {
+    let base = LayerBase {
+        repository: identity_in(conn)?,
+        version,
+        world: version_in(conn, version)?.id,
+    };
+    let empty = prepare_checkpoint(conn, &base, &SparseChanges::new([])?, &[], None)?;
+    create_in(conn, layer, &empty)
+}
+
 fn create_in(conn: &Connection, layer: &LayerId, candidate: &Candidate) -> Result<LayerHead> {
     let checkpoint = candidate.id;
     let exists = conn

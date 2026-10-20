@@ -7,7 +7,7 @@ use javelin::{
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -569,6 +569,45 @@ fn radar_text(radar: &Radar) -> String {
         ));
     }
     lines.join("\n")
+}
+
+/// `adopt [project-directory] --operation ID`: one command from an existing project
+/// directory to a repository whose World 1 holds its files. Retry with the same operation.
+pub fn adopt(args: Vec<OsString>) -> Result<Output> {
+    let mut root = None;
+    let mut operation = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--operation" {
+            let value = args
+                .next()
+                .ok_or_else(|| Error::InvalidInput("--operation needs a value".into()))?;
+            if operation.replace(value).is_some() {
+                return Err(Error::InvalidInput("repeated option --operation".into()));
+            }
+        } else if arg.to_string_lossy().starts_with('-') || root.replace(arg).is_some() {
+            return Err(Error::InvalidInput(
+                "expected adopt [project-directory] --operation ID".into(),
+            ));
+        }
+    }
+    let operation = operation.ok_or_else(|| Error::InvalidInput("missing --operation".into()))?;
+    let operation = OperationId::parse(text(&operation)?)?;
+    let root = match root {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir()?,
+    };
+    let adoption = Repository::adopt(&root, &operation)?;
+    let files = adoption.files;
+    let layer = adoption.layer.as_str().to_owned();
+    let (mut value, mut text, code) = publication("adopt", adoption.receipt);
+    value["files"] = json!(files);
+    if let (Some(files), 0) = (files, code) {
+        text = format!(
+            "Adopted {files} files through Layer {layer}; the project directory was not changed.\n{text}"
+        );
+    }
+    Ok((value, text, code))
 }
 
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {

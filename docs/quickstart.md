@@ -128,4 +128,5 @@ provide isolation, not a security sandbox.
   macOS, Linux and Windows with a failing Git stand-in first on `PATH`.
 
 This walkthrough does not establish release packaging/signing, minimum OS support,
-a background autosave daemon, project adoption, or complete hosting.
+or a background autosave daemon, or complete hosting. `adopt` (see `docs/cli.md`) is
+covered by `crates/javelin-cli/tests/cli_adopt.rs`, but this walkthrough does not run it.

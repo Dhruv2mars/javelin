@@ -164,6 +164,19 @@ Code: src/stack.rs, crates/javelin-stack/src/lib.rs, crates/javelin-merge/src/li
 
 Code: src/publish.rs, src/repository.rs, src/lib.rs
 
+## Adoption
+
+`Repository::adopt` (`javelin adopt`) turns a project directory into a repository whose
+World 1 holds its files. World 0 stays empty, as in `init`. The reserved Layer is named
+`adoption-<hash>`, where `<hash>` is 16 bytes of the operation ID's SHA-256 (`adoption_layer`).
+Fresh stores get that Layer in the same transaction as World 0, so no store exists with World 0
+but without it. The name binds the operation: only the same operation can resume or replay the
+adoption. Capture reads the directory once with Source::Project, which skips `.git` at any depth
+and honors root `.javelinignore`. Publish then accepts the checkpoint whole under that operation.
+A store with any other Layer or version is refused without change.
+
+Code: src/adopt.rs, src/capture.rs (`Source`), src/layer.rs (`create_on_version_in`)
+
 ## Repository protocol crate (`crates/javelin-protocol`)
 
 Version 2 moves snapshots as derived trees: tree chunks and blobs, content-addressed and verified by hash, with no packfiles and no snapshot-wide size limit.

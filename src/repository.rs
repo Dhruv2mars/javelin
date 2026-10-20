@@ -94,6 +94,16 @@ impl Repository {
     /// Creates empty immutable World 0, or validates and reopens an existing store.
     /// An interrupted empty initialization can be retried; foreign data is never replaced.
     pub fn init(root: impl AsRef<Path>) -> Result<Self> {
+        Self::initialize(root, None)
+    }
+
+    /// Like [`Repository::init`], and creates `adoption` on World 0 in the same transaction,
+    /// so no store exists with World 0 but without the adoption Layer.
+    pub(crate) fn init_adopting(root: impl AsRef<Path>, adoption: &crate::LayerId) -> Result<Self> {
+        Self::initialize(root, Some(adoption))
+    }
+
+    fn initialize(root: impl AsRef<Path>, adoption: Option<&crate::LayerId>) -> Result<Self> {
         let root = fs::canonicalize(root)?;
         if !root.is_dir() {
             return Err(Error::InvalidInput(
@@ -162,6 +172,9 @@ impl Repository {
                     empty.to_string()
                 ],
             )?;
+            if let Some(layer) = adoption {
+                crate::layer::create_on_version_in(&tx, layer, VersionNumber::new(0)?)?;
+            }
         } else {
             validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
         }
