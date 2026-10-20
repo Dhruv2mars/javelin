@@ -13,3 +13,17 @@ The local VCS and hosting service are under active development; no GA release or
 complete hosting workflow is available. See the [architecture](docs/architecture.md),
 [CLI and setup reference](docs/cli.md), [build contract](docs/build-contract.md), and
 [build checklist](TASKS.md).
+
+## Install
+
+Pre-GA. The release pipeline ships install scripts for macOS, Linux and Windows that
+verify SHA-256 checksums and upgrade in place. Pin a release tag until GA:
+
+```sh
+curl -fsSLO https://github.com/Dhruv2mars/javelin/releases/download/TAG/install.sh
+sh install.sh --version TAG
+```
+
+On Windows, use `install.ps1` with `-Version TAG`. Details, limits, and upgrade notes
+are in [docs/install.md](docs/install.md). Without a release, build from source with
+the [quickstart](docs/quickstart.md).
