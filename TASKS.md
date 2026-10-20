@@ -136,7 +136,7 @@ workflow may invoke or interpret Git.
   reference clones, retained history and exact retries. Ordinary-path binding and
   automatic capture remain separate unchecked requirements.
 - [x] Adopt existing non-Git project files through a Layer without accepting edits outside it. (PR #61)
-- [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
+- [x] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [x] Bind supplied agent traces to immutable work, with missing-trace override.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
@@ -324,7 +324,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 - [ ] Process concurrency, crash recovery, retries and corruption proofs.
 
 Wave 3, after wave 2:
-- [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
+- [x] Stack, refresh, structural conflicts and explicit resolution end to end.
 - [x] Adopt existing non-Git project files through a Layer. (PR #61)
 - [x] Bind agent traces to immutable work, with a missing-trace override (#68).
 - [ ] Online units from `docs/online-design.md`, in its order.
