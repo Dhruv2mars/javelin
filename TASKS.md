@@ -135,7 +135,7 @@ workflow may invoke or interpret Git.
 - [x] Verify the bounded native Layer state API, immutable sparse checkpoints,
   reference clones, retained history and exact retries. Ordinary-path binding and
   automatic capture remain separate unchecked requirements.
-- [ ] Adopt existing non-Git project files through a Layer without accepting edits outside it.
+- [x] Adopt existing non-Git project files through a Layer without accepting edits outside it. (PR #61)
 - [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [x] Bind supplied agent traces to immutable work, with missing-trace override.
 - [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
@@ -323,7 +323,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 
 Wave 3, after wave 2:
 - [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
-- [ ] Adopt existing non-Git project files through a Layer.
+- [x] Adopt existing non-Git project files through a Layer. (PR #61)
 - [x] Bind agent traces to immutable work, with a missing-trace override.
 - [ ] Online units from `docs/online-design.md`, in its order.
 - [ ] Release packaging and clean-machine installs on three OSes; then docs.

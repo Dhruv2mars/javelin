@@ -31,6 +31,7 @@ workspaces.
 
 ```text
 javelin init [project-directory] [--json]
+javelin adopt [project-directory] --operation ID [--json]
 javelin history [project-directory] [--json]
 javelin check [project-directory] [--json]
 javelin blame PATH [--world N] [--lines]
@@ -65,7 +66,19 @@ and may appear before or after positional arguments. Unknown, repeated, and
 irrelevant options are errors. Use `./name` for a path that starts with `-`.
 
 `init` creates an empty immutable World 0. Existing project files remain untouched
-and untracked. It does not adopt an existing project. `layer create` uses the
+and untracked. It does not adopt an existing project; use `adopt` for that.
+
+`adopt` creates the repository and publishes the directory's files as World 1 through
+the reserved Layer `adoption-<hash>`, named from the operation ID. World 0 stays empty,
+as `init` defines it. Root
+`.javelinignore` applies, and `.git` is never read or imported. The project directory
+is never written. Later edits reach a World only through a Layer, such as
+`workspace publish`. Retry an interrupted adoption with the same `--operation ID`; a
+completed adoption replays its receipt for that ID. Any other existing repository, or
+an adoption under a different ID, is refused (exit 2) with no change. Files that change
+during capture stop the adoption before Publish, so nothing is published from a
+moving directory. Layer capture is unchanged: a `.git` directory that appears inside a
+Layer is still captured. `layer create` uses the
 current World head unless `--world N` selects an exact version. A Layer ID and
 an operation ID each contain 1 to 128 ASCII letters, digits, `-`, `_`, or `.`.
 Checkpoint hashes come from `layer state`, `layer history`, or checkpoint output.

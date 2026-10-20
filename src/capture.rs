@@ -36,7 +36,7 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Error, FileEntry, IgnoreRules, LayerHead, LayerId, LayerUpdate, Manifest, ObjectId,
+    Error, FileEntry, IgnoreRules, LayerHead, LayerId, LayerState, LayerUpdate, Manifest, ObjectId,
     OperationId, RepoPath, Repository, Result, SparseChanges,
     domain::ObjectKind,
     ignore::{CONFIG, LIMIT},
@@ -164,6 +164,26 @@ pub fn scan(
     prior: &Manifest,
     store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
 ) -> Result<Scan> {
+    scan_source(root, cache, prior, store, Source::Layer)
+}
+
+/// What a walk imports from its directory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Source {
+    /// A Layer directory: every entry except `.javelin` is captured.
+    Layer,
+    /// An existing project directory being adopted. Git metadata (`.git`) is never
+    /// read or imported, at any depth.
+    Project,
+}
+
+pub(crate) fn scan_source(
+    root: &Path,
+    cache: &mut StatCache,
+    prior: &Manifest,
+    store: &mut dyn FnMut(&[u8]) -> Result<ObjectId>,
+    source: Source,
+) -> Result<Scan> {
     if !fs::symlink_metadata(root)?.is_dir() {
         return Err(Error::InvalidInput("Layer root must be a directory".into()));
     }
@@ -180,7 +200,7 @@ pub fn scan(
         relative,
         path,
         stat,
-    } in walk(root, &rules, prior)?
+    } in walk(root, &rules, prior, source)?
     {
         let reused = old
             .remove(&relative)
@@ -240,7 +260,7 @@ struct Found {
 ///
 /// Directories are listed by a small thread pool: the walk is bound by per-entry
 /// syscall latency, not CPU, so parallel listing cuts a 100k-file rescan severalfold.
-fn walk(root: &Path, rules: &IgnoreRules, prior: &Manifest) -> Result<Vec<Found>> {
+fn walk(root: &Path, rules: &IgnoreRules, prior: &Manifest, source: Source) -> Result<Vec<Found>> {
     use std::sync::{Condvar, Mutex};
     struct Queue {
         pending: Vec<String>,
@@ -282,6 +302,7 @@ fn walk(root: &Path, rules: &IgnoreRules, prior: &Manifest) -> Result<Vec<Found>
                             &directory,
                             rules,
                             prior,
+                            source,
                             &mut found,
                             &mut subdirectories,
                         );
@@ -315,6 +336,7 @@ fn list(
     directory: &str,
     rules: &IgnoreRules,
     prior: &Manifest,
+    source: Source,
     found: &mut Vec<Found>,
     subdirectories: &mut Vec<String>,
 ) -> Result<()> {
@@ -330,7 +352,9 @@ fn list(
         let name = name
             .to_str()
             .ok_or_else(|| Error::Unsupported(format!("non-UTF-8 name in {directory:?}")))?;
-        if name.eq_ignore_ascii_case(".javelin") {
+        if name.eq_ignore_ascii_case(".javelin")
+            || (source == Source::Project && name.eq_ignore_ascii_case(".git"))
+        {
             continue;
         }
         let relative = if directory.is_empty() {
@@ -776,6 +800,18 @@ impl Capture {
 }
 
 impl Repository {
+    /// Captures an existing project directory into an active Layer for adoption.
+    pub(crate) fn capture_project(&mut self, layer: &LayerId, root: &Path) -> Result<Capture> {
+        self.capture_source(layer, root, Source::Project)
+    }
+
+    fn capture_source(&mut self, layer: &LayerId, root: &Path, source: Source) -> Result<Capture> {
+        match self.layer_state(layer)? {
+            LayerState::Active { head } => self.capture_at(head, root, source),
+            _ => Err(Error::InvalidInput("Layer is not active".into())),
+        }
+    }
+
     /// Whether Stack produced the head. Stack changes only native state, so a Layer's
     /// directory lacks the stacked work until it is refreshed to the head.
     pub(crate) fn stacked(&self, head: &LayerHead) -> Result<bool> {
@@ -798,7 +834,12 @@ impl Repository {
 
     /// Scans `root` against the head and commits any difference. The caller decides
     /// whether the directory may be captured at all (see `capture_workspace`).
-    pub(crate) fn capture_at(&mut self, head: LayerHead, root: &Path) -> Result<Capture> {
+    pub(crate) fn capture_at(
+        &mut self,
+        head: LayerHead,
+        root: &Path,
+        source: Source,
+    ) -> Result<Capture> {
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
         let base = self.manifest_at(checkpoint.base().version())?;
         let cache_path = self.capture_cache(head.layer())?;
@@ -806,9 +847,13 @@ impl Repository {
         let rebuilt = cache.rebuilt();
         let manifest = self.checkpoint_manifest(checkpoint.id())?;
         let tx = self.conn.unchecked_transaction()?;
-        let scan = scan(root, &mut cache, &manifest, &mut |bytes| {
-            store_blob(&tx, bytes)
-        })?;
+        let scan = scan_source(
+            root,
+            &mut cache,
+            &manifest,
+            &mut |bytes| store_blob(&tx, bytes),
+            source,
+        )?;
         tx.commit()?;
         // The cache only accelerates later scans; failing to save it loses no edits.
         let _ = cache.save(&cache_path);

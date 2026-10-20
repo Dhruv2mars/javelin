@@ -207,6 +207,13 @@ fn actor() {
             Ok(outcome) => json!(outcome),
             Err(error) => json!({"error": error.code()}),
         }
+    } else if mode == "adopt" {
+        let operation =
+            OperationId::parse(&std::env::var("JAVELIN_TEST_OPERATION").unwrap()).unwrap();
+        match Repository::adopt(&root, &operation) {
+            Ok(adoption) => json!(adoption),
+            Err(error) => json!({"error": error.code()}),
+        }
     } else if mode == "layer_read" {
         let repo = Repository::open(&root).unwrap();
         let checkpoint =
@@ -493,6 +500,71 @@ fn initialization_recovers_on_both_sides_of_commit() {
         let repo = Repository::open(root.path()).unwrap();
         assert_eq!(repo.check().unwrap().versions, 1);
         assert_eq!(repo.check().unwrap().objects, 1); // the empty World tree
+    }
+}
+
+fn write_project(root: &Path) {
+    std::fs::create_dir_all(root.join("src/deep")).unwrap();
+    std::fs::write(root.join("src/deep/a.txt"), "alpha\n").unwrap();
+    std::fs::write(root.join("readme.md"), "# proj\n").unwrap();
+}
+
+#[test]
+fn a_crashed_adoption_resumes_only_under_its_own_operation() {
+    let crashed = TempDir::new().unwrap();
+    write_project(crashed.path());
+    let mut actor = Actor::spawn(
+        crashed.path(),
+        "adopt",
+        "adopt-first",
+        None,
+        0,
+        "adopt_after_capture",
+    );
+    actor.release();
+    actor.marker("BOUNDARY adopt_after_capture");
+    actor.kill();
+
+    let mut other = Actor::spawn(crashed.path(), "adopt", "adopt-other", None, 0, "");
+    other.release();
+    let refused = other.result();
+    assert!(refused.get("error").is_some(), "{refused}");
+
+    let mut retry = Actor::spawn(crashed.path(), "adopt", "adopt-first", None, 0, "");
+    retry.release();
+    assert_eq!(retry.result()["files"], 2);
+}
+
+#[test]
+fn adoption_retry_after_a_crash_yields_the_world_of_a_clean_adoption() {
+    let operation = "adopt-first";
+    for boundary in ["init_before_commit", "adopt_after_capture"] {
+        let crashed = TempDir::new().unwrap();
+        write_project(crashed.path());
+        let mut actor = Actor::spawn(crashed.path(), "adopt", operation, None, 0, boundary);
+        actor.release();
+        actor.marker(&format!("BOUNDARY {boundary}"));
+        actor.kill();
+
+        let mut retry = Actor::spawn(crashed.path(), "adopt", operation, None, 0, "");
+        retry.release();
+        let adopted = retry.result();
+        assert_eq!(adopted["files"], 2, "{boundary}: {adopted}");
+        let repo = Repository::open(crashed.path()).unwrap();
+        assert_eq!(repo.check().unwrap().versions, 2, "{boundary}");
+
+        let clean = TempDir::new().unwrap();
+        write_project(clean.path());
+        let fresh =
+            Repository::adopt(clean.path(), &OperationId::parse(operation).unwrap()).unwrap();
+        assert_eq!(fresh.files, Some(2));
+        let fresh_repo = Repository::open(clean.path()).unwrap();
+        let number = VersionNumber::new(1).unwrap();
+        assert_eq!(
+            repo.version(number).unwrap().id,
+            fresh_repo.version(number).unwrap().id,
+            "{boundary}"
+        );
     }
 }
 

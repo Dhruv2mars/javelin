@@ -199,17 +199,26 @@ impl Chunk {
             .map(|item| (item.name.as_str(), item.node()))
     }
 
+    /// Each child chunk with the last name its parent files it under, above the leaves.
+    pub fn child_links(&self) -> impl Iterator<Item = (&str, ObjectId)> + '_ {
+        self.items
+            .iter()
+            .filter(|item| item.tag == CHILD)
+            .map(|item| (item.name.as_str(), item.id))
+    }
+
     /// The child chunk that holds `name` if anything does, for a chunk above the
     /// leaves: the first whose last name is at least `name`.
-    pub fn child_for(&self, name: &str) -> Option<ObjectId> {
+    pub fn child_for(&self, name: &str) -> Option<(&str, ObjectId)> {
         let index = self.items.partition_point(|item| item.name.as_str() < name);
         self.items
             .get(index)
             .filter(|i| i.tag == CHILD)
-            .map(|i| i.id)
+            .map(|i| (i.name.as_str(), i.id))
     }
 
-    fn last(&self) -> &str {
+    /// The last name in this chunk.
+    pub fn last(&self) -> &str {
         self.items.last().map_or("", |item| item.name.as_str())
     }
 }

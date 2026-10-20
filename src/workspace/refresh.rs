@@ -25,7 +25,7 @@ use super::{Store, WorkspaceRecovery, clone, native, remove_entry, representable
 use crate::{
     CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
     Repository, Result, SparseChanges,
-    capture::{Capture, StatCache, changes_from, entry_at, scan, store_blob, write_atomic},
+    capture::{Capture, Source, StatCache, changes_from, entry_at, scan, store_blob, write_atomic},
 };
 
 /// What a refresh did. `refreshed` is false when the directory already matched the head.
@@ -103,7 +103,7 @@ impl Repository {
         if self.stacked(&head)? && self.synced(layer)? != Some(head.checkpoint()) {
             return Capture::behind(head);
         }
-        let capture = self.capture_at(head, root)?;
+        let capture = self.capture_at(head, root, Source::Layer)?;
         // The directory now matches the captured head. A stale update leaves the record as
         // it was, because the directory still matches the checkpoint it was synced with.
         let synced = match &capture.update {
