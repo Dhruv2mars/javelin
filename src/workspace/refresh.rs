@@ -23,7 +23,7 @@ use serde::Serialize;
 
 use super::{Store, WorkspaceRecovery, clone, native, remove_entry, representable, sync_dir};
 use crate::{
-    CheckpointId, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
+    CheckpointId, Choice, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
     Repository, Result, SparseChanges,
     capture::{Capture, Source, StatCache, changes_from, entry_at, scan, store_blob, write_atomic},
 };
@@ -57,6 +57,13 @@ struct Plan {
 }
 
 impl Repository {
+    /// Paths among `paths` that alias an earlier one on this volume, for Stack, which has no
+    /// workspace to probe. Paths must be sorted, so the first of an alias pair is kept.
+    pub fn aliased_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>> {
+        let store = Store::lock(self)?;
+        Ok(probe_volume(&store, paths)?.into_iter().cloned().collect())
+    }
+
     /// Captures the Layer's clone-backed directory (`.javelin/layers/<id>`) before a
     /// command reads Layer state. `None` when there is no directory or the Layer is
     /// no longer active, so there is nothing to capture.
@@ -126,6 +133,32 @@ impl Repository {
     /// when a local edit and the head disagree on a path. The directory is not captured
     /// first: local edits stay local until the next capture.
     pub fn refresh_workspace(&mut self, layer: &LayerId) -> Result<WorkspaceRefresh> {
+        self.refresh_in(layer, &BTreeMap::new(), true)
+    }
+
+    /// As [`Repository::refresh_workspace`], with the owner's choice for each conflicting
+    /// path. A choice names a path that conflicts; any other path is an invalid input.
+    /// Re-running after an interruption converges, as an unresolved path refuses again.
+    pub fn refresh_workspace_resolved(
+        &mut self,
+        layer: &LayerId,
+        choices: &BTreeMap<RepoPath, Choice>,
+    ) -> Result<WorkspaceRefresh> {
+        self.refresh_in(layer, choices, true)
+    }
+
+    /// Plans the refresh without writing. Returns the same conflicts a refresh would refuse
+    /// with, and changes nothing but the store's recovery of its own trash.
+    pub fn refresh_preview(&mut self, layer: &LayerId) -> Result<WorkspaceRefresh> {
+        self.refresh_in(layer, &BTreeMap::new(), false)
+    }
+
+    fn refresh_in(
+        &mut self,
+        layer: &LayerId,
+        choices: &BTreeMap<RepoPath, Choice>,
+        apply: bool,
+    ) -> Result<WorkspaceRefresh> {
         let store = Store::lock(self)?;
         let recovery = store.recover(self, Some(super::RECLAIM_BUDGET))?;
         let head = match self.layer_state(layer)? {
@@ -161,6 +194,9 @@ impl Repository {
             recovery,
         };
         if from == head.checkpoint() {
+            if let Some(path) = choices.keys().next() {
+                return Err(not_a_conflict(path));
+            }
             return Ok(report);
         }
         let before = self.read_checkpoint(from)?;
@@ -194,22 +230,60 @@ impl Repository {
                 plan.conflicts.insert(path.as_str().to_owned());
             }
         }
-        let gone: BTreeSet<&str> = plan
-            .apply
-            .iter()
-            .filter(|(_, change)| change.is_none())
-            .map(|(path, _)| path.as_str())
-            .collect();
-        plan.conflicts.extend(blocked(&root, &plan.apply, &gone)?);
-        plan.conflicts
-            .extend(occupied(&root, &plan.apply, &scanned.entries, &gone)?);
-        plan.conflicts
-            .extend(aliased_dirs(&root, &plan.apply, &gone)?);
-        plan.conflicts.extend(aliased(&store, &plan.apply)?);
-        if !plan.conflicts.is_empty() {
-            return Err(Error::RefreshConflict(plan.conflicts.into_iter().collect()));
+        // Structural conflicts depend on what the head applies, so they are found again
+        // after the choices change the apply list.
+        let structural = |apply: &[(RepoPath, Option<FileEntry>)]| -> Result<BTreeSet<String>> {
+            let gone: BTreeSet<&str> = apply
+                .iter()
+                .filter(|(_, change)| change.is_none())
+                .map(|(path, _)| path.as_str())
+                .collect();
+            let mut found = BTreeSet::new();
+            found.extend(blocked(&root, apply, &gone)?);
+            found.extend(occupied(&root, apply, &scanned.entries, &gone)?);
+            found.extend(aliased_dirs(&root, apply, &gone)?);
+            found.extend(aliased(&store, apply)?);
+            Ok(found)
+        };
+        let known = structural(&plan.apply)?;
+        for path in choices.keys() {
+            if !plan.conflicts.contains(path.as_str()) && !known.contains(path.as_str()) {
+                return Err(not_a_conflict(path));
+            }
         }
-
+        for (path, choice) in choices {
+            plan.conflicts.remove(path.as_str());
+            let change = match choice {
+                // The directory keeps its own entry, so nothing is written for the path.
+                Choice::Ours => continue,
+                Choice::Theirs => target.entries().get(path).cloned(),
+                Choice::Content { bytes, executable } => {
+                    let mode = |entry: Option<&FileEntry>| match entry {
+                        Some(FileEntry::Regular { executable, .. }) => Some(*executable),
+                        _ => None,
+                    };
+                    let executable = executable
+                        .or_else(|| mode(scanned.entries.get(path)))
+                        .or_else(|| mode(target.entries().get(path)))
+                        .unwrap_or(false);
+                    Some(FileEntry::Regular {
+                        content: self.put_blob(bytes)?,
+                        executable,
+                    })
+                }
+            };
+            plan.apply.push((path.clone(), change));
+        }
+        let mut conflicts = plan.conflicts.clone();
+        conflicts.extend(structural(&plan.apply)?);
+        if !conflicts.is_empty() {
+            return Err(Error::RefreshConflict(conflicts.into_iter().collect()));
+        }
+        if !apply {
+            report.applied = plan.apply.len();
+            report.kept = plan.kept;
+            return Ok(report);
+        }
         // Removals come first, so every path a removal frees is free before an addition
         // writes to it.
         for (path, change) in &plan.apply {
@@ -273,6 +347,13 @@ impl Repository {
     }
 }
 
+fn not_a_conflict(path: &RepoPath) -> Error {
+    Error::InvalidInput(format!(
+        "resolution for {:?}, which is not a conflict",
+        path.as_str()
+    ))
+}
+
 /// Three-way decision over local edits (`S` to directory) and head changes (`S` to head).
 fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
     let (local, theirs) = (local.entries(), theirs.entries());
@@ -323,9 +404,25 @@ fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
 /// folding rule is guessed. The names are created in a scratch tree in the store's staging
 /// area, never in the workspace, and the tree is removed afterwards.
 fn aliased(store: &Store, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec<String>> {
+    let added = apply
+        .iter()
+        .filter(|(_, change)| change.is_some())
+        .map(|(path, _)| path);
+    Ok(probe_volume(store, added)?
+        .into_iter()
+        .map(|path| path.as_str().to_owned())
+        .collect())
+}
+
+/// Paths in `paths` (in order) that name an entry an earlier path already made on this
+/// volume. The probe runs in the store's scratch area, which is removed afterwards.
+pub(crate) fn probe_volume<'a>(
+    store: &Store,
+    paths: impl IntoIterator<Item = &'a RepoPath>,
+) -> Result<Vec<&'a RepoPath>> {
     let scratch = store.staging("alias");
     fs::create_dir_all(&scratch)?;
-    let found = probe(&scratch, apply);
+    let found = probe(&scratch, paths);
     // Our own scratch tree: a failed removal only leaves files the store's recovery trashes.
     let _ = fs::remove_dir_all(&scratch);
     Ok(found)
@@ -334,13 +431,10 @@ fn aliased(store: &Store, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec
 /// Creates each addition's components under `scratch`. A component whose exact name is new
 /// but whose entry already exists is an alias of an earlier one. A failure for any other
 /// reason is left to the write, which reports it with the path's own error.
-fn probe(scratch: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Vec<String> {
+fn probe<'a>(scratch: &Path, paths: impl IntoIterator<Item = &'a RepoPath>) -> Vec<&'a RepoPath> {
     let mut dirs = BTreeMap::<String, PathBuf>::new();
     let mut found = Vec::new();
-    for (path, change) in apply {
-        if change.is_none() {
-            continue;
-        }
+    for path in paths {
         let names: Vec<&str> = path.as_str().split('/').collect();
         let mut parent = scratch.to_path_buf();
         for (i, name) in names.iter().enumerate() {
@@ -363,7 +457,7 @@ fn probe(scratch: &Path, apply: &[(RepoPath, Option<FileEntry>)]) -> Vec<String>
                     parent = child;
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                    found.push(path.as_str().to_owned());
+                    found.push(path);
                     break;
                 }
                 Err(_) => break,

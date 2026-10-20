@@ -1,14 +1,16 @@
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
+use std::{collections::BTreeMap, ffi::OsString, fs, path::PathBuf};
 
 use javelin::{
-    Actor, Capture, CheckpointId, Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId,
-    OperationId, Origin, Provenance, PublicationReceipt, PublishOutcome, Radar, RepoPath,
+    Actor, Capture, CheckpointId, Choice, Error, LayerHead, LayerId, LayerState, LayerUpdate,
+    ObjectId, OperationId, Origin, Provenance, PublicationReceipt, PublishOutcome, Radar, RepoPath,
     Repository, Result, VersionNumber,
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  refresh ID               Bring the directory to its head after Stack moved it, keeping
-                           local edits; refuses without changing anything on conflict
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID [--resolutions FILE]\n                           Stack a frozen source checkpoint into exact target revision N.\n                           Conflicts change nothing; resolve each path in FILE (JSON object:\n                           path -> \"ours\" | \"theirs\" | {\"file\": PATH, \"executable\": bool})\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  refresh ID [--resolutions FILE]
+                           Bring the directory to its head after Stack moved it, keeping
+                           local edits; refuses without changing anything on conflict.
+                           FILE resolves conflicting paths as for layer stack
   recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
@@ -612,9 +614,59 @@ pub fn adopt(args: Vec<OsString>) -> Result<Output> {
     Ok((value, text, code))
 }
 
+/// Reads `--resolutions FILE`: a JSON object from each conflicting path to `"ours"`,
+/// `"theirs"`, or `{"file": PATH, "executable": optional bool}`, whose bytes are the
+/// resolved content. Without the option there are no choices.
+pub(super) fn resolutions(args: &Args) -> Result<BTreeMap<RepoPath, Choice>> {
+    let Some(file) = args.options.get("--resolutions") else {
+        return Ok(BTreeMap::new());
+    };
+    let invalid = |why: &str| Error::InvalidInput(format!("resolutions file {why}"));
+    let value: Value = serde_json::from_slice(&fs::read(file)?)
+        .map_err(|_| invalid("is not a JSON object of path to choice"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid("is not a JSON object of path to choice"))?;
+    let mut choices = BTreeMap::new();
+    for (path, choice) in object {
+        let choice = match choice {
+            Value::String(name) if name == "ours" => Choice::Ours,
+            Value::String(name) if name == "theirs" => Choice::Theirs,
+            Value::Object(fields) if fields.keys().all(|k| k == "file" || k == "executable") => {
+                let source = fields
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid("content choice needs a \"file\" path"))?;
+                let executable = match fields.get("executable") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Bool(bool)) => Some(*bool),
+                    Some(_) => return Err(invalid("executable must be true or false")),
+                };
+                Choice::Content {
+                    bytes: fs::read(source)?,
+                    executable,
+                }
+            }
+            _ => {
+                return Err(invalid(
+                    "choice must be \"ours\", \"theirs\", or a file object",
+                ));
+            }
+        };
+        choices.insert(RepoPath::parse(path)?, choice);
+    }
+    Ok(choices)
+}
+
 pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError> {
     let allowed = [
-        &["--repo", "--revision", "--source", "--operation"][..],
+        &[
+            "--repo",
+            "--revision",
+            "--source",
+            "--operation",
+            "--resolutions",
+        ][..],
         PROVENANCE,
     ]
     .concat();
@@ -624,10 +676,12 @@ pub fn stack(args: Vec<OsString>) -> std::result::Result<Output, super::CliError
     let revision = args.number("--revision")?.unwrap();
     let source = CheckpointId::parse(text(args.required("--source")?)?)?;
     let operation = args.operation()?;
+    let choices = resolutions(&args)?;
     let mut repo = open(&args)?;
     let capture = repo.capture_workspace(&id)?;
     let target = historical_head(&repo, &id, revision)?;
-    let outcome = javelin_stack::stack_layer(&mut repo, &operation, &target, source)?;
+    let outcome =
+        javelin_stack::stack_layer_resolved(&mut repo, &operation, &target, source, &choices)?;
     let (mut reply, text, code) = match outcome {
         javelin_stack::StackOutcome::Updated(outcome) => update("layer stack", &operation, outcome),
         javelin_stack::StackOutcome::Conflicts(conflicts) => {
