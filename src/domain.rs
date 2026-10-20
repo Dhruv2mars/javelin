@@ -232,7 +232,7 @@ impl fmt::Display for OperationId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FileEntry {
     Regular {
@@ -242,6 +242,21 @@ pub enum FileEntry {
     /// Exact link-target bytes live in a blob; readers never follow the target.
     Symlink {
         target: ObjectId,
+    },
+}
+
+/// How an owner resolves one conflicting path. Javelin never picks a side itself.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Choice {
+    /// The Layer's own entry at the path; absent means the path is deleted.
+    Ours,
+    /// The source's entry at the path (the head for refresh); absent means deleted.
+    Theirs,
+    /// Exact bytes as a regular file. `executable: None` keeps the mode of the Layer's
+    /// regular file at the path, else the source's, else false.
+    Content {
+        bytes: Vec<u8>,
+        executable: Option<bool>,
     },
 }
 
@@ -258,6 +273,28 @@ impl FileEntry {
 pub struct Manifest(BTreeMap<RepoPath, FileEntry>);
 
 impl Manifest {
+    /// Exact-entry renames from `self` to `later`: a path `later` removes whose entry `later`
+    /// adds at exactly one other path. Content is never compared by similarity, so an edited
+    /// rename is reported as a delete and an add. Ambiguous matches are not reported.
+    pub fn renames_to(&self, later: &Manifest) -> BTreeMap<RepoPath, RepoPath> {
+        let mut added = BTreeMap::<&FileEntry, Vec<&RepoPath>>::new();
+        for (path, entry) in &later.0 {
+            if !self.0.contains_key(path) {
+                added.entry(entry).or_default().push(path);
+            }
+        }
+        let mut renames = BTreeMap::new();
+        for (path, entry) in &self.0 {
+            if later.0.contains_key(path) {
+                continue;
+            }
+            if let Some([to]) = added.get(entry).map(Vec::as_slice) {
+                renames.insert(path.clone(), (*to).clone());
+            }
+        }
+        renames
+    }
+
     pub fn new(entries: impl IntoIterator<Item = (RepoPath, FileEntry)>) -> Result<Self> {
         let mut map = BTreeMap::new();
         for (path, entry) in entries {
