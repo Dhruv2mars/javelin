@@ -50,7 +50,10 @@ fn crash_at(root: &Path, failpoint: &str, args: &[&str]) {
         "{failpoint}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.is_empty(), "{failpoint}: crashed process printed a result");
+    assert!(
+        output.stdout.is_empty(),
+        "{failpoint}: crashed process printed a result"
+    );
 }
 
 fn ok(output: &Output) -> Value {
@@ -106,9 +109,16 @@ fn layer_with(root: &Path, layer: &str, name: &str, bytes: &[u8]) {
 }
 
 fn publish(layer: &str, operation: &str) -> Vec<String> {
-    ["workspace", "publish", layer, "--operation", operation, "--json"]
-        .map(String::from)
-        .to_vec()
+    [
+        "workspace",
+        "publish",
+        layer,
+        "--operation",
+        operation,
+        "--json",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 fn args(list: &[String]) -> Vec<&str> {
@@ -152,7 +162,11 @@ fn racing_publishers_of_disjoint_paths_all_land_once_in_order() {
     let layers: Vec<String> = (0..6).map(|i| format!("l{i}")).collect();
     for (i, layer) in layers.iter().enumerate() {
         ok(&javelin(root, &["workspace", "create", layer, "--json"]));
-        fs::write(layer_dir(root, layer).join(format!("f{i}.txt")), format!("{i}")).unwrap();
+        fs::write(
+            layer_dir(root, layer).join(format!("f{i}.txt")),
+            format!("{i}"),
+        )
+        .unwrap();
     }
     let children: Vec<_> = layers
         .iter()
@@ -180,7 +194,9 @@ fn racing_retries_of_one_operation_publish_once_with_identical_receipts() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     layer_with(root, "a", "x.txt", b"same");
-    let children: Vec<_> = (0..6).map(|_| spawn(root, &args(&publish("a", "same")))).collect();
+    let children: Vec<_> = (0..6)
+        .map(|_| spawn(root, &args(&publish("a", "same"))))
+        .collect();
     let results: Vec<_> = children.into_iter().map(finish).collect();
     for (code, value) in &results {
         assert_eq!(*code, Some(0), "{value}");
@@ -244,9 +260,17 @@ fn capture_crash_points_never_leave_a_half_recorded_checkpoint() {
 
     fs::write(layer_dir(root, "a").join("y.txt"), b"second").unwrap();
     crash_at(root, "layer_capture_after_commit", &checkpoint);
-    assert_eq!(layer_events(root, "a"), 3, "the committed capture is recorded once");
+    assert_eq!(
+        layer_events(root, "a"),
+        3,
+        "the committed capture is recorded once"
+    );
     ok(&javelin(root, &checkpoint));
-    assert_eq!(layer_events(root, "a"), 3, "a retried capture adds no revision");
+    assert_eq!(
+        layer_events(root, "a"),
+        3,
+        "a retried capture adds no revision"
+    );
     valid(root);
 }
 
@@ -272,7 +296,10 @@ fn publish_lost_reply_retry_returns_the_same_version_and_never_applies_twice() {
     assert_eq!(versions(root), vec![0, 1]);
     let history = Repository::open(root).unwrap().history().unwrap();
     let retry = ok(&javelin(root, &args(&publish("a", "p1"))));
-    assert_eq!(retry["receipt"]["outcome"]["version"]["id"], json!(history[1].id.to_string()));
+    assert_eq!(
+        retry["receipt"]["outcome"]["version"]["id"],
+        json!(history[1].id.to_string())
+    );
     assert_eq!(versions(root), vec![0, 1]);
     // The Layer is published, so a different operation cannot publish it again.
     let other = javelin(root, &args(&publish("a", "p2")));
@@ -291,7 +318,16 @@ fn layer_discard_crash_points_are_atomic_and_retries_end_discarded_once() {
         let root = dir.path();
         ok(&javelin(root, &["init", "--json"]));
         ok(&javelin(root, &["layer", "create", "a", "--json"]));
-        let discard = ["layer", "discard", "a", "--revision", "0", "--operation", "d1", "--json"];
+        let discard = [
+            "layer",
+            "discard",
+            "a",
+            "--revision",
+            "0",
+            "--operation",
+            "d1",
+            "--json",
+        ];
         crash_at(root, point, &discard);
         let state = ok(&javelin(root, &["layer", "state", "a", "--json"]));
         assert_eq!(state["state"]["state"] == "discarded", committed, "{point}");
@@ -312,7 +348,10 @@ fn workspace_discard_crash_before_trash_is_finished_by_recovery_and_retry_is_ide
     crash_at(root, "workspace_discard_before_trash", &discard);
     let state = ok(&javelin(root, &["layer", "state", "a", "--json"]));
     assert_eq!(state["state"]["state"], "discarded");
-    assert!(layer_dir(root, "a").exists(), "the directory waits for recovery");
+    assert!(
+        layer_dir(root, "a").exists(),
+        "the directory waits for recovery"
+    );
     let recovered = ok(&javelin(root, &["workspace", "recover", "--json"]));
     assert_eq!(recovered["recovery"]["trashed"], 1);
     assert!(!layer_dir(root, "a").exists());
