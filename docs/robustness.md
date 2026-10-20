@@ -16,7 +16,8 @@ discard, Publish, or workspace open and discard leaves a repository that passes 
 Each operation is either fully recorded or not recorded at all. A stopped workspace open leaves
 no directory behind. A stopped workspace discard is finished by recovery. A Publish that
 commits is reported as published even if its directory reclaim then hits lock contention;
-a replay of the same operation finishes the reclaim.
+a replay of the same operation retries the bounded reclaim, and a later recovery finishes
+what it leaves.
 
 **Idempotent retries.** A retry with the same operation ID and the same input after a lost
 reply returns the recorded receipt and applies nothing twice. The same ID with different input
