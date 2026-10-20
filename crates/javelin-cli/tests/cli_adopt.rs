@@ -7,6 +7,9 @@ use std::{
 use serde_json::Value;
 use tempfile::TempDir;
 
+/// Adopted files: the portable set, plus `run.sh` and `link` where Unix modes and symlinks exist.
+const FILES: usize = if cfg!(unix) { 5 } else { 3 };
+
 fn invoke(cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(cwd)
@@ -56,25 +59,33 @@ fn project() -> (TempDir, PathBuf) {
     fs::write(root.join("readme.md"), "# proj\n").unwrap();
     fs::write(root.join("build/out.bin"), "generated\n").unwrap();
     fs::write(root.join(".javelinignore"), "build/\n").unwrap();
-    fs::write(root.join("run.sh"), "#!/bin/sh\necho run\n").unwrap();
-    fs::set_permissions(
-        root.join("run.sh"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    std::os::unix::fs::symlink("src/deep/a.txt", root.join("link")).unwrap();
+    #[cfg(unix)]
+    {
+        fs::write(root.join("run.sh"), "#!/bin/sh\necho run\n").unwrap();
+        set_mode(&root.join("run.sh"), 0o755);
+        std::os::unix::fs::symlink("src/deep/a.txt", root.join("link")).unwrap();
+    }
     (parent, root)
 }
 
+/// Sets a Unix mode. Off Unix there are no modes, so this does nothing.
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) {}
+
 /// Every file under `.javelin`, read as bytes, to prove a value never reached the store.
-/// Bases are sealed to mode 000 by design, so the scan opens them first.
 fn stored_bytes(root: &Path) -> Vec<u8> {
+    // Bases are sealed to mode 000 by design, so the scan opens them first.
     for base in fs::read_dir(root.join(".javelin/bases"))
         .into_iter()
         .flatten()
     {
-        let path = base.unwrap().path();
-        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        set_mode(&base.unwrap().path(), 0o755);
     }
     let mut all = Vec::new();
     let mut pending = vec![root.join(".javelin")];
@@ -92,10 +103,10 @@ fn stored_bytes(root: &Path) -> Vec<u8> {
 }
 
 #[test]
-fn adopt_publishes_nested_files_symlinks_executables_and_honors_ignores() {
+fn adopt_publishes_nested_files_and_honors_ignores() {
     let (_parent, root) = project();
     let adopted = adopt(&root, "first");
-    assert_eq!(adopted["files"], 5, "{adopted}");
+    assert_eq!(adopted["files"], FILES, "{adopted}");
     assert_eq!(adopted["receipt"]["outcome"]["outcome"], "published");
     assert_eq!(
         json(&root, &["history"], 0)["versions"]
@@ -109,15 +120,25 @@ fn adopt_publishes_nested_files_symlinks_executables_and_honors_ignores() {
     assert_eq!(fs::read(world.join("src/deep/a.txt")).unwrap(), b"alpha\n");
     assert_eq!(fs::read(world.join("readme.md")).unwrap(), b"# proj\n");
     assert_eq!(fs::read(world.join(".javelinignore")).unwrap(), b"build/\n");
+    assert!(!world.join("build").exists(), "ignored path was adopted");
+}
+
+#[cfg(unix)]
+#[test]
+fn adopt_keeps_executables_and_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_parent, root) = project();
+    adopt(&root, "first");
+    let world = materialize(&root, "view", "1");
     let mode = fs::metadata(world.join("run.sh")).unwrap().permissions();
-    assert_ne!(std::os::unix::fs::PermissionsExt::mode(&mode) & 0o111, 0);
+    assert_ne!(mode.mode() & 0o111, 0);
     let link = fs::symlink_metadata(world.join("link")).unwrap();
     assert!(link.file_type().is_symlink());
     assert_eq!(
         fs::read_link(world.join("link")).unwrap(),
         Path::new("src/deep/a.txt")
     );
-    assert!(!world.join("build").exists(), "ignored path was adopted");
 }
 
 #[test]
@@ -132,12 +153,12 @@ fn a_git_directory_is_never_read_or_imported() {
     )
     .unwrap();
     fs::write(git.join("objects/pack.idx"), MARKER).unwrap();
-    // Unreadable: adoption must succeed without ever opening anything inside `.git`.
-    fs::set_permissions(&git, std::os::unix::fs::PermissionsExt::from_mode(0o000)).unwrap();
+    // On Unix, unreadable: adoption must succeed without opening anything inside `.git`.
+    set_mode(&git, 0o000);
 
     let adopted = adopt(&root, "first");
-    fs::set_permissions(&git, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    assert_eq!(adopted["files"], 5, "{adopted}");
+    set_mode(&git, 0o755);
+    assert_eq!(adopted["files"], FILES, "{adopted}");
 
     let world = materialize(&root, "view", "1");
     assert!(
@@ -208,9 +229,10 @@ fn an_existing_repository_is_refused_without_change() {
 }
 
 #[test]
-fn a_completed_adoption_replays_for_its_operation_and_refuses_another() {
+fn a_completed_adoption_replays_after_other_layers_exist_and_refuses_another_operation() {
     let (_parent, root) = project();
     let first = adopt(&root, "first");
+    json(&root, &["workspace", "create", "work"], 0);
     let replayed = adopt(&root, "first");
     assert_eq!(replayed["receipt"], first["receipt"]);
     let other = invoke(
@@ -218,7 +240,7 @@ fn a_completed_adoption_replays_for_its_operation_and_refuses_another() {
         &["adopt", root.to_str().unwrap(), "--operation", "other"],
     );
     assert_eq!(other.status.code(), Some(2), "{other:?}");
-    assert!(String::from_utf8_lossy(&other.stderr).contains("already adopted by operation first"));
+    assert!(String::from_utf8_lossy(&other.stderr).contains("already exists"));
 }
 
 #[test]

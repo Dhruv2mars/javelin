@@ -510,6 +510,32 @@ fn write_project(root: &Path) {
 }
 
 #[test]
+fn a_crashed_adoption_resumes_only_under_its_own_operation() {
+    let crashed = TempDir::new().unwrap();
+    write_project(crashed.path());
+    let mut actor = Actor::spawn(
+        crashed.path(),
+        "adopt",
+        "adopt-first",
+        None,
+        0,
+        "adopt_after_capture",
+    );
+    actor.release();
+    actor.marker("BOUNDARY adopt_after_capture");
+    actor.kill();
+
+    let mut other = Actor::spawn(crashed.path(), "adopt", "adopt-other", None, 0, "");
+    other.release();
+    let refused = other.result();
+    assert!(refused.get("error").is_some(), "{refused}");
+
+    let mut retry = Actor::spawn(crashed.path(), "adopt", "adopt-first", None, 0, "");
+    retry.release();
+    assert_eq!(retry.result()["files"], 2);
+}
+
+#[test]
 fn adoption_retry_after_a_crash_yields_the_world_of_a_clean_adoption() {
     let operation = "adopt-first";
     for boundary in ["init_before_commit", "adopt_after_capture"] {
