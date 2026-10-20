@@ -14,7 +14,9 @@ version. A process that cannot get the write lock within the 5 second busy timeo
 **Crash recovery.** A process stopped at any named point during Layer create, capture,
 discard, Publish, or workspace open and discard leaves a repository that passes `check()`.
 Each operation is either fully recorded or not recorded at all. A stopped workspace open leaves
-no directory behind. A stopped workspace discard is finished by recovery.
+no directory behind. A stopped workspace discard is finished by recovery. A Publish that
+commits is reported as published even if its directory reclaim then hits lock contention;
+a replay of the same operation finishes the reclaim.
 
 **Idempotent retries.** A retry with the same operation ID and the same input after a lost
 reply returns the recorded receipt and applies nothing twice. The same ID with different input
@@ -31,7 +33,8 @@ is refused as `operation_id_reused`.
 - A single-version read (`manifest_at`) does not re-derive the World. It returns the tree its
   version row names, so a changed tree pointer is caught by `check()` only. This is a limit,
   not a guarantee.
-- A damaged SQLite file (header, schema, stored text) is refused as `corrupt_repository`,
+- A damaged SQLite file (header, schema, stored value types and text) is refused as
+  `corrupt_repository`,
   or fails to open, and is never reported as a retryable `storage_error`.
 
 ## Failure codes
@@ -62,6 +65,8 @@ is refused as `operation_id_reused`.
 | Blob, manifest and tree byte flips | `every_flipped_*_byte_is_detected_as_corrupt_object` (`tests/corruption.rs`) | Every byte of every stored object of each kind |
 | Substituted blob | `a_blob_whose_bytes_are_replaced_by_another_valid_blob_is_detected` | A valid but wrong blob for an ID |
 | Altered rows | `an_altered_version_row_is_detected` | Version id and tree, changeset content and path |
+| Stored value of the wrong type | `a_stored_value_of_the_wrong_type_is_corrupt_repository_not_storage_error` (`tests/corruption.rs`) | A BLOB where the schema promises TEXT |
+| Publish committed under lock contention | `a_publish_committed_under_lock_contention_is_not_reported_busy` (`src/workspace.rs`) | Another connection holds the lock after the commit; the Publish reports success, and a replay finishes the reclaim |
 | Whole-file SQLite flips | `every_sampled_sqlite_file_byte_flip_fails_or_returns_original_content` | Header bytes and a sampled stride through the file |
 
 Run them with:

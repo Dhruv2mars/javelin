@@ -1239,6 +1239,14 @@ fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attem
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Runs once after a Publish commits, before its reclaim, so a test can take the
+    /// database lock at exactly that point.
+    pub(crate) static BEFORE_RECLAIM: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
 pub(crate) fn test_boundary(phase: &str) {
     use std::io::{Read, Write};
     if std::env::var("JAVELIN_TEST_BOUNDARY").as_deref() == Ok(phase) {
