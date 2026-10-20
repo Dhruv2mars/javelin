@@ -264,7 +264,8 @@ fn a_slow_reader_cannot_hold_the_next_client_past_the_reply_deadline() {
     let started = Instant::now();
     let (status, reply) = exchange(addr, &request, &body);
     assert!(started.elapsed() < Duration::from_secs(15));
-    stop.shutdown(Shutdown::Both).unwrap();
+    // The node may already have closed its side, so the shutdown can report not connected.
+    let _ = stop.shutdown(Shutdown::Both);
     drip.join().unwrap();
     server.join().unwrap();
 
