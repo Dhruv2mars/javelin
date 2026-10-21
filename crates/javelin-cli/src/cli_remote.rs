@@ -372,6 +372,15 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     // that never replaces anything. The installed store is therefore never partial: a failure
     // before the rename leaves no World history at the project directory, so a retry sees an
     // empty repository even if the remote has moved on.
+    // An unopenable `.javelin` is an interrupted `init`. The rename below would fail after the
+    // whole fetch, so refuse it up front.
+    if root.join(".javelin").exists() {
+        return Err(Error::InvalidInput(
+            "this directory has an incomplete .javelin; remove it, then attach".into(),
+        )
+        .into());
+    }
+    sweep_staging(&root);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
@@ -408,6 +417,24 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     }
 }
 
+/// Removes staging directories that an attach killed mid-way left in the project directory.
+/// They hold only objects fetched by that attach, never a store, so removing them is safe.
+/// Best effort: a directory that cannot be removed is left for the next attach.
+fn sweep_staging(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".javelin-attach-")
+        {
+            let _ = remove_staging(&entry.path());
+        }
+    }
+}
+
 /// Removes a private staging directory. A warmed rolling base is sealed (mode 000), so its
 /// root is opened first: the directory only ever holds what this call built.
 fn remove_staging(staging: &Path) -> io::Result<()> {
@@ -436,7 +463,7 @@ fn stage(
     link: &RefCell<Link>,
     head: &RemoteHead,
 ) -> std::result::Result<(Repository, RemoteHead), CliError> {
-    repo.check_attach(head)?;
+    repo.check_attach()?;
 
     // Pinned to the number resolved above: World versions are immutable, so the fetch
     // reads exactly the head this attach reports.

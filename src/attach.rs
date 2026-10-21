@@ -14,6 +14,7 @@ use crate::{
 };
 
 const ATTACHMENT: &str = "attach.json";
+const ATTACH_PREFIX: &str = "attach-";
 
 /// A head a node reported: its World number, chain ID and root tree. The number is the
 /// remote World's, which the local store does not share after attach (see `attach_head`).
@@ -37,7 +38,7 @@ pub struct Attachment {
 
 /// The operation that records an attach to the chain `head` belongs to.
 fn attach_operation(head: &RemoteHead) -> Result<OperationId> {
-    OperationId::parse(&format!("attach-{}", head.id))
+    OperationId::parse(&format!("{ATTACH_PREFIX}{}", head.id))
 }
 
 impl Repository {
@@ -87,15 +88,25 @@ impl Repository {
         Ok(())
     }
 
-    /// Refuses an attach this store cannot take, whatever its tree. Only World 0 takes an
-    /// attach, and so does an interrupted attach of this same head, which left World 1 under
-    /// `attach-<chain ID>` with the head's tree. Other history is never merged: its World
-    /// numbers are not the remote's, even when the trees match.
-    pub fn check_attach(&self, head: &RemoteHead) -> Result<()> {
+    /// Whether an attach was interrupted before `attach.json` was written. Only attach writes
+    /// an `attach-` World, so such a store holds nothing but its own earlier attach steps.
+    fn interrupted_attach(&self) -> Result<bool> {
         let local = self.head()?;
-        let resumed =
-            local.tree == head.tree && local.operation.as_ref() == Some(&attach_operation(head)?);
-        if local.number.get() != 0 && !resumed {
+        Ok(self.attachment()?.is_none()
+            && local
+                .operation
+                .as_ref()
+                .is_some_and(|op| op.as_str().starts_with(ATTACH_PREFIX)))
+    }
+
+    /// Refuses an attach this store cannot take, whatever its tree. Only World 0 takes an
+    /// attach, and so does a store whose attach was interrupted before `attach.json`: the
+    /// remote may have moved on since, and the attach resumes from whatever head it reports
+    /// now. Other history is never merged: its World numbers are not the remote's, even
+    /// when the trees match.
+    pub fn check_attach(&self) -> Result<()> {
+        let local = self.head()?;
+        if local.number.get() != 0 && !self.interrupted_attach()? {
             return Err(Error::InvalidInput(
                 "this repository already has World history; attach needs an empty \
                  repository at World 0"
@@ -107,14 +118,15 @@ impl Repository {
 
     /// Makes the local head hold `head.tree`, without materializing the rolling base.
     ///
-    /// A store at World 0 gets one World advance to the remote tree, under the operation
+    /// The store gets one World advance to the remote tree, under the operation
     /// `attach-<chain ID>`, so a retry after a crash finds the tree already present and
-    /// does nothing. Refused unless [`Repository::check_attach`] allows it. The caller warms
-    /// the rolling base with [`Repository::warm_base`].
+    /// does nothing. An interrupted attach advances from its own World the same way. Refused
+    /// unless [`Repository::check_attach`] allows it. The caller warms the rolling base with
+    /// [`Repository::warm_base`].
     pub fn attach_head(&mut self, head: &RemoteHead) -> Result<()> {
-        self.check_attach(head)?;
+        self.check_attach()?;
         let local = self.head()?;
-        if local.number.get() == 0 && local.tree != head.tree {
+        if local.tree != head.tree {
             let operation = attach_operation(head)?;
             match self.advance_to_tree(&operation, local.number, head.tree)? {
                 AdvanceOutcome::Accepted { .. } => {}

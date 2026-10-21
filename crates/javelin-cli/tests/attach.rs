@@ -378,3 +378,64 @@ fn attach_refuses_matching_history_it_did_not_fetch() {
     assert_eq!(error["error"]["code"], "invalid_input");
     assert!(!project.join(".javelin/attach.json").exists());
 }
+
+#[test]
+fn attach_resumes_an_interrupted_attach_after_the_remote_moved() {
+    let first = TempDir::new().unwrap();
+    let old_url = start_node(first.path(), SMALL);
+    let second = TempDir::new().unwrap();
+    let new_url = start_node(second.path(), LARGE);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    attach(root.path(), &old_url, 0);
+    // Interrupted after the World advanced and before attach.json was written.
+    std::fs::remove_file(project.join(".javelin/attach.json")).unwrap();
+
+    let out = attach(root.path(), &new_url, 0);
+    assert_eq!(out["head"]["number"], 1);
+    let local = Repository::open(&project).unwrap();
+    assert_eq!(
+        local.manifest_at(v(2)).unwrap().entries(),
+        manifest(LARGE).entries()
+    );
+    let attached = local.attachment().unwrap().unwrap();
+    assert_eq!(attached.node, new_url.trim_end_matches("/demo"));
+    assert_eq!(attached.head.number, 1);
+}
+
+#[test]
+fn attach_refuses_an_incomplete_javelin_directory_before_fetching() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir_all(project.join(".javelin")).unwrap();
+
+    let error = attach(root.path(), &url, 2);
+    assert_eq!(error["error"]["code"], "invalid_input");
+    let names: Vec<_> = std::fs::read_dir(&project)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![".javelin"]);
+}
+
+#[test]
+fn attach_sweeps_staging_an_earlier_attach_left_behind() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let stale = project.join(".javelin-attach-4242-1");
+    std::fs::create_dir_all(stale.join("bases")).unwrap();
+    std::fs::write(stale.join("left.txt"), b"left").unwrap();
+
+    attach(root.path(), &url, 0);
+    let names: Vec<_> = std::fs::read_dir(&project)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![".javelin"]);
+}
