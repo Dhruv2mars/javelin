@@ -359,6 +359,17 @@ Wave 3, after wave 2:
     the forker is Maintain; `javelin-control` fork op, in-process node; wire pull deferred).
   - [x] U8b passkey sign-in for device approval: WebAuthn enrollment and sign-in (webauthn-rs,
     software-authenticator tests), browser approval page over loopback HTTP, no email (D5).
+  - [x] U14 hosted acceptance suite (`tests/hosted_acceptance.rs`, `tools/acceptance/run.ts`):
+    contract gate 4 and the outage matrix against the self-hosted node and control plane, with
+    browser device approval over HTTP; the `target_*` tests against a node URL (the Worker on
+    workerd by default, a deployed node later); a failing `git` stand-in with a positive control
+    and a marker check. Assertions only a deployed node or an unbuilt piece can prove report
+    NOT VERIFIED with the reason. Product gaps found, each with an ignored failing `gap_*` test:
+    - [ ] Control plane unreachable is `storage_error`, not `control_plane_unavailable`
+      (`docs/online-design.md` section 5): `repo create` with an unreadable control directory.
+      There is no network control-plane client, so no code path emits the designed code.
+    - [ ] A node answering HTTP 5xx is `node_error`, not `node_unavailable` (section 4.4 and 5):
+      `crates/javelin-cli/src/cli_remote.rs` maps every non-200, non-404 status to `node_error`.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
