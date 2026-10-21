@@ -16,6 +16,8 @@ javelin-protocol = { path = "../javelin-protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+webauthn-authenticator-rs = { version = "=0.6.1-dev", default-features = false, features = ["softpasskey"] }

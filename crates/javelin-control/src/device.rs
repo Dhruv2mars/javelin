@@ -1,12 +1,13 @@
 //! The device-code flow (D5). `javelin login` starts a device code and prints its user code.
-//! The admin token approves that code. The waiting login then polls and receives a session.
-//! The browser approval page and passkeys come in U8b.
+//! The admin token, or a browser sign-in with a passkey, approves that code. The waiting login
+//! then polls and receives a session.
 
 use crate::{
     ControlError, ControlPlane,
     control::{authenticate, issue, require_initialized},
+    passkey::{BROWSER_PREFIX, browser_principal},
     secret,
-    state::{DeviceRecord, SessionRecord},
+    state::{DeviceRecord, SessionRecord, State},
 };
 
 /// How long a device code can wait for approval, in seconds.
@@ -81,20 +82,16 @@ impl ControlPlane {
         })
     }
 
-    /// Approves the device code that `user_code` names. Only the admin token may approve.
-    /// Approving twice is harmless.
+    /// Approves the device code that `user_code` names. Only the admin token may approve here;
+    /// [`ControlPlane::device_approve_as`] also takes a browser sign-in. Approving twice is
+    /// harmless.
     pub fn device_approve(
         &self,
         admin_token: &str,
         user_code: &str,
         now: u64,
     ) -> Result<(), ControlError> {
-        let canonical = secret::canonical_user_code(user_code).ok_or_else(|| {
-            ControlError::InvalidInput(
-                "a user code is eight letters and digits, as XXXX-XXXX".into(),
-            )
-        })?;
-        let user_hash = secret::hash(&canonical);
+        let user_hash = user_code_hash(user_code)?;
         self.store.update(|state| {
             let caller = authenticate(state, admin_token, now)?;
             if !caller.admin {
@@ -102,21 +99,27 @@ impl ControlPlane {
                     "only the admin token can approve a device",
                 ));
             }
-            let record = state
-                .device_codes
-                .values_mut()
-                .find(|record| record.user_hash == user_hash)
-                .ok_or(ControlError::NotFound(
-                    "no pending device code has this user code",
-                ))?;
-            if now >= record.expires_at && record.approved_by.is_none() {
-                return Err(ControlError::Expired("this device code has expired"));
-            }
-            if record.approved_by.is_none() {
-                record.approved_by = Some(caller.principal);
-                record.device = Some(secret::id("dev_"));
-            }
-            Ok(())
+            approve(state, caller.principal, &user_hash, now)
+        })
+    }
+
+    /// Approves a device code with whichever credential the caller holds: a browser sign-in
+    /// (a passkey, D5) or the admin token. The approval page calls this.
+    pub fn device_approve_as(
+        &self,
+        bearer: &str,
+        user_code: &str,
+        now: u64,
+    ) -> Result<(), ControlError> {
+        if !bearer.starts_with(BROWSER_PREFIX) {
+            return self.device_approve(bearer, user_code, now);
+        }
+        let user_hash = user_code_hash(user_code)?;
+        self.store.update(|state| {
+            let principal = browser_principal(state, bearer, now).ok_or(
+                ControlError::Unauthorized("sign in with your passkey first"),
+            )?;
+            approve(state, principal, &user_hash, now)
         })
     }
 
@@ -178,4 +181,36 @@ impl ControlPlane {
             })
         })
     }
+}
+
+/// The hash of a typed user code, canonical so that case and dashes do not matter.
+fn user_code_hash(user_code: &str) -> Result<String, ControlError> {
+    let canonical = secret::canonical_user_code(user_code).ok_or_else(|| {
+        ControlError::InvalidInput("a user code is eight letters and digits, as XXXX-XXXX".into())
+    })?;
+    Ok(secret::hash(&canonical))
+}
+
+/// Marks the pending device code with this user hash as approved by `principal`.
+fn approve(
+    state: &mut State,
+    principal: String,
+    user_hash: &str,
+    now: u64,
+) -> Result<(), ControlError> {
+    let record = state
+        .device_codes
+        .values_mut()
+        .find(|record| record.user_hash == user_hash)
+        .ok_or(ControlError::NotFound(
+            "no pending device code has this user code",
+        ))?;
+    if now >= record.expires_at && record.approved_by.is_none() {
+        return Err(ControlError::Expired("this device code has expired"));
+    }
+    if record.approved_by.is_none() {
+        record.approved_by = Some(principal);
+        record.device = Some(secret::id("dev_"));
+    }
+    Ok(())
 }
