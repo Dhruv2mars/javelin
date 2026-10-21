@@ -312,6 +312,11 @@ mod tests {
 
         let other_provider = NodeTarget::self_hosted();
         let other_url = NodeTarget::cloudflare("https://b.workers.dev");
+        assert_eq!(
+            NodeTarget::cloudflare("https://a.workers.dev/"),
+            node,
+            "a trailing slash names the same node"
+        );
         for elsewhere in [&other_provider, &other_url] {
             let refused = reserve(&mut state, "alice", &request, elsewhere, None).unwrap_err();
             assert_eq!(refused.code(), "operation_id_reused");

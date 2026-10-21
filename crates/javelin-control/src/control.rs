@@ -82,11 +82,12 @@ impl NodeTarget {
         }
     }
 
-    /// A Cloudflare node at `url`.
+    /// A Cloudflare node at `url`. A trailing slash is dropped, as the node client drops it, so
+    /// the same node is never refused for its spelling.
     pub fn cloudflare(url: &str) -> Self {
         Self {
             provider: "cloudflare".into(),
-            url: Some(url.into()),
+            url: Some(url.trim_end_matches('/').into()),
         }
     }
 }
