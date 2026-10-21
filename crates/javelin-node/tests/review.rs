@@ -1,5 +1,6 @@
 use javelin::{
-    CheckpointId, FileEntry, LayerId, ObjectId, OperationId, RepoPath, SparseChanges, VersionNumber,
+    CheckpointId, FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RepoPath,
+    SparseChanges, VersionNumber,
 };
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
@@ -420,4 +421,23 @@ fn a_publish_whose_record_was_lost_is_completed_only_by_its_own_operation() {
         published(send(&mut log, &gate, &mona(), publish("publish-1", 1)).unwrap()),
         (number, tree)
     );
+}
+
+#[test]
+fn an_ordinary_publish_layer_cannot_publish_a_revision_layer() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, _gate) = node(&dir, Some(Role::Review));
+    let head = log.create_layer(&review_layer(1), v(0)).unwrap();
+
+    // The revision was never approved, so a plain PublishLayer on its Layer is refused.
+    let reply = log
+        .publish_layer(
+            &op("ordinary-1"),
+            &review_layer(1),
+            head.checkpoint().object(),
+            v(0),
+            &PublishAttribution::Human,
+        )
+        .unwrap();
+    assert_eq!(refused(Message::PublishOutcome(reply)), "layer_reserved");
 }

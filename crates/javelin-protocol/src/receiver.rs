@@ -19,6 +19,7 @@ use crate::{
 pub mod refusal {
     pub const UNKNOWN_LAYER: &str = "unknown_layer";
     pub const LAYER_DISCARDED: &str = "layer_discarded";
+    pub const LAYER_RESERVED: &str = "layer_reserved";
 }
 
 /// The coordinator's ordering point for hosted writes. A node implements it over its

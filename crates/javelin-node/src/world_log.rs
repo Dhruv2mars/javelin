@@ -21,7 +21,7 @@ use javelin_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::trace::Traces;
+use crate::{review::is_review_layer, trace::Traces};
 
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
@@ -287,6 +287,10 @@ impl WorldLog for FileWorldLog {
         base: VersionNumber,
         attribution: &PublishAttribution,
     ) -> std::result::Result<PublishOutcome, ProtocolError> {
+        // A revision publishes only through PublishRequest, so its approvals gate it.
+        if is_review_layer(layer) {
+            return Ok(refused(refusal::LAYER_RESERVED));
+        }
         self.publish(operation, layer, expected, base, attribution)
     }
 }

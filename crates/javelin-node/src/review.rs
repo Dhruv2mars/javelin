@@ -186,21 +186,8 @@ pub fn handle(
                     revision: pinned,
                 },
             };
-            // This operation published the revision, but its record was lost before being
-            // written. Record it now, so the reply is kept. Other operations are refused.
-            if review.state() == RequestState::Open
-                && review
-                    .current()
-                    .is_some_and(|current| current.index == *revision)
-                && recorded(records, operation)?.is_none()
-                && let Some((published_by, reply)) =
-                    world_publication(repo, &id, *revision, pinned.checkpoint())?
-                && published_by == *operation
-            {
-                let reply = Message::PublishOutcome(reply);
-                persist(records, &id, &command, permissions.epoch, &reply, None)?;
-                return Ok(reply);
-            }
+            // A lost record is completed by the same operation: `publish_checkpoint` finds its
+            // World receipt. Other operations are refused as published.
             match decide(records, permissions, &review, &id, &command)? {
                 Decision::Replayed(reply) => Ok(reply),
                 Decision::Refused(refused_code) => Ok(publish_refused(refused_code)),
@@ -286,10 +273,17 @@ fn settle_review(
     }
 }
 
+const REVIEW_LAYER_PREFIX: &str = "review-";
+
+/// Whether `layer` is a revision's Layer, which only `PublishRequest` may publish.
+pub(crate) fn is_review_layer(layer: &LayerId) -> bool {
+    layer.as_str().starts_with(REVIEW_LAYER_PREFIX)
+}
+
 /// The Layer that publishes revision `index` of request `id`.
 fn revision_layer(id: &RequestId, index: u32) -> Result<LayerId, ProtocolError> {
     Ok(LayerId::parse(&format!(
-        "review-{}",
+        "{REVIEW_LAYER_PREFIX}{}",
         ObjectId::for_blob(format!("{id}/{index}").as_bytes())
     ))?)
 }
