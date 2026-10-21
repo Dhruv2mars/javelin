@@ -6,8 +6,8 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
 use javelin::{
-    AdvanceOutcome, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
-    OperationId, PublishAttribution, RepoPath, Repository, SparseChanges, VersionNumber,
+    AdvanceOutcome, Choice, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate,
+    Manifest, OperationId, PublishAttribution, RepoPath, Repository, SparseChanges, VersionNumber,
 };
 use tempfile::TempDir;
 
@@ -348,6 +348,146 @@ fn refresh_refuses_to_overwrite_an_ignored_file_the_head_adds() {
         ]),
         "a refused refresh must not write"
     );
+}
+
+#[test]
+fn a_head_write_blocked_by_a_local_file_is_resolved_through_the_file_or_the_write() {
+    let setup = || {
+        let root = scratch();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let version = world(&mut repo, &[("dir/inner.txt", b"base")]);
+        let dir = open(&mut repo, "work", version);
+        fs::remove_file(dir.join("dir/inner.txt")).unwrap();
+        fs::remove_dir(dir.join("dir")).unwrap();
+        fs::write(dir.join("dir"), b"local file").unwrap();
+        stack(
+            &mut repo,
+            "work",
+            version,
+            &[("dir/inner.txt", b"theirs")],
+            "blocked",
+        );
+        (root, repo, dir)
+    };
+    let path = |p: &str| RepoPath::parse(p).unwrap();
+
+    // The file `dir` blocks the head write below it, so both are conflicts from the start.
+    let (_root, mut repo, dir) = setup();
+    let error = repo
+        .refresh_workspace_resolved(&id("work"), &BTreeMap::new())
+        .unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["dir", "dir/inner.txt"]),
+        other => panic!("{other:?}"),
+    }
+
+    // Taking the head at both paths removes the file and writes the head's content.
+    let taken = BTreeMap::from([
+        (path("dir"), Choice::Theirs),
+        (path("dir/inner.txt"), Choice::Theirs),
+    ]);
+    let refresh = repo
+        .refresh_workspace_resolved(&id("work"), &taken)
+        .unwrap();
+    assert!(refresh.refreshed);
+    assert_eq!(contents(&dir), expected(&[("dir/inner.txt", b"theirs")]));
+
+    // Keeping the local file settles both paths, and the head write is cancelled.
+    let (_root, mut repo, dir) = setup();
+    let kept = BTreeMap::from([(path("dir"), Choice::Ours)]);
+    let refresh = repo.refresh_workspace_resolved(&id("work"), &kept).unwrap();
+    assert!(refresh.refreshed);
+    assert_eq!(contents(&dir), expected(&[("dir", b"local file")]));
+}
+
+#[test]
+fn a_head_edit_to_a_tracked_path_renamed_away_is_resolved_through_both_spellings() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("Readme.md", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::rename(dir.join("Readme.md"), dir.join("readme.md")).unwrap();
+    if !dir.join("Readme.md").exists() {
+        // A case-sensitive volume keeps both names apart, so there is no alias to resolve.
+        return;
+    }
+    stack(
+        &mut repo,
+        "work",
+        version,
+        &[("Readme.md", b"theirs")],
+        "alias",
+    );
+
+    let error = repo
+        .refresh_workspace_resolved(&id("work"), &BTreeMap::new())
+        .unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["Readme.md", "readme.md"]),
+        other => panic!("{other:?}"),
+    }
+
+    // Removing the local spelling alone leaves the head's path conflicting.
+    let local_only = BTreeMap::from([(RepoPath::parse("readme.md").unwrap(), Choice::Theirs)]);
+    let error = repo
+        .refresh_workspace_resolved(&id("work"), &local_only)
+        .unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["Readme.md"]),
+        other => panic!("{other:?}"),
+    }
+
+    let both = BTreeMap::from([
+        (RepoPath::parse("Readme.md").unwrap(), Choice::Theirs),
+        (RepoPath::parse("readme.md").unwrap(), Choice::Theirs),
+    ]);
+    let refresh = repo.refresh_workspace_resolved(&id("work"), &both).unwrap();
+    assert!(refresh.refreshed);
+    let values: Vec<Vec<u8>> = contents(&dir).into_values().collect();
+    assert_eq!(values, [b"theirs".to_vec()]);
+}
+
+#[test]
+fn an_explicit_overwrite_replaces_an_ignored_file_at_the_head_path() {
+    let overwrites = [
+        (Choice::Theirs, &b"theirs"[..]),
+        (
+            Choice::Content {
+                bytes: b"typed".to_vec(),
+                executable: None,
+            },
+            &b"typed"[..],
+        ),
+    ];
+    for (choice, bytes) in overwrites {
+        let root = scratch();
+        let mut repo = Repository::init(root.path()).unwrap();
+        let version = world(&mut repo, &[("shared", b"base")]);
+        let dir = open(&mut repo, "work", version);
+        fs::write(dir.join(".javelinignore"), b"new.txt\n").unwrap();
+        fs::write(dir.join("new.txt"), b"local").unwrap();
+        stack(
+            &mut repo,
+            "work",
+            version,
+            &[("new.txt", b"theirs")],
+            "ignored",
+        );
+
+        let choices = BTreeMap::from([(RepoPath::parse("new.txt").unwrap(), choice)]);
+        let refresh = repo
+            .refresh_workspace_resolved(&id("work"), &choices)
+            .unwrap();
+        assert!(refresh.refreshed);
+        assert_eq!(
+            contents(&dir),
+            expected(&[
+                ("shared", b"base"),
+                (".javelinignore", b"new.txt\n"),
+                ("new.txt", bytes),
+            ])
+        );
+    }
 }
 
 #[test]

@@ -110,6 +110,9 @@ workflow may invoke or interpret Git.
     normalization, probed on the volume), applies head deletions before additions so a file
     can become a directory, syncs only directories that still exist, and a capture through a
     relative path to the workspace moves its sync record.
+  - [x] Refresh discovers collisions caused by conflicting head writes before validating
+    choices, so a local file blocking a head write resolves through either side, a tracked
+    alias resolves through both spellings, and an explicit overwrite replaces an ignored file.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs

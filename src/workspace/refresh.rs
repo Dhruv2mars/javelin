@@ -246,16 +246,36 @@ impl Repository {
         plan.apply
             .retain(|(path, _)| !plan.conflicts.contains(path.as_str()));
         // Structural conflicts depend on what the head applies, so they are found again
-        // after the choices change the apply list. An occupied path and the spellings holding
-        // it are all conflicts, so the owner may choose either side.
+        // after the choices change the apply list. The head's conflicting writes count as
+        // applied here too: a choice may take them, so their collisions must be known before
+        // any choice is validated. An occupied path and the spellings holding it are all
+        // conflicts, so the owner may choose either side.
         let holders = |path: &RepoPath| alias_holders(&store, &root, path);
-        let structural = |apply: &[(RepoPath, Option<FileEntry>)]| -> Result<StructuralConflicts> {
+        let candidate = |plan: &Plan| {
+            let mut apply = plan.apply.clone();
+            apply.extend(
+                theirs
+                    .entries()
+                    .iter()
+                    .filter(|(path, _)| plan.conflicts.contains(path.as_str()))
+                    .map(|(path, change)| (path.clone(), change.clone())),
+            );
+            apply
+        };
+        // `overwrite` names the paths an explicit `Theirs` or content choice replaces, so an
+        // ignored file there is not an occupant. Spellings holding a path stay guarded.
+        let structural = |apply: &[(RepoPath, Option<FileEntry>)],
+                          overwrite: &BTreeSet<&str>|
+         -> Result<StructuralConflicts> {
             let gone: BTreeSet<&str> = apply
                 .iter()
                 .filter(|(_, change)| change.is_none())
                 .map(|(path, _)| path.as_str())
                 .collect();
-            let occupants = occupied(&root, apply, &scanned.entries, &gone, &holders)?;
+            let mut occupants = occupied(&root, apply, &scanned.entries, &gone, &holders)?;
+            occupants.retain(|(path, spellings)| {
+                !(spellings.is_empty() && overwrite.contains(path.as_str()))
+            });
             let mut found = BTreeSet::new();
             found.extend(blocked(&root, apply, &gone)?);
             for (path, spellings) in &occupants {
@@ -266,7 +286,7 @@ impl Repository {
             found.extend(aliased(&store, apply)?);
             Ok((found, occupants))
         };
-        let (known, occupants) = structural(&plan.apply)?;
+        let (known, occupants) = structural(&candidate(&plan), &BTreeSet::new())?;
         // Each spelling an occupant holds, mapped to the head write it blocks. Choosing that
         // spelling keeps it and cancels the write.
         let writer_of: BTreeMap<&str, &str> = occupants
@@ -297,6 +317,11 @@ impl Repository {
                         !under(applied.as_str(), path.as_str())
                             && Some(applied.as_str()) != blocked_write
                     });
+                    // Keeping the entry settles the conflicts under it, and the spelling's head
+                    // write it blocks is cancelled, so that path's conflict is settled too.
+                    plan.conflicts.retain(|conflict| {
+                        !under(conflict, path.as_str()) && Some(conflict.as_str()) != blocked_write
+                    });
                     continue;
                 }
                 Choice::Theirs => target.entries().get(path).cloned(),
@@ -317,8 +342,13 @@ impl Repository {
             };
             plan.apply.push((path.clone(), change));
         }
+        let overwrite: BTreeSet<&str> = choices
+            .iter()
+            .filter(|(_, choice)| !matches!(choice, Choice::Ours))
+            .map(|(path, _)| path.as_str())
+            .collect();
         let mut conflicts = plan.conflicts.clone();
-        conflicts.extend(structural(&plan.apply)?.0);
+        conflicts.extend(structural(&candidate(&plan), &overwrite)?.0);
         if !conflicts.is_empty() {
             return Err(Error::RefreshConflict(conflicts.into_iter().collect()));
         }
