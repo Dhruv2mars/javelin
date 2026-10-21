@@ -966,6 +966,7 @@ fn copy_build_sources(dest: &Path) {
         .into_iter()
         .chain(walk(&root_dir.join("crates/javelin-cli")))
         .chain(walk(&root_dir.join("crates/javelin-collaboration")))
+        .chain(walk(&root_dir.join("crates/javelin-control")))
         .chain(walk(&root_dir.join("crates/javelin-identity")))
         .chain(walk(&root_dir.join("crates/javelin-merge")))
         .chain(walk(&root_dir.join("crates/javelin-node")))
@@ -1070,6 +1071,8 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         "crates/javelin-protocol/src/lib.rs",
         "crates/javelin-collaboration/Cargo.toml",
         "crates/javelin-collaboration/src/lib.rs",
+        "crates/javelin-control/Cargo.toml",
+        "crates/javelin-control/src/lib.rs",
         "crates/javelin-stack/src/lib.rs",
         "src/lib.rs",
     ] {
