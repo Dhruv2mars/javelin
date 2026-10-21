@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 
 use javelin::{
-    FileEntry, LayerId, ObjectId, OperationId, Repository, SparseChanges, VersionNumber,
+    LayerId, ObjectId, OperationId, Repository, SparseChanges, VersionNumber,
     tree::{Chunk, Node},
 };
 
@@ -204,20 +204,19 @@ pub fn upload_blobs(
         .entries()
         .values()
         .flatten()
-        .filter_map(|entry| match entry {
-            FileEntry::Regular { content, .. } => Some((Kind::Blob, *content)),
-            FileEntry::Symlink { .. } => None,
-        })
+        .map(|entry| (Kind::Blob, entry.content()))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    if wanted.is_empty() {
-        return Ok(());
+    let mut missing = Vec::new();
+    for chunk in wanted.chunks(MAX_WANT) {
+        match request(link, &Message::Want(chunk.to_vec()))? {
+            Message::Missing(items) if items.iter().all(|item| chunk.contains(item)) => {
+                missing.extend(items)
+            }
+            _ => return Err(unexpected()),
+        }
     }
-    let missing = match request(link, &Message::Want(wanted.clone()))? {
-        Message::Missing(items) if items.iter().all(|item| wanted.contains(item)) => items,
-        _ => return Err(unexpected()),
-    };
     let mut batch = Batch::default();
     let mut send = |message: Message| request(link, &message);
     for (kind, id) in missing {

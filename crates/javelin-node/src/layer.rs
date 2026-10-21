@@ -1,6 +1,6 @@
 //! The node's Layer partition: `LayerAppend` and `LayerHead`, and the changes objects an
 //! append names. A changes object is staged in `node.db` until an append references it.
-//! An accepted append is one native `append_checkpoint` transaction, so the Layer head,
+//! An accepted append is one native `capture_layer` transaction, so the Layer head,
 //! its `live_paths` index and the attempt record commit together.
 
 use javelin::{
@@ -69,20 +69,24 @@ pub(crate) fn append(
         Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
         state => state?,
     };
-    let expected = match parent {
-        Some(parent) => repo
-            .layer_history(layer)?
-            .into_iter()
-            .find_map(|state| match state {
-                LayerState::Active { head } if head.checkpoint().object() == parent => Some(head),
-                _ => None,
-            }),
-        None => None,
-    };
-    let Some(expected) = expected else {
+    // Contents can revert, so a checkpoint can recur in the history. The latest match is
+    // the parent of a new append; an earlier one can only be the parent of a replay, which
+    // the latest refuses as a reused operation.
+    let mut update = None;
+    let heads = repo.layer_history(layer)?.into_iter().rev();
+    for head in heads.filter_map(|state| match state {
+        LayerState::Active { head } if Some(head.checkpoint().object()) == parent => Some(head),
+        _ => None,
+    }) {
+        update = Some(repo.capture_layer(operation, &head, &changes));
+        if !matches!(update, Some(Err(Error::OperationIdReused(_)))) {
+            break;
+        }
+    }
+    let Some(update) = update else {
         return Ok(stale_or_refused(state));
     };
-    match repo.append_checkpoint(operation, &expected, &changes) {
+    match update {
         Ok(LayerUpdate::Applied {
             state: LayerState::Active { head },
         }) => Ok(LayerOutcome::Accepted {

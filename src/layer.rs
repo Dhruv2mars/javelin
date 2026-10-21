@@ -316,35 +316,6 @@ impl Repository {
         Ok(outcome)
     }
 
-    /// Appends `changes` after `expected`, which may be an earlier head. A head that has
-    /// moved is not an error: the attempt is recorded and returned as `Stale`. A retry
-    /// with the same operation replays the recorded outcome, whatever the head is now.
-    /// Node-side appends use this, since a lost reply can leave the head ahead of the
-    /// retry's parent.
-    pub fn append_checkpoint(
-        &mut self,
-        operation: &OperationId,
-        expected: &LayerHead,
-        changes: &SparseChanges,
-    ) -> Result<LayerUpdate> {
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        validate_format(&tx)?;
-        crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
-        let before = checkpoint_in(&tx, expected.checkpoint.0)?;
-        let candidate = prepare_checkpoint(
-            &tx,
-            &before.base,
-            changes,
-            &before.sources,
-            self.provenance.as_ref(),
-        )?;
-        let outcome = update_in(&tx, operation, expected, candidate, false, None, None)?;
-        tx.commit()?;
-        Ok(outcome)
-    }
-
     /// Discard is a terminal event; checkpoint and head history remain recoverable.
     pub fn discard_layer(
         &mut self,

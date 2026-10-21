@@ -369,6 +369,59 @@ fn a_blob_missing_from_the_node_is_refused_as_missing_object() {
     assert_eq!(log.repo().layer_history(&layer("work")).unwrap().len(), 1);
 }
 
+#[test]
+fn symlinks_upload_and_reverted_contents_append_after_the_current_head() {
+    let node_dir = TempDir::new().unwrap();
+    let (log, head) = node(&node_dir);
+    let served = serve_node(log);
+
+    let source_dir = TempDir::new().unwrap();
+    let mut source = Repository::init(source_dir.path()).unwrap();
+    let one = source.put_blob(b"one").unwrap();
+    let two = source.put_blob(b"two").unwrap();
+    let target = source.put_blob(b"a.txt").unwrap();
+    let state = |content| {
+        changes([
+            ("a.txt", file(content)),
+            ("link", Some(FileEntry::Symlink { target })),
+        ])
+    };
+
+    // The third capture reverts to the first, so its checkpoint recurs in the history.
+    let mut link = Link::new(served.addr);
+    let mut uploader = Uploader::new(layer("work"), head);
+    let mut seqs = Vec::new();
+    for (n, content) in [one, two, one, two].into_iter().enumerate() {
+        let outcome = uploader
+            .upload(
+                &mut link,
+                &source,
+                &op(&format!("write-{n}")),
+                &state(content),
+            )
+            .unwrap();
+        seqs.push(outcome_seq(&outcome));
+    }
+    assert_eq!(seqs, [Some(1), Some(2), Some(3), Some(4)]);
+
+    // A lost reply to the second append: its parent is now also checkpoint 3.
+    let first = match &Uploader::new(layer("work"), head)
+        .upload(&mut link, &source, &op("write-0"), &state(one))
+        .unwrap()
+    {
+        LayerOutcome::Accepted { checkpoint, .. } => *checkpoint,
+        other => panic!("replay refused: {other:?}"),
+    };
+    let replay = Uploader::new(layer("work"), first)
+        .upload(&mut link, &source, &op("write-1"), &state(two))
+        .unwrap();
+    assert_eq!(outcome_seq(&replay), Some(2));
+
+    let log = served.finish();
+    assert_eq!(log.repo().layer_history(&layer("work")).unwrap().len(), 5);
+    log.repo().check().unwrap();
+}
+
 fn outcome_seq(outcome: &LayerOutcome) -> Option<u64> {
     match outcome {
         LayerOutcome::Accepted { seq, .. } => Some(*seq),
