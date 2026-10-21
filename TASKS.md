@@ -332,6 +332,7 @@ Wave 3, after wave 2:
 - [x] Bind agent traces to immutable work, with a missing-trace override (#68).
 - [ ] Online units from `docs/online-design.md`, in its order.
   - [x] U1 protocol v2 hosting messages (#67)
+  - [x] U2 node core: file-backed World log, loopback transport, idempotent PublishLayer.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.

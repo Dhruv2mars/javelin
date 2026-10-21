@@ -7,13 +7,65 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
-use javelin::Repository;
+use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, Repository, VersionNumber};
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{OBJECT_OVERHEAD, VERSION, read_frame, write_frame},
+    codec::{OBJECT_OVERHEAD, PublishOutcome, VERSION, read_frame, write_frame},
     limits::*,
 };
+
+/// Refusal codes that hosted writes return as outcomes, not as protocol errors.
+pub mod refusal {
+    pub const UNKNOWN_LAYER: &str = "unknown_layer";
+    pub const LAYER_DISCARDED: &str = "layer_discarded";
+}
+
+/// The coordinator's ordering point for hosted writes. A node implements it over its
+/// storage. A repeated operation replays its recorded outcome, and the World advances
+/// at most once per operation.
+pub trait WorldLog {
+    /// The repository that holds this log's objects and World versions.
+    fn repository(&mut self) -> &mut Repository;
+
+    /// Publishes `layer` as the next World version, provided its head is `expected` and
+    /// its base is `base`. Refusals and conflicts are returned as outcomes. `Err` means
+    /// the node could not decide: the caller retries the same operation.
+    fn publish_layer(
+        &mut self,
+        operation: &OperationId,
+        layer: &LayerId,
+        expected: ObjectId,
+        base: VersionNumber,
+        attribution: &PublishAttribution,
+    ) -> Result<PublishOutcome, ProtocolError>;
+}
+
+/// Serves one message: a hosted write goes to the log, anything else to the repository.
+/// The legacy `Publish` is not served here: it would skip the log's operation records,
+/// so one operation ID could mean two different things.
+pub fn handle_request<L: WorldLog>(
+    log: &mut L,
+    message: Message,
+) -> Result<Message, ProtocolError> {
+    match message {
+        Message::Publish { .. } => Err(unexpected()),
+        Message::PublishLayer {
+            operation,
+            layer,
+            expected,
+            base,
+            attribution,
+        } => Ok(Message::PublishOutcome(log.publish_layer(
+            &operation,
+            &layer,
+            expected,
+            base,
+            &attribution,
+        )?)),
+        other => handle(log.repository(), other),
+    }
+}
 
 /// Serves one session. Any refusal is reported to the peer and ends the session.
 pub fn serve(
