@@ -139,8 +139,11 @@ jobs:
           echo "PREV_SHA=$prev_sha" >> "$GITHUB_ENV"
           flags=()
           [ "$RUNNER_OS" = Windows ] && flags=(--rustflag "-Ctarget-feature=+crt-static")
-          $PACK build --source "$prev_src" --out work/build-previous "${flags[@]}"
-          $PACK package --build work/build-previous --source "$prev_src" --source-sha "$prev_sha" --out work/dist-previous
+          # Use the previous commit's own packager: its source list matches its workspace,
+          # so a release that adds a workspace crate still builds the previous commit.
+          prev_pack="cargo run --locked --quiet --manifest-path $prev_src/tools/native-packaging/Cargo.toml --"
+          $prev_pack build --source "$prev_src" --out work/build-previous "${flags[@]}"
+          $prev_pack package --build work/build-previous --source "$prev_src" --source-sha "$prev_sha" --out work/dist-previous
 
       - name: Name archives and write per-platform SHA256SUMS
         run: |
