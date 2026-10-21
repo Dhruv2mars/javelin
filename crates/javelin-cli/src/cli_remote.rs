@@ -356,18 +356,20 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         return complete(&mut repo, &fetched, &node, &repository_name);
     }
 
-    // A new store is built in a private directory and installed with a rename that never
-    // replaces anything. A failure removes only that directory. The rolling base is warmed
-    // after the install, so the private directory never holds a sealed base.
+    // A new store is built and completed in a private directory, then installed by a rename
+    // that never replaces anything. The installed store is therefore never partial: a failure
+    // before the rename leaves no World history at the project directory, so a retry sees an
+    // empty repository even if the remote has moved on.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let staging = root.join(format!(".javelin-attach-{}-{nanos}", std::process::id()));
     std::fs::create_dir(&staging).map_err(Error::from)?;
-    let installed = Repository::init(&staging)
+    let built = Repository::init(&staging)
         .map_err(CliError::from)
         .and_then(|repo| stage(repo, &link, &head))
-        .and_then(|(repo, fetched)| {
+        .and_then(|(mut repo, fetched)| {
+            let output = complete(&mut repo, &fetched, &node, &repository_name)?;
             drop(repo);
             rename_new(&staging.join(".javelin"), &root.join(".javelin")).map_err(|e| {
                 match e.kind() {
@@ -378,14 +380,10 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
                     _ => CliError::from(Error::from(e)),
                 }
             })?;
-            Ok(fetched)
+            Ok(output)
         });
-    let outcome = installed.and_then(|fetched| {
-        let mut repo = Repository::open(&root)?;
-        complete(&mut repo, &fetched, &node, &repository_name)
-    });
-    let cleanup = std::fs::remove_dir_all(&staging);
-    match (outcome, cleanup) {
+    let cleanup = remove_staging(&staging);
+    match (built, cleanup) {
         (Ok(output), Ok(())) => Ok(output),
         (Ok(_), Err(e)) => Err(Error::InvalidInput(format!(
             "attached, but could not remove {}: {e}",
@@ -396,6 +394,27 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         // objects this call fetched.
         (Err(error), _) => Err(error),
     }
+}
+
+/// Removes a private staging directory. A warmed rolling base is sealed (mode 000), so its
+/// root is opened first: the directory only ever holds what this call built.
+fn remove_staging(staging: &Path) -> io::Result<()> {
+    let base = staging.join(".javelin").join("bases").join("rolling");
+    if base.try_exists()? {
+        open_for_removal(&base)?;
+    }
+    std::fs::remove_dir_all(staging)
+}
+
+#[cfg(unix)]
+fn open_for_removal(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn open_for_removal(_: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Checks, fetches and imports `head` into `repo`, then advances World 0 to it. Nothing is
@@ -570,7 +589,41 @@ fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
 
 #[cfg(test)]
 mod tests {
-    use super::rename_new;
+    use javelin::{FileEntry, Manifest, OperationId, RepoPath, Repository, VersionNumber};
+
+    use super::{remove_staging, rename_new};
+
+    #[test]
+    fn remove_staging_removes_a_store_with_a_sealed_base() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let staging = dir.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        let mut repo = Repository::init(&staging).unwrap();
+        let content = repo.put_blob(b"shared").unwrap();
+        let path = RepoPath::parse("a.txt").unwrap();
+        let tree = repo
+            .put_snapshot(
+                &Manifest::new([(
+                    path,
+                    FileEntry::Regular {
+                        content,
+                        executable: false,
+                    },
+                )])
+                .unwrap(),
+            )
+            .unwrap();
+        let operation = OperationId::parse("seed-1").unwrap();
+        repo.advance_to_tree(&operation, VersionNumber::new(0).unwrap(), tree)
+            .unwrap();
+        repo.warm_base().unwrap();
+        drop(repo);
+        assert!(staging.join(".javelin/bases/rolling").is_dir());
+
+        // Without opening the sealed root first, removal fails with permission denied.
+        remove_staging(&staging).unwrap();
+        assert!(!staging.exists());
+    }
 
     #[test]
     fn rename_new_never_replaces_an_existing_directory() {
