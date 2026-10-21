@@ -365,6 +365,7 @@ dependencies = [
  "javelin-identity",
  "javelin-protocol",
  "rusqlite",
+ "serde_json",
  "tempfile",
 ]
 
