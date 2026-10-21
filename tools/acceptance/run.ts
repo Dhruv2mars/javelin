@@ -43,7 +43,7 @@ const expected: Record<string, string[]> = {
     "gate4.exact-revision-authorization", "gate4.immutable-prior-revisions",
     "gate4.lost-reply-one-outcome", "gate4.fork-data-without-credentials",
     "gate4.restricted-traces", "gate4.distinct-outage-outcomes",
-    "outage.local-layer-work", "outage.control-plane-refusals", "outage.stack-node-down",
+    "outage.local-layer-work", "outage.node-down-queue", "outage.control-plane-refusals", "outage.stack-node-down",
     "outage.review-node-down", "outage.coordinator-transactions",
   ],
   "self-hosted-cli": ["cli.repo-create", "cli.attach", "cli.attach-node-down"],
@@ -55,6 +55,7 @@ const expected: Record<string, string[]> = {
     "gate4.distinct-outage-outcomes", "outage.coordinator-transactions",
   ],
   gaps: ["gap.repo-create-control-plane-unavailable", "gap.attach-node-5xx"],
+  cargo: ["cargo.self-hosted", "cargo.target"],
 };
 
 function record(target: string, id: string, status: Status, detail: string) {
@@ -142,16 +143,18 @@ async function collect() {
   await rm(report);
 }
 
-async function cargoTest(args: string[], env: Record<string, string>): Promise<Output> {
+// Any failing test fails the run, even one that failed after reporting its rows.
+async function cargoTest(id: string, args: string[], env: Record<string, string>) {
   const out = await run(
     ["cargo", "test", "--locked", "--test", "hosted_acceptance", ...args],
     { JAVELIN_ACCEPTANCE_REPORT: report, ...env },
   );
   await collect();
-  if (out.code !== 0) {
-    console.error(out.stdout.split("\n").filter((l) => /panicked|FAILED|left:|right:|error/.test(l)).join("\n"));
-  }
-  return out;
+  const failures = `${out.stdout}\n${out.stderr}`.split("\n")
+    .filter((l) => /panicked|FAILED|left:|right:|error/.test(l)).join("\n");
+  record("cargo", id, out.code === 0 ? "VERIFIED" : "FAILED", out.code === 0
+    ? `cargo test ${args.join(" ")} passed`
+    : `cargo test ${args.join(" ")} exited ${out.code}:\n${failures}`);
 }
 
 try {
@@ -162,7 +165,7 @@ try {
   const javelin = join(targetDir, "debug", `javelin${exe}`);
   const javelinNode = join(targetDir, "debug", `javelin-node${exe}`);
 
-  await cargoTest(["--", "--test-threads=4"], {});
+  await cargoTest("cargo.self-hosted", ["--", "--test-threads=4"], {});
 
   const env: Record<string, string> = {
     JAVELIN_HOME: join(scratch, "home"),
@@ -235,7 +238,7 @@ try {
     ));
     await waitFor(`${url}/healthz`, "wrangler dev");
   }
-  await cargoTest(["target_", "--", "--ignored", "--test-threads=1"], {
+  await cargoTest("cargo.target", ["target_", "--", "--ignored", "--test-threads=1"], {
     JAVELIN_ACCEPTANCE_NODE_URL: url,
     JAVELIN_ACCEPTANCE_NODE_ADMIN_TOKEN: token,
     JAVELIN_ACCEPTANCE_TARGET: nodeTarget,
@@ -246,17 +249,22 @@ try {
   }
 
   // --- 4. Product gaps: designed outcomes the product does not give yet. -----------------------
-  for (const [id, test, what] of [
-    ["gap.repo-create-control-plane-unavailable", "gap_repo_create_without_a_control_plane",
+  // Only the documented wrong code counts as the gap; any other failure, or no test run, FAILED.
+  for (const [id, test, today, what] of [
+    ["gap.repo-create-control-plane-unavailable", "gap_repo_create_without_a_control_plane", "storage_error",
       "repo create with the control plane unreachable should be control_plane_unavailable; it is storage_error"],
-    ["gap.attach-node-5xx", "gap_attach_to_a_failing_node",
+    ["gap.attach-node-5xx", "gap_attach_to_a_failing_node", "node_error",
       "a node answering HTTP 5xx should be node_unavailable; attach reports node_error"],
   ]) {
     const out = await run(["cargo", "test", "--locked", "--test", "hosted_acceptance", test, "--", "--ignored"],
       { JAVELIN_ACCEPTANCE_CLI: javelin });
-    record("gaps", id, out.code === 0 ? "VERIFIED" : "NOT VERIFIED", out.code === 0
-      ? `fixed: ${test} passes now; remove its #[ignore]`
-      : `product gap recorded in TASKS.md (U14): ${what}`);
+    const ran = /running 1 test/.test(out.stdout);
+    const gap = ran && out.stdout.includes(`left: "${today}"`);
+    record("gaps", id, !ran ? "FAILED" : out.code === 0 ? "VERIFIED" : gap ? "NOT VERIFIED" : "FAILED",
+      !ran ? `${test} did not run (exit ${out.code}):\n${out.stderr.slice(-2000)}`
+        : out.code === 0 ? `fixed: ${test} passes now; remove its #[ignore]`
+        : gap ? `product gap recorded in TASKS.md (U14): ${what}`
+        : `${test} failed for another reason:\n${out.stdout.slice(-2000)}`);
   }
 } finally {
   for (const child of children) {
