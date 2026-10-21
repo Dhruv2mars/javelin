@@ -139,7 +139,7 @@ Merge engine (`crates/javelin-merge`):
 - diff3 anchors are lines unique in all three versions and kept by every minimal diff. Matching is an exact LCS in `matching.rs` (`matches()`, with mandatory-row computation). The crate does not use the `similar` crate.
 - Conflict kinds (`ConflictKind`): Content, Binary, ModifyDelete, AddAdd, EntryType, PathPrefix, RenameRename, Alias.
 - Renames are exact-entry matches only (same entry bytes, no similarity). A base path whose two sides move it to different destinations is RenameRename, and `with` names the other destination.
-- Alias conflicts come from a volume probe over the present paths (case and Unicode aliasing). Both members of an alias pair are listed, so either may be chosen, and `with` is None.
+- Alias conflicts come from a volume probe over the present paths (case and Unicode aliasing). Both members of an alias pair are listed, so either may be chosen, and `with` is None. Refresh lists a local file's head descendants and a local spelling's head write the same way; keeping the local side cancels the head writes it blocks.
 - `merge_resolved` applies owner choices (`Choice`: Ours, Theirs, or Content) to conflicting paths and collision/alias members. Javelin never keeps two colliding paths. A choice for a path that does not conflict is invalid input.
 - Stack stores the choices as one immutable resolution blob (`{"resolutions":[...]}`) that the Stack binding names. Retries with the same blob replay the original outcome. A different blob under the same operation ID is `operation_id_reused`.
 - Admission limits are constants returned by `Resource::limit()`:

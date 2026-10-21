@@ -888,3 +888,196 @@ fn keeping_the_local_directory_cancels_the_head_file_write() {
     assert!(dir.join("dir").is_dir());
     assert!(dir.join("dir/inner.txt").exists());
 }
+
+/// A local file `dir` where the head adds `dir/inner.txt`: the file blocks the head's write.
+fn local_file_over_head_directory_fixture() -> (TempDir, PathBuf, TempDir) {
+    let root = fixture(&[("keep.txt", b"keep\n")]);
+    let created = ok(
+        root.path(),
+        &["workspace", "create", "work", "--world", "1"],
+    );
+    let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    capture(
+        root.path(),
+        "source",
+        &[("dir/inner.txt", Edit::Text(b"inner\n"))],
+        "s",
+    );
+    let stacked = ok(
+        root.path(),
+        &[
+            "layer",
+            "stack",
+            "work",
+            "--revision",
+            "0",
+            "--source",
+            &head(root.path(), "source").0,
+            "--operation",
+            "stack-work",
+        ],
+    );
+    assert_eq!(stacked["update"]["outcome"], "applied");
+    fs::write(dir.join("dir"), b"file\n").unwrap();
+    (root, dir, TempDir::new().unwrap())
+}
+
+#[test]
+fn local_file_over_a_head_directory_is_refused_until_a_path_is_chosen() {
+    let (root, dir, _resolutions) = local_file_over_head_directory_fixture();
+    let refused = value(
+        invoke(root.path(), &["workspace", "refresh", "work", "--json"]),
+        1,
+    );
+    assert_eq!(refused["error"]["code"], "refresh_conflict");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(message.contains("dir"), "{message}");
+    assert_eq!(fs::read(dir.join("dir")).unwrap(), b"file\n");
+}
+
+#[test]
+fn keeping_the_local_file_cancels_the_head_write_below_it() {
+    // Either path alone resolves the collision, so each runs on its own fresh workspace.
+    for choice in [json!({"dir": "ours"}), json!({"dir/inner.txt": "ours"})] {
+        let (root, dir, resolutions) = local_file_over_head_directory_fixture();
+        let keep = write_resolutions(resolutions.path(), "keep.json", choice.clone());
+        ok(
+            root.path(),
+            &[
+                "workspace",
+                "refresh",
+                "work",
+                "--resolutions",
+                keep.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(fs::read(dir.join("dir")).unwrap(), b"file\n", "{choice}");
+        assert!(!dir.join("dir/inner.txt").exists(), "{choice}");
+    }
+}
+
+#[test]
+fn local_file_over_a_head_directory_resolves_by_taking_the_head() {
+    let (root, dir, resolutions) = local_file_over_head_directory_fixture();
+    // Taking the head removes the local file, which frees the path below it.
+    let theirs = write_resolutions(resolutions.path(), "theirs.json", json!({"dir": "theirs"}));
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            theirs.to_str().unwrap(),
+        ],
+    );
+    assert!(dir.join("dir").is_dir());
+    assert_eq!(fs::read(dir.join("dir/inner.txt")).unwrap(), b"inner\n");
+    ok(root.path(), &["check"]);
+}
+
+/// A local `readme.md` where the head adds `Readme.md`: the two spellings name one entry on a
+/// case-insensitive volume.
+fn local_alias_fixture() -> (TempDir, PathBuf, TempDir) {
+    let root = fixture(&[("keep.txt", b"keep\n")]);
+    let created = ok(
+        root.path(),
+        &["workspace", "create", "work", "--world", "1"],
+    );
+    let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    capture(
+        root.path(),
+        "source",
+        &[("Readme.md", Edit::Text(b"head\n"))],
+        "s",
+    );
+    let stacked = ok(
+        root.path(),
+        &[
+            "layer",
+            "stack",
+            "work",
+            "--revision",
+            "0",
+            "--source",
+            &head(root.path(), "source").0,
+            "--operation",
+            "stack-work",
+        ],
+    );
+    assert_eq!(stacked["update"]["outcome"], "applied");
+    fs::write(dir.join("readme.md"), b"local\n").unwrap();
+    (root, dir, TempDir::new().unwrap())
+}
+
+#[test]
+fn local_alias_resolves_by_taking_the_head_spelling_or_keeping_the_local_one() {
+    let probe = TempDir::new().unwrap();
+    fs::write(probe.path().join("probe"), b"").unwrap();
+    if !probe.path().join("PROBE").exists() {
+        eprintln!("skipped: the test volume is case-sensitive");
+        return;
+    }
+    let (root, dir, resolutions) = local_alias_fixture();
+    let refused = value(
+        invoke(root.path(), &["workspace", "refresh", "work", "--json"]),
+        1,
+    );
+    assert_eq!(refused["error"]["code"], "refresh_conflict");
+
+    // Keeping the local spelling cancels the head's write to the other one.
+    let keep = write_resolutions(
+        resolutions.path(),
+        "keep.json",
+        json!({"readme.md": "ours"}),
+    );
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            keep.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(fs::read(dir.join("readme.md")).unwrap(), b"local\n");
+    let names: Vec<String> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!names.iter().any(|name| name == "Readme.md"), "{names:?}");
+}
+
+#[test]
+fn local_alias_resolves_by_removing_the_local_spelling_for_the_head() {
+    let probe = TempDir::new().unwrap();
+    fs::write(probe.path().join("probe"), b"").unwrap();
+    if !probe.path().join("PROBE").exists() {
+        eprintln!("skipped: the test volume is case-sensitive");
+        return;
+    }
+    let (root, dir, resolutions) = local_alias_fixture();
+    // Removing the local spelling frees the name, so the head's file takes it.
+    let theirs = write_resolutions(
+        resolutions.path(),
+        "theirs.json",
+        json!({"readme.md": "theirs"}),
+    );
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            theirs.to_str().unwrap(),
+        ],
+    );
+    let names: Vec<String> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.iter().any(|name| name == "Readme.md"), "{names:?}");
+    assert_eq!(fs::read(dir.join("Readme.md")).unwrap(), b"head\n");
+}

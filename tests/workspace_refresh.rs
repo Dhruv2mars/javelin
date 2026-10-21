@@ -244,7 +244,7 @@ fn refresh_blocked_by_a_conflicting_edit_changes_nothing() {
     let error = repo.refresh_workspace(&id("work")).unwrap_err();
     assert_eq!(error.code(), "refresh_conflict", "{error}");
     match error {
-        Error::RefreshConflict(paths) => assert_eq!(paths, ["shared", "x"]),
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["shared", "x", "x/y"]),
         other => panic!("{other:?}"),
     }
     assert_eq!(
@@ -398,8 +398,11 @@ fn refresh_refuses_an_identical_head_name_that_aliases_a_tracked_file() {
         stack(&mut repo, "work", version, &[(alias, b"same")], "alias");
 
         let error = repo.refresh_workspace(&id("work")).unwrap_err();
+        // Both spellings are conflicts, so the owner may choose either.
+        let mut both = vec![tracked, alias];
+        both.sort();
         match error {
-            Error::RefreshConflict(paths) => assert_eq!(paths, [alias]),
+            Error::RefreshConflict(paths) => assert_eq!(paths, both),
             other => panic!("{other:?}"),
         }
         assert_eq!(contents(&dir), expected(&[(tracked, b"same")]));
@@ -427,7 +430,7 @@ fn refresh_refuses_a_name_that_aliases_a_local_file() {
 
     let error = repo.refresh_workspace(&id("work")).unwrap_err();
     match error {
-        Error::RefreshConflict(paths) => assert_eq!(paths, ["new.txt"]),
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["NEW.txt", "new.txt"]),
         other => panic!("{other:?}"),
     }
     assert_eq!(

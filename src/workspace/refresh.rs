@@ -246,21 +246,37 @@ impl Repository {
         plan.apply
             .retain(|(path, _)| !plan.conflicts.contains(path.as_str()));
         // Structural conflicts depend on what the head applies, so they are found again
-        // after the choices change the apply list.
-        let structural = |apply: &[(RepoPath, Option<FileEntry>)]| -> Result<BTreeSet<String>> {
+        // after the choices change the apply list. An occupied path and the spellings holding
+        // it are all conflicts, so the owner may choose either side.
+        let holders = |path: &RepoPath| alias_holders(&store, &root, path);
+        let structural = |apply: &[(RepoPath, Option<FileEntry>)]| -> Result<StructuralConflicts> {
             let gone: BTreeSet<&str> = apply
                 .iter()
                 .filter(|(_, change)| change.is_none())
                 .map(|(path, _)| path.as_str())
                 .collect();
+            let occupants = occupied(&root, apply, &scanned.entries, &gone, &holders)?;
             let mut found = BTreeSet::new();
             found.extend(blocked(&root, apply, &gone)?);
-            found.extend(occupied(&root, apply, &scanned.entries, &gone)?);
+            for (path, spellings) in &occupants {
+                found.insert(path.clone());
+                found.extend(spellings.iter().cloned());
+            }
             found.extend(aliased_dirs(&root, apply, &gone)?);
             found.extend(aliased(&store, apply)?);
-            Ok(found)
+            Ok((found, occupants))
         };
-        let known = structural(&plan.apply)?;
+        let (known, occupants) = structural(&plan.apply)?;
+        // Each spelling an occupant holds, mapped to the head write it blocks. Choosing that
+        // spelling keeps it and cancels the write.
+        let writer_of: BTreeMap<&str, &str> = occupants
+            .iter()
+            .flat_map(|(path, spellings)| {
+                spellings
+                    .iter()
+                    .map(move |spelling| (spelling.as_str(), path.as_str()))
+            })
+            .collect();
         for path in choices.keys() {
             if !plan.conflicts.contains(path.as_str()) && !known.contains(path.as_str()) {
                 return Err(not_a_conflict(path));
@@ -272,8 +288,17 @@ impl Repository {
             // path gets exactly one change.
             plan.apply.retain(|(applied, _)| applied != path);
             let change = match choice {
-                // The directory keeps its own entry, so nothing is written for the path.
-                Choice::Ours => continue,
+                // The directory keeps its own entry, so nothing is written for the path. Head
+                // writes below the path would need it to be a directory, so they are cancelled
+                // too, and so is the head write for the other spelling the path holds.
+                Choice::Ours => {
+                    let blocked_write = writer_of.get(path.as_str()).copied();
+                    plan.apply.retain(|(applied, _)| {
+                        !under(applied.as_str(), path.as_str())
+                            && Some(applied.as_str()) != blocked_write
+                    });
+                    continue;
+                }
                 Choice::Theirs => target.entries().get(path).cloned(),
                 Choice::Content { bytes, executable } => {
                     let mode = |entry: Option<&FileEntry>| match entry {
@@ -293,7 +318,7 @@ impl Repository {
             plan.apply.push((path.clone(), change));
         }
         let mut conflicts = plan.conflicts.clone();
-        conflicts.extend(structural(&plan.apply)?);
+        conflicts.extend(structural(&plan.apply)?.0);
         if !conflicts.is_empty() {
             return Err(Error::RefreshConflict(conflicts.into_iter().collect()));
         }
@@ -372,6 +397,10 @@ fn not_a_conflict(path: &RepoPath) -> Error {
     ))
 }
 
+/// Conflicts a head's changes raise against the directory on disk, with the occupied paths and
+/// the spellings holding each.
+type StructuralConflicts = (BTreeSet<String>, Vec<(String, Vec<String>)>);
+
 /// Three-way decision over local edits (`S` to directory) and head changes (`S` to head).
 fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
     let (local, theirs) = (local.entries(), theirs.entries());
@@ -392,8 +421,9 @@ fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
             None => plan.apply.push((path.clone(), change.clone())),
         }
     }
-    // A file and a directory cannot share a path: a local file blocks head paths below it,
-    // and a head file blocks local paths below it.
+    // A file and a directory cannot share a path: a head file blocks local paths below it.
+    // A local file blocking head paths below it is found on disk by refresh, which names both
+    // sides so either may be chosen.
     for (path, mine) in local {
         if mine.is_none() {
             continue;
@@ -404,14 +434,6 @@ fn plan(local: &SparseChanges, theirs: &SparseChanges) -> Plan {
                 plan.conflicts.insert(path.as_str().to_owned());
             }
             dir = parent;
-        }
-        let prefix = format!("{}/", path.as_str());
-        let below_head_file = theirs
-            .range(RepoPath(prefix.clone())..)
-            .take_while(|(p, _)| p.as_str().starts_with(&prefix))
-            .any(|(_, change)| change.is_some());
-        if below_head_file {
-            plan.conflicts.insert(path.as_str().to_owned());
         }
     }
     plan
@@ -561,6 +583,11 @@ fn freed(path: &str, gone: &BTreeSet<&str>) -> bool {
     false
 }
 
+/// Whether `path` lies strictly below `dir`.
+fn under(path: &str, dir: &str) -> bool {
+    path.len() > dir.len() && path.starts_with(dir) && path.as_bytes()[dir.len()] == b'/'
+}
+
 /// Whether some path in `gone` lies under `dir`.
 fn removed_under(gone: &BTreeSet<&str>, dir: &str) -> bool {
     gone.range(dir..)
@@ -605,7 +632,11 @@ fn blocked(
         let mut dir = path.as_str();
         while let Some((parent, _)) = dir.rsplit_once('/') {
             match fs::symlink_metadata(native(root, parent)) {
-                Ok(meta) if !meta.is_dir() => blocked.push(parent.to_owned()),
+                Ok(meta) if !meta.is_dir() => {
+                    blocked.push(parent.to_owned());
+                    // The head write below the file is blocked by it, so either may be chosen.
+                    blocked.push(path.as_str().to_owned());
+                }
                 Ok(_) => {}
                 // A file above `parent` blocks it too, and the loop reaches that file next.
                 Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
@@ -638,12 +669,15 @@ fn blocked(
 /// untracked file, or a name that matches a local one only by case or normalization on this
 /// volume. Writing over them would lose their bytes, so the refresh refuses. An ignored file
 /// that already holds the head's entry is the write of an interrupted refresh, so it is applied.
+/// Each occupied path comes with the spellings that hold it and stay, which the owner may also
+/// choose. A spelling the head removes gives the path up, so it does not occupy it.
 fn occupied(
     root: &Path,
     apply: &[(RepoPath, Option<FileEntry>)],
     scanned: &BTreeMap<RepoPath, FileEntry>,
     gone: &BTreeSet<&str>,
-) -> Result<Vec<String>> {
+    holders: &impl Fn(&RepoPath) -> Result<Vec<String>>,
+) -> Result<Vec<(String, Vec<String>)>> {
     let mut occupied = Vec::new();
     for (path, change) in apply {
         let Some(entry) = change else { continue };
@@ -665,8 +699,18 @@ fn occupied(
                 // spelling are an alias of a tracked file, which the head must not claim.
                 let interrupted = listed_exactly(root, path.as_str())?
                     && entry_at(&full, executable)?.as_ref() == Some(entry);
-                if !interrupted {
-                    occupied.push(path.as_str().to_owned());
+                if interrupted {
+                    continue;
+                }
+                let spellings = holders(path)?;
+                let kept: Vec<String> = spellings
+                    .iter()
+                    .filter(|name| !gone.contains(name.as_str()))
+                    .cloned()
+                    .collect();
+                // An occupant no spelling accounts for is an ignored file, which stays occupied.
+                if spellings.is_empty() || !kept.is_empty() {
+                    occupied.push((path.as_str().to_owned(), kept));
                 }
             }
             Ok(_) => {}
@@ -675,6 +719,39 @@ fn occupied(
         }
     }
     Ok(occupied)
+}
+
+/// Names in `path`'s parent, other than its own, that hold the same entry on this volume, as
+/// [`probe_volume`] decides. Each is returned by its full path.
+fn alias_holders(store: &Store, root: &Path, path: &RepoPath) -> Result<Vec<String>> {
+    let text = path.as_str();
+    let (parent, leaf) = text.rsplit_once('/').unwrap_or(("", text));
+    let listing = match fs::read_dir(native(root, parent)) {
+        Ok(entries) => entries.collect::<std::io::Result<Vec<_>>>()?,
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            return Ok(Vec::new());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let mut holders = Vec::new();
+    for entry in listing {
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|name| *name != leaf) else {
+            continue;
+        };
+        let other = if parent.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{parent}/{name}")
+        };
+        let Ok(other_path) = RepoPath::parse(&other) else {
+            continue;
+        };
+        if !probe_volume(store, [&other_path, path])?.is_empty() {
+            holders.push(other);
+        }
+    }
+    Ok(holders)
 }
 
 /// Whether the parent's listing names `path`'s leaf exactly. A name that only resolves on this
@@ -768,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn divergent_paths_and_structure_conflict_while_unrelated_edits_are_kept() {
+    fn divergent_paths_conflict_while_unrelated_edits_are_kept() {
         let local = changes(&[
             ("shared", file(b"mine")),
             ("x", file(b"local")),
@@ -780,7 +857,7 @@ mod tests {
             ("new", file(b"n")),
         ]);
         let plan = plan(&local, &theirs);
-        assert_eq!(names(&plan.conflicts), ["shared", "x"]);
+        assert_eq!(names(&plan.conflicts), ["shared"]);
         assert_eq!(
             plan.apply,
             vec![(path("new"), file(b"n")), (path("x/y"), file(b"t"))]
@@ -832,8 +909,9 @@ mod tests {
         let apply = [(path("x"), None), (path("x/y"), file(b"n"))];
         let gone = BTreeSet::from(["x"]);
         assert!(blocked(root.path(), &apply, &gone).unwrap().is_empty());
+        let no_holders = |_: &RepoPath| Ok(Vec::new());
         assert!(
-            occupied(root.path(), &apply, &BTreeMap::new(), &gone)
+            occupied(root.path(), &apply, &BTreeMap::new(), &gone, &no_holders)
                 .unwrap()
                 .is_empty()
         );
@@ -845,15 +923,14 @@ mod tests {
         fs::write(root.path().join("new.txt"), b"theirs").unwrap();
         let none = BTreeSet::new();
         let same = [(path("new.txt"), file(b"theirs"))];
+        let no_holders = |_: &RepoPath| Ok(Vec::new());
         assert!(
-            occupied(root.path(), &same, &BTreeMap::new(), &none)
+            occupied(root.path(), &same, &BTreeMap::new(), &none, &no_holders)
                 .unwrap()
                 .is_empty()
         );
         let differs = [(path("new.txt"), file(b"mine"))];
-        assert_eq!(
-            occupied(root.path(), &differs, &BTreeMap::new(), &none).unwrap(),
-            ["new.txt"]
-        );
+        let found = occupied(root.path(), &differs, &BTreeMap::new(), &none, &no_holders).unwrap();
+        assert_eq!(found, [("new.txt".to_owned(), Vec::new())]);
     }
 }
