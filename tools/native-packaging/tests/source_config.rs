@@ -42,6 +42,7 @@ fn build_uses_source_cargo_config_instead_of_caller_config() {
     for package in [
         "javelin-cli",
         "javelin-collaboration",
+        "javelin-control",
         "javelin-identity",
         "javelin-merge",
         "javelin-node",
