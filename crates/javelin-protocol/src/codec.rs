@@ -17,8 +17,8 @@ mod hosting;
 mod wire;
 
 pub use hosting::{
-    LayerOutcome, LayerStatus, PublishOutcome, RequestId, RequestStatus, ReviewOutcome, Role,
-    Visibility,
+    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
+    RequestStatus, ReviewOutcome, Role, Visibility,
 };
 use wire::*;
 
@@ -53,7 +53,14 @@ const APPROVE: u8 = 0x53;
 const COMMENT: u8 = 0x54;
 const READ_REQUEST: u8 = 0x55;
 const REQUEST_STATE: u8 = 0x56;
+const CHECK_REPORT: u8 = 0x60;
+const CHECK_OUTCOME: u8 = 0x61;
 const ERROR: u8 = 0x7f;
+
+/// Longest `details_url` in a `CheckReport`, in bytes.
+pub const MAX_DETAILS_URL: usize = 2 << 10;
+/// Longest `summary` in a `CheckReport`, in bytes.
+pub const MAX_SUMMARY: usize = 64 << 10;
 
 /// Refusal codes that appear in `Error` frames and in hosting outcomes. Two codes
 /// are client-side only and never cross the wire: `node_unavailable` (provider or
@@ -84,6 +91,11 @@ pub mod code {
     pub const STORAGE_FULL: &str = "storage_full";
     pub const NODE_UNAVAILABLE: &str = "node_unavailable";
     pub const CONTROL_PLANE_UNAVAILABLE: &str = "control_plane_unavailable";
+    pub const TREE_MISMATCH: &str = "tree_mismatch";
+    pub const CHECK_NAME_INVALID: &str = "check_name_invalid";
+    pub const CHECK_NAME_NOT_ALLOWED: &str = "check_name_not_allowed";
+    pub const CHECKS_MISSING: &str = "checks_missing";
+    pub const CHECKS_FAILED: &str = "checks_failed";
 }
 
 /// Object IDs are kind-separated; every reference names the expected kind.
@@ -264,6 +276,9 @@ pub enum Message {
     ReadRequest {
         request: RequestId,
     },
+    /// Report one completed check result for a tree. Reply: `CheckOutcome`.
+    CheckReport(CheckReport),
+    CheckOutcome(CheckOutcome),
     /// Reply to `ReadRequest`: the request's state and its latest revision number.
     RequestState {
         request: RequestId,
@@ -554,6 +569,28 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.push(state.code());
             out.extend_from_slice(&revision.to_be_bytes());
         }
+        Message::CheckReport(report) => {
+            out.push(CHECK_REPORT);
+            put_short(&mut out, report.operation.as_str());
+            put_short(&mut out, &report.repository);
+            put_id(&mut out, &report.subject_tree);
+            put_optional_id(&mut out, report.subject_checkpoint.as_ref());
+            put_short(&mut out, &report.name);
+            out.push(report.conclusion.code());
+            put_optional_text(&mut out, report.details_url.as_deref());
+            put_optional_text(&mut out, report.summary.as_deref());
+            out.extend_from_slice(&report.started_at.to_be_bytes());
+            out.extend_from_slice(&report.completed_at.to_be_bytes());
+        }
+        Message::CheckOutcome(CheckOutcome::Accepted { id, seq }) => {
+            out.extend_from_slice(&[CHECK_OUTCOME, 0]);
+            put_id(&mut out, id);
+            out.extend_from_slice(&seq.to_be_bytes());
+        }
+        Message::CheckOutcome(CheckOutcome::Refused { code }) => {
+            out.extend_from_slice(&[CHECK_OUTCOME, 1]);
+            put_short(&mut out, code);
+        }
         Message::Error { code, detail } => {
             out.push(ERROR);
             put_short(&mut out, code);
@@ -677,6 +714,32 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         }
         Message::ReadRequest { request } => 1 + short(request.as_str())?,
         Message::RequestState { request, .. } => 1 + short(request.as_str())? + 1 + 4,
+        Message::CheckReport(report) => {
+            let url = report.details_url.as_deref().map_or(0, str::len);
+            let summary = report.summary.as_deref().map_or(0, str::len);
+            if report.details_url.as_deref() == Some("") || report.summary.as_deref() == Some("") {
+                return Err(malformed("optional text must be absent or nonempty"));
+            }
+            if url > MAX_DETAILS_URL {
+                return Err(limit("details URL exceeds limit"));
+            }
+            if summary > MAX_SUMMARY {
+                return Err(limit("summary exceeds limit"));
+            }
+            1 + short(report.operation.as_str())?
+                + short(&report.repository)?
+                + 32
+                + 33
+                + short(&report.name)?
+                + 1
+                + 5
+                + url
+                + 5
+                + summary
+                + 16
+        }
+        Message::CheckOutcome(CheckOutcome::Accepted { .. }) => 42,
+        Message::CheckOutcome(CheckOutcome::Refused { code }) => 2 + short(code)?,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -886,6 +949,37 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             state: r.request_status()?,
             revision: r.u32()?,
         },
+        CHECK_REPORT => {
+            let operation = r.operation()?;
+            let repository = r.short_str()?.to_owned();
+            let subject_tree = r.id()?;
+            let subject_checkpoint = r.optional_id()?;
+            let name = r.short_str()?.to_owned();
+            let conclusion =
+                Conclusion::from_code(r.u8()?).ok_or_else(|| malformed("unknown conclusion"))?;
+            Message::CheckReport(CheckReport {
+                operation,
+                repository,
+                subject_tree,
+                subject_checkpoint,
+                name,
+                conclusion,
+                details_url: r.optional_text(MAX_DETAILS_URL)?,
+                summary: r.optional_text(MAX_SUMMARY)?,
+                started_at: r.u64()?,
+                completed_at: r.u64()?,
+            })
+        }
+        CHECK_OUTCOME => Message::CheckOutcome(match r.u8()? {
+            0 => CheckOutcome::Accepted {
+                id: r.id()?,
+                seq: r.u64()?,
+            },
+            1 => CheckOutcome::Refused {
+                code: r.short_str()?.to_owned(),
+            },
+            _ => return Err(malformed("unknown check outcome")),
+        }),
         ERROR => {
             let code = r.short_str()?.to_owned();
             let len = r.u16()? as usize;
@@ -943,4 +1037,116 @@ pub fn write_frame(w: &mut impl Write, message: &Message) -> Result<(), Protocol
     w.write_all(&body)?;
     w.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod check_tests {
+    use super::*;
+
+    fn id(text: &str) -> ObjectId {
+        ObjectId::for_blob(text.as_bytes())
+    }
+
+    fn report() -> CheckReport {
+        CheckReport {
+            operation: OperationId::parse("report-1").unwrap(),
+            repository: "repo-1".into(),
+            subject_tree: id("tree"),
+            subject_checkpoint: Some(id("checkpoint")),
+            name: "ci/unit".into(),
+            conclusion: Conclusion::Failure,
+            details_url: Some("https://ci.example/run/1".into()),
+            summary: None,
+            started_at: 10,
+            completed_at: 20,
+        }
+    }
+
+    #[test]
+    fn check_report_round_trips_with_and_without_optional_fields() {
+        for message in [
+            Message::CheckReport(report()),
+            Message::CheckReport(CheckReport {
+                subject_checkpoint: None,
+                details_url: None,
+                summary: Some("2 tests failed".into()),
+                ..report()
+            }),
+        ] {
+            let bytes = encode(&message).unwrap();
+            assert_eq!(bytes[0], CHECK_REPORT);
+            assert_eq!(decode(&bytes).unwrap(), message);
+        }
+    }
+
+    #[test]
+    fn check_outcomes_round_trip() {
+        for message in [
+            Message::CheckOutcome(CheckOutcome::Accepted {
+                id: id("result"),
+                seq: 7,
+            }),
+            Message::CheckOutcome(CheckOutcome::Refused {
+                code: code::TREE_MISMATCH.into(),
+            }),
+        ] {
+            let bytes = encode(&message).unwrap();
+            assert_eq!(bytes[0], CHECK_OUTCOME);
+            assert_eq!(decode(&bytes).unwrap(), message);
+        }
+    }
+
+    #[test]
+    fn empty_optional_text_is_refused_both_ways() {
+        let empty = Message::CheckReport(CheckReport {
+            summary: Some(String::new()),
+            ..report()
+        });
+        assert_eq!(encode(&empty).unwrap_err().code, code::MALFORMED);
+
+        // A present flag over an empty field is not a canonical encoding.
+        let mut bytes = encode(&Message::CheckReport(CheckReport {
+            details_url: None,
+            summary: None,
+            ..report()
+        }))
+        .unwrap();
+        let summary_flag = bytes.len() - 16 - 5;
+        bytes[summary_flag] = 1;
+        assert_eq!(decode(&bytes).unwrap_err().code, code::MALFORMED);
+    }
+
+    #[test]
+    fn oversize_text_is_refused_before_encoding() {
+        let long_url = Message::CheckReport(CheckReport {
+            details_url: Some("u".repeat(MAX_DETAILS_URL + 1)),
+            ..report()
+        });
+        assert_eq!(encode(&long_url).unwrap_err().code, code::LIMIT_EXCEEDED);
+        let long_summary = Message::CheckReport(CheckReport {
+            summary: Some("s".repeat(MAX_SUMMARY + 1)),
+            ..report()
+        });
+        assert_eq!(
+            encode(&long_summary).unwrap_err().code,
+            code::LIMIT_EXCEEDED
+        );
+    }
+
+    #[test]
+    fn conclusions_use_the_github_names() {
+        for conclusion in [
+            Conclusion::Success,
+            Conclusion::Failure,
+            Conclusion::Neutral,
+            Conclusion::Cancelled,
+            Conclusion::TimedOut,
+            Conclusion::Skipped,
+        ] {
+            assert_eq!(Conclusion::parse(conclusion.as_str()), Some(conclusion));
+            assert_eq!(Conclusion::from_code(conclusion.code()), Some(conclusion));
+        }
+        assert_eq!(Conclusion::parse("action_required"), None);
+        assert_eq!(Conclusion::from_code(6), None);
+    }
 }

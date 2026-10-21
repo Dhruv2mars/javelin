@@ -147,6 +147,24 @@ impl<'a> Reader<'a> {
             std::str::from_utf8(self.take(len)?).map_err(|_| malformed("path is not UTF-8"))?;
         RepoPath::parse(text).map_err(|_| malformed("invalid repository path"))
     }
+    /// An optional text field: a flag, then a `u32` length and UTF-8 bounded by `max`.
+    /// Absence is a zero flag with a zero length, and nothing else.
+    pub(super) fn optional_text(&mut self, max: usize) -> Result<Option<String>, ProtocolError> {
+        let present = self.flag()?;
+        let len = self.u32()? as usize;
+        if len > max {
+            return Err(limit("text exceeds limit"));
+        }
+        let bytes = self.take(len)?;
+        match present {
+            true if len == 0 => Err(malformed("present text must not be empty")),
+            true => std::str::from_utf8(bytes)
+                .map(|text| Some(text.to_owned()))
+                .map_err(|_| malformed("text is not UTF-8")),
+            false if len == 0 => Ok(None),
+            false => Err(malformed("absent text must be empty")),
+        }
+    }
     /// A comment body: `u32` length, bounded by `max`, then UTF-8.
     pub(super) fn text32(&mut self, max: usize) -> Result<String, ProtocolError> {
         let len = self.u32()? as usize;
@@ -185,6 +203,14 @@ pub(super) fn put_id(out: &mut Vec<u8>, id: &ObjectId) {
 pub(super) fn put_optional_id(out: &mut Vec<u8>, id: Option<&ObjectId>) {
     out.push(u8::from(id.is_some()));
     put_id(out, id.unwrap_or(&ABSENT_ID));
+}
+
+/// The encoding `Reader::optional_text` reads: a flag, a `u32` length, then the bytes.
+pub(super) fn put_optional_text(out: &mut Vec<u8>, text: Option<&str>) {
+    out.push(u8::from(text.is_some()));
+    let text = text.unwrap_or("");
+    put_u32(out, text.len());
+    out.extend_from_slice(text.as_bytes());
 }
 
 pub(super) fn put_optional_u32(out: &mut Vec<u8>, value: Option<u32>) {
