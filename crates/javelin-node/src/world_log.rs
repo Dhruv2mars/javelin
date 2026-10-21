@@ -68,6 +68,7 @@ impl FileWorldLog {
                 outcome BLOB NOT NULL
             );",
         )?;
+        records.execute_batch(crate::fork::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
             repo,
@@ -80,6 +81,11 @@ impl FileWorldLog {
     /// Read access to the repository, for checks and inspection.
     pub fn repo(&self) -> &Repository {
         &self.repo
+    }
+
+    /// The node's `node.db`, shared with the trace and fork stores.
+    pub(crate) fn records(&self) -> &Connection {
+        &self.records
     }
 
     /// The trace store, which keeps its visibility beside the decided operations.
