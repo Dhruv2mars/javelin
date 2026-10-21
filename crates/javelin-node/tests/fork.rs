@@ -223,20 +223,26 @@ fn a_fork_outlives_its_source() {
 fn a_reader_who_cannot_see_a_restricted_trace_gets_a_marker_and_no_bytes() {
     let (src_dir, dst_dir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let (src, public, secret) = source(src_dir.path());
+    let source_shape = shape(&src);
+    // Windows locks the files an open log holds, so each scan runs with its log closed.
+    drop(src);
     assert!(
         holds(src_dir.path(), SECRET),
         "the scan must see the source's bytes"
     );
+    let src = FileWorldLog::open(src_dir.path()).unwrap();
     let mut dst = FileWorldLog::open(dst_dir.path()).unwrap();
 
     let forked = fork::fork(&src, "repo-src", &mut dst, v(4), Role::Read).unwrap();
 
     assert_eq!(forked.omitted, vec![secret]);
     assert!(!dst.repo().has_blob(secret).unwrap());
+    drop(dst);
     assert!(
         !holds(dst_dir.path(), SECRET),
         "no copy of the restricted bytes"
     );
+    let dst = FileWorldLog::open(dst_dir.path()).unwrap();
     assert_eq!(
         dst.traces().visibility(public).unwrap(),
         TraceVisibility::Inherit
@@ -247,7 +253,11 @@ fn a_reader_who_cannot_see_a_restricted_trace_gets_a_marker_and_no_bytes() {
         vec![secret],
         "the marker is recorded in the fork"
     );
-    assert_eq!(shape(&dst), shape(&src), "omission does not change the log");
+    assert_eq!(
+        shape(&dst),
+        source_shape,
+        "omission does not change the log"
+    );
 }
 
 #[test]
