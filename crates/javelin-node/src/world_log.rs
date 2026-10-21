@@ -21,7 +21,7 @@ use javelin_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{review::is_review_layer, trace::Traces};
+use crate::{checks, review::is_review_layer, trace::Traces};
 
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
@@ -70,6 +70,7 @@ impl FileWorldLog {
         )?;
         records.execute_batch(crate::fork::SCHEMA)?;
         records.execute_batch(crate::layer::SCHEMA)?;
+        records.execute_batch(crate::checks::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
             repo,
@@ -211,6 +212,12 @@ impl FileWorldLog {
         };
         if self.base_of(&head)? != base {
             return Ok(refused(code::INVALID_INPUT));
+        }
+        // No reporter-revocation check here: PublishLayer has no applied permissions until
+        // its path is authenticated. PublishRequest checks them (review.rs).
+        let (repo, records) = self.parts();
+        if let Some(refusal) = checks::gate(records, repo, head.checkpoint(), None)? {
+            return Ok(refused(refusal));
         }
         match self
             .repo

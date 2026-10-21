@@ -5,6 +5,7 @@
 //! See `docs/online-design.md` sections 4.2, 4.5, 4.6 and 8 (U2, U5).
 
 pub mod auth;
+pub mod checks;
 pub mod fork;
 mod layer;
 mod log_do;

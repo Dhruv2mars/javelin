@@ -165,7 +165,11 @@ workflow may invoke or interpret Git.
   - [x] Design written: `docs/ci-execution.md` (PR on `docs/ci-execution`), with examples in `docs/examples/ci/`.
   - [x] Hub confirms the dialect: GitHub Actions YAML (CI1, confirmed 2026-10-21). The contract accepts "CI workflow syntax compatibility" without naming one.
   - [x] Hub adds U17 (check ingestion and required-check gate) and U18 (validator) to the unit table.
-  - [ ] U17 check ingestion and required-check gate (`docs/ci-execution.md` §11, tests 1–15).
+  - [x] U17 check ingestion and required-check gate (`docs/ci-execution.md` §11, tests 1–15): `CheckReport` 0x60 and `CheckOutcome` 0x61, name-pattern tokens (`checks:report`), tree binding, required-check gate in `PublishLayer` and `PublishRequest`, `javelin check report`.
+  - [ ] `javelin check report` to a serving node: needs wire carriage of the reporter token
+    (open from U7). Until then the command opens the node directory in process and gets `busy`
+    while `javelin-node serve` holds it; the loopback transport answers 0x60 with
+    `unexpected_message`.
   - [x] U18 validator (`tools/ci-validate/`) passes examples 01–07, rejects 08–09 with the expected codes and rejects duplicate-key fixture 10. `validator_fixtures_match_readme` runs in the CI Rust job on all three OSes.
 - [ ] Measure hot-repository contention, many repositories, transfer costs, and quotas.
 

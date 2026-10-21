@@ -4,6 +4,7 @@ use javelin::{Error, Repository, Result, VersionNumber};
 use serde_json::{Value, json};
 
 mod cli;
+mod cli_check;
 mod cli_control;
 mod cli_remote;
 
@@ -113,6 +114,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         .is_some_and(|a| a == "login" || a == "control" || a == "repo")
     {
         return cli_control::run(args).map_err(CliError::Control);
+    }
+    if args.first().is_some_and(|a| a == "check") && args.get(1).is_some_and(|a| a == "report") {
+        return cli_check::report(args.into_iter().skip(2).collect()).map_err(Into::into);
     }
     if args.first().is_some_and(|a| a == "checkpoint") {
         return cli::checkpoint(args.into_iter().skip(1).collect()).map_err(Into::into);

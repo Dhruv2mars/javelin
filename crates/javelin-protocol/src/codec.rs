@@ -13,12 +13,13 @@ use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, VersionNumber,
 
 use crate::{ProtocolError, limits::*};
 
+mod checks;
 mod hosting;
 mod wire;
 
 pub use hosting::{
-    LayerOutcome, LayerStatus, PublishOutcome, RequestId, RequestStatus, ReviewOutcome, Role,
-    Visibility,
+    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
+    RequestStatus, ReviewOutcome, Role, Visibility,
 };
 use wire::*;
 
@@ -55,7 +56,14 @@ const APPROVE: u8 = 0x53;
 const COMMENT: u8 = 0x54;
 const READ_REQUEST: u8 = 0x55;
 const REQUEST_STATE: u8 = 0x56;
+const CHECK_REPORT: u8 = 0x60;
+const CHECK_OUTCOME: u8 = 0x61;
 const ERROR: u8 = 0x7f;
+
+/// Longest `details_url` in a `CheckReport`, in bytes.
+pub const MAX_DETAILS_URL: usize = 2 << 10;
+/// Longest `summary` in a `CheckReport`, in bytes.
+pub const MAX_SUMMARY: usize = 64 << 10;
 
 /// Refusal codes that appear in `Error` frames and in hosting outcomes. Two codes
 /// are client-side only and never cross the wire: `node_unavailable` (provider or
@@ -86,6 +94,11 @@ pub mod code {
     pub const STORAGE_FULL: &str = "storage_full";
     pub const NODE_UNAVAILABLE: &str = "node_unavailable";
     pub const CONTROL_PLANE_UNAVAILABLE: &str = "control_plane_unavailable";
+    pub const TREE_MISMATCH: &str = "tree_mismatch";
+    pub const CHECK_NAME_INVALID: &str = "check_name_invalid";
+    pub const CHECK_NAME_NOT_ALLOWED: &str = "check_name_not_allowed";
+    pub const CHECKS_MISSING: &str = "checks_missing";
+    pub const CHECKS_FAILED: &str = "checks_failed";
 }
 
 /// Object IDs are kind-separated; every reference names the expected kind.
@@ -278,6 +291,9 @@ pub enum Message {
     ReadRequest {
         request: RequestId,
     },
+    /// Report one completed check result for a tree. Reply: `CheckOutcome`.
+    CheckReport(CheckReport),
+    CheckOutcome(CheckOutcome),
     /// Reply to `ReadRequest`: the request's state and its latest revision number.
     RequestState {
         request: RequestId,
@@ -579,6 +595,14 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.push(state.code());
             out.extend_from_slice(&revision.to_be_bytes());
         }
+        Message::CheckReport(report) => {
+            out.push(CHECK_REPORT);
+            checks::put_report(&mut out, report);
+        }
+        Message::CheckOutcome(outcome) => {
+            out.push(CHECK_OUTCOME);
+            checks::put_outcome(&mut out, outcome);
+        }
         Message::Error { code, detail } => {
             out.push(ERROR);
             put_short(&mut out, code);
@@ -709,6 +733,8 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         }
         Message::ReadRequest { request } => 1 + short(request.as_str())?,
         Message::RequestState { request, .. } => 1 + short(request.as_str())? + 1 + 4,
+        Message::CheckReport(report) => checks::report_len(report)?,
+        Message::CheckOutcome(outcome) => checks::outcome_len(outcome)?,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -933,6 +959,8 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             state: r.request_status()?,
             revision: r.u32()?,
         },
+        CHECK_REPORT => Message::CheckReport(checks::read_report(&mut r)?),
+        CHECK_OUTCOME => Message::CheckOutcome(checks::read_outcome(&mut r)?),
         ERROR => {
             let code = r.short_str()?.to_owned();
             let len = r.u16()? as usize;

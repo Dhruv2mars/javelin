@@ -205,6 +205,7 @@ pub(crate) fn issue(
         repo: repo.into(),
         scopes: SESSION_SCOPES.to_vec(),
         layer: None,
+        checks: Vec::new(),
         iat: now,
         exp: now + MAX_LIFETIME,
         jti: secret::id("jti_"),

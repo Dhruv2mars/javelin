@@ -39,6 +39,7 @@ pub fn claims(sub: &str, repo: &str, scopes: &[Scope], iat: u64, exp: u64, jti: 
         repo: repo.to_string(),
         scopes: scopes.to_vec(),
         layer: None,
+        checks: Vec::new(),
         iat,
         exp,
         jti: jti.to_string(),
