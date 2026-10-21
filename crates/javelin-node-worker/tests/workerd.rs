@@ -30,10 +30,7 @@ fn wrong_admin_token_is_refused() {
     let repository = RepositoryId::parse("repo_conformance").expect("repository");
     let error = javelin_control::NodeLink::provision(&node, &repository)
         .expect_err("a wrong token must not provision");
-    assert!(
-        matches!(&error, ControlError::Node(detail) if detail.contains("401")),
-        "{error}"
-    );
+    assert!(matches!(&error, ControlError::Unauthorized(_)), "{error}");
     assert!(
         node.snapshot(&repository).is_err(),
         "state reads need the admin token too"

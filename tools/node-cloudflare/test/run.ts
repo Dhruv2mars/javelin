@@ -100,7 +100,7 @@ try {
   const retry = await create("op-create-1", base);
   check(retry.code === 0, "retry with the same operation completes");
   const created = JSON.parse(retry.stdout);
-  check(created.provider === "cloudflare" && created.epoch === 1, "retry reports cloudflare epoch 1");
+  check(created.epoch === 1, "retry reports epoch 1");
   const repository = created.repository as string;
 
   const state = await nodeState(repository);

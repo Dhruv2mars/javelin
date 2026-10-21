@@ -153,7 +153,6 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             "repo create needs --operation ID; reuse it when retrying".into(),
         )
     })?;
-    let provider = if cloudflare { "cloudflare" } else { "self" };
     let plane = if cloudflare {
         let url = node_url.ok_or_else(|| {
             ControlError::InvalidInput("--provider cloudflare needs --node-url URL".into())
@@ -208,7 +207,6 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
         json!({
             "ok": true,
             "command": "repo create",
-            "provider": provider,
             "repository": created.repository,
             "owner": owner,
             "name": name,

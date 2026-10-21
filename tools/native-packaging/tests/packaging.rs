@@ -159,12 +159,7 @@ fn package_installs_into_a_fresh_path_and_works_through_path() {
         deps.iter()
             .any(|d| d["name"] == "javelin" && d["source"].is_null())
     );
-    // tempfile ships only as native-tls's dependency (the CLI's HTTPS client), never as a
-    // test-only crate of the library.
-    assert!(
-        !deps.iter().any(|d| d["name"] == "tempfile")
-            || deps.iter().any(|d| d["name"] == "native-tls")
-    );
+    assert!(!deps.iter().any(|d| d["name"] == "tempfile"));
     // Every listed dependency ships its license text.
     for d in deps {
         let dir = dest.join("licenses").join(format!(

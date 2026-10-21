@@ -10,7 +10,7 @@
 //! The conformance suite in `tests/common` runs the same assertions against `LocalNode` (in
 //! CI) and against a workerd `wrangler dev` node (`tools/node-cloudflare`, `bun run test`).
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, sync::OnceLock, time::Duration};
 
 use javelin::Repository;
 use javelin_collaboration::{AppliedPermissions, RepositoryId, Role, Visibility};
@@ -41,10 +41,21 @@ impl CloudflareNode {
     /// `http` is accepted only for loopback, so the admin token never crosses the network in clear.
     pub fn new(base: &str, token: &str) -> Result<Self, ControlError> {
         let base = base.trim_end_matches('/');
-        let loopback = ["http://127.0.0.1:", "http://localhost:"]
-            .iter()
-            .any(|prefix| base.starts_with(prefix));
-        if !base.starts_with("https://") && !loopback {
+        let uri: ureq::http::Uri = base
+            .parse()
+            .map_err(|_| ControlError::InvalidInput("node URL is not a valid URL".into()))?;
+        let with_credentials = uri
+            .authority()
+            .is_some_and(|authority| authority.as_str().contains('@'));
+        if with_credentials {
+            return Err(ControlError::InvalidInput(
+                "node URL must not carry credentials".into(),
+            ));
+        }
+        // Plain http is allowed only to this machine, so the admin token never crosses a network in clear.
+        let loopback = uri.scheme_str() == Some("http")
+            && matches!(uri.host(), Some("127.0.0.1" | "localhost"));
+        if uri.scheme_str() != Some("https") && !loopback {
             return Err(ControlError::InvalidInput(
                 "node URL must be https (http only on localhost)".into(),
             ));
@@ -119,6 +130,9 @@ fn answer_json(
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
+    if status == 401 || status == 403 {
+        return Err(ControlError::Unauthorized("node rejected the admin token"));
+    }
     if status == 409 && error == "stale_permissions" {
         return Err(ControlError::Refused(ProtocolError::new(
             "stale_permissions",
@@ -145,22 +159,25 @@ impl NodeLink for CloudflareNode {
 
 /// World 0 of an empty repository, as `(id, tree)`. It is the same value a node computes for
 /// `Repository::init`, so every node that provisions a repository starts from one genesis.
+/// Computed once per process, in a scratch repository that is removed after.
 pub fn genesis() -> Result<(String, String), ControlError> {
-    // A process-and-clock name keeps concurrent calls apart; the directory is removed after.
+    static GENESIS: OnceLock<Result<(String, String), String>> = OnceLock::new();
+    GENESIS
+        .get_or_init(|| compute_genesis().map_err(|error| error.to_string()))
+        .clone()
+        .map_err(ControlError::Storage)
+}
+
+fn compute_genesis() -> Result<(String, String), std::io::Error> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
     let dir = std::env::temp_dir().join(format!("javelin-genesis-{}-{nanos}", std::process::id()));
-    let result = std::fs::create_dir_all(&dir)
-        .map_err(|error| ControlError::Storage(error.to_string()))
-        .and_then(|()| {
-            let repository =
-                Repository::init(&dir).map_err(|error| ControlError::Node(error.to_string()))?;
-            let head = repository
-                .head()
-                .map_err(|error| ControlError::Node(error.to_string()))?;
-            Ok((head.id.to_string(), head.tree.to_string()))
-        });
+    std::fs::create_dir_all(&dir)?;
+    let result = Repository::init(&dir)
+        .and_then(|repository| repository.head())
+        .map(|head| (head.id.to_string(), head.tree.to_string()))
+        .map_err(|error| std::io::Error::other(error.to_string()));
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -206,4 +223,31 @@ fn string(value: Option<&Value>) -> Result<String, ControlError> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| ControlError::Node("node state is missing a genesis field".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_https_or_plain_loopback_is_accepted() {
+        assert!(CloudflareNode::new("https://node.example.workers.dev/", "t").is_ok());
+        assert!(CloudflareNode::new("http://127.0.0.1:18788", "t").is_ok());
+        assert!(CloudflareNode::new("http://localhost:18788", "t").is_ok());
+        assert!(CloudflareNode::new("http://evil.example", "t").is_err());
+        assert!(CloudflareNode::new("http://localhost:80@evil.example", "t").is_err());
+        assert!(CloudflareNode::new("https://user:pass@node.example", "t").is_err());
+        assert!(CloudflareNode::new("ftp://127.0.0.1", "t").is_err());
+    }
+
+    #[test]
+    fn https_reaches_the_tls_stack_without_panicking() {
+        // Port 1 refuses connections, so the call must end in a Node error, not a panic.
+        let node = CloudflareNode::new("https://127.0.0.1:1", "t").expect("https accepted");
+        let repository = RepositoryId::parse("repo_conformance").expect("repository");
+        assert!(matches!(
+            node.snapshot(&repository),
+            Err(ControlError::Node(_))
+        ));
+    }
 }

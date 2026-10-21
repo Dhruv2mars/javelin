@@ -164,6 +164,10 @@ function authorized(request: Request, expected: string | undefined): boolean {
   return diff === 0;
 }
 
+function isHex64(value: unknown): value is string {
+  return typeof value === "string" && HEX64.test(value);
+}
+
 // The Worker checks the body before forwarding; it never reaches storage malformed.
 function validPermissions(body: unknown, repository: string): body is Permissions {
   if (!body || typeof body !== "object") return false;
@@ -172,8 +176,19 @@ function validPermissions(body: unknown, repository: string): body is Permission
   if (!Number.isSafeInteger(p.epoch) || p.epoch < 0) return false;
   if (typeof p.public !== "boolean") return false;
   if (!Number.isSafeInteger(p.required_approvals) || p.required_approvals < 0) return false;
-  if (!p.roles || typeof p.roles !== "object") return false;
+  if (!p.roles || typeof p.roles !== "object" || Array.isArray(p.roles)) return false;
   return Object.values(p.roles).every((role) => ROLES.has(role));
+}
+
+// Only the five known fields are stored, so an unknown key cannot ride along into the node.
+function keepPermissions(p: Permissions): Permissions {
+  return {
+    repository: p.repository,
+    epoch: p.epoch,
+    public: p.public,
+    roles: p.roles,
+    required_approvals: p.required_approvals,
+  };
 }
 
 export default {
@@ -200,13 +215,13 @@ export default {
       const parsed = await request.json().catch(() => null);
       if (action === "provision") {
         const genesis = (parsed as { genesis?: Genesis } | null)?.genesis;
-        if (!genesis || !HEX64.test(genesis.id) || !HEX64.test(genesis.tree)) {
+        if (!genesis || !isHex64(genesis.id) || !isHex64(genesis.tree)) {
           return json({ error: "invalid_input", detail: "genesis needs 64-hex id and tree" }, 400);
         }
       } else if (!validPermissions(parsed, repository)) {
         return json({ error: "invalid_input", detail: "malformed permissions" }, 400);
       }
-      body = JSON.stringify(parsed);
+      body = JSON.stringify(action === "permissions" ? keepPermissions(parsed as Permissions) : parsed);
     }
 
     const stub = env.REPOSITORY_NODE.get(env.REPOSITORY_NODE.idFromName(repository));
