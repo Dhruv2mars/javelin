@@ -27,6 +27,8 @@ use crate::cli::Output;
 
 const PROVIDER: &str = "self-hosted";
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// One framed message plus the HTTP head in front of it.
+const MAX_REPLY: u64 = javelin_protocol::limits::MAX_FRAME as u64 + 16 * 1024;
 
 /// A failure with a stable code, reported as the error code in output.
 #[derive(Clone, Debug)]
@@ -160,8 +162,18 @@ impl Link {
         );
         stream.write_all(head.as_bytes()).map_err(unavailable)?;
         stream.write_all(body).map_err(unavailable)?;
+        // Bounded in total, so a node cannot make the client buffer without limit.
         let mut reply = Vec::new();
-        stream.read_to_end(&mut reply).map_err(unavailable)?;
+        stream
+            .take(MAX_REPLY + 1)
+            .read_to_end(&mut reply)
+            .map_err(unavailable)?;
+        if reply.len() as u64 > MAX_REPLY {
+            return Err(RemoteError::new(
+                "limit_exceeded",
+                "the node's reply is larger than one frame",
+            ));
+        }
         let split = reply
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
@@ -337,18 +349,34 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         }
         return Ok(already_attached(&attached, &head));
     }
-    let mut repo = match opened {
+    // A store this call creates is removed again on failure, so a failed attach leaves no
+    // trace. A store that already existed keeps the objects its fetch stored, which no World
+    // refers to.
+    let created = opened.is_none() && !root.join(".javelin").exists();
+    let repo = match opened {
         Some(repo) => repo,
         None => Repository::init(&root)?,
     };
-    let local = repo.head()?;
-    if local.number.get() != 0 && local.tree != head.tree {
-        return Err(Error::InvalidInput(
-            "this repository already has World history; attach needs an empty repository at World 0"
-                .into(),
-        )
-        .into());
+    match adopt(repo, &link, &head, &node, &repository_name) {
+        Ok(output) => Ok(output),
+        Err(error) => {
+            if created {
+                let _ = std::fs::remove_dir_all(root.join(".javelin"));
+            }
+            Err(error)
+        }
     }
+}
+
+/// Fetches `head` into `repo`, makes it the local head, and records the attachment last.
+fn adopt(
+    mut repo: Repository,
+    link: &RefCell<Link>,
+    head: &RemoteHead,
+    node: &str,
+    repository_name: &str,
+) -> std::result::Result<Output, CliError> {
+    repo.check_attach(head)?;
 
     // Pinned to the number resolved above: World versions are immutable, so the fetch
     // reads exactly the head this attach reports.
@@ -356,8 +384,8 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     let fetched = {
         let mut blobs = RepoBlobs(&mut repo);
         let version = Some(VersionNumber::new(head.number)?);
-        fetch(Down(&link), Up(&link), &trees, &mut blobs, version, None)
-            .map_err(|e| CliError::Remote(remote(&link, e)))?
+        fetch(Down(link), Up(link), &trees, &mut blobs, version, None)
+            .map_err(|e| CliError::Remote(remote(link, e)))?
     };
     let fetched_head = RemoteHead {
         number: fetched.number.get(),
@@ -367,8 +395,8 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     repo.import_tree(&trees, fetched.tree)?;
     let base = repo.attach_head(&fetched_head)?;
     let attachment = Attachment {
-        node: node.clone(),
-        repository: repository_name.clone(),
+        node: node.into(),
+        repository: repository_name.into(),
         provider: PROVIDER.into(),
         head: fetched_head.clone(),
     };

@@ -2,9 +2,11 @@
 //! warm, failures write nothing, and no Git runs.
 
 use std::{
-    net::TcpListener,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
     path::Path,
     process::{Command, Output},
+    sync::atomic::{AtomicUsize, Ordering},
     thread,
 };
 
@@ -12,6 +14,10 @@ use javelin::{
     AdvanceOutcome, FileEntry, Manifest, ObjectId, OperationId, RepoPath, Repository, VersionNumber,
 };
 use javelin_node::{FileWorldLog, bind_loopback, serve};
+use javelin_protocol::{
+    Message,
+    codec::{decode, encode},
+};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -214,4 +220,126 @@ fn attach_runs_without_git() {
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(!marker.exists(), "attach invoked git");
+}
+
+/// Reads one HTTP request and returns its body.
+fn read_request(stream: &mut TcpStream) -> Vec<u8> {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).unwrap();
+        head.push(byte[0]);
+    }
+    let text = String::from_utf8(head).unwrap();
+    let length: usize = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Content-Length: "))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let mut body = vec![0; length];
+    stream.read_exact(&mut body).unwrap();
+    body
+}
+
+/// A node that runs `answer` on each request. Returns its URL.
+fn fake_node(answer: fn(&mut TcpStream, &[u8])) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let body = read_request(&mut stream);
+            answer(&mut stream, &body);
+        }
+    });
+    format!("http://{addr}/demo")
+}
+
+fn reply(stream: &mut TcpStream, body: &[u8]) {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(body);
+}
+
+/// Answers `Resolve` with World 1, then drops every other request without a reply.
+fn resolve_then_drop(stream: &mut TcpStream, body: &[u8]) {
+    if let Ok(Message::Resolve { .. }) = decode(body) {
+        let resolved = Message::Resolved {
+            number: v(1),
+            id: ObjectId::for_blob(b"chain"),
+            tree: ObjectId::for_blob(b"tree"),
+        };
+        reply(stream, &encode(&resolved).unwrap());
+    }
+}
+
+/// Bytes the oversized node managed to send before the client hung up.
+static SENT: AtomicUsize = AtomicUsize::new(0);
+
+/// Answers every request with 64 MiB, far more than one frame. Stops when the client hangs up.
+fn oversized(stream: &mut TcpStream, _body: &[u8]) {
+    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+    let chunk = vec![0u8; 1 << 20];
+    for _ in 0..64 {
+        if stream.write_all(&chunk).is_err() {
+            break;
+        }
+        SENT.fetch_add(chunk.len(), Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn attach_writes_nothing_when_the_node_is_lost_after_resolve() {
+    let url = fake_node(resolve_then_drop);
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join("project")).unwrap();
+
+    let error = attach(root.path(), &url, 1);
+    assert_eq!(error["error"]["code"], "node_unavailable");
+    assert!(!root.path().join("project/.javelin").exists());
+}
+
+#[test]
+fn attach_refuses_a_reply_larger_than_one_frame() {
+    let url = fake_node(oversized);
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join("project")).unwrap();
+
+    let error = attach(root.path(), &url, 1);
+    assert_eq!(error["error"]["code"], "limit_exceeded");
+    assert!(!root.path().join("project/.javelin").exists());
+    // The client read at most about one frame, so the node stopped well short of 64 MiB.
+    assert!(
+        SENT.load(Ordering::SeqCst) < 64 << 20,
+        "sent {}",
+        SENT.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn attach_refuses_matching_history_it_did_not_fetch() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    for i in 0..SMALL {
+        let dir = project.join(format!("d{:03}", i / 100));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("f{i:05}.txt")), b"shared").unwrap();
+    }
+    json(
+        root.path(),
+        &["adopt", "project", "--operation", "adopt-1"],
+        0,
+    );
+
+    let error = attach(root.path(), &url, 2);
+    assert_eq!(error["error"]["code"], "invalid_input");
+    assert!(!project.join(".javelin/attach.json").exists());
 }
