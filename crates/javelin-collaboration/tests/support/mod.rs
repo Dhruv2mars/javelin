@@ -73,13 +73,16 @@ impl Fixture {
             other => panic!("capture failed: {other:?}"),
         };
         let checkpoint = self.repo.read_checkpoint(head.checkpoint()).unwrap();
-        // Public API: storing the checkpoint manifest yields its native object ID.
-        let manifest = self
-            .repo
-            .put_manifest(&self.repo.checkpoint_manifest(checkpoint.id()).unwrap())
-            .unwrap();
+        // The tree root is what the checkpoint composes to; storing it is idempotent.
+        let manifest = self.repo.checkpoint_manifest(checkpoint.id()).unwrap();
+        let tree = self.repo.put_snapshot(&manifest).unwrap();
         let context = context.map(|bytes| self.repo.put_blob(bytes).unwrap());
-        RevisionRef::new(checkpoint.base().version(), manifest, context)
+        RevisionRef::new(
+            checkpoint.base().version(),
+            checkpoint.id().object(),
+            tree,
+            context,
+        )
     }
 }
 
@@ -151,9 +154,22 @@ pub fn approve(index: u32, revision: RevisionRef) -> Action {
     Action::Approve { index, revision }
 }
 
+pub fn publish(index: u32, revision: RevisionRef) -> Action {
+    Action::Publish { index, revision }
+}
+
+/// Comment on revision `index`.
 pub fn comment(index: u32, body: &str) -> Action {
     Action::Comment {
-        index,
+        index: Some(index),
+        body: CommentBody::parse(body).unwrap(),
+    }
+}
+
+/// Comment on the request itself.
+pub fn request_comment(body: &str) -> Action {
+    Action::Comment {
+        index: None,
         body: CommentBody::parse(body).unwrap(),
     }
 }

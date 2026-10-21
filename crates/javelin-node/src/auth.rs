@@ -19,6 +19,11 @@ impl Gate {
         }
     }
 
+    /// The permissions currently applied, if any.
+    pub fn permissions(&self) -> Option<&AppliedPermissions> {
+        self.access.permissions()
+    }
+
     /// The trusted keys, for rotation.
     pub fn keys_mut(&mut self) -> &mut KeySet {
         self.access.keys_mut()

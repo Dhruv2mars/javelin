@@ -1,9 +1,21 @@
 mod support;
 
 use javelin_collaboration::{
-    CommentBody, PrincipalId, Refusal, RepositoryId, Review, Role, Visibility, check_publishable,
+    Action, AppliedPermissions, CommentBody, PrincipalId, Publishable, Refusal, RepositoryId,
+    RequestState, Review, RevisionRef, Role, Visibility, check_publishable,
 };
 use support::*;
+
+/// Publishes against the revision that is current now, as a publisher would.
+fn publish_check(
+    review: &Review,
+    exact: &RevisionRef,
+    p: &AppliedPermissions,
+    publisher: &PrincipalId,
+) -> Result<Publishable, Refusal> {
+    let index = review.current().map_or(0, |c| c.index);
+    check_publishable(review, index, exact, p, publisher)
+}
 
 /// Applies a command that must be accepted and returns the new state.
 fn ok(
@@ -33,8 +45,7 @@ fn repository_backed_proposal_flows_to_publishable() {
     let mut fx = Fixture::new();
     let rev = fx.proposal(1, "pub fn a() {}\n", Some(b"supplied trace bytes"));
     // The reference names real stored native objects.
-    let manifest = fx.repo.read_manifest(rev.manifest()).unwrap();
-    assert_eq!(manifest.entries().len(), 2);
+    assert!(fx.repo.has_tree(rev.tree()).unwrap());
     assert_eq!(
         fx.repo.read_blob(rev.context().unwrap()).unwrap(),
         b"supplied trace bytes"
@@ -44,20 +55,20 @@ fn repository_backed_proposal_flows_to_publishable() {
     let p = team(1);
     let r = ok(&review(), cmd("o1", "alice", open(rev)), &p);
     assert_eq!(
-        check_publishable(&r, &rev, &p, &who("mona")),
+        publish_check(&r, &rev, &p, &who("mona")),
         Err(Refusal::NotEnoughApprovals {
             required: 1,
             current: 0
         })
     );
     let r = ok(&r, cmd("a1", "rita", approve(1, rev)), &p);
-    let allowed = check_publishable(&r, &rev, &p, &who("mona")).unwrap();
+    let allowed = publish_check(&r, &rev, &p, &who("mona")).unwrap();
     assert_eq!(allowed.index, 1);
     assert_eq!(allowed.approvals, vec![who("rita")]);
     // Only Maintain may Publish, even the approving reviewer or the author.
     for p_name in ["rita", "alice"] {
         assert_eq!(
-            check_publishable(&r, &rev, &p, &who(p_name)),
+            publish_check(&r, &rev, &p, &who(p_name)),
             Err(Refusal::InsufficientRole {
                 required: Role::Maintain
             })
@@ -96,18 +107,19 @@ fn changed_code_context_or_base_invalidates_approval() {
     let p = team(1);
     let base = ok(&review(), cmd("o1", "alice", open(code)), &p);
     let base = ok(&base, cmd("a1", "rita", approve(1, code)), &p);
-    assert!(check_publishable(&base, &code, &p, &who("mona")).is_ok());
+    assert!(publish_check(&base, &code, &p, &who("mona")).is_ok());
 
     // Same code, different context; different code, same context; same code over World 0.
-    let other_context = javelin_collaboration::RevisionRef::new(
+    let other_context = RevisionRef::new(
         code.base(),
-        code.manifest(),
+        code.checkpoint(),
+        code.tree(),
         Some(fx.repo.put_blob(b"ctx-b").unwrap()),
     );
-    let no_context = javelin_collaboration::RevisionRef::new(code.base(), code.manifest(), None);
+    let no_context = RevisionRef::new(code.base(), code.checkpoint(), code.tree(), None);
     let other_code = fx.proposal(1, "changed", Some(b"ctx-a"));
     let other_base = fx.proposal(0, "same", Some(b"ctx-a"));
-    assert_ne!(other_base.manifest(), code.manifest());
+    assert_ne!(other_base.tree(), code.tree());
     for (n, next) in [other_context, no_context, other_code, other_base]
         .into_iter()
         .enumerate()
@@ -115,7 +127,7 @@ fn changed_code_context_or_base_invalidates_approval() {
         let r = ok(&base, cmd(&format!("v{n}"), "alice", revise(1, next)), &p);
         assert!(r.current().unwrap().approvals.is_empty());
         assert_eq!(
-            check_publishable(&r, &next, &p, &who("mona")),
+            publish_check(&r, &next, &p, &who("mona")),
             Err(Refusal::NotEnoughApprovals {
                 required: 1,
                 current: 0
@@ -123,7 +135,7 @@ fn changed_code_context_or_base_invalidates_approval() {
         );
         // The old exact revision is no longer publishable.
         assert_eq!(
-            check_publishable(&r, &code, &p, &who("mona")),
+            publish_check(&r, &code, &p, &who("mona")),
             Err(Refusal::RevisionMismatch)
         );
         // History retains the approved revision unchanged.
@@ -142,7 +154,7 @@ fn approval_binds_index_not_just_value() {
     let r = ok(&r, cmd("v3", "alice", revise(2, a)), &p);
     assert_eq!(r.current().unwrap().index, 3);
     assert_eq!(
-        check_publishable(&r, &a, &p, &who("mona")),
+        publish_check(&r, &a, &p, &who("mona")),
         Err(Refusal::NotEnoughApprovals {
             required: 1,
             current: 0
@@ -207,7 +219,7 @@ fn reviewer_rules_and_current_permission_evaluation() {
         1,
     );
     assert_eq!(
-        check_publishable(&r, &rev, &p2, &who("mona")),
+        publish_check(&r, &rev, &p2, &who("mona")),
         Err(Refusal::NotEnoughApprovals {
             required: 1,
             current: 0
@@ -224,7 +236,7 @@ fn reviewer_rules_and_current_permission_evaluation() {
         ],
         1,
     );
-    assert!(check_publishable(&r, &rev, &p3, &who("mona")).is_err());
+    assert!(publish_check(&r, &rev, &p3, &who("mona")).is_err());
     let p4 = perms(
         4,
         Visibility::Private,
@@ -235,7 +247,7 @@ fn reviewer_rules_and_current_permission_evaluation() {
         ],
         1,
     );
-    assert!(check_publishable(&r, &rev, &p4, &who("mona")).is_ok());
+    assert!(publish_check(&r, &rev, &p4, &who("mona")).is_ok());
     // Revoked publisher.
     let p5 = perms(
         5,
@@ -244,7 +256,7 @@ fn reviewer_rules_and_current_permission_evaluation() {
         1,
     );
     assert_eq!(
-        check_publishable(&r, &rev, &p5, &who("mona")),
+        publish_check(&r, &rev, &p5, &who("mona")),
         Err(Refusal::NoAccess)
     );
     // An author later granted Review still cannot count as their own approver.
@@ -255,7 +267,7 @@ fn reviewer_rules_and_current_permission_evaluation() {
         0,
     );
     assert_eq!(
-        check_publishable(&r, &rev, &p6, &who("mona"))
+        publish_check(&r, &rev, &p6, &who("mona"))
             .unwrap()
             .approvals,
         vec![]
@@ -273,7 +285,7 @@ fn stale_permission_epochs_and_foreign_repository_are_refused() {
         Refusal::StalePermissions { seen: 5 }
     );
     assert_eq!(
-        check_publishable(&r, &a, &team(4), &who("mona")),
+        publish_check(&r, &a, &team(4), &who("mona")),
         Err(Refusal::StalePermissions { seen: 5 })
     );
     // Equal epoch is accepted.
@@ -285,7 +297,7 @@ fn stale_permission_epochs_and_foreign_repository_are_refused() {
         Refusal::RepositoryMismatch
     );
     assert_eq!(
-        check_publishable(&r, &a, &foreign, &who("mona")),
+        publish_check(&r, &a, &foreign, &who("mona")),
         Err(Refusal::RepositoryMismatch)
     );
 }
@@ -311,12 +323,12 @@ fn public_contributor_and_private_revocation() {
     );
     let r = ok(&r, cmd("a", "rita", approve(2, b)), &public);
     assert_eq!(
-        check_publishable(&r, &b, &public, &who("outsider")),
+        publish_check(&r, &b, &public, &who("outsider")),
         Err(Refusal::InsufficientRole {
             required: Role::Maintain
         })
     );
-    assert!(check_publishable(&r, &b, &public, &who("mona")).is_ok());
+    assert!(publish_check(&r, &b, &public, &who("mona")).is_ok());
 
     // Repository becomes private: the outsider loses all access, history persists.
     let private = perms(
@@ -404,12 +416,12 @@ fn publish_access_refusal_does_not_reveal_revision_state() {
     for state in [&empty, &opened, &approved] {
         for exact in [a, b] {
             assert_eq!(
-                check_publishable(state, &exact, &p, &who("outsider")),
+                publish_check(state, &exact, &p, &who("outsider")),
                 Err(Refusal::NoAccess)
             );
             for actor in ["alice", "rita"] {
                 assert_eq!(
-                    check_publishable(state, &exact, &p, &who(actor)),
+                    publish_check(state, &exact, &p, &who(actor)),
                     Err(Refusal::InsufficientRole {
                         required: Role::Maintain
                     })
@@ -417,7 +429,7 @@ fn publish_access_refusal_does_not_reveal_revision_state() {
             }
             let public = perms(1, Visibility::Public, &[], 0);
             assert_eq!(
-                check_publishable(state, &exact, &public, &who("outsider")),
+                publish_check(state, &exact, &public, &who("outsider")),
                 Err(Refusal::InsufficientRole {
                     required: Role::Maintain
                 })
@@ -469,7 +481,7 @@ fn reordered_commands_refuse_then_succeed_in_order() {
     let r = ok(&r, revise_b, &p);
     let r = ok(&r, approve_b, &p);
     let r = ok(&r, comment_2, &p);
-    assert!(check_publishable(&r, &b, &p, &who("mona")).is_ok());
+    assert!(publish_check(&r, &b, &p, &who("mona")).is_ok());
     // Two concurrent author revisions from the same observed index: second is stale.
     let c = fx.proposal(1, "c", None);
     let d = fx.proposal(1, "d", None);
@@ -499,6 +511,11 @@ fn comments_and_revisions_are_retained_in_order() {
         &p,
     );
     r = ok(&r, cmd("v3", "alice", revise(2, c)), &p);
+    r = ok(
+        &r,
+        cmd("c3", "rita", request_comment("request-level note")),
+        &p,
+    );
     // Earlier states are values, unchanged by later transitions.
     assert_eq!(snapshot.comments().len(), 1);
     assert_eq!(snapshot.revisions().len(), 2);
@@ -509,7 +526,11 @@ fn comments_and_revisions_are_retained_in_order() {
         .collect();
     assert_eq!(
         bodies,
-        [(1, "rita", "first"), (1, "mona", "late note on revision 1")]
+        [
+            (Some(1), "rita", "first"),
+            (Some(1), "mona", "late note on revision 1"),
+            (None, "rita", "request-level note"),
+        ]
     );
     let revs: Vec<_> = r
         .revisions()
@@ -518,7 +539,7 @@ fn comments_and_revisions_are_retained_in_order() {
         .collect();
     assert_eq!(revs, [(1, a), (2, b), (3, c)]);
     let ops: Vec<_> = r.history().iter().map(|c| c.operation.as_str()).collect();
-    assert_eq!(ops, ["o1", "c1", "v2", "c2", "v3"]);
+    assert_eq!(ops, ["o1", "c1", "v2", "c2", "v3", "c3"]);
     assert_eq!(
         refused(&r, cmd("c0", "rita", comment(0, "x")), &p),
         Refusal::UnknownRevision
@@ -548,14 +569,12 @@ fn optional_reviews_still_require_current_publish_role() {
     let p = perms(1, Visibility::Private, &[("mona", Role::Maintain)], 0);
     let r = ok(&review(), cmd("o1", "mona", open(rev)), &p);
     assert_eq!(
-        check_publishable(&r, &rev, &p, &who("mona"))
-            .unwrap()
-            .approvals,
+        publish_check(&r, &rev, &p, &who("mona")).unwrap().approvals,
         vec![]
     );
     let empty = review();
     assert_eq!(
-        check_publishable(&empty, &rev, &p, &who("mona")),
+        publish_check(&empty, &rev, &p, &who("mona")),
         Err(Refusal::NotOpen)
     );
 }
@@ -565,11 +584,8 @@ fn base_only_change_is_a_different_revision() {
     let mut fx = Fixture::new();
     let on1 = fx.proposal(1, "same", Some(b"ctx"));
     let on2 = fx.proposal(2, "same", Some(b"ctx"));
-    // Real native proposals with identical manifest and context, different base.
-    assert_eq!(
-        (on1.manifest(), on1.context()),
-        (on2.manifest(), on2.context())
-    );
+    // Real native proposals with identical tree and context, different base.
+    assert_eq!((on1.tree(), on1.context()), (on2.tree(), on2.context()));
     assert_ne!(on1.base(), on2.base());
 
     let p = team(1);
@@ -580,7 +596,7 @@ fn base_only_change_is_a_different_revision() {
     );
     let approved = ok(&r, cmd("a1", "rita", approve(1, on1)), &p);
     assert_eq!(
-        check_publishable(&approved, &on2, &p, &who("mona")),
+        publish_check(&approved, &on2, &p, &who("mona")),
         Err(Refusal::RevisionMismatch)
     );
     // Same operation ID and actor, base-only different input.
@@ -591,14 +607,117 @@ fn base_only_change_is_a_different_revision() {
     // Rebased resubmission is accepted as a new revision and invalidates approval.
     let rebased = ok(&approved, cmd("v2", "alice", revise(1, on2)), &p);
     assert_eq!(
-        check_publishable(&rebased, &on2, &p, &who("mona")),
+        publish_check(&rebased, &on2, &p, &who("mona")),
         Err(Refusal::NotEnoughApprovals {
             required: 1,
             current: 0
         })
     );
     assert_eq!(
-        check_publishable(&rebased, &on1, &p, &who("mona")),
+        publish_check(&rebased, &on1, &p, &who("mona")),
         Err(Refusal::RevisionMismatch)
     );
+}
+
+#[test]
+fn publish_pins_the_index_and_moves_the_request_to_published() {
+    let mut fx = Fixture::new();
+    let (a, b) = (fx.proposal(1, "a", None), fx.proposal(1, "b", None));
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(a)), &p);
+    let r = ok(&r, cmd("a1", "rita", approve(1, a)), &p);
+    let r = ok(&r, cmd("v2", "alice", revise(1, b)), &p);
+    // Revision 1 is approved but no longer current: it is not published.
+    assert_eq!(
+        check_publishable(&r, 1, &a, &p, &who("mona")),
+        Err(Refusal::StaleRevision { current: 2 })
+    );
+    assert_eq!(
+        refused(&r, cmd("p1", "mona", publish(1, a)), &p),
+        Refusal::StaleRevision { current: 2 }
+    );
+    // Revision 2 exists but has no approval yet.
+    assert_eq!(
+        refused(&r, cmd("p2", "mona", publish(2, b)), &p),
+        Refusal::NotEnoughApprovals {
+            required: 1,
+            current: 0
+        }
+    );
+    let r = ok(&r, cmd("a2", "rita", approve(2, b)), &p);
+    let published = ok(&r, cmd("p3", "mona", publish(2, b)), &p);
+    assert_eq!(published.state(), RequestState::Published);
+    // Published is terminal: nothing else is accepted.
+    assert_eq!(
+        refused(&published, cmd("c", "rita", request_comment("after")), &p),
+        Refusal::NotOpen
+    );
+    assert_eq!(
+        refused(&published, cmd("a3", "rita", approve(2, b)), &p),
+        Refusal::NotOpen
+    );
+}
+
+#[test]
+fn close_refuses_a_revision_it_was_not_prepared_for() {
+    let mut fx = Fixture::new();
+    let a = fx.proposal(1, "a", None);
+    let b = fx.proposal(2, "b", None);
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(a)), &p);
+    let r = ok(&r, cmd("v2", "alice", revise(1, b)), &p);
+    assert_eq!(
+        refused(&r, cmd("cl1", "alice", Action::Close { index: 1 }), &p),
+        Refusal::StaleRevision { current: 2 }
+    );
+    let closed = ok(&r, cmd("cl2", "alice", Action::Close { index: 2 }), &p);
+    assert_eq!(closed.state(), RequestState::Closed);
+}
+
+#[test]
+fn closed_request_refuses_approval_and_publish() {
+    let mut fx = Fixture::new();
+    let rev = fx.proposal(1, "a", None);
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(rev)), &p);
+    let r = ok(&r, cmd("a1", "rita", approve(1, rev)), &p);
+    // Only the author or a Maintain holder may close.
+    assert_eq!(
+        refused(&r, cmd("x", "rita", Action::Close { index: 1 }), &p),
+        Refusal::InsufficientRole {
+            required: Role::Maintain
+        }
+    );
+    let closed = ok(&r, cmd("cl", "alice", Action::Close { index: 1 }), &p);
+    assert_eq!(closed.state(), RequestState::Closed);
+    // The approval exists, but the request is Closed.
+    assert_eq!(
+        refused(&closed, cmd("p", "mona", publish(1, rev)), &p),
+        Refusal::NotOpen
+    );
+    assert_eq!(
+        refused(&closed, cmd("a2", "rita", approve(1, rev)), &p),
+        Refusal::NotOpen
+    );
+    assert_eq!(
+        publish_check(&closed, &rev, &p, &who("mona")),
+        Err(Refusal::NotOpen)
+    );
+}
+
+#[test]
+fn replay_rebuilds_the_same_state_without_rechecking_roles() {
+    let mut fx = Fixture::new();
+    let (a, b) = (fx.proposal(1, "a", None), fx.proposal(1, "b", None));
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(a)), &p);
+    let r = ok(&r, cmd("a1", "rita", approve(1, a)), &p);
+    let r = ok(&r, cmd("v2", "alice", revise(1, b)), &p);
+    let r = ok(&r, cmd("c", "mona", request_comment("note")), &p);
+    // Rebuild after rita's grant is gone: past decisions keep their recorded epoch.
+    let mut rebuilt = review();
+    for command in r.history() {
+        rebuilt = rebuilt.replay(command, 1).unwrap();
+    }
+    assert_eq!(rebuilt, r);
 }

@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod fork;
 mod log_do;
+pub mod review;
 mod server;
 mod trace;
 mod world_log;

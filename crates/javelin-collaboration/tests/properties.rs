@@ -3,7 +3,8 @@
 mod support;
 
 use javelin_collaboration::{
-    Action, AppliedPermissions, Command, Review, RevisionRef, Role, Visibility, check_publishable,
+    Action, AppliedPermissions, Command, RequestState, Review, RevisionRef, Role, Visibility,
+    check_publishable,
 };
 use support::*;
 
@@ -69,10 +70,15 @@ fn random_command(
         Some(c) if rng.below(3) == 0 => c.revision,
         _ => revs[rng.below(revs.len())],
     };
-    let action = match rng.below(4) {
+    // Publish and Close end a request, so they stay rare to keep long runs.
+    let action = match rng.below(50) {
         0 => open(rev),
-        1 => revise(index, rev),
-        2 => approve(index, rev),
+        1..=14 => revise(index, rev),
+        15..=28 => approve(index, rev),
+        29..=38 => comment(index, "note"),
+        39..=44 => request_comment("note"),
+        45 => publish(index, rev),
+        46 => Action::Close { index },
         _ => comment(index, "note"),
     };
     let c = cmd(&format!("op-{n}"), PEOPLE[rng.below(PEOPLE.len())], action);
@@ -122,7 +128,7 @@ fn run(seed: u64, revs: &[RevisionRef]) -> Review {
     let mut epoch = 1;
     let mut p = random_perms(&mut rng, epoch);
     let mut state = review();
-    for n in 0..60 {
+    for n in 0..120 {
         if rng.below(6) == 0 {
             // Mostly advance; occasionally supply a regressed epoch.
             epoch = if rng.below(4) == 0 {
@@ -142,17 +148,21 @@ fn run(seed: u64, revs: &[RevisionRef]) -> Review {
         }
         for publisher in PEOPLE {
             let who_p = who(publisher);
-            for exact in revs {
-                if let Ok(ok) = check_publishable(&state, exact, &p, &who_p) {
-                    let current = state.current().unwrap();
-                    assert_eq!(current.revision, *exact);
-                    assert_eq!(ok.index, current.index);
-                    assert!(p.role(&who_p) == Some(Role::Maintain));
-                    assert!(ok.approvals.len() as u32 >= p.required_approvals);
-                    for a in &ok.approvals {
-                        assert!(current.approvals.contains(a));
-                        assert!(p.role(a) >= Some(Role::Review));
-                        assert_ne!(Some(a), state.author());
+            for index in 0..=3 {
+                for exact in revs {
+                    if let Ok(ok) = check_publishable(&state, index, exact, &p, &who_p) {
+                        let current = state.current().unwrap();
+                        assert_eq!(current.revision, *exact);
+                        assert_eq!(ok.index, current.index);
+                        assert_eq!(index, current.index);
+                        assert_eq!(state.state(), RequestState::Open);
+                        assert!(p.role(&who_p) == Some(Role::Maintain));
+                        assert!(ok.approvals.len() as u32 >= p.required_approvals);
+                        for a in &ok.approvals {
+                            assert!(current.approvals.contains(a));
+                            assert!(p.role(a) >= Some(Role::Review));
+                            assert_ne!(Some(a), state.author());
+                        }
                     }
                 }
             }

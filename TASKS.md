@@ -339,6 +339,8 @@ Wave 3, after wave 2:
     (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and
     authenticated control-plane pushes remain open.
   - [x] U12 World log in one Durable Object: commit transaction on workerd (50 publishers, kill inside and after commit); deployed-object checks and replication re-check moved to U13.
+  - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
+    partition (`review.rs`), tree IDs in collaboration.
   - [x] U10 restricted agent traces (`javelin-node` trace store: D25 visibility, Maintain-only
     restriction, wire fetch guard, `missing_agent_trace` node tests).
   - [x] U8 control plane minimum: admin-token bootstrap, device-code API, CLI login, repo create

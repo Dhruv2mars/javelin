@@ -21,7 +21,7 @@ use javelin_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::trace::Traces;
+use crate::{review::is_review_layer, trace::Traces};
 
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
@@ -81,6 +81,12 @@ impl FileWorldLog {
     /// Read access to the repository, for checks and inspection.
     pub fn repo(&self) -> &Repository {
         &self.repo
+    }
+
+    /// The repository and the node's records, for partitions that share this node's
+    /// storage (the review partition in `review.rs`).
+    pub(crate) fn parts(&mut self) -> (&mut Repository, &mut Connection) {
+        (&mut self.repo, &mut self.records)
     }
 
     /// The node's `node.db`, shared with the trace and fork stores.
@@ -287,13 +293,19 @@ impl WorldLog for FileWorldLog {
         base: VersionNumber,
         attribution: &PublishAttribution,
     ) -> std::result::Result<PublishOutcome, ProtocolError> {
+        // A revision publishes only through PublishRequest, so its approvals gate it.
+        if is_review_layer(layer) {
+            return Ok(refused(refusal::LAYER_RESERVED));
+        }
         self.publish(operation, layer, expected, base, attribution)
     }
 }
 
 /// Maps the repository's outcome to the wire. A Layer that is no longer Active has
 /// no head to be stale against, so it is refused as published or discarded.
-fn outcome(outcome: NativeOutcome) -> std::result::Result<PublishOutcome, ProtocolError> {
+pub(crate) fn outcome(
+    outcome: NativeOutcome,
+) -> std::result::Result<PublishOutcome, ProtocolError> {
     Ok(match outcome {
         NativeOutcome::Published { version } => PublishOutcome::Published {
             number: version.number,
@@ -318,7 +330,7 @@ fn replay(bytes: &[u8]) -> std::result::Result<PublishOutcome, ProtocolError> {
     }
 }
 
-fn refused(code: &str) -> PublishOutcome {
+pub(crate) fn refused(code: &str) -> PublishOutcome {
     PublishOutcome::Refused { code: code.into() }
 }
 
