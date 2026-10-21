@@ -1239,6 +1239,14 @@ fn attempt_in(conn: &Connection, operation: &OperationId) -> Result<Option<Attem
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Runs once after a Publish commits, before its reclaim, so a test can take the
+    /// database lock at exactly that point.
+    pub(crate) static BEFORE_RECLAIM: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
 pub(crate) fn test_boundary(phase: &str) {
     use std::io::{Read, Write};
     if std::env::var("JAVELIN_TEST_BOUNDARY").as_deref() == Ok(phase) {
@@ -1248,6 +1256,21 @@ pub(crate) fn test_boundary(phase: &str) {
         std::io::stdin().read_exact(&mut byte).unwrap();
     }
 }
+
+/// Simulated power loss at a named point, for process-level recovery tests.
+/// Debug builds only: `JAVELIN_FAILPOINT=<name>` exits with status 86 at that point,
+/// without unwinding, dropping connections or finishing the operation. Release
+/// builds compile this to nothing (docs/robustness.md).
+#[cfg(debug_assertions)]
+pub(crate) fn failpoint(name: &str) {
+    const EXIT_STATUS: i32 = 86;
+    if std::env::var_os("JAVELIN_FAILPOINT").is_some_and(|set| set == name) {
+        std::process::exit(EXIT_STATUS);
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn failpoint(_: &str) {}
 
 #[cfg(test)]
 #[path = "../tests/support/process.rs"]

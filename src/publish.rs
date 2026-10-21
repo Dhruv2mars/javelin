@@ -11,8 +11,8 @@ use crate::{
     domain::{ObjectKind, version_id},
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        Index, Sql, append_version_in, changeset_in, decode_id, head_in as world_head_in,
-        insert_object, read_object, validate_format, version_in,
+        Index, Sql, append_version_in, changeset_in, decode_id, failpoint,
+        head_in as world_head_in, insert_object, read_object, validate_format, version_in,
     },
 };
 
@@ -207,7 +207,9 @@ impl Repository {
                     tag, result, result.map(|_| operation.as_str()), blob.to_string()])?;
             #[cfg(test)]
             crate::repository::test_boundary("publish_before_commit");
+            failpoint("publish_before_commit");
             tx.commit()?;
+            failpoint("publish_after_commit");
             #[cfg(test)]
             lock_probe::finish(&self.conn)?;
             #[cfg(test)]
