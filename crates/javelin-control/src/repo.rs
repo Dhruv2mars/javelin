@@ -159,7 +159,8 @@ pub(crate) fn reserve(
             && record.name == request.name
             && record.public == request.public
             && record.publish == publish
-            && record.fork == fork;
+            && record.fork == fork
+            && record.creator == creator;
         if !same {
             return Err(ControlError::OperationReused);
         }

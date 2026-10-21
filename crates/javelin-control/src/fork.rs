@@ -98,6 +98,15 @@ impl ControlPlane {
             at: request.at,
             reader,
         })?;
+        if record.phase == Phase::Ready {
+            // A retry after a lost reply: the permissions and the Ready mark are already done,
+            // and marking again would reset the epoch.
+            return Ok(ForkedRepository {
+                repository: created(&repository, &record, inserted),
+                origin: forked.origin,
+                omitted: forked.omitted,
+            });
+        }
         self.node
             .apply(&initial_permissions(&repository_id, &record)?)?;
         let ready = self.mark_ready(&repository)?;
