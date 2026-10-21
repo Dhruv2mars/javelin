@@ -348,6 +348,7 @@ Wave 3, after wave 2:
   - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
     partition (`review.rs`), tree IDs in collaboration.
   - [x] U13 Cloudflare managed node: Free-plan limits cited (unverified items marked), TypeScript Worker and Durable Object (wasm fallback, D23), `repo create --provider cloudflare` on workerd; deployed-only checks pending (`tools/node-cloudflare/README.md`).
+  - [x] U13 S1 follow-up: a `Provisioning` retry with another `--provider` or `--node-url` is refused as `operation_id_reused`; the reserved record stores both (`javelin-control` `NodeTarget`).
   - [x] U10 restricted agent traces (`javelin-node` trace store: D25 visibility, Maintain-only
     restriction, wire fetch guard, `missing_agent_trace` node tests).
   - [x] U8 control plane minimum: admin-token bootstrap, device-code API, CLI login, repo create

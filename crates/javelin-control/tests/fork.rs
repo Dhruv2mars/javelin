@@ -9,7 +9,7 @@ use javelin::{
 use javelin_collaboration::{AppliedPermissions, RepositoryId};
 use javelin_control::{
     ControlError, ControlPlane, CreateRequest, Created, ForkPlan, ForkRequest, LocalNode, NodeLink,
-    Publish,
+    NodeTarget, Publish,
 };
 use javelin_node::{FileWorldLog, fork::Forked};
 use javelin_protocol::{codec::PublishOutcome, receiver::WorldLog};
@@ -168,6 +168,7 @@ fn retrying_a_finished_fork_pushes_no_permissions_again() {
             node: LocalNode::new(nodes),
             applies: applies.clone(),
         }),
+        NodeTarget::self_hosted(),
     )
     .expect("open");
     let again = counting
@@ -295,6 +296,7 @@ fn a_lost_permissions_push_is_resumed_by_retrying_the_fork() {
             node: LocalNode::new(nodes.clone()),
             lose: Cell::new(true),
         }),
+        NodeTarget::self_hosted(),
     )
     .expect("open");
     let lost = lossy.fork_repository(&admin, &fork, T0).unwrap_err();

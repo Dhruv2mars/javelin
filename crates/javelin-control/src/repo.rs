@@ -9,7 +9,7 @@ use javelin_identity::Scope;
 
 use crate::{
     ControlError, ControlPlane,
-    control::{authenticate, issue},
+    control::{NodeTarget, authenticate, issue},
     device::{ACCESS_TTL, AccessToken},
     secret,
     state::{ForkOf, Phase, RepositoryRecord, State},
@@ -111,7 +111,7 @@ impl ControlPlane {
                 ));
             }
             caller.require(Scope::RepoCreate, "token does not carry repo:create")?;
-            reserve(state, &caller.principal, request, None)
+            reserve(state, &caller.principal, request, &self.target, None)
         })?;
 
         let repository_id = RepositoryId::parse(&repository)
@@ -140,13 +140,16 @@ impl ControlPlane {
     }
 }
 
-/// Reserves `request`'s name and operation as a new Provisioning record created by `creator`.
-/// A retry with the same operation and request returns the record reserved first. A fork
-/// passes its origin, so a create and a fork never share an operation.
+/// Reserves `request`'s name and operation as a new Provisioning record created by `creator`,
+/// on `node`. A retry with the same operation and request returns the record reserved first.
+/// A Provisioning record also needs `node` to be the one it was reserved on: a retry that
+/// names another node would finish the create there and leave the first node's object behind.
+/// A fork passes its origin, so a create and a fork never share an operation.
 pub(crate) fn reserve(
     state: &mut State,
     creator: &str,
     request: &CreateRequest,
+    node: &NodeTarget,
     fork: Option<ForkOf>,
 ) -> Result<(String, RepositoryRecord, bool), ControlError> {
     let publish = request.publish.as_str();
@@ -161,7 +164,9 @@ pub(crate) fn reserve(
             && record.publish == publish
             && record.fork == fork
             && record.creator == creator;
-        if !same {
+        let elsewhere = record.phase == Phase::Provisioning
+            && (record.provider != node.provider || record.node_url != node.url);
+        if !same || elsewhere {
             return Err(ControlError::OperationReused);
         }
         return Ok((id.clone(), record.clone(), false));
@@ -183,6 +188,8 @@ pub(crate) fn reserve(
         operation: request.operation.clone(),
         phase: Phase::Provisioning,
         epoch: 0,
+        provider: node.provider.clone(),
+        node_url: node.url.clone(),
         fork,
     };
     state.repositories.insert(id.clone(), record.clone());
@@ -269,25 +276,57 @@ fn validate_operation(value: &str) -> Result<(), ControlError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_replayed_operation_stays_with_its_creator() {
-        let mut state = State::default();
-        let request = CreateRequest {
+    fn request(operation: &str) -> CreateRequest {
+        CreateRequest {
             owner: "acme".into(),
             name: "app".into(),
             public: false,
             publish: Publish::Direct,
-            operation: "op-1".into(),
-        };
+            operation: operation.into(),
+        }
+    }
+
+    #[test]
+    fn a_replayed_operation_stays_with_its_creator() {
+        let mut state = State::default();
+        let request = request("op-1");
+        let node = NodeTarget::self_hosted();
         assert!(matches!(
-            reserve(&mut state, "alice", &request, None),
+            reserve(&mut state, "alice", &request, &node, None),
             Ok((_, _, true))
         ));
         assert!(matches!(
-            reserve(&mut state, "alice", &request, None),
+            reserve(&mut state, "alice", &request, &node, None),
             Ok((_, _, false))
         ));
-        let other = reserve(&mut state, "bob", &request, None).unwrap_err();
+        let other = reserve(&mut state, "bob", &request, &node, None).unwrap_err();
         assert_eq!(other.code(), "operation_id_reused");
+    }
+
+    #[test]
+    fn a_provisioning_retry_must_name_the_node_it_was_reserved_on() {
+        let mut state = State::default();
+        let request = request("op-1");
+        let node = NodeTarget::cloudflare("https://a.workers.dev");
+        let (id, _, _) = reserve(&mut state, "alice", &request, &node, None).unwrap();
+
+        let other_provider = NodeTarget::self_hosted();
+        let other_url = NodeTarget::cloudflare("https://b.workers.dev");
+        assert_eq!(
+            NodeTarget::cloudflare("https://a.workers.dev/"),
+            node,
+            "a trailing slash names the same node"
+        );
+        for elsewhere in [&other_provider, &other_url] {
+            let refused = reserve(&mut state, "alice", &request, elsewhere, None).unwrap_err();
+            assert_eq!(refused.code(), "operation_id_reused");
+        }
+        let (again, _, inserted) = reserve(&mut state, "alice", &request, &node, None).unwrap();
+        assert_eq!((again, inserted), (id.clone(), false));
+
+        state.repositories.get_mut(&id).unwrap().phase = Phase::Ready;
+        let (ready, _, inserted) =
+            reserve(&mut state, "alice", &request, &other_url, None).unwrap();
+        assert_eq!((ready, inserted), (id, false));
     }
 }

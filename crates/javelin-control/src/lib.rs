@@ -17,7 +17,7 @@ mod secret;
 mod state;
 
 pub use browser::{answer, serve};
-pub use control::{ADMIN_PRINCIPAL, ControlPlane, ForkPlan, NodeLink};
+pub use control::{ADMIN_PRINCIPAL, ControlPlane, ForkPlan, NodeLink, NodeTarget};
 pub use credentials::Credentials;
 pub use device::{AccessToken, DeviceStart, Poll, Session};
 pub use error::ControlError;

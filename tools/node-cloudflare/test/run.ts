@@ -84,20 +84,25 @@ try {
   check(init.code === 0, "control init");
   env.JAVELIN_ADMIN_TOKEN = JSON.parse(init.stdout).admin_token;
 
-  const create = (operation: string, node: string) =>
+  const create = (operation: string, node: string, token = adminToken) =>
     run(
       [javelin, "--json", "repo", "create", "acme/app", "--operation", operation,
         "--provider", "cloudflare", "--node-url", node],
       here,
-      env,
+      { ...env, JAVELIN_NODE_ADMIN_TOKEN: token },
     );
 
-  // A crash before provisioning: the node is unreachable, so the repository stays Provisioning.
-  const crashed = await create("op-create-1", "http://127.0.0.1:1");
+  // A crash before provisioning: the node refuses the token, so the repository stays Provisioning.
+  const crashed = await create("op-create-1", base, "not-the-admin-token");
   const crashedJson = JSON.parse(crashed.stderr);
-  check(crashed.code !== 0 && crashedJson.error.code === "node_unavailable", "unreachable node refuses create");
+  check(crashed.code !== 0 && crashedJson.error.code === "unauthorized", "refused node leaves the create Provisioning");
 
-  // The retry with the same operation ID resumes and completes.
+  // A retry that names another node is refused before anything is provisioned there.
+  const elsewhere = await create("op-create-1", "http://127.0.0.1:1");
+  check(elsewhere.code !== 0 && JSON.parse(elsewhere.stderr).error.code === "operation_id_reused",
+    "retry naming another node is refused as operation_id_reused");
+
+  // The retry with the same operation ID and node resumes and completes.
   const retry = await create("op-create-1", base);
   check(retry.code === 0, "retry with the same operation completes");
   const created = JSON.parse(retry.stdout);

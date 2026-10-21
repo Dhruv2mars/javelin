@@ -82,8 +82,13 @@ impl ControlPlane {
                 source: request.source.clone(),
                 number: request.at,
             };
-            let (id, record, inserted) =
-                reserve(state, &caller.principal, &request.target, Some(fork))?;
+            let (id, record, inserted) = reserve(
+                state,
+                &caller.principal,
+                &request.target,
+                &self.target,
+                Some(fork),
+            )?;
             Ok((id, record, inserted, reader))
         })?;
 

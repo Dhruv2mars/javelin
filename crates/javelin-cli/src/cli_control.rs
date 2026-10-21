@@ -11,7 +11,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use javelin_control::{ControlError, ControlPlane, CreateRequest, Credentials, Poll, Publish};
+use javelin_control::{
+    ControlError, ControlPlane, CreateRequest, Credentials, NodeTarget, Poll, Publish,
+};
 use javelin_node_worker::CloudflareNode;
 use serde_json::json;
 
@@ -161,7 +163,11 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
         })?;
         let node = CloudflareNode::new(&url, &token)?;
-        ControlPlane::with_node(&control_dir()?, Box::new(node))?
+        ControlPlane::with_node(
+            &control_dir()?,
+            Box::new(node),
+            NodeTarget::cloudflare(&url),
+        )?
     } else {
         if node_url.is_some() {
             return Err(ControlError::InvalidInput(

@@ -63,22 +63,61 @@ pub trait NodeLink {
     }
 }
 
+/// The node a control plane provisions repositories on. Every repository the plane reserves
+/// records it, so a retry that names another node is refused instead of finishing elsewhere.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeTarget {
+    /// `self` or `cloudflare`, as `--provider` names them.
+    pub provider: String,
+    /// The node's URL, for a remote provider.
+    pub url: Option<String>,
+}
+
+impl NodeTarget {
+    /// Self-hosted nodes under the control directory.
+    pub fn self_hosted() -> Self {
+        Self {
+            provider: "self".into(),
+            url: None,
+        }
+    }
+
+    /// A Cloudflare node at `url`. A trailing slash is dropped, as the node client drops it, so
+    /// the same node is never refused for its spelling.
+    pub fn cloudflare(url: &str) -> Self {
+        Self {
+            provider: "cloudflare".into(),
+            url: Some(url.trim_end_matches('/').into()),
+        }
+    }
+}
+
 pub struct ControlPlane {
     pub(crate) store: Store,
     pub(crate) node: Box<dyn NodeLink>,
+    pub(crate) target: NodeTarget,
 }
 
 impl ControlPlane {
     /// Opens the control plane in `dir`, with self-hosted nodes under `dir/nodes`.
     pub fn open(dir: &Path) -> Result<Self, ControlError> {
-        Self::with_node(dir, Box::new(LocalNode::new(dir.join("nodes"))))
+        Self::with_node(
+            dir,
+            Box::new(LocalNode::new(dir.join("nodes"))),
+            NodeTarget::self_hosted(),
+        )
     }
 
-    /// Opens the control plane in `dir` with a caller-supplied node.
-    pub fn with_node(dir: &Path, node: Box<dyn NodeLink>) -> Result<Self, ControlError> {
+    /// Opens the control plane in `dir` with a caller-supplied node, which `target` describes.
+    pub fn with_node(
+        dir: &Path,
+        node: Box<dyn NodeLink>,
+        target: NodeTarget,
+    ) -> Result<Self, ControlError> {
         Ok(Self {
             store: Store::open(dir)?,
             node,
+            target,
         })
     }
 

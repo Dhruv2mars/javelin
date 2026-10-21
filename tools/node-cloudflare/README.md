@@ -59,7 +59,7 @@ the same assertions against `LocalNode` in CI and against this Worker on workerd
 then checks:
 
 1. The conformance suite passes against the Worker (`workerd_node_conforms`, `wrong_admin_token_is_refused`).
-2. `repo create acme/app` against a dead node fails with `node_unavailable`; the retry with the same operation ID succeeds at epoch 1 on the `cloudflare` provider.
+2. `repo create acme/app` against a node that refuses the token leaves the repository Provisioning; a retry naming another `--node-url` is refused as `operation_id_reused`; the retry with the same operation ID and node succeeds at epoch 1 on the `cloudflare` provider.
 3. Node state holds the genesis and the permissions; a repeat is idempotent; a name collision returns `conflict`.
 
 The test kills only the `wrangler` process it started.
@@ -80,4 +80,4 @@ Need a real Free-plan Cloudflare account, which this unit did not use (no creden
 ## Known gaps
 
 - The Worker holds provision, permissions and state. The World-log commit path (U12's spike) is not moved into the Worker.
-- `RepositoryRecord` does not store the provider or node URL. A retry of an operation whose record is still `Provisioning` with a different `--provider` or `--node-url` can finish on the other node, and the Cloudflare object is left with a genesis and no permissions. Once the record is `Ready`, a retry returns it unchanged. The fix belongs in `javelin-control` (store both on the reserved record and refuse a mismatch as `OperationReused`); it was left out to avoid conflicts with U8b and U11.
+- A retry of a create or fork whose record is still `Provisioning` must name the same `--provider` and `--node-url` as the first attempt. A different node is refused with `operation_id_reused` before anything is provisioned there, so no Cloudflare object is left with a genesis and no permissions. A trailing `/` on the URL is ignored. Once a create is `Ready`, a retry returns it unchanged on any node. A fork retry always calls the current node (`head`, `provision`, `fork`) before it returns, so a finished fork retried against another node is not refused. Forks are library-only today; this is left as a follow-up. A record written before the provider was stored has no provider, so every retry of it is refused and its name stays reserved. Nothing releases it: remove that record from the control state by hand (pre-release only).
