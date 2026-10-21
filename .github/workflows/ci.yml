@@ -64,6 +64,19 @@ jobs:
           PATH="$GIT_SHIM:$PATH" cargo test --locked --workspace --all-targets --all-features
           test ! -e "$GIT_SHIM/invoked"
 
+      # CI workflow validator (docs/ci-execution.md §10) runs on every OS in this matrix.
+      - name: Set up bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Test CI workflow validator with the git shim first on PATH
+        working-directory: tools/ci-validate
+        run: |
+          bun install --frozen-lockfile
+          PATH="$GIT_SHIM:$PATH" bun test
+          test ! -e "$GIT_SHIM/invoked"
+
       - name: Build release binary
         run: cargo build --locked --release --workspace --all-features
 
