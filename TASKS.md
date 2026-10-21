@@ -165,7 +165,7 @@ workflow may invoke or interpret Git.
   - [x] Design written: `docs/ci-execution.md` (PR on `docs/ci-execution`), with examples in `docs/examples/ci/`.
   - [ ] Hub confirms the dialect. The contract accepts "CI workflow syntax compatibility" without naming one; the working reading is GitHub Actions YAML (CI1).
   - [ ] Hub adds U17 (check ingestion and required-check gate) to the unit table.
-  - [ ] Validator (`tools/ci-validate/`) passes examples 01–07 and rejects 08–09 with the expected codes.
+  - [x] U18 validator (`tools/ci-validate/`) passes examples 01–07, rejects 08–09 with the expected codes and rejects duplicate-key fixture 10. `validator_fixtures_match_readme` runs in the CI Rust job on all three OSes.
 - [ ] Measure hot-repository contention, many repositories, transfer costs, and quotas.
 
 ## Deliver OSS GA
