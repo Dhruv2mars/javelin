@@ -109,8 +109,9 @@ impl CloudflareNode {
     }
 }
 
-/// Reads a node answer. A 2xx answer is its JSON body. A 409 `stale_permissions` is
-/// `ControlError::Refused`, and any other refusal or transport fault is `ControlError::Node`.
+/// Reads a node answer. A 2xx answer is its JSON body. A 401 or 403 is
+/// `ControlError::Unauthorized`, a 409 `stale_permissions` is `ControlError::Refused`, and any
+/// other refusal or transport fault is `ControlError::Node`.
 fn answer_json(
     answer: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<Value, ControlError> {
@@ -159,13 +160,14 @@ impl NodeLink for CloudflareNode {
 
 /// World 0 of an empty repository, as `(id, tree)`. It is the same value a node computes for
 /// `Repository::init`, so every node that provisions a repository starts from one genesis.
-/// Computed once per process, in a scratch repository that is removed after.
+/// Computed once per process after a success, in a scratch repository that is removed after.
 pub fn genesis() -> Result<(String, String), ControlError> {
-    static GENESIS: OnceLock<Result<(String, String), String>> = OnceLock::new();
-    GENESIS
-        .get_or_init(|| compute_genesis().map_err(|error| error.to_string()))
-        .clone()
-        .map_err(ControlError::Storage)
+    static GENESIS: OnceLock<(String, String)> = OnceLock::new();
+    if let Some(known) = GENESIS.get() {
+        return Ok(known.clone());
+    }
+    let computed = compute_genesis().map_err(|error| ControlError::Storage(error.to_string()))?;
+    Ok(GENESIS.get_or_init(|| computed).clone())
 }
 
 fn compute_genesis() -> Result<(String, String), std::io::Error> {
@@ -242,8 +244,17 @@ mod tests {
 
     #[test]
     fn https_reaches_the_tls_stack_without_panicking() {
-        // Port 1 refuses connections, so the call must end in a Node error, not a panic.
-        let node = CloudflareNode::new("https://127.0.0.1:1", "t").expect("https accepted");
+        // A listener that accepts and drops each connection lets the TCP connect succeed, so
+        // the request reaches the TLS stack; the handshake then fails with a Node error.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                drop(stream);
+            }
+        });
+        let url = format!("https://127.0.0.1:{port}");
+        let node = CloudflareNode::new(&url, "t").expect("https accepted");
         let repository = RepositoryId::parse("repo_conformance").expect("repository");
         assert!(matches!(
             node.snapshot(&repository),
