@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Javelin: approve a sign-in</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; color: #1b1b1b; }
+  h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+  section { border-top: 1px solid #ddd; padding: 1rem 0; }
+  h2 { font-size: 1rem; margin: 0 0 .5rem; }
+  p { margin: .25rem 0 .5rem; }
+  input { font: inherit; width: 100%; box-sizing: border-box; padding: .4rem .6rem; }
+  button { font: inherit; padding: .45rem 1rem; margin-top: .5rem; cursor: pointer; }
+  #status { min-height: 1.5rem; }
+  .error { color: #b00020; }
+  .ok { color: #1a7f37; }
+</style>
+</head>
+<body>
+<h1>Approve a Javelin sign-in</h1>
+<p>Sign in with your passkey, then enter the code that <code>javelin login</code> printed.</p>
+
+<section>
+  <h2>1. Sign in with a passkey</h2>
+  <button id="signin">Sign in with passkey</button>
+</section>
+
+<section>
+  <h2>2. Approve the code</h2>
+  <input id="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false">
+  <button id="approve">Approve</button>
+</section>
+
+<section>
+  <h2>No passkey yet?</h2>
+  <p>Enroll one with the admin token that was printed at setup. Once you are signed in, you can add more.</p>
+  <input id="admin" type="password" placeholder="admin token" autocomplete="off" spellcheck="false">
+  <button id="enroll">Enroll a passkey</button>
+</section>
+
+<p id="status" role="status"></p>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+const report = (text, ok) => {
+  $("status").textContent = text;
+  $("status").className = ok ? "ok" : "error";
+};
+
+const run = (action) => async () => {
+  try {
+    await action();
+  } catch (error) {
+    report(error.message || String(error), false);
+  }
+};
+
+const fromBase64Url = (text) => {
+  const padded = text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+};
+
+const toBase64Url = (buffer) => {
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
+// The server sends base64url strings; the authenticator API takes byte arrays.
+const optionsFromServer = (options) => {
+  const key = options.publicKey;
+  key.challenge = fromBase64Url(key.challenge);
+  if (key.user) key.user.id = fromBase64Url(key.user.id);
+  for (const list of [key.excludeCredentials, key.allowCredentials]) {
+    for (const item of list || []) item.id = fromBase64Url(item.id);
+  }
+  return key;
+};
+
+// The server expects the JSON shape of a PublicKeyCredential, with base64url byte fields.
+const credentialToServer = (credential) => {
+  const response = credential.response;
+  const out = { id: credential.id, rawId: toBase64Url(credential.rawId), type: credential.type, extensions: {} };
+  if (response.attestationObject) {
+    out.response = {
+      attestationObject: toBase64Url(response.attestationObject),
+      clientDataJSON: toBase64Url(response.clientDataJSON),
+      transports: response.getTransports ? response.getTransports() : [],
+    };
+  } else {
+    out.response = {
+      authenticatorData: toBase64Url(response.authenticatorData),
+      clientDataJSON: toBase64Url(response.clientDataJSON),
+      signature: toBase64Url(response.signature),
+      userHandle: response.userHandle ? toBase64Url(response.userHandle) : null,
+    };
+  }
+  return out;
+};
+
+const post = async (path, body, bearer) => {
+  const headers = { "Content-Type": "application/json" };
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body || {}),
+    credentials: "same-origin",
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || `Request failed (${response.status}).`);
+  return data;
+};
+
+$("signin").onclick = run(async () => {
+  const start = await post("/passkey/signin/start");
+  const credential = await navigator.credentials.get({ publicKey: optionsFromServer(start.options) });
+  await post("/passkey/signin/finish", { ceremony: start.ceremony, credential: credentialToServer(credential) });
+  report("Signed in. Enter the code and approve it.", true);
+});
+
+$("approve").onclick = run(async () => {
+  const userCode = $("code").value.trim();
+  await post("/device/approve", { user_code: userCode });
+  report(`Approved ${userCode}. The waiting javelin login will finish.`, true);
+});
+
+$("enroll").onclick = run(async () => {
+  const admin = $("admin").value.trim();
+  const start = await post("/passkey/enroll/start", null, admin || null);
+  const credential = await navigator.credentials.create({ publicKey: optionsFromServer(start.options) });
+  await post("/passkey/enroll/finish", { ceremony: start.ceremony, credential: credentialToServer(credential) });
+  report("Passkey enrolled. Sign in with it next.", true);
+});
+
+const prefilled = new URLSearchParams(location.search).get("code");
+if (prefilled) $("code").value = prefilled;
+</script>
+</body>
+</html>

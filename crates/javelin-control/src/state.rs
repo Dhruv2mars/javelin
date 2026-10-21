@@ -11,7 +11,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ControlError, secret};
+use crate::{
+    ControlError,
+    passkey::{BrowserRecord, CeremonyRecord, PasskeyRecord},
+    secret,
+};
 
 const STATE_FILE: &str = "control.json";
 const LOCK_FILE: &str = "control.lock";
@@ -31,6 +35,12 @@ pub(crate) struct State {
     pub repositories: BTreeMap<String, RepositoryRecord>,
     /// Operation ID to the repository it created.
     pub operations: BTreeMap<String, String>,
+    /// Enrolled passkeys, keyed by credential ID.
+    pub passkeys: BTreeMap<String, PasskeyRecord>,
+    /// Passkey ceremonies in flight, keyed by ceremony ID.
+    pub ceremonies: BTreeMap<String, CeremonyRecord>,
+    /// Browser sign-ins, keyed by the hash of their token.
+    pub browser_sessions: BTreeMap<String, BrowserRecord>,
 }
 
 impl State {
