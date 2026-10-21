@@ -220,6 +220,28 @@ fn empty_scope_and_oversized_payload_are_refused_before_writing() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn an_existing_journal_opens_under_an_ancestor_without_read_permission() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new().unwrap();
+    let repo = root.path().join("search_only/repo");
+    let mut outbox = Outbox::open(&repo, "demo").unwrap();
+    outbox
+        .enqueue(Kind::Upload, "a", &op("op-1"), b"one")
+        .unwrap();
+    drop(outbox);
+
+    // Search (execute) permission is enough to reach the journal; opening the ancestor
+    // for reading is not needed once the journal exists.
+    let search_only = root.path().join("search_only");
+    fs::set_permissions(&search_only, fs::Permissions::from_mode(0o111)).unwrap();
+    let reopened = Outbox::open(&repo, "demo");
+    fs::set_permissions(&search_only, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(reopened.unwrap().pending().count(), 1);
+}
+
 #[test]
 fn backoff_grows_then_caps_and_never_waits_nothing() {
     assert_eq!(backoff(0, 0.0), Duration::from_millis(125));

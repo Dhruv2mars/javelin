@@ -10,6 +10,7 @@ use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf, absolute},
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -165,20 +166,14 @@ impl Outbox {
         // Joining onto "." makes an empty root mean the working directory, which `absolute` rejects.
         let root = absolute(Path::new(".").join(root))?;
         let path = journal_path(&root, name)?;
-        let dir = path.parent().expect("journal path has a parent");
-        fs::create_dir_all(dir)?;
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)?;
-        // Every open syncs each directory from the journal's up to the filesystem root. A
-        // crashed opener may have created any of them without syncing, so none is skipped for
-        // already existing.
-        for ancestor in dir.ancestors() {
-            sync_dir(ancestor)?;
+        if !path.exists() {
+            create_journal(&path)?;
         }
+        let mut file = OpenOptions::new().read(true).write(true).open(&path)?;
+        // The journal's own entry is the one a crash can still lose here; its ancestors were
+        // synced before the name was linked. Syncing only this directory keeps opening
+        // possible without search permission on the ancestors.
+        sync_dir(path.parent().expect("journal path has a parent"))?;
         // Two live handles would each hand out the same next sequence number and overwrite
         // each other's records, so the lock is held until this handle is dropped.
         match file.try_lock() {
@@ -398,6 +393,36 @@ pub fn backoff(attempt: u32, jitter: f64) -> Duration {
     const CAP: Duration = Duration::from_secs(60);
     let ceiling = BASE.saturating_mul(1 << attempt.min(16)).min(CAP);
     ceiling / 2 + ceiling.mul_f64(jitter.clamp(0.0, 1.0)) / 2
+}
+
+/// Creates the journal so that its name never refers to an entry a crash could lose. The
+/// header is synced under a temporary name, every directory up to the filesystem root is
+/// synced, and only then is the journal linked into place. A crash before the link leaves
+/// no journal, and the next open starts over.
+fn create_journal(path: &Path) -> Result<()> {
+    static CREATED: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().expect("journal path has a parent");
+    fs::create_dir_all(dir)?;
+    let n = CREATED.fetch_add(1, Ordering::Relaxed);
+    let temporary = dir.join(format!(".init-{}-{n}.tmp", std::process::id()));
+    let mut file = File::create_new(&temporary)?;
+    file.write_all(MAGIC)?;
+    file.sync_all()?;
+    drop(file);
+    for ancestor in dir.ancestors() {
+        sync_dir(ancestor)?;
+    }
+    match fs::hard_link(&temporary, path) {
+        // Another opener linked its own journal first; that one is authoritative.
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(e.into());
+        }
+    }
+    let _ = fs::remove_file(&temporary);
+    Ok(())
 }
 
 #[cfg(unix)]
