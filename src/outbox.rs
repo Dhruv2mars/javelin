@@ -162,16 +162,25 @@ impl Outbox {
     /// Opens or creates the journal for `name`. Reading never changes the file: a
     /// damaged tail is only reported here and moved aside by the next append.
     pub fn open(root: impl AsRef<Path>, name: &str) -> Result<Self> {
+        let root = root.as_ref();
         let path = journal_path(root, name)?;
         let dir = path.parent().expect("journal path has a parent");
-        create_dir_durable(dir)?;
+        fs::create_dir_all(dir)?;
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(&path)?;
-        sync_dir(dir)?;
+        // Every open syncs the chain from the journal's directory up to the root. A crashed
+        // opener may have created these directories without syncing them, so skipping
+        // the sync for directories that already exist would be unsafe.
+        for ancestor in dir.ancestors().take_while(|p| !p.as_os_str().is_empty()) {
+            sync_dir(ancestor)?;
+            if ancestor == root {
+                break;
+            }
+        }
         // Two live handles would each hand out the same next sequence number and overwrite
         // each other's records, so the lock is held until this handle is dropped.
         match file.try_lock() {
@@ -391,27 +400,6 @@ pub fn backoff(attempt: u32, jitter: f64) -> Duration {
     const CAP: Duration = Duration::from_secs(60);
     let ceiling = BASE.saturating_mul(1 << attempt.min(16)).min(CAP);
     ceiling / 2 + ceiling.mul_f64(jitter.clamp(0.0, 1.0)) / 2
-}
-
-/// Creates `dir` and any missing ancestors, then syncs each parent that gained an entry,
-/// so an accepted record cannot vanish with a directory a crash never persisted.
-fn create_dir_durable(dir: &Path) -> Result<()> {
-    let mut created = Vec::new();
-    let mut missing = dir;
-    while !missing.exists() {
-        created.push(missing);
-        match missing.parent() {
-            Some(parent) => missing = parent,
-            None => break,
-        }
-    }
-    fs::create_dir_all(dir)?;
-    for path in created {
-        if let Some(parent) = path.parent() {
-            sync_dir(parent)?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(unix)]
