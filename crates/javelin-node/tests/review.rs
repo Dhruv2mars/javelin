@@ -6,7 +6,7 @@ use javelin_identity::{Scope, test_keys};
 use javelin_node::{FileWorldLog, auth::Gate, review::handle};
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{PublishOutcome, RequestId, ReviewOutcome},
+    codec::{PublishOutcome, RequestId, RequestStatus, ReviewOutcome},
     receiver::WorldLog,
 };
 use tempfile::TempDir;
@@ -336,4 +336,88 @@ fn an_unknown_request_is_a_protocol_error() {
     let (mut log, gate) = node(&dir, Some(Role::Review));
     let error = send(&mut log, &gate, &alice(), read()).unwrap_err();
     assert_eq!(error.code, "unknown_request");
+}
+
+/// The Layer that publishes revision `index` of `pr-1`, named as `review.rs` names it.
+fn review_layer(index: u32) -> LayerId {
+    LayerId::parse(&format!(
+        "review-{}",
+        ObjectId::for_blob(format!("pr-1/{index}").as_bytes())
+    ))
+    .unwrap()
+}
+
+fn state_of(reply: Message) -> (RequestStatus, u32) {
+    match reply {
+        Message::RequestState {
+            state, revision, ..
+        } => (state, revision),
+        other => panic!("expected request state, got {other:?}"),
+    }
+}
+
+#[test]
+fn publish_refuses_a_revision_layer_at_another_checkpoint() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, gate) = node(&dir, Some(Role::Review));
+    let first = write(&mut log, "write-1", "a.txt", b"one");
+    // The revision's Layer exists at World 0, not at the approved checkpoint.
+    log.create_layer(&review_layer(1), v(0)).unwrap();
+    assert_eq!(
+        accepted(send(&mut log, &gate, &alice(), open("open-1", first)).unwrap()),
+        1
+    );
+    assert_eq!(
+        accepted(send(&mut log, &gate, &rita(), approve("approve-1", 1)).unwrap()),
+        1
+    );
+    assert_eq!(
+        refused(send(&mut log, &gate, &mona(), publish("publish-1", 1)).unwrap()),
+        "layer_stale"
+    );
+}
+
+#[test]
+fn a_publish_whose_record_was_lost_is_completed_only_by_its_own_operation() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, gate) = node(&dir, Some(Role::Review));
+    let first = write(&mut log, "write-1", "a.txt", b"one");
+    accepted(send(&mut log, &gate, &alice(), open("open-1", first)).unwrap());
+    accepted(send(&mut log, &gate, &rita(), approve("approve-1", 1)).unwrap());
+    let (number, tree) =
+        published(send(&mut log, &gate, &mona(), publish("publish-1", 1)).unwrap());
+
+    // A crash: the World published revision 1, but publish-1's record is lost.
+    drop(log);
+    let records = rusqlite::Connection::open(dir.path().join("node.db")).unwrap();
+    records
+        .execute("DELETE FROM review_rows WHERE operation = 'publish-1'", [])
+        .unwrap();
+    drop(records);
+    let (mut log, gate) = node(&dir, Some(Role::Review));
+
+    // The request reads as Published, and no later action is accepted.
+    assert_eq!(
+        state_of(send(&mut log, &gate, &mona(), read()).unwrap()),
+        (RequestStatus::Published, 1)
+    );
+    let second = write(&mut log, "write-2", "b.txt", b"two");
+    assert_eq!(
+        refused(send(&mut log, &gate, &alice(), revise("revise-2", 1, second)).unwrap()),
+        "not_open"
+    );
+    assert_eq!(
+        refused(send(&mut log, &gate, &rita(), approve("approve-2", 1)).unwrap()),
+        "not_open"
+    );
+    // Another operation cannot take over the recorded publication.
+    assert_eq!(
+        refused(send(&mut log, &gate, &mona(), publish("publish-2", 1)).unwrap()),
+        "layer_published"
+    );
+    // Its own retry gets the same version back.
+    assert_eq!(
+        published(send(&mut log, &gate, &mona(), publish("publish-1", 1)).unwrap()),
+        (number, tree)
+    );
 }

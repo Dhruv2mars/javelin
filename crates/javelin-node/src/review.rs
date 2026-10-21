@@ -186,14 +186,16 @@ pub fn handle(
                     revision: pinned,
                 },
             };
-            // The World accepted this revision's publication, but its record was lost before
-            // being written. Record it now under this operation, so the reply is kept.
+            // This operation published the revision, but its record was lost before being
+            // written. Record it now, so the reply is kept. Other operations are refused.
             if review.state() == RequestState::Open
                 && review
                     .current()
                     .is_some_and(|current| current.index == *revision)
                 && recorded(records, operation)?.is_none()
-                && let Some(reply) = world_publication(repo, &id, *revision)?
+                && let Some((published_by, reply)) =
+                    world_publication(repo, &id, *revision, pinned.checkpoint())?
+                && published_by == *operation
             {
                 let reply = Message::PublishOutcome(reply);
                 persist(records, &id, &command, permissions.epoch, &reply, None)?;
@@ -292,18 +294,27 @@ fn revision_layer(id: &RequestId, index: u32) -> Result<LayerId, ProtocolError> 
     ))?)
 }
 
-/// The World's publication of revision `index`, if it has one.
+/// The World's publication of revision `index` at `checkpoint`: the operation that
+/// published it, and its reply. A Layer published at another checkpoint is not this revision's.
 fn world_publication(
     repo: &Repository,
     id: &RequestId,
     index: u32,
-) -> Result<Option<PublishOutcome>, ProtocolError> {
+    checkpoint: ObjectId,
+) -> Result<Option<(OperationId, PublishOutcome)>, ProtocolError> {
     match repo.layer_state(&revision_layer(id, index)?) {
-        Ok(LayerState::Published { version, .. }) => Ok(Some(PublishOutcome::Published {
-            number: version.number,
-            id: version.id,
-            tree: version.tree,
-        })),
+        Ok(LayerState::Published {
+            head,
+            operation,
+            version,
+        }) if head.checkpoint().object() == checkpoint => Ok(Some((
+            operation,
+            PublishOutcome::Published {
+                number: version.number,
+                id: version.id,
+                tree: version.tree,
+            },
+        ))),
         Ok(_) | Err(Error::InvalidInput(_)) => Ok(None),
         Err(error) => Err(error.into()),
     }
@@ -318,7 +329,12 @@ fn settled(repo: &Repository, review: Review) -> Result<Review, ProtocolError> {
     let Some(current) = review.current() else {
         return Ok(review);
     };
-    match world_publication(repo, review.request(), current.index)? {
+    match world_publication(
+        repo,
+        review.request(),
+        current.index,
+        current.revision.checkpoint(),
+    )? {
         Some(_) => Ok(review.published_by_world()),
         None => Ok(review),
     }
