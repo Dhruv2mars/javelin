@@ -966,6 +966,7 @@ fn copy_build_sources(dest: &Path) {
         .into_iter()
         .chain(walk(&root_dir.join("crates/javelin-cli")))
         .chain(walk(&root_dir.join("crates/javelin-collaboration")))
+        .chain(walk(&root_dir.join("crates/javelin-identity")))
         .chain(walk(&root_dir.join("crates/javelin-merge")))
         .chain(walk(&root_dir.join("crates/javelin-node")))
         .chain(walk(&root_dir.join("crates/javelin-protocol")))
