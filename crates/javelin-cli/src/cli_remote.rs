@@ -8,7 +8,7 @@ use std::{
     ffi::OsString,
     io::{self, Cursor, Read, Write},
     net::{TcpStream, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -350,43 +350,61 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         return Ok(already_attached(&attached, &head));
     }
     // An existing store is attached in place. Its fetch only adds content-addressed objects,
-    // and its World moves only through the checked advance, so a failure changes no World.
+    // and its World moves only through the checked advance, so nothing is deleted on failure.
     if let Some(repo) = opened {
-        return adopt(repo, &link, &head, &node, &repository_name);
+        let (mut repo, fetched) = stage(repo, &link, &head)?;
+        return complete(&mut repo, &fetched, &node, &repository_name);
     }
 
-    // A new store is built in a private directory and renamed into place. A failure removes
-    // only that directory, and a store that appears meanwhile is never replaced.
+    // A new store is built in a private directory and installed with a rename that never
+    // replaces anything. A failure removes only that directory. The rolling base is warmed
+    // after the install, so the private directory never holds a sealed base.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let staging = root.join(format!(".javelin-attach-{}-{nanos}", std::process::id()));
     std::fs::create_dir(&staging).map_err(Error::from)?;
-    let built = Repository::init(&staging)
+    let installed = Repository::init(&staging)
         .map_err(CliError::from)
-        .and_then(|repo| adopt(repo, &link, &head, &node, &repository_name));
-    let outcome = built.and_then(|output| {
-        if root.join(".javelin").exists() {
-            return Err(Error::InvalidInput(
-                "a store appeared in this directory during attach; nothing was changed".into(),
-            )
-            .into());
-        }
-        std::fs::rename(staging.join(".javelin"), root.join(".javelin")).map_err(Error::from)?;
-        Ok(output)
+        .and_then(|repo| stage(repo, &link, &head))
+        .and_then(|(repo, fetched)| {
+            drop(repo);
+            rename_new(&staging.join(".javelin"), &root.join(".javelin")).map_err(|e| {
+                match e.kind() {
+                    io::ErrorKind::AlreadyExists => CliError::from(Error::InvalidInput(
+                        "a store appeared in this directory during attach; nothing was changed"
+                            .into(),
+                    )),
+                    _ => CliError::from(Error::from(e)),
+                }
+            })?;
+            Ok(fetched)
+        });
+    let outcome = installed.and_then(|fetched| {
+        let mut repo = Repository::open(&root)?;
+        complete(&mut repo, &fetched, &node, &repository_name)
     });
-    let _ = std::fs::remove_dir_all(&staging);
-    outcome
+    let cleanup = std::fs::remove_dir_all(&staging);
+    match (outcome, cleanup) {
+        (Ok(output), Ok(())) => Ok(output),
+        (Ok(_), Err(e)) => Err(Error::InvalidInput(format!(
+            "attached, but could not remove {}: {e}",
+            staging.display()
+        ))
+        .into()),
+        // The original failure is the one to report; the private directory holds only
+        // objects this call fetched.
+        (Err(error), _) => Err(error),
+    }
 }
 
-/// Fetches `head` into `repo`, makes it the local head, and records the attachment last.
-fn adopt(
+/// Checks, fetches and imports `head` into `repo`, then advances World 0 to it. Nothing is
+/// attached yet: the rolling base and `attach.json` come from [`complete`].
+fn stage(
     mut repo: Repository,
     link: &RefCell<Link>,
     head: &RemoteHead,
-    node: &str,
-    repository_name: &str,
-) -> std::result::Result<Output, CliError> {
+) -> std::result::Result<(Repository, RemoteHead), CliError> {
     repo.check_attach(head)?;
 
     // Pinned to the number resolved above: World versions are immutable, so the fetch
@@ -404,12 +422,23 @@ fn adopt(
         tree: fetched.tree,
     };
     repo.import_tree(&trees, fetched.tree)?;
-    let base = repo.attach_head(&fetched_head)?;
+    repo.attach_head(&fetched_head)?;
+    Ok((repo, fetched_head))
+}
+
+/// Warms the rolling base, then records the attachment. `attach.json` is written last.
+fn complete(
+    repo: &mut Repository,
+    fetched: &RemoteHead,
+    node: &str,
+    repository_name: &str,
+) -> std::result::Result<Output, CliError> {
+    let base = repo.warm_base()?;
     let attachment = Attachment {
         node: node.into(),
         repository: repository_name.into(),
         provider: PROVIDER.into(),
-        head: fetched_head.clone(),
+        head: fetched.clone(),
     };
     repo.write_attachment(&attachment)?;
 
@@ -420,15 +449,105 @@ fn adopt(
         "attached": true,
         "node": node,
         "repository": repository_name,
-        "head": fetched_head,
+        "head": fetched,
         "local_head": local,
         "base": base,
     });
     let text = format!(
         "Attached {repository_name} at {node}: remote World {} (tree {}). Rolling base holds {} paths.",
-        fetched_head.number, fetched_head.tree, base.changed_paths
+        fetched.number, fetched.tree, base.changed_paths
     );
     Ok((value, text, 0))
+}
+
+/// Renames `from` to `to`, failing with `AlreadyExists` rather than replacing `to`. The
+/// check and the rename are one system call, so no other process can create `to` between.
+#[cfg(target_os = "linux")]
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    use std::ffi::{c_char, c_int, c_uint};
+
+    const AT_FDCWD: c_int = -100;
+    const RENAME_NOREPLACE: c_uint = 1;
+    unsafe extern "C" {
+        fn renameat2(
+            olddirfd: c_int,
+            old: *const c_char,
+            newdirfd: c_int,
+            new: *const c_char,
+            flags: c_uint,
+        ) -> c_int;
+    }
+    let from = c_path(from)?;
+    let to = c_path(to)?;
+    let renamed = unsafe {
+        renameat2(
+            AT_FDCWD,
+            from.as_ptr(),
+            AT_FDCWD,
+            to.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    };
+    if renamed == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    use std::ffi::{c_char, c_int, c_uint};
+
+    const RENAME_EXCL: c_uint = 0x0000_0004;
+    unsafe extern "C" {
+        fn renamex_np(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
+    }
+    let from = c_path(from)?;
+    let to = c_path(to)?;
+    if unsafe { renamex_np(from.as_ptr(), to.as_ptr(), RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(windows)]
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    let wide = |path: &Path| -> Vec<u16> {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let (from, to) = (wide(from), wide(to));
+    // Without MOVEFILE_REPLACE_EXISTING, an existing destination fails the move.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_new(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "attach needs a rename that does not replace on this platform",
+    ))
+}
+
+/// A path as a NUL-terminated C string, for the platform rename calls.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))
 }
 
 fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
@@ -447,4 +566,28 @@ fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
         attached.repository, attached.node, attached.head.number, head.number
     );
     (value, text, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rename_new;
+
+    #[test]
+    fn rename_new_never_replaces_an_existing_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let from = dir.path().join("from");
+        let to = dir.path().join("to");
+        std::fs::create_dir(&from).unwrap();
+        std::fs::write(from.join("marker"), b"new").unwrap();
+        std::fs::create_dir(&to).unwrap();
+
+        let error = rename_new(&from, &to).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(from.join("marker").exists());
+        assert!(to.is_dir());
+
+        std::fs::remove_dir(&to).unwrap();
+        rename_new(&from, &to).unwrap();
+        assert_eq!(std::fs::read(to.join("marker")).unwrap(), b"new");
+    }
 }

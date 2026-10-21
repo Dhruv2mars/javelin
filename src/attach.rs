@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AdvanceOutcome, Error, ObjectId, OperationId, Repository, Result,
     tree::{self, Node},
-    workspace::BaseReport,
 };
 
 const ATTACHMENT: &str = "attach.json";
@@ -106,12 +105,13 @@ impl Repository {
         Ok(())
     }
 
-    /// Makes the local head hold `head.tree` and materializes the rolling base at it.
+    /// Makes the local head hold `head.tree`, without materializing the rolling base.
     ///
     /// A store at World 0 gets one World advance to the remote tree, under the operation
     /// `attach-<chain ID>`, so a retry after a crash finds the tree already present and
-    /// does nothing. Refused unless [`Repository::check_attach`] allows it.
-    pub fn attach_head(&mut self, head: &RemoteHead) -> Result<BaseReport> {
+    /// does nothing. Refused unless [`Repository::check_attach`] allows it. The caller warms
+    /// the rolling base with [`Repository::warm_base`].
+    pub fn attach_head(&mut self, head: &RemoteHead) -> Result<()> {
         self.check_attach(head)?;
         let local = self.head()?;
         if local.number.get() == 0 && local.tree != head.tree {
@@ -125,7 +125,7 @@ impl Repository {
                 }
             }
         }
-        self.warm_base()
+        Ok(())
     }
 
     fn attachment_path(&self) -> Result<PathBuf> {
