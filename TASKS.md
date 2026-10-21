@@ -110,6 +110,9 @@ workflow may invoke or interpret Git.
     normalization, probed on the volume), applies head deletions before additions so a file
     can become a directory, syncs only directories that still exist, and a capture through a
     relative path to the workspace moves its sync record.
+  - [x] Refresh discovers collisions caused by conflicting head writes before validating
+    choices, so a local file blocking a head write resolves through either side, a tracked
+    alias resolves through both spellings, and an explicit overwrite replaces an ignored file.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
   - [ ] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
@@ -136,7 +139,7 @@ workflow may invoke or interpret Git.
   reference clones, retained history and exact retries. Ordinary-path binding and
   automatic capture remain separate unchecked requirements.
 - [x] Adopt existing non-Git project files through a Layer without accepting edits outside it. (PR #61)
-- [ ] Implement Stack, refresh, structural conflicts, and explicit resolution.
+- [x] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [x] Bind supplied agent traces to immutable work, with missing-trace override.
 - [x] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
@@ -324,13 +327,17 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
 - [x] Process concurrency, crash recovery, retries and corruption proofs.
 
 Wave 3, after wave 2:
-- [ ] Stack, refresh, structural conflicts and explicit resolution end to end.
+- [x] Stack, refresh, structural conflicts and explicit resolution end to end.
 - [x] Adopt existing non-Git project files through a Layer. (PR #61)
 - [x] Bind agent traces to immutable work, with a missing-trace override (#68).
 - [ ] Online units from `docs/online-design.md`, in its order.
   - [x] U1 protocol v2 hosting messages (#67)
   - [x] U2 node core: file-backed World log, loopback transport, idempotent PublishLayer.
   - [x] U4 attach: `.javelin/attach.json` written last, full fetch into the rolling base, refusal on local World history.
+  - [x] U7 scoped tokens, applied permissions, epochs and revocation on the node
+    (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and
+    authenticated control-plane pushes remain open.
+  - [x] U12 World log in one Durable Object: commit transaction on workerd (50 publishers, kill inside and after commit); deployed-object checks and replication re-check moved to U13.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.

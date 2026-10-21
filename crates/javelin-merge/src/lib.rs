@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub use javelin::Choice;
 use javelin::{FileEntry, Manifest, ObjectId, RepoPath};
 
 mod matching;
@@ -31,6 +32,11 @@ pub enum ConflictKind {
     EntryType,
     /// A resolved path would be a directory of, or a file under, another path.
     PathPrefix,
+    /// Both sides renamed one path to different destinations, so both destinations are
+    /// unresolved until the owner keeps one, or both.
+    RenameRename,
+    /// Two resolved paths name the same entry on this volume (a case or Unicode alias).
+    Alias,
 }
 
 /// Unresolved path with the exact entries the owner chooses between.
@@ -42,7 +48,8 @@ pub struct Conflict {
     pub ours: Option<FileEntry>,
     pub theirs: Option<FileEntry>,
     /// The first path in sorted order that this path would be a directory of, or a
-    /// file under, if both were kept. Always set for PathPrefix.
+    /// file under, if both were kept. Always set for PathPrefix. For RenameRename, the
+    /// other destination.
     pub with: Option<RepoPath>,
 }
 
@@ -51,6 +58,8 @@ pub struct Conflict {
 pub struct MergeOutcome {
     pub merged: BTreeMap<RepoPath, Merged>,
     pub conflicts: Vec<Conflict>,
+    /// Choices for paths that were not conflicts, so they were never applied.
+    pub unused: Vec<RepoPath>,
     pub usage: Usage,
 }
 
@@ -66,12 +75,40 @@ enum Path {
     Unresolved(ConflictKind),
 }
 
-/// Merges `ours` and `theirs` relative to `base`. `load` is called, in sorted path
-/// order, only for regular-file content that both sides changed.
+/// Collisions by member path, then the alias members the volume reported.
+type Analysis = (BTreeMap<RepoPath, RepoPath>, BTreeSet<RepoPath>);
+
+/// Merges `ours` and `theirs` relative to `base` with no owner choices and no alias probe.
 pub fn merge<E>(
     base: &Manifest,
     ours: &Manifest,
     theirs: &Manifest,
+    load: impl FnMut(ObjectId) -> Result<Vec<u8>, E>,
+) -> Result<MergeOutcome, MergeError<E>> {
+    merge_resolved(
+        base,
+        ours,
+        theirs,
+        &BTreeMap::new(),
+        |_| Ok(Vec::new()),
+        load,
+    )
+}
+
+/// Merges `ours` and `theirs` relative to `base`, applying `choices` to conflicting paths.
+/// `load` is called, in sorted path order, only for regular-file content that both sides
+/// changed. `aliases` receives every resolved path that remains, in sorted order, and returns
+/// every one that aliases another path in that list on the volume.
+///
+/// A choice applies to a conflict, and to a path that collides with another after choices
+/// are applied. Collisions are never resolved by keeping both paths: the owner must choose
+/// a side that removes one of them, and either member of an alias pair may be the one chosen.
+pub fn merge_resolved<E>(
+    base: &Manifest,
+    ours: &Manifest,
+    theirs: &Manifest,
+    choices: &BTreeMap<RepoPath, Choice>,
+    mut aliases: impl FnMut(&[RepoPath]) -> Result<Vec<RepoPath>, E>,
     mut load: impl FnMut(ObjectId) -> Result<Vec<u8>, E>,
 ) -> Result<MergeOutcome, MergeError<E>> {
     let (b, o, t) = (base.entries(), ours.entries(), theirs.entries());
@@ -97,6 +134,94 @@ pub fn merge<E>(
         results.insert(path.clone(), (result, sides));
     }
 
+    // A destination both sides renamed the same base path to, differently, is unresolved.
+    let (ours_renames, theirs_renames) = (base.renames_to(ours), base.renames_to(theirs));
+    let mut rename_partner = BTreeMap::<RepoPath, RepoPath>::new();
+    for (from, to) in &ours_renames {
+        if let Some(other) = theirs_renames.get(from).filter(|other| *other != to) {
+            rename_partner.insert(to.clone(), other.clone());
+            rename_partner.insert(other.clone(), to.clone());
+        }
+    }
+    for path in rename_partner.keys() {
+        if let Some((result, _)) = results.get_mut(path) {
+            *result = Path::Unresolved(ConflictKind::RenameRename);
+        }
+    }
+
+    let mut applied = BTreeSet::new();
+    let (collisions, alias_hits) = loop {
+        // Choices apply to conflicts and to paths that collide with another path after choices.
+        let (collisions, alias_hits) = analyse(&results, &mut aliases)?;
+        let mut progress = false;
+        for (path, (result, sides)) in results.iter_mut() {
+            let conflicting = matches!(result, Path::Unresolved(_))
+                || collisions.contains_key(path)
+                || alias_hits.contains(path);
+            if !conflicting || applied.contains(path) {
+                continue;
+            }
+            let Some(choice) = choices.get(path) else {
+                continue;
+            };
+            *result = choose(choice, *sides);
+            applied.insert(path.clone());
+            progress = true;
+        }
+        if !progress {
+            break (collisions, alias_hits);
+        }
+    };
+
+    let mut outcome = MergeOutcome {
+        usage,
+        unused: choices
+            .keys()
+            .filter(|path| !applied.contains(*path))
+            .cloned()
+            .collect(),
+        ..MergeOutcome::default()
+    };
+    for (path, (result, (b, o, t))) in results {
+        let conflict = |kind, with| Conflict {
+            path: path.clone(),
+            kind,
+            base: b.cloned(),
+            ours: o.cloned(),
+            theirs: t.cloned(),
+            with,
+        };
+        match result {
+            Path::Deleted => {}
+            Path::Unresolved(ConflictKind::RenameRename) => outcome.conflicts.push(conflict(
+                ConflictKind::RenameRename,
+                rename_partner.get(&path).cloned(),
+            )),
+            Path::Unresolved(kind) => outcome
+                .conflicts
+                .push(conflict(kind, collisions.get(&path).cloned())),
+            Path::Resolved(merged) => match collisions.get(&path) {
+                Some(other) => outcome
+                    .conflicts
+                    .push(conflict(ConflictKind::PathPrefix, Some(other.clone()))),
+                None if alias_hits.contains(&path) => {
+                    outcome.conflicts.push(conflict(ConflictKind::Alias, None))
+                }
+                None => {
+                    outcome.merged.insert(path, merged);
+                }
+            },
+        }
+    }
+    Ok(outcome)
+}
+
+/// Structural collisions among the paths that would remain, and the aliases the volume
+/// reports among paths that do not already collide.
+fn analyse<E>(
+    results: &BTreeMap<RepoPath, (Path, Sides<'_>)>,
+    aliases: &mut impl FnMut(&[RepoPath]) -> Result<Vec<RepoPath>, E>,
+) -> Result<Analysis, MergeError<E>> {
     // Any path either side still has could end up in the owner's result.
     let present: BTreeSet<&RepoPath> = results
         .iter()
@@ -120,36 +245,43 @@ pub fn merge<E>(
             }
         }
     }
-
-    let mut outcome = MergeOutcome {
-        usage,
-        ..MergeOutcome::default()
-    };
-    for (path, (result, (b, o, t))) in results {
-        let conflict = |kind, with| Conflict {
-            path: path.clone(),
-            kind,
-            base: b.cloned(),
-            ours: o.cloned(),
-            theirs: t.cloned(),
-            with,
-        };
-        match result {
-            Path::Deleted => {}
-            Path::Unresolved(kind) => outcome
-                .conflicts
-                .push(conflict(kind, collisions.get(&path).cloned())),
-            Path::Resolved(merged) => match collisions.get(&path) {
-                Some(other) => outcome
-                    .conflicts
-                    .push(conflict(ConflictKind::PathPrefix, Some(other.clone()))),
-                None => {
-                    outcome.merged.insert(path, merged);
-                }
-            },
+    let candidates: Vec<RepoPath> = present
+        .iter()
+        .filter(|path| !collisions.contains_key(**path))
+        .map(|path| (*path).clone())
+        .collect();
+    let mut hits = BTreeSet::new();
+    if candidates.len() > 1 {
+        for path in aliases(&candidates).map_err(MergeError::Load)? {
+            hits.insert(path);
         }
     }
-    Ok(outcome)
+    Ok((collisions, hits))
+}
+
+/// Applies a choice to one path's three sides.
+fn choose(choice: &Choice, (_, ours, theirs): Sides<'_>) -> Path {
+    let take = |entry: Option<&FileEntry>| match entry {
+        Some(entry) => Path::Resolved(Merged::Retained(entry.clone())),
+        None => Path::Deleted,
+    };
+    match choice {
+        Choice::Ours => take(ours),
+        Choice::Theirs => take(theirs),
+        Choice::Content { bytes, executable } => {
+            let mode = |entry: Option<&FileEntry>| match entry {
+                Some(FileEntry::Regular { executable, .. }) => Some(*executable),
+                _ => None,
+            };
+            Path::Resolved(Merged::Content {
+                bytes: bytes.clone(),
+                executable: executable
+                    .or_else(|| mode(ours))
+                    .or_else(|| mode(theirs))
+                    .unwrap_or(false),
+            })
+        }
+    }
 }
 
 type Sides<'a> = (

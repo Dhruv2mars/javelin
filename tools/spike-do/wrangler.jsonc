@@ -1,0 +1,9 @@
+{
+  "name": "javelin-spike-do",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "WORLD_LOG", "class_name": "WorldLog" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorldLog"] }]
+}

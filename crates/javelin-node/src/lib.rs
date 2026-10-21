@@ -4,8 +4,12 @@
 //! streamed checkpoint path and the Layer partition's wire messages come later.
 //! See `docs/online-design.md` sections 4.5, 4.6 and 8 (U2).
 
+pub mod auth;
+mod log_do;
 mod server;
 mod world_log;
+
+pub use log_do::{CommitReply, ComposedVersion, DoLog, Publish};
 
 pub use server::{bind_loopback, serve};
 pub use world_log::FileWorldLog;

@@ -52,7 +52,7 @@ javelin layer discard ID --revision N --operation ID
 javelin workspace create ID [--world N]
 javelin workspace open ID
 javelin workspace path ID
-javelin workspace refresh ID
+javelin workspace refresh ID [--resolutions FILE]
 javelin workspace discard ID --operation ID
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
@@ -224,13 +224,22 @@ Compatible edits, including separated changes within one text file, combine.
 Structural or overlapping edits return explicit conflicts without changing the
 native Layer or World. The CLI never resolves a conflict for its owner.
 
+Owners resolve conflicts with `--resolutions FILE`: a JSON object from each conflicting
+path to `"ours"`, `"theirs"`, or `{"file": PATH, "executable": BOOL}` for supplied bytes.
+`ours` keeps the target's entry and `theirs` takes the source's entry, where an absent
+entry means removal. Choices are recorded as one immutable resolution object that the
+Stack binding names. Retrying with the same file replays the original outcome. A
+different resolution under the same operation ID is `operation_id_reused`. A choice for
+a path that does not conflict is `invalid_input`. Collisions and aliases are never
+resolved by keeping both paths.
+
 Stack changes only native state. The target's workspace directory does not receive
 the stacked work, and capture never reverts it (see "Daemonless checkpoint").
 `javelin workspace refresh ID` brings the directory to the stacked head. It three-way
 merges local edits against the head and writes only paths the head changed. Local edits
 that do not touch those paths are kept, and the next capture includes them. When a local
 edit and a head change touch the same path or a file and directory collide, refresh
-reports `refresh_conflict` with the paths and changes nothing. Each path is replaced by
+reports `refresh_conflict` with the paths and changes nothing. A path both sides renamed to different names is a conflict on both destinations. A local file that blocks head paths below it, or a local spelling that holds a head path's name on this volume, lists both sides: keeping the local side cancels the head writes it blocks, and taking the head removes it. Each path is replaced by
 an atomic rename, so an interrupted refresh leaves whole files and running refresh again
 converges. Refresh does not capture first. Afterwards `workspace publish` publishes the
 stacked work with the local edits.
@@ -267,7 +276,11 @@ javelin workspace publish work --operation work-publish-1
 javelin workspace create next
 ```
 
-Publish refuses rather than leave edits behind. Files that keep changing during
+Publish refuses rather than leave edits behind. When the directory conflicts with
+the head, Publish returns `refresh_conflict` and publishes nothing. Resolve the paths
+with `workspace refresh ID --resolutions FILE`, then publish again.
+
+Files that keep changing during
 capture return `busy`; a Layer whose head came from Stack returns `invalid_input`
 (see "Stack"). Ignored untracked files are not published, and a successful Publish
 reclaims the directory, so they are deleted with it.
