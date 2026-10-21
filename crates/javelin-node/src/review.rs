@@ -28,6 +28,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
     auth::Gate,
+    checks,
     world_log::{FileWorldLog, outcome, refused},
 };
 
@@ -192,6 +193,11 @@ pub fn handle(
                 Decision::Replayed(reply) => Ok(reply),
                 Decision::Refused(refused_code) => Ok(publish_refused(refused_code)),
                 Decision::Accepted(_) => {
+                    if let Some(refusal) =
+                        checks::gate_tree(records, pinned.tree(), Some(permissions))?
+                    {
+                        return Ok(publish_refused(refusal));
+                    }
                     let reply = publish_checkpoint(repo, operation, &id, *revision, &pinned)?;
                     if matches!(reply, PublishOutcome::Published { .. }) {
                         let message = Message::PublishOutcome(reply.clone());
