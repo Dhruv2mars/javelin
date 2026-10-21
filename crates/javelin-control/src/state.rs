@@ -83,6 +83,14 @@ pub(crate) struct RepositoryRecord {
     pub operation: String,
     pub phase: Phase,
     pub epoch: u64,
+    /// The node provider the repository was reserved for, as `NodeTarget::provider` names it.
+    /// Empty for a record written before this was stored.
+    #[serde(default)]
+    pub provider: String,
+    /// The node URL the repository was reserved for. Only a Provisioning record's node matters
+    /// on retry; a Ready record returns unchanged.
+    #[serde(default)]
+    pub node_url: Option<String>,
     /// Set for a fork: its source repository and the version it was forked at.
     #[serde(default)]
     pub fork: Option<ForkOf>,

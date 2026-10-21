@@ -5,7 +5,7 @@ use std::{cell::Cell, fs, path::Path};
 use javelin_collaboration::AppliedPermissions;
 use javelin_collaboration::{RepositoryId, Role};
 use javelin_control::{
-    ControlError, ControlPlane, CreateRequest, LocalNode, NodeLink, Poll, Publish,
+    ControlError, ControlPlane, CreateRequest, LocalNode, NodeLink, NodeTarget, Poll, Publish,
 };
 use javelin_identity::{Need, Scope, test_keys};
 
@@ -53,6 +53,19 @@ impl NodeLink for FailFirstApply {
             return Err(ControlError::Node("injected: reply lost".into()));
         }
         self.node.apply(permissions)
+    }
+}
+
+/// A node that cannot be reached: any call to it fails.
+struct Unreachable;
+
+impl NodeLink for Unreachable {
+    fn provision(&self, _repository: &RepositoryId) -> Result<(), ControlError> {
+        Err(ControlError::Node("injected: unreachable".into()))
+    }
+
+    fn apply(&self, _permissions: &AppliedPermissions) -> Result<(), ControlError> {
+        Err(ControlError::Node("injected: unreachable".into()))
     }
 }
 
@@ -206,7 +219,8 @@ fn a_crash_after_provisioning_is_resumed_by_retry() {
         node: LocalNode::new(dir.path().join("nodes")),
         fail: Cell::new(true),
     };
-    let plane = ControlPlane::with_node(dir.path(), Box::new(node)).expect("open");
+    let plane = ControlPlane::with_node(dir.path(), Box::new(node), NodeTarget::self_hosted())
+        .expect("open");
     let admin = plane.bootstrap().expect("bootstrap");
 
     let lost = plane
@@ -223,6 +237,46 @@ fn a_crash_after_provisioning_is_resumed_by_retry() {
         .expect("nodes")
         .collect();
     assert_eq!(nodes.len(), 1, "retry must not duplicate the namespace");
+}
+
+#[test]
+fn a_provisioning_retry_on_another_node_is_refused_before_touching_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let node = FailFirstApply {
+        node: LocalNode::new(dir.path().join("nodes")),
+        fail: Cell::new(true),
+    };
+    let plane = ControlPlane::with_node(dir.path(), Box::new(node), NodeTarget::self_hosted())
+        .expect("open");
+    let admin = plane.bootstrap().expect("bootstrap");
+    let lost = plane
+        .create_repository(&admin, &request("app", "op-1"), T0)
+        .unwrap_err();
+    assert_eq!(lost.code(), "node_unavailable");
+
+    // Unreachable would fail with node_unavailable if the create got past the reservation.
+    let elsewhere = ControlPlane::with_node(
+        dir.path(),
+        Box::new(Unreachable),
+        NodeTarget::cloudflare("https://other.workers.dev"),
+    )
+    .expect("open");
+    let refused = elsewhere
+        .create_repository(&admin, &request("app", "op-1"), T0 + 1)
+        .unwrap_err();
+    assert_eq!(refused.code(), "operation_id_reused");
+
+    let retried = plane
+        .create_repository(&admin, &request("app", "op-1"), T0 + 2)
+        .expect("retry on the node it was reserved on");
+    assert!(!retried.created);
+    assert_eq!(retried.epoch, 1);
+
+    let ready = elsewhere
+        .create_repository(&admin, &request("app", "op-1"), T0 + 3)
+        .expect("a Ready repository returns unchanged on any node");
+    assert!(!ready.created);
+    assert_eq!(ready.epoch, 1);
 }
 
 #[test]
