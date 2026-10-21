@@ -210,6 +210,7 @@ pub fn source_files(source: &Path) -> Result<Vec<String>> {
     for package in [
         "javelin-cli",
         "javelin-collaboration",
+        "javelin-control",
         "javelin-identity",
         "javelin-merge",
         "javelin-node",
