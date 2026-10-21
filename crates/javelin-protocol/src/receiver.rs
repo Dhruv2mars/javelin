@@ -11,7 +11,7 @@ use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, Repository, Ve
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{OBJECT_OVERHEAD, PublishOutcome, VERSION, read_frame, write_frame},
+    codec::{LayerOutcome, OBJECT_OVERHEAD, PublishOutcome, VERSION, read_frame, write_frame},
     limits::*,
 };
 
@@ -40,6 +40,26 @@ pub trait WorldLog {
         base: VersionNumber,
         attribution: &PublishAttribution,
     ) -> Result<PublishOutcome, ProtocolError>;
+
+    /// Whether the changes object `id` is stored. Only checkpoint objects are staged.
+    fn has_changes(&mut self, id: ObjectId) -> Result<bool, ProtocolError>;
+
+    /// Stores a changes object whose ID the caller has verified. Bytes that are not a
+    /// canonical changeset are refused as `malformed`.
+    fn store_changes(&mut self, id: ObjectId, bytes: &[u8]) -> Result<(), ProtocolError>;
+
+    /// Appends the staged changes `changes` to `layer` after `parent`. Refusals and
+    /// staleness are outcomes. A repeated operation replays its recorded outcome.
+    fn append_checkpoint(
+        &mut self,
+        operation: &OperationId,
+        layer: &LayerId,
+        parent: Option<ObjectId>,
+        changes: ObjectId,
+    ) -> Result<LayerOutcome, ProtocolError>;
+
+    /// The `LayerState` reply for `layer`: its base, head sequence, head and status.
+    fn layer_head(&mut self, layer: &LayerId) -> Result<Message, ProtocolError>;
 }
 
 /// Serves one message: a hosted write goes to the log, anything else to the repository.
@@ -64,6 +84,42 @@ pub fn handle_request<L: WorldLog>(
             base,
             &attribution,
         )?)),
+        Message::LayerAppend {
+            operation,
+            layer,
+            parent,
+            checkpoint,
+        } => Ok(Message::LayerOutcome(
+            log.append_checkpoint(&operation, &layer, parent, checkpoint)?,
+        )),
+        Message::LayerHead { layer } => log.layer_head(&layer),
+        // A batch of only changes objects goes to the log. A mixed batch falls through
+        // to `handle`, which refuses checkpoint kinds.
+        Message::Want(items) if all_changes(&items) => {
+            unique(&items)?;
+            let mut missing = Vec::new();
+            for (kind, id) in items {
+                if !log.has_changes(id)? {
+                    missing.push((kind, id));
+                }
+            }
+            Ok(Message::Missing(missing))
+        }
+        Message::Objects(objects) if all_changes_objects(&objects) => {
+            // Checked before anything is stored: a wrong ID rejects the whole batch.
+            for (kind, claimed, bytes) in &objects {
+                let actual = kind.id(bytes);
+                if actual != *claimed {
+                    return Err(mismatch(*claimed, actual));
+                }
+            }
+            for (_, id, bytes) in &objects {
+                log.store_changes(*id, bytes)?;
+            }
+            Ok(Message::Stored {
+                count: objects.len() as u32,
+            })
+        }
         other => handle(log.repository(), other),
     }
 }
@@ -205,6 +261,14 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
         }
         _ => Err(unexpected()),
     }
+}
+
+fn all_changes(items: &[(Kind, ObjectId)]) -> bool {
+    !items.is_empty() && items.iter().all(|(kind, _)| *kind == Kind::Checkpoint)
+}
+
+fn all_changes_objects(objects: &[(Kind, ObjectId, Vec<u8>)]) -> bool {
+    !objects.is_empty() && objects.iter().all(|(kind, _, _)| *kind == Kind::Checkpoint)
 }
 
 fn unique(items: &[(Kind, javelin::ObjectId)]) -> Result<(), ProtocolError> {

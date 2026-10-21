@@ -88,6 +88,8 @@ pub struct Repository {
     pub(crate) conn: Connection,
     /// Recorded in every checkpoint this handle captures or stacks.
     pub(crate) provenance: Option<crate::Provenance>,
+    /// Told about each capture that advances a Layer. See `capture::CheckpointSink`.
+    pub(crate) sink: Option<Box<dyn crate::capture::CheckpointSink + Send>>,
 }
 
 impl Repository {
@@ -188,6 +190,7 @@ impl Repository {
         Ok(Self {
             conn,
             provenance: None,
+            sink: None,
         })
     }
 
@@ -217,6 +220,7 @@ impl Repository {
         Ok(Self {
             conn,
             provenance: None,
+            sink: None,
         })
     }
 

@@ -42,6 +42,26 @@ use crate::{
     ignore::{CONFIG, LIMIT},
 };
 
+/// Receives each local capture that advanced a Layer, right after it is recorded.
+/// `source` holds the captured blobs, and `before` is the head the changes were captured
+/// against. A sink that cannot upload returns `Err`; the capture stays recorded locally.
+pub trait CheckpointSink {
+    fn upload(
+        &mut self,
+        source: &Repository,
+        operation: &OperationId,
+        before: &LayerHead,
+        changes: &SparseChanges,
+    ) -> std::result::Result<(), String>;
+}
+
+impl Repository {
+    /// Sets the sink that uploads captures. Replaces any previous sink.
+    pub fn set_checkpoint_sink(&mut self, sink: Box<dyn CheckpointSink + Send>) {
+        self.sink = Some(sink);
+    }
+}
+
 /// Reads of one entry before it is reported uncertain.
 pub const ATTEMPTS: usize = 3;
 /// Entries modified this close to (or after) the scan start are racy.
@@ -781,6 +801,9 @@ pub struct Capture {
     /// Stack produced the head, so the directory lacks the stacked work and nothing was
     /// scanned: capturing it would revert that work.
     pub behind: bool,
+    /// The sink's result for this capture, when a sink is set and the capture advanced
+    /// the Layer. `Err` leaves the capture local: the caller queues it.
+    pub upload: Option<std::result::Result<(), String>>,
 }
 
 impl Capture {
@@ -795,6 +818,7 @@ impl Capture {
             uncertain: Vec::new(),
             rebuilt: false,
             behind: true,
+            upload: None,
         })
     }
 }
@@ -867,6 +891,17 @@ impl Repository {
             let update = self.capture_layer(&operation, &head, &changes)?;
             (Some(update), Some(operation))
         };
+        let upload = match (&update, &operation) {
+            (Some(LayerUpdate::Applied { .. }), Some(operation)) => match self.sink.take() {
+                Some(mut sink) => {
+                    let result = sink.upload(self, operation, &head, &changes);
+                    self.sink = Some(sink);
+                    Some(result)
+                }
+                None => None,
+            },
+            _ => None,
+        };
         Ok(Capture {
             update,
             operation,
@@ -876,6 +911,7 @@ impl Repository {
             uncertain: scan.uncertain,
             rebuilt,
             behind: false,
+            upload,
         })
     }
 

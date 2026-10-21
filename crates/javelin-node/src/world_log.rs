@@ -16,7 +16,7 @@ use javelin::{
 };
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{PublishOutcome, code, decode, encode},
+    codec::{LayerOutcome, PublishOutcome, code, decode, encode},
     receiver::{WorldLog, refusal},
 };
 use rusqlite::{Connection, OptionalExtension, params};
@@ -69,6 +69,7 @@ impl FileWorldLog {
             );",
         )?;
         records.execute_batch(crate::fork::SCHEMA)?;
+        records.execute_batch(crate::layer::SCHEMA)?;
         records.execute_batch(crate::checks::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
@@ -305,6 +306,44 @@ impl WorldLog for FileWorldLog {
             return Ok(refused(refusal::LAYER_RESERVED));
         }
         self.publish(operation, layer, expected, base, attribution)
+    }
+
+    fn has_changes(&mut self, id: ObjectId) -> std::result::Result<bool, ProtocolError> {
+        crate::layer::has_changes(&self.records, id)
+    }
+
+    fn store_changes(
+        &mut self,
+        id: ObjectId,
+        bytes: &[u8],
+    ) -> std::result::Result<(), ProtocolError> {
+        crate::layer::store_changes(&self.records, id, bytes)
+    }
+
+    fn append_checkpoint(
+        &mut self,
+        operation: &OperationId,
+        layer: &LayerId,
+        parent: Option<ObjectId>,
+        changes: ObjectId,
+    ) -> std::result::Result<LayerOutcome, ProtocolError> {
+        if is_review_layer(layer) {
+            return Ok(LayerOutcome::Refused {
+                code: refusal::LAYER_RESERVED.into(),
+            });
+        }
+        crate::layer::append(
+            &mut self.repo,
+            &self.records,
+            operation,
+            layer,
+            parent,
+            changes,
+        )
+    }
+
+    fn layer_head(&mut self, layer: &LayerId) -> std::result::Result<Message, ProtocolError> {
+        crate::layer::layer_head(&self.repo, layer)
     }
 }
 

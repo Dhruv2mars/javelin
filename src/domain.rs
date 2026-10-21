@@ -376,9 +376,27 @@ impl SparseChanges {
             .collect()
     }
 
-    /// The bytes a version's identity hashes. A changeset served to a client is these bytes.
+    /// The bytes a version's identity hashes. A changeset served to a client, and a
+    /// checkpoint upload, are these bytes; `from_canonical_bytes` reads them back.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(&self.encoded()).expect("changeset encoding")
+    }
+
+    /// Decodes `canonical_bytes` output. Any other encoding is refused, so one changeset
+    /// has one byte form and one object ID.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        let encoded: BTreeMap<String, Option<FileEntry>> = serde_json::from_slice(bytes)
+            .map_err(|e| Error::InvalidInput(format!("invalid changes encoding: {e}")))?;
+        let changes = Self::new(
+            encoded
+                .into_iter()
+                .map(|(path, entry)| Ok((RepoPath::parse(&path)?, entry)))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        if changes.canonical_bytes() != bytes {
+            return Err(Error::InvalidInput("noncanonical changes encoding".into()));
+        }
+        Ok(changes)
     }
 
     /// Applies this changeset to a snapshot, producing the child snapshot.
