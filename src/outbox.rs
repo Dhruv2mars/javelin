@@ -7,8 +7,8 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    fs::{self, File, OpenOptions, TryLockError},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -163,13 +163,26 @@ impl Outbox {
     /// damaged tail is only reported here and moved aside by the next append.
     pub fn open(root: impl AsRef<Path>, name: &str) -> Result<Self> {
         let path = journal_path(root, name)?;
-        fs::create_dir_all(path.parent().expect("journal path has a parent"))?;
+        let dir = path.parent().expect("journal path has a parent");
+        create_dir_durable(dir)?;
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(&path)?;
+        sync_dir(dir)?;
+        // Two live handles would each hand out the same next sequence number and overwrite
+        // each other's records, so the lock is held until this handle is dropped.
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(Error::Busy(format!(
+                    "outbox {name} is open in another handle"
+                )));
+            }
+            Err(TryLockError::Error(e)) => return Err(e.into()),
+        }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         if bytes.len() < MAGIC.len() {
@@ -357,7 +370,12 @@ impl Outbox {
                 .with_extension(format!("damaged-{}-{n}", damage.offset));
             n += 1;
         }
-        fs::write(&sibling, &tail)?;
+        let mut saved = File::create(&sibling)?;
+        saved.write_all(&tail)?;
+        saved.sync_all()?;
+        drop(saved);
+        sync_dir(self.path.parent().expect("journal path has a parent"))?;
+        // The saved copy must be durable before the original tail is gone.
         self.file.set_len(self.valid_len)?;
         self.file.sync_data()?;
         self.repaired = true;
@@ -373,6 +391,38 @@ pub fn backoff(attempt: u32, jitter: f64) -> Duration {
     const CAP: Duration = Duration::from_secs(60);
     let ceiling = BASE.saturating_mul(1 << attempt.min(16)).min(CAP);
     ceiling / 2 + ceiling.mul_f64(jitter.clamp(0.0, 1.0)) / 2
+}
+
+/// Creates `dir` and any missing ancestors, then syncs each parent that gained an entry,
+/// so an accepted record cannot vanish with a directory a crash never persisted.
+fn create_dir_durable(dir: &Path) -> Result<()> {
+    let mut created = Vec::new();
+    let mut missing = dir;
+    while !missing.exists() {
+        created.push(missing);
+        match missing.parent() {
+            Some(parent) => missing = parent,
+            None => break,
+        }
+    }
+    fs::create_dir_all(dir)?;
+    for path in created {
+        if let Some(parent) = path.parent() {
+            sync_dir(parent)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    File::open(dir)?.sync_all()
+}
+
+/// Directory durability needs platform verification off Unix, as in `repository.rs`.
+#[cfg(not(unix))]
+fn sync_dir(_: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// The body of the first record in `rest`, and the bytes it occupies.

@@ -63,6 +63,22 @@ fn queued_records_survive_reopen_in_order_with_their_fields() {
 }
 
 #[test]
+fn a_second_handle_is_refused_while_the_first_is_open() {
+    let root = TempDir::new().unwrap();
+    let mut first = Outbox::open(root.path(), "demo").unwrap();
+    first
+        .enqueue(Kind::Upload, "a", &op("op-1"), b"one")
+        .unwrap();
+    assert!(Outbox::open(root.path(), "demo").is_err());
+    drop(first);
+
+    // Had the second handle been allowed, its sequence 1 would have overwritten op-1.
+    let second = Outbox::open(root.path(), "demo").unwrap();
+    assert_eq!(second.entry(1).unwrap().operation, op("op-1"));
+    assert!(second.damage().is_none());
+}
+
+#[test]
 fn replay_delivers_each_record_once_and_acknowledged_records_stay_acknowledged() {
     let root = TempDir::new().unwrap();
     let mut outbox = three_records(&root);
