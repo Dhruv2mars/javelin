@@ -32,8 +32,8 @@ use javelin::{
 };
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_control::{
-    ControlError, ControlPlane, CreateRequest, Created, ForkRequest, LocalNode, NodeLink, Poll,
-    Publish, RelyingParty, Session, answer,
+    ControlError, ControlPlane, CreateRequest, Created, ForkRequest, LocalNode, NodeLink,
+    NodeTarget, Poll, Publish, RelyingParty, Session, answer,
 };
 use javelin_identity::{KeySet, Need, Scope, test_keys};
 use javelin_node::{FileWorldLog, TraceVisibility, auth::Gate, bind_loopback, fork, review, serve};
@@ -1852,6 +1852,11 @@ impl Target {
         }
     }
 
+    /// What the control plane records as this repository's node: the target's own URL.
+    fn label(&self) -> NodeTarget {
+        NodeTarget::cloudflare(&self.url)
+    }
+
     fn node(&self, url: &str) -> CloudflareNode {
         CloudflareNode::new(url, &self.token).unwrap()
     }
@@ -1890,7 +1895,12 @@ fn node_state(node: &CloudflareNode, created: &Created) -> (Option<(String, Stri
 fn target_repository_flows_and_retries() {
     let target = Target::from_env();
     let dir = TempDir::new().unwrap();
-    let plane = ControlPlane::with_node(dir.path(), Box::new(target.node(&target.url))).unwrap();
+    let plane = ControlPlane::with_node(
+        dir.path(),
+        Box::new(target.node(&target.url)),
+        target.label(),
+    )
+    .unwrap();
     let hosted = Hosted::sign_in(dir, plane);
     target.verified(
         "flow.browser-device-approval",
@@ -2008,11 +2018,26 @@ fn target_node_outage_and_lost_replies() {
     let target = Target::from_env();
     let dir = TempDir::new().unwrap();
     let control = dir.path().to_path_buf();
+    // Every control plane here names the target's URL; the proxy, when there is one, stands in
+    // for it. Without one, an unreachable address plays the node that is down.
+    let proxy = target.loopback().map(Proxy::start);
+    let via = proxy.as_ref().map_or_else(
+        || target.url.clone(),
+        |proxy| format!("http://{}", proxy.addr),
+    );
+    let plane = |url: &str| {
+        ControlPlane::with_node(&control, Box::new(target.node(url)), target.label()).unwrap()
+    };
 
-    // The node is unreachable: create fails with node_unavailable and nothing is reported done.
-    let dead =
-        ControlPlane::with_node(&control, Box::new(target.node("http://127.0.0.1:1"))).unwrap();
-    let hosted = Hosted::sign_in(dir, dead);
+    // The node is down: create fails with node_unavailable and nothing is reported done.
+    let down = match &proxy {
+        Some(proxy) => {
+            proxy.set(Mode::Reset);
+            plane(&via)
+        }
+        None => plane("http://127.0.0.1:1"),
+    };
+    let hosted = Hosted::sign_in(dir, down);
     let bearer = hosted.session.access_token.clone();
     let request = create_request("app", false, Publish::Direct);
     let refused = hosted
@@ -2023,29 +2048,46 @@ fn target_node_outage_and_lost_replies() {
     let mut hosted = hosted;
     hosted.plane = None;
 
+    // A retry may not finish the create on another node.
+    let elsewhere = ControlPlane::with_node(
+        &control,
+        Box::new(target.node(&target.url)),
+        NodeTarget::cloudflare("http://127.0.0.1:1"),
+    )
+    .unwrap();
+    assert_eq!(
+        elsewhere
+            .create_repository(&bearer, &request, now())
+            .unwrap_err()
+            .code(),
+        "operation_id_reused"
+    );
+    drop(elsewhere);
+
     // The node is back: the same operation completes once.
-    let live = ControlPlane::with_node(&control, Box::new(target.node(&target.url))).unwrap();
+    if let Some(proxy) = &proxy {
+        proxy.set(Mode::Pass);
+    }
+    let live = plane(&via);
     let created = live.create_repository(&bearer, &request, now()).unwrap();
     assert_eq!(created.epoch, 1);
     let node = target.node(&target.url);
     assert_eq!(node_state(&node, &created).1["epoch"], 1);
-    drop(live);
     target.verified(
         "outage.node-down-create",
-        "repo create with the node unreachable fails with node_unavailable; the retry with the \
-         same operation ID completes at epoch 1",
+        "repo create with the node down fails with node_unavailable; a retry naming another \
+         node is operation_id_reused; the retry with the same operation ID on the same node \
+         completes at epoch 1",
     );
 
-    let Some(upstream) = target.loopback() else {
+    let Some(proxy) = proxy else {
         target.not_verified(
             "gate4.lost-reply-one-outcome",
             "the target is not on loopback, so no proxy can drop a reply in front of it",
         );
         return;
     };
-    let proxy = Proxy::start(upstream);
-    let via = format!("http://{}", proxy.addr);
-    let plane = ControlPlane::with_node(&control, Box::new(target.node(&via))).unwrap();
+    let plane = live;
 
     // The provision reply is lost after the node stored World 0.
     let request = create_request("lost-provision", true, Publish::Requests);
