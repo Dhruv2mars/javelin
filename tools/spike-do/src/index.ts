@@ -65,12 +65,20 @@ export class WorldLog implements DurableObject {
       }
       if (request.method === "POST" && url.pathname === "/layers") {
         const body = (await request.json()) as { layer: string; head: string };
+        // Creation never changes an existing Layer: a repeat with the same checkpoint is a
+        // no-op (so a published Layer stays published), a different checkpoint is refused.
         this.sql.exec(
-          "INSERT OR REPLACE INTO layers (name, state, head) VALUES (?, 'active', ?)",
+          "INSERT OR IGNORE INTO layers (name, state, head) VALUES (?, 'active', ?)",
           body.layer,
           body.head,
         );
-        return json({ ok: true });
+        const layer = this.sql
+          .exec("SELECT state, head FROM layers WHERE name = ?", body.layer)
+          .one();
+        if (layer.head !== body.head) {
+          return json({ outcome: "error", detail: "layer_exists" }, 409);
+        }
+        return json({ ok: true, state: layer.state });
       }
       if (request.method === "POST" && url.pathname === "/commit") {
         const body = (await request.json()) as Commit;

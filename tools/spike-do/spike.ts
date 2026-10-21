@@ -1,6 +1,7 @@
 // U12 spike driver. Starts `wrangler dev` (workerd, local, no account) and checks the
 // World log's commit transaction in WorldLog (src/index.ts):
 //   1. 50 concurrent publishers on one repository: one version per n, replays hold.
+//   1b. Re-creating a published Layer does not reset it; a conflicting create is refused.
 //   2. SIGKILL inside a commit (stalled in the transaction): no partial version after
 //      restart; the retry commits exactly once.
 //   3. SIGKILL after commit, before the reply: the retry replays the same version.
@@ -187,6 +188,38 @@ async function concurrentPublishers() {
   check("every Layer published exactly once", allPublished && state.layers.length === PUBLISHERS);
 }
 
+// --- test 1b: a Layer's lifecycle is not reset by re-creating it -------------------------
+
+async function layerLifecycle() {
+  const repo = `life-${RUN}`;
+  await post(`/r/${repo}/layers`, { layer: "p", head: "c-p" });
+  const head = await get(`/r/${repo}/head`);
+  const first = await post(`/r/${repo}/commit`, commitFor(repo, "life-op-1", "p", head));
+  check("layer publishes once", first.outcome === "published" && first.n === 1, JSON.stringify(first));
+
+  // Same checkpoint again: a no-op, and the Layer stays published.
+  const again = await post(`/r/${repo}/layers`, { layer: "p", head: "c-p" });
+  check("re-creating a published Layer with the same head is a no-op", again.state === "published", JSON.stringify(again));
+
+  // A second operation on the published Layer is refused, and nothing is written.
+  const second = await post(`/r/${repo}/commit`, commitFor(repo, "life-op-2", "p", { n: 1 }));
+  check(
+    "a published Layer cannot publish again after re-creation",
+    second.outcome === "refused" && second.code === "layer_published",
+    JSON.stringify(second),
+  );
+
+  // A different checkpoint for an existing Layer is refused.
+  const conflict = await post(`/r/${repo}/layers`, { layer: "p", head: "c-other" });
+  check("conflicting re-creation is refused", conflict.outcome === "error" && conflict.detail === "layer_exists", JSON.stringify(conflict));
+
+  const state = await get(`/r/${repo}/state`);
+  check(
+    "the lifecycle left one version and a published Layer",
+    state.world.length === 2 && state.layers[0].state === "published" && state.layers[0].head === "c-p",
+  );
+}
+
 // --- test 2: kill inside a commit ---------------------------------------------------
 
 async function killInsideCommit() {
@@ -264,6 +297,7 @@ async function main() {
   await start();
   try {
     await concurrentPublishers();
+    await layerLifecycle();
     await killInsideCommit();
     await killAfterCommit();
   } finally {
