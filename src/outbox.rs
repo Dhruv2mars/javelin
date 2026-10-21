@@ -403,9 +403,16 @@ fn create_journal(path: &Path) -> Result<()> {
     static CREATED: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().expect("journal path has a parent");
     fs::create_dir_all(dir)?;
-    let n = CREATED.fetch_add(1, Ordering::Relaxed);
-    let temporary = dir.join(format!(".init-{}-{n}.tmp", std::process::id()));
-    let mut file = File::create_new(&temporary)?;
+    // A name left by a crashed opener with the same process ID is skipped, not reused or removed.
+    let (temporary, mut file) = loop {
+        let n = CREATED.fetch_add(1, Ordering::Relaxed);
+        let temporary = dir.join(format!(".init-{}-{n}.tmp", std::process::id()));
+        match File::create_new(&temporary) {
+            Ok(file) => break (temporary, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    };
     file.write_all(MAGIC)?;
     file.sync_all()?;
     drop(file);

@@ -220,6 +220,28 @@ fn empty_scope_and_oversized_payload_are_refused_before_writing() {
     );
 }
 
+#[test]
+fn stale_temporary_names_from_a_reused_process_id_are_skipped_and_kept() {
+    let root = TempDir::new().unwrap();
+    let path = journal_path(root.path(), "demo").unwrap();
+    let dir = path.parent().unwrap();
+    fs::create_dir_all(dir).unwrap();
+    // Names a crashed opener with this process ID would have left behind.
+    let stale: Vec<_> = (0..64)
+        .map(|n| dir.join(format!(".init-{}-{n}.tmp", std::process::id())))
+        .collect();
+    for name in &stale {
+        fs::write(name, b"stale").unwrap();
+    }
+
+    let outbox = Outbox::open(root.path(), "demo").unwrap();
+    assert!(outbox.damage().is_none());
+    drop(outbox);
+    for name in &stale {
+        assert_eq!(fs::read(name).unwrap(), b"stale");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn an_existing_journal_opens_under_an_ancestor_without_read_permission() {
