@@ -20,8 +20,8 @@ pub use adopt::Adoption;
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::Capture;
 pub use domain::{
-    FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath, SparseChanges,
-    VersionNumber,
+    Choice, FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath,
+    SparseChanges, VersionNumber,
 };
 pub use ignore::IgnoreRules;
 pub use layer::{

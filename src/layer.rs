@@ -305,7 +305,7 @@ impl Repository {
         let provenance = self.provenance.as_ref();
         let candidate =
             prepare_checkpoint(&tx, &before.base, changes, &before.sources, provenance)?;
-        let outcome = update_in(&tx, operation, expected, candidate, false, None)?;
+        let outcome = update_in(&tx, operation, expected, candidate, false, None, None)?;
         #[cfg(test)]
         crate::repository::test_boundary("layer_before_commit");
         failpoint("layer_capture_before_commit");
@@ -334,7 +334,7 @@ impl Repository {
             changes: SparseChanges::default(),
             provenance: None,
         };
-        let outcome = update_in(&tx, operation, expected, candidate, true, None)?;
+        let outcome = update_in(&tx, operation, expected, candidate, true, None, None)?;
         failpoint("layer_discard_before_commit");
         tx.commit()?;
         failpoint("layer_discard_after_commit");
@@ -667,6 +667,7 @@ pub(crate) fn update_in(
     candidate: Candidate,
     discard: bool,
     source: Option<CheckpointId>,
+    resolution: Option<ObjectId>,
 ) -> Result<LayerUpdate> {
     let checkpoint = candidate.id;
     let prior = conn
@@ -689,6 +690,7 @@ pub(crate) fn update_in(
             || candidate != checkpoint.0.to_string()
             || was_discard != discard
             || crate::stack::source_in(conn, operation)? != source
+            || crate::stack::resolution_in(conn, operation)? != resolution
         {
             return Err(Error::OperationIdReused(operation.clone()));
         }
@@ -722,7 +724,9 @@ pub(crate) fn update_in(
         } else {
             LayerUpdate::Stale { state }
         };
-        crate::stack::record_in(conn, operation, expected, source, checkpoint, &outcome)?;
+        crate::stack::record_in(
+            conn, operation, expected, source, checkpoint, &outcome, resolution,
+        )?;
     }
     attempt_outcome(conn, operation)
 }

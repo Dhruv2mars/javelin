@@ -1,0 +1,12 @@
+[package]
+name = "javelin-identity"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+base64ct = { version = "1", features = ["alloc"] }
+ed25519-dalek = "2"
+javelin-collaboration = { path = "../javelin-collaboration" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

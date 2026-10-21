@@ -12,7 +12,8 @@ use super::{Args, AttributionInput, BEHIND, Output, captured, publication, succe
 pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
     let (allowed, count): (&[&str], usize) = match action {
         "create" => (&["--repo", "--world"], 1),
-        "open" | "path" | "refresh" => (&["--repo"], 1),
+        "open" | "path" => (&["--repo"], 1),
+        "refresh" => (&["--repo", "--resolutions"], 1),
         "discard" => (&["--repo", "--operation"], 1),
         "publish" => (
             &[
@@ -64,7 +65,8 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
     };
     let output = match action {
         "refresh" => {
-            let report = repo.refresh_workspace(&layer)?;
+            let choices = super::resolutions(&args)?;
+            let report = repo.refresh_workspace_resolved(&layer, &choices)?;
             let text = refresh_text(&report);
             success(
                 json!({"ok": true, "command": command, "refresh": report}),
@@ -128,7 +130,12 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
                     // Publish only what the directory holds, so no edit is silently left out.
                     if let Some(capture) = &capture {
                         if capture.behind {
-                            return Err(Error::InvalidInput(BEHIND.into()));
+                            // Unresolved conflicts with the head are the owner's to resolve, so
+                            // they are reported as such before the generic BEHIND refusal.
+                            return match repo.refresh_preview(&layer) {
+                                Err(conflict @ Error::RefreshConflict(_)) => Err(conflict),
+                                _ => Err(Error::InvalidInput(BEHIND.into())),
+                            };
                         }
                         if matches!(capture.update, Some(LayerUpdate::Stale { .. }))
                             || !capture.uncertain.is_empty()

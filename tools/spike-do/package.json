@@ -1,0 +1,15 @@
+{
+  "name": "javelin-spike-do",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "spike": "bun run spike.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "@types/bun": "latest",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
+  }
+}

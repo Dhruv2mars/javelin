@@ -1,10 +1,11 @@
 //! Bounded durable Stack from an immutable source checkpoint to an exact target.
 use javelin::{
-    CheckpointId, FileEntry, LayerHead, LayerUpdate, Manifest, OperationId, Repository,
-    SparseChanges,
+    CheckpointId, Choice, FileEntry, LayerHead, LayerUpdate, Manifest, ObjectId, OperationId,
+    RepoPath, Repository, SparseChanges,
 };
 use javelin_merge::{Conflict, MergeError, Merged, Resource};
-use std::collections::BTreeSet;
+use serde_json::json;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StackOutcome {
@@ -49,7 +50,25 @@ pub fn stack_layer(
     target: &LayerHead,
     source: CheckpointId,
 ) -> Result<StackOutcome, StackError> {
-    if let Some(outcome) = repo.stack_operation(operation, target, source)? {
+    stack_layer_resolved(repo, operation, target, source, &BTreeMap::new())
+}
+
+/// As [`stack_layer`], applying the owner's choice for each conflicting path. Choices are
+/// recorded as one immutable resolution object that the Stack binding names, so a retry
+/// with the same choices replays the original outcome and different choices are refused as
+/// a reused operation ID. A choice for a path that does not conflict is an invalid input.
+pub fn stack_layer_resolved(
+    repo: &mut Repository,
+    operation: &OperationId,
+    target: &LayerHead,
+    source: CheckpointId,
+    choices: &BTreeMap<RepoPath, Choice>,
+) -> Result<StackOutcome, StackError> {
+    let resolution = match choices.is_empty() {
+        true => None,
+        false => Some(record_resolution(repo, choices)?),
+    };
+    if let Some(outcome) = repo.stack_operation_resolved(operation, target, source, resolution)? {
         return Ok(StackOutcome::Updated(outcome));
     }
     let ours = repo.read_checkpoint(target.checkpoint())?;
@@ -57,10 +76,22 @@ pub fn stack_layer(
     let base = repo.manifest_at(theirs.base().version())?;
     let ours_manifest = repo.checkpoint_manifest(ours.id())?;
     let theirs_manifest = repo.checkpoint_manifest(theirs.id())?;
-    let merged = javelin_merge::merge(&base, &ours_manifest, &theirs_manifest, |id| {
-        repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize)
-    })
+    let merged = javelin_merge::merge_resolved(
+        &base,
+        &ours_manifest,
+        &theirs_manifest,
+        choices,
+        |paths| repo.aliased_paths(paths),
+        |id| repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize),
+    )
     .map_err(StackError::Merge)?;
+    if let Some(path) = merged.unused.first() {
+        return Err(javelin::Error::InvalidInput(format!(
+            "resolution for {:?}, which is not a conflict",
+            path.as_str()
+        ))
+        .into());
+    }
     if !merged.is_clean() {
         return Ok(StackOutcome::Conflicts(merged.conflicts));
     }
@@ -88,7 +119,34 @@ pub fn stack_layer(
         let after = merged.entries().get(path);
         (target_base.entries().get(path) != after).then(|| (path.clone(), after.cloned()))
     }))?;
-    Ok(StackOutcome::Updated(
-        repo.commit_stack(operation, target, source, &changes)?,
-    ))
+    Ok(StackOutcome::Updated(repo.commit_stack_resolved(
+        operation, target, source, &changes, resolution,
+    )?))
+}
+
+/// Stores the choices as one canonical JSON blob. Content is stored by its own blob ID, so
+/// the resolution names exactly the bytes the owner supplied.
+fn record_resolution(
+    repo: &mut Repository,
+    choices: &BTreeMap<RepoPath, Choice>,
+) -> Result<ObjectId, StackError> {
+    let mut resolutions = Vec::new();
+    for (path, choice) in choices {
+        resolutions.push(match choice {
+            Choice::Ours => json!({ "path": path, "choice": "ours" }),
+            Choice::Theirs => json!({ "path": path, "choice": "theirs" }),
+            Choice::Content { bytes, executable } => {
+                let content = repo.put_blob(bytes)?;
+                json!({
+                    "path": path,
+                    "choice": "content",
+                    "content": content,
+                    "executable": executable,
+                })
+            }
+        });
+    }
+    let bytes =
+        serde_json::to_vec(&json!({ "resolutions": resolutions })).expect("resolution encoding");
+    Ok(repo.put_blob(&bytes)?)
 }
