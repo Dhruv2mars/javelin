@@ -323,6 +323,7 @@ name = "javelin-cli"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "javelin-control",
  "javelin-stack",
  "rusqlite",
  "serde_json",
@@ -334,6 +335,24 @@ name = "javelin-collaboration"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "tempfile",
+]
+
+[[package]]
+name = "javelin-control"
+version = "0.1.0"
+dependencies = [
+ "base64ct",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "javelin",
+ "javelin-collaboration",
+ "javelin-identity",
+ "javelin-node",
+ "javelin-protocol",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "tempfile",
 ]
 

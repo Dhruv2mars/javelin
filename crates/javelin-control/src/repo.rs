@@ -1,0 +1,225 @@
+//! Repository create. It is idempotent per operation ID and provisions the node in steps.
+//! A crash leaves the repository `Provisioning`; a retry with the same operation ID resumes
+//! it, and every step it repeats is idempotent.
+
+use std::collections::BTreeMap;
+
+use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
+use javelin_identity::Scope;
+
+use crate::{
+    ControlError, ControlPlane,
+    control::{authenticate, issue},
+    device::{ACCESS_TTL, AccessToken},
+    secret,
+    state::{Phase, RepositoryRecord},
+};
+
+/// How a repository accepts changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Publish {
+    /// Maintainers Publish directly.
+    Direct,
+    /// Changes go through Publish Requests.
+    Requests,
+}
+
+impl Publish {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "direct" => Some(Self::Direct),
+            "requests" => Some(Self::Requests),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Requests => "requests",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateRequest {
+    /// Lowercase slug: letters, digits and dashes, starting with a letter or digit.
+    pub owner: String,
+    pub name: String,
+    pub public: bool,
+    pub publish: Publish,
+    /// Reuse this on retry. It names one request for good.
+    pub operation: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Created {
+    pub repository: String,
+    pub owner: String,
+    pub name: String,
+    pub public: bool,
+    pub publish: Publish,
+    pub epoch: u64,
+    /// False when the operation had already created this repository.
+    pub created: bool,
+}
+
+impl ControlPlane {
+    /// Issues an access token for `repository`, which a node accepts. Only the creator and the
+    /// admin may ask for one until membership exists; the node still applies the role.
+    pub fn repository_token(
+        &self,
+        bearer: &str,
+        repository: &str,
+        now: u64,
+    ) -> Result<AccessToken, ControlError> {
+        self.store.read(|state| {
+            let caller = authenticate(state, bearer, now)?;
+            let record = state
+                .repositories
+                .get(repository)
+                .ok_or(ControlError::NotFound("no such repository"))?;
+            if !caller.admin && caller.principal != record.creator {
+                return Err(ControlError::Forbidden(
+                    "caller has no role in this repository",
+                ));
+            }
+            Ok(AccessToken {
+                access_token: issue(state, &caller.principal, &caller.device, repository, now)?,
+                expires_in: ACCESS_TTL,
+            })
+        })
+    }
+
+    /// Creates `owner/name`. The caller needs the `repo:create` scope. Repeating the same
+    /// operation ID with the same request returns the same repository.
+    pub fn create_repository(
+        &self,
+        bearer: &str,
+        request: &CreateRequest,
+        now: u64,
+    ) -> Result<Created, ControlError> {
+        validate_slug("owner", &request.owner)?;
+        validate_slug("repository name", &request.name)?;
+        validate_operation(&request.operation)?;
+        let publish = request.publish.as_str();
+        let (repository, record, inserted) = self.store.update(|state| {
+            let caller = authenticate(state, bearer, now)?;
+            caller.require(Scope::RepoCreate, "token does not carry repo:create")?;
+            if let Some(id) = state.operations.get(&request.operation) {
+                let record = state.repositories.get(id).ok_or_else(|| {
+                    ControlError::Storage("operation names a missing repository".into())
+                })?;
+                let same = record.owner == request.owner
+                    && record.name == request.name
+                    && record.public == request.public
+                    && record.publish == publish;
+                if !same {
+                    return Err(ControlError::OperationReused);
+                }
+                return Ok((id.clone(), record.clone(), false));
+            }
+            if state
+                .repositories
+                .values()
+                .any(|record| record.owner == request.owner && record.name == request.name)
+            {
+                return Err(ControlError::NameTaken);
+            }
+            let id = secret::id("repo_");
+            let record = RepositoryRecord {
+                owner: request.owner.clone(),
+                name: request.name.clone(),
+                public: request.public,
+                publish: publish.into(),
+                creator: caller.principal,
+                operation: request.operation.clone(),
+                phase: Phase::Provisioning,
+                epoch: 0,
+            };
+            state.repositories.insert(id.clone(), record.clone());
+            state
+                .operations
+                .insert(request.operation.clone(), id.clone());
+            Ok((id, record, true))
+        })?;
+
+        let repository_id = RepositoryId::parse(&repository)
+            .map_err(|error| ControlError::Storage(error.to_string()))?;
+        if record.phase == Phase::Ready {
+            return Ok(created(&repository, &record, inserted));
+        }
+        self.node.provision(&repository_id)?;
+        let permissions = AppliedPermissions {
+            repository: repository_id.clone(),
+            epoch: 1,
+            visibility: if record.public {
+                Visibility::Public
+            } else {
+                Visibility::Private
+            },
+            roles: creator_roles(&record.creator)?,
+            required_approvals: 0,
+        };
+        self.node.apply(&permissions)?;
+        let ready = self.store.update(|state| {
+            let record = state
+                .repositories
+                .get_mut(&repository)
+                .ok_or_else(|| ControlError::Storage("repository vanished during create".into()))?;
+            record.phase = Phase::Ready;
+            record.epoch = 1;
+            Ok(record.clone())
+        })?;
+        Ok(created(&repository, &ready, inserted))
+    }
+}
+
+fn creator_roles(creator: &str) -> Result<BTreeMap<PrincipalId, Role>, ControlError> {
+    let principal =
+        PrincipalId::parse(creator).map_err(|error| ControlError::Storage(error.to_string()))?;
+    Ok(BTreeMap::from([(principal, Role::Maintain)]))
+}
+
+fn created(repository: &str, record: &RepositoryRecord, inserted: bool) -> Created {
+    Created {
+        repository: repository.into(),
+        owner: record.owner.clone(),
+        name: record.name.clone(),
+        public: record.public,
+        publish: if record.publish == "requests" {
+            Publish::Requests
+        } else {
+            Publish::Direct
+        },
+        epoch: record.epoch,
+        created: inserted,
+    }
+}
+
+fn validate_slug(what: &str, value: &str) -> Result<(), ControlError> {
+    let valid = !value.is_empty()
+        && value.len() <= 39
+        && value.as_bytes()[0] != b'-'
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err(ControlError::InvalidInput(format!(
+            "{what} must be 1 to 39 lowercase letters, digits or dashes, not starting with a dash"
+        )))
+    }
+}
+
+fn validate_operation(value: &str) -> Result<(), ControlError> {
+    PrincipalId::parse(value)
+        .map(|_| ())
+        .or_else(|_| RepositoryId::parse(value).map(|_| ()))
+        .map_err(|_| {
+            ControlError::InvalidInput(
+                "operation ID must be 1 to 128 ASCII letters, digits, '-', '_', '.' or ':'".into(),
+            )
+        })
+}
