@@ -159,7 +159,12 @@ fn package_installs_into_a_fresh_path_and_works_through_path() {
         deps.iter()
             .any(|d| d["name"] == "javelin" && d["source"].is_null())
     );
-    assert!(!deps.iter().any(|d| d["name"] == "tempfile"));
+    // tempfile ships only as native-tls's dependency (the CLI's HTTPS client), never as a
+    // test-only crate of the library.
+    assert!(
+        !deps.iter().any(|d| d["name"] == "tempfile")
+            || deps.iter().any(|d| d["name"] == "native-tls")
+    );
     // Every listed dependency ships its license text.
     for d in deps {
         let dir = dest.join("licenses").join(format!(
@@ -970,6 +975,7 @@ fn copy_build_sources(dest: &Path) {
         .chain(walk(&root_dir.join("crates/javelin-identity")))
         .chain(walk(&root_dir.join("crates/javelin-merge")))
         .chain(walk(&root_dir.join("crates/javelin-node")))
+        .chain(walk(&root_dir.join("crates/javelin-node-worker")))
         .chain(walk(&root_dir.join("crates/javelin-protocol")))
         .chain(walk(&root_dir.join("crates/javelin-stack")))
         .chain(walk(&root_dir.join("tools/native-packaging/notices")))
@@ -1078,6 +1084,9 @@ fn package_rejects_sources_that_differ_from_what_was_built() {
         "crates/javelin-control/Cargo.toml",
         "crates/javelin-control/LICENSE",
         "crates/javelin-control/src/lib.rs",
+        "crates/javelin-node-worker/Cargo.toml",
+        "crates/javelin-node-worker/LICENSE",
+        "crates/javelin-node-worker/src/lib.rs",
         "crates/javelin-stack/src/lib.rs",
         "src/lib.rs",
     ] {

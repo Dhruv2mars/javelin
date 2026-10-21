@@ -1,0 +1,9 @@
+{
+  "name": "javelin-node",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "REPOSITORY_NODE", "class_name": "RepositoryNode" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepositoryNode"] }]
+}
