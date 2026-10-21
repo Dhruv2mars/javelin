@@ -4,6 +4,7 @@ use javelin::{Error, Repository, Result, VersionNumber};
 use serde_json::{Value, json};
 
 mod cli;
+mod cli_control;
 mod cli_remote;
 
 const HELP: &str = cli::HELP;
@@ -53,6 +54,7 @@ enum CliError {
     Native(Error),
     Stack(javelin_stack::StackError),
     Remote(cli_remote::RemoteError),
+    Control(javelin_control::ControlError),
 }
 
 impl From<Error> for CliError {
@@ -74,6 +76,7 @@ impl CliError {
             Self::Native(error) => error.code(),
             Self::Stack(_) => "stack_merge_error",
             Self::Remote(error) => &error.code,
+            Self::Control(error) => error.code(),
         }
     }
 }
@@ -83,6 +86,7 @@ impl std::fmt::Display for CliError {
             Self::Native(error) => error.fmt(f),
             Self::Stack(error) => error.fmt(f),
             Self::Remote(error) => write!(f, "{}", error.detail),
+            Self::Control(error) => error.fmt(f),
         }
     }
 }
@@ -100,6 +104,12 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     }
     if args.first().is_some_and(|a| a == "adopt") {
         return cli::adopt(args.into_iter().skip(1).collect()).map_err(Into::into);
+    }
+    if args
+        .first()
+        .is_some_and(|a| a == "login" || a == "control" || a == "repo")
+    {
+        return cli_control::run(args).map_err(CliError::Control);
     }
     if args.first().is_some_and(|a| a == "checkpoint") {
         return cli::checkpoint(args.into_iter().skip(1).collect()).map_err(Into::into);
