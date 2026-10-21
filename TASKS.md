@@ -346,6 +346,8 @@ Wave 3, after wave 2:
   - [x] U11 forks with inherited history (`javelin-node` fork: log copy to N with source IDs,
     object copy into the fork's store, `fork_of` provenance, traces omitted with a marker unless
     the forker is Maintain; `javelin-control` fork op, in-process node; wire pull deferred).
+  - [x] U8b passkey sign-in for device approval: WebAuthn enrollment and sign-in (webauthn-rs,
+    software-authenticator tests), browser approval page over loopback HTTP, no email (D5).
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.

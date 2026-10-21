@@ -972,6 +972,7 @@ fn copy_build_sources(dest: &Path) {
         .chain(walk(&root_dir.join("crates/javelin-node")))
         .chain(walk(&root_dir.join("crates/javelin-protocol")))
         .chain(walk(&root_dir.join("crates/javelin-stack")))
+        .chain(walk(&root_dir.join("tools/native-packaging/notices")))
     {
         let rel = file.strip_prefix(&root_dir).unwrap();
         let target = dest.join(rel);
