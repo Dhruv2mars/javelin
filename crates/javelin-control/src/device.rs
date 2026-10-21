@@ -132,12 +132,12 @@ impl ControlPlane {
             if record.redeemed {
                 return Err(ControlError::Redeemed);
             }
+            if now >= record.expires_at {
+                return Err(ControlError::Expired("this device code has expired"));
+            }
             let (Some(principal), Some(device)) =
                 (record.approved_by.clone(), record.device.clone())
             else {
-                if now >= record.expires_at {
-                    return Err(ControlError::Expired("this device code has expired"));
-                }
                 return Ok(Poll::Pending);
             };
             record.redeemed = true;

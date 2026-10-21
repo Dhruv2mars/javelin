@@ -88,11 +88,13 @@ impl ControlPlane {
     }
 }
 
-/// Who a bearer token speaks for, and what it may do.
+/// Who a bearer token speaks for, what it may do, and which repository it is for (`*` for
+/// all of them).
 pub(crate) struct Caller {
     pub principal: String,
     pub device: String,
     pub scopes: Vec<Scope>,
+    pub repo: String,
     pub admin: bool,
 }
 
@@ -103,6 +105,11 @@ impl Caller {
         } else {
             Err(ControlError::Forbidden(detail))
         }
+    }
+
+    /// Whether this token may act on `repository`. Only a discovery token (`*`) acts on all.
+    pub fn may_act_on(&self, repository: &str) -> bool {
+        self.repo == "*" || self.repo == repository
     }
 }
 
@@ -122,7 +129,8 @@ pub(crate) fn signing_key(state: &State) -> Result<SigningKey, ControlError> {
 }
 
 /// Resolves a bearer token. The admin token is checked by hash; anything else must be a
-/// signed access token that this control plane issued and that has not expired.
+/// signed access token that this control plane issued, that has not expired, and whose
+/// sign-in is still live. Renewing a token needs the sign-in too, so access ends with it.
 pub(crate) fn authenticate(state: &State, bearer: &str, now: u64) -> Result<Caller, ControlError> {
     require_initialized(state)?;
     if bearer.starts_with(ADMIN_PREFIX) {
@@ -133,6 +141,7 @@ pub(crate) fn authenticate(state: &State, bearer: &str, now: u64) -> Result<Call
             principal: ADMIN_PRINCIPAL.into(),
             device: ADMIN_DEVICE.into(),
             scopes: SESSION_SCOPES.to_vec(),
+            repo: "*".into(),
             admin: true,
         });
     }
@@ -141,10 +150,19 @@ pub(crate) fn authenticate(state: &State, bearer: &str, now: u64) -> Result<Call
         .map_err(|error| ControlError::Storage(error.to_string()))?;
     let claims =
         verify(&keys, bearer, now).map_err(|error| ControlError::Unauthorized(error.reason()))?;
+    let live = state.sessions.values().any(|session| {
+        session.device == claims.dev && session.principal == claims.sub && now < session.expires_at
+    });
+    if !live {
+        return Err(ControlError::Unauthorized(
+            "sign-in has ended; sign in again",
+        ));
+    }
     Ok(Caller {
         principal: claims.sub,
         device: claims.dev,
         scopes: claims.scopes,
+        repo: claims.repo,
         admin: false,
     })
 }

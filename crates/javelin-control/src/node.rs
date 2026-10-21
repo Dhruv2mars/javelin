@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::{ControlError, control::NodeLink, secret};
 
 const PERMISSIONS_FILE: &str = "permissions.json";
+const LOCK_FILE: &str = "node.lock";
 
 /// Self-hosted nodes under one directory: `root/<repository>/`.
 pub struct LocalNode {
@@ -43,6 +44,21 @@ impl LocalNode {
         Ok(gate)
     }
 
+    /// Creates the repository's directory and takes its lock. Holding the lock is what keeps two
+    /// retries of one create from racing on the node's files; the lock lasts until the guard drops.
+    fn locked(&self, repository: &RepositoryId) -> Result<fs::File, ControlError> {
+        let dir = self.repository_dir(repository);
+        fs::create_dir_all(&dir).map_err(node_error)?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(LOCK_FILE))
+            .map_err(node_error)?;
+        lock.lock().map_err(node_error)?;
+        Ok(lock)
+    }
+
     fn stored(
         &self,
         repository: &RepositoryId,
@@ -63,8 +79,8 @@ impl LocalNode {
 
 impl NodeLink for LocalNode {
     fn provision(&self, repository: &RepositoryId) -> Result<(), ControlError> {
+        let _lock = self.locked(repository)?;
         let dir = self.repository_dir(repository);
-        fs::create_dir_all(&dir).map_err(node_error)?;
         if Repository::open(&dir).is_ok() {
             return Ok(());
         }
@@ -74,6 +90,7 @@ impl NodeLink for LocalNode {
     }
 
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {
+        let _lock = self.locked(&permissions.repository)?;
         let stored = self.stored(&permissions.repository)?;
         let mut gate = Gate::new(permissions.repository.clone(), KeySet::new());
         if let Some(current) = &stored {
@@ -85,7 +102,6 @@ impl NodeLink for LocalNode {
             return Ok(());
         }
         let dir = self.repository_dir(&permissions.repository);
-        fs::create_dir_all(&dir).map_err(node_error)?;
         let bytes = serde_json::to_vec_pretty(&Stored::from(permissions))
             .map_err(|error| ControlError::Storage(error.to_string()))?;
         secret::write_private(&dir.join(PERMISSIONS_FILE), &bytes).map_err(node_error)

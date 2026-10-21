@@ -75,6 +75,9 @@ impl ControlPlane {
     ) -> Result<AccessToken, ControlError> {
         self.store.read(|state| {
             let caller = authenticate(state, bearer, now)?;
+            if !caller.may_act_on(repository) {
+                return Err(ControlError::Forbidden("token is for another repository"));
+            }
             let record = state
                 .repositories
                 .get(repository)
@@ -105,6 +108,11 @@ impl ControlPlane {
         let publish = request.publish.as_str();
         let (repository, record, inserted) = self.store.update(|state| {
             let caller = authenticate(state, bearer, now)?;
+            if caller.repo != "*" {
+                return Err(ControlError::Forbidden(
+                    "create needs a sign-in token, not a repository token",
+                ));
+            }
             caller.require(Scope::RepoCreate, "token does not carry repo:create")?;
             if let Some(id) = state.operations.get(&request.operation) {
                 let record = state.repositories.get(id).ok_or_else(|| {

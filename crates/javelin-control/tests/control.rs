@@ -313,3 +313,89 @@ fn a_stale_permissions_push_is_refused_by_the_node() {
     let refused = node.apply(&stale).unwrap_err();
     assert_eq!(refused.code(), "stale_permissions");
 }
+
+#[test]
+fn a_repository_token_is_only_good_for_its_repository() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (plane, admin) = open(dir.path());
+    let session = sign_in(&plane, &admin, T0);
+    let first = plane
+        .create_repository(&session.access_token, &request("app", "op-1"), T0)
+        .expect("create");
+    let second = plane
+        .create_repository(&session.access_token, &request("api", "op-2"), T0)
+        .expect("create");
+    let token = plane
+        .repository_token(&session.access_token, &first.repository, T0)
+        .expect("token");
+
+    let reach = plane.repository_token(&token.access_token, &second.repository, T0);
+    assert_eq!(reach.unwrap_err().code(), "forbidden");
+    let create = plane.create_repository(&token.access_token, &request("tool", "op-3"), T0);
+    assert_eq!(create.unwrap_err().code(), "forbidden");
+}
+
+#[test]
+fn access_ends_when_the_sign_in_does() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (plane, admin) = open(dir.path());
+    let session = sign_in(&plane, &admin, T0);
+    let created = plane
+        .create_repository(&session.access_token, &request("app", "op-1"), T0)
+        .expect("create");
+
+    let session_ends = T0 + 30 * 24 * 3600;
+    let fresh = plane
+        .refresh(&session.refresh_token, session_ends - 60)
+        .expect("refresh while the sign-in lasts");
+    let token = plane
+        .repository_token(&fresh.access_token, &created.repository, session_ends - 60)
+        .expect("token while the sign-in lasts");
+    let later = session_ends + 60;
+    // The minted token is still inside its hour, but the sign-in behind it has ended.
+    let renewed = plane.repository_token(&token.access_token, &created.repository, later);
+    assert_eq!(renewed.unwrap_err().code(), "unauthorized");
+    assert_eq!(
+        plane
+            .refresh(&session.refresh_token, later)
+            .unwrap_err()
+            .code(),
+        "unauthorized"
+    );
+}
+
+#[test]
+fn an_approved_device_code_still_expires() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (plane, admin) = open(dir.path());
+    let start = plane.device_start(T0).expect("start");
+    plane
+        .device_approve(&admin, &start.user_code, T0)
+        .expect("approve");
+    let late = plane.device_poll(&start.device_code, T0 + 901);
+    assert_eq!(late.unwrap_err().code(), "expired");
+}
+
+#[test]
+fn concurrent_retries_of_one_create_all_succeed_and_agree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (_plane, admin) = open(dir.path());
+    let root = dir.path().to_path_buf();
+    let handles: Vec<_> = (0..32)
+        .map(|_| {
+            let root = root.clone();
+            let admin = admin.clone();
+            std::thread::spawn(move || {
+                let plane = ControlPlane::open(&root).expect("open");
+                plane
+                    .create_repository(&admin, &request("app", "op-1"), T0)
+                    .map(|created| created.repository)
+            })
+        })
+        .collect();
+    let ids: Vec<String> = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("thread").expect("create"))
+        .collect();
+    assert!(ids.windows(2).all(|pair| pair[0] == pair[1]));
+}
