@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, absolute},
     time::Duration,
 };
 
@@ -162,8 +162,9 @@ impl Outbox {
     /// Opens or creates the journal for `name`. Reading never changes the file: a
     /// damaged tail is only reported here and moved aside by the next append.
     pub fn open(root: impl AsRef<Path>, name: &str) -> Result<Self> {
-        let root = root.as_ref();
-        let path = journal_path(root, name)?;
+        // Joining onto "." makes an empty root mean the working directory, which `absolute` rejects.
+        let root = absolute(Path::new(".").join(root))?;
+        let path = journal_path(&root, name)?;
         let dir = path.parent().expect("journal path has a parent");
         fs::create_dir_all(dir)?;
         let mut file = OpenOptions::new()
@@ -172,14 +173,11 @@ impl Outbox {
             .create(true)
             .truncate(false)
             .open(&path)?;
-        // Every open syncs the chain from the journal's directory up to the root. A crashed
-        // opener may have created these directories without syncing them, so skipping
-        // the sync for directories that already exist would be unsafe.
-        for ancestor in dir.ancestors().take_while(|p| !p.as_os_str().is_empty()) {
+        // Every open syncs each directory from the journal's up to the filesystem root. A
+        // crashed opener may have created any of them without syncing, so none is skipped for
+        // already existing.
+        for ancestor in dir.ancestors() {
             sync_dir(ancestor)?;
-            if ancestor == root {
-                break;
-            }
         }
         // Two live handles would each hand out the same next sequence number and overwrite
         // each other's records, so the lock is held until this handle is dropped.
