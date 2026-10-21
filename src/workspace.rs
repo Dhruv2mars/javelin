@@ -239,6 +239,14 @@ impl Repository {
         Ok(report)
     }
 
+    /// Brings the rolling base to the head World under the lock, so the next Layer create
+    /// clones it instead of materializing it. Idempotent.
+    pub fn warm_base(&mut self) -> Result<BaseReport> {
+        let store = Store::lock(self)?;
+        let head = self.head()?.number;
+        Ok(self.ensure_rolling(&store, head)?.1)
+    }
+
     /// Publishes the Layer and reclaims its directory under the same lock. A crash after
     /// the publish commits leaves the directory for the next command, because recovery
     /// treats a published Layer as terminal. A retry replays the receipt and finishes it.
