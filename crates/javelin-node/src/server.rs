@@ -152,7 +152,7 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    let reply = match decode(&body).and_then(|message| handle_request(log, message)) {
+    let reply = match decode(&body).and_then(|message| serve_one(log, message)) {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
@@ -161,6 +161,12 @@ fn read_request(
         Err(ProtocolError { code, detail }) => encode(&Message::Error { code, detail })
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.detail))?,
     })
+}
+
+/// One message through the trace guard, then the protocol handler.
+fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, ProtocolError> {
+    log.traces().refuse_wire_fetch(&message)?;
+    handle_request(log, message)
 }
 
 /// One line without its terminator, bounded by `MAX_LINE`. An overlong or non-UTF-8
