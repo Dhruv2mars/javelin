@@ -102,6 +102,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "attach") {
         return cli_remote::attach(args.into_iter().skip(1).collect());
     }
+    if args.first().is_some_and(|a| a == "outbox") && args.get(1).is_some_and(|a| a == "status") {
+        return cli::outbox_status(args.into_iter().skip(2).collect()).map_err(Into::into);
+    }
     if args.first().is_some_and(|a| a == "adopt") {
         return cli::adopt(args.into_iter().skip(1).collect()).map_err(Into::into);
     }

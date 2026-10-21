@@ -9,6 +9,7 @@ pub mod capture;
 mod domain;
 mod ignore;
 mod layer;
+pub mod outbox;
 mod publish;
 mod radar;
 mod repository;
