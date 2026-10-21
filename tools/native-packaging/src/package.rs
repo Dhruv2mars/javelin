@@ -271,6 +271,26 @@ fn crate_version(source: &Path) -> Result<String> {
 
 type LicenseFiles = BTreeMap<String, Vec<u8>>;
 
+/// The license and notice files directly in `dir`, by file name. A missing directory has none.
+fn license_files(dir: &Path) -> Result<LicenseFiles> {
+    let mut files = LicenseFiles::new();
+    if !dir.is_dir() {
+        return Ok(files);
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let lower = file.to_lowercase();
+        let wanted = ["licen", "copying", "unlicense", "notice", "copyright"]
+            .iter()
+            .any(|p| lower.starts_with(p));
+        if wanted && entry.file_type()?.is_file() {
+            files.insert(file, read(&entry.path())?);
+        }
+    }
+    Ok(files)
+}
+
 /// Normal-dependency closure of `javelin-cli` for `target`, with lock checksums and license texts.
 fn dependency_graph(
     source: &Path,
@@ -351,17 +371,14 @@ fn dependency_graph(
             .parent()
             .ok_or_else(|| crate::Error("bad manifest path".into()))?
             .to_path_buf();
-        let mut files = LicenseFiles::new();
-        for entry in fs::read_dir(&dir)? {
-            let entry = entry?;
-            let file = entry.file_name().to_string_lossy().into_owned();
-            let lower = file.to_lowercase();
-            let wanted = ["licen", "copying", "unlicense", "notice", "copyright"]
-                .iter()
-                .any(|p| lower.starts_with(p));
-            if wanted && entry.file_type()?.is_file() {
-                files.insert(file, read(&entry.path())?);
-            }
+        let mut files = license_files(&dir)?;
+        if files.is_empty() {
+            // Some crates ship no license text. `notices/` holds the upstream texts for those.
+            files = license_files(
+                &source
+                    .join("tools/native-packaging/notices")
+                    .join(format!("{name}-{version}")),
+            )?;
         }
         if files.is_empty() {
             bail!(
