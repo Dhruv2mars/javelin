@@ -349,23 +349,34 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         }
         return Ok(already_attached(&attached, &head));
     }
-    // A store this call creates is removed again on failure, so a failed attach leaves no
-    // trace. A store that already existed keeps the objects its fetch stored, which no World
-    // refers to.
-    let created = opened.is_none() && !root.join(".javelin").exists();
-    let repo = match opened {
-        Some(repo) => repo,
-        None => Repository::init(&root)?,
-    };
-    match adopt(repo, &link, &head, &node, &repository_name) {
-        Ok(output) => Ok(output),
-        Err(error) => {
-            if created {
-                let _ = std::fs::remove_dir_all(root.join(".javelin"));
-            }
-            Err(error)
-        }
+    // An existing store is attached in place. Its fetch only adds content-addressed objects,
+    // and its World moves only through the checked advance, so a failure changes no World.
+    if let Some(repo) = opened {
+        return adopt(repo, &link, &head, &node, &repository_name);
     }
+
+    // A new store is built in a private directory and renamed into place. A failure removes
+    // only that directory, and a store that appears meanwhile is never replaced.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let staging = root.join(format!(".javelin-attach-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&staging).map_err(Error::from)?;
+    let built = Repository::init(&staging)
+        .map_err(CliError::from)
+        .and_then(|repo| adopt(repo, &link, &head, &node, &repository_name));
+    let outcome = built.and_then(|output| {
+        if root.join(".javelin").exists() {
+            return Err(Error::InvalidInput(
+                "a store appeared in this directory during attach; nothing was changed".into(),
+            )
+            .into());
+        }
+        std::fs::rename(staging.join(".javelin"), root.join(".javelin")).map_err(Error::from)?;
+        Ok(output)
+    });
+    let _ = std::fs::remove_dir_all(&staging);
+    outcome
 }
 
 /// Fetches `head` into `repo`, makes it the local head, and records the attachment last.

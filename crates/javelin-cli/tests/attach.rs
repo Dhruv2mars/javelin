@@ -244,7 +244,7 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
 }
 
 /// A node that runs `answer` on each request. Returns its URL.
-fn fake_node(answer: fn(&mut TcpStream, &[u8])) -> String {
+fn fake_node(answer: impl Fn(&mut TcpStream, &[u8]) + Send + 'static) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -297,11 +297,41 @@ fn oversized(stream: &mut TcpStream, _body: &[u8]) {
 fn attach_writes_nothing_when_the_node_is_lost_after_resolve() {
     let url = fake_node(resolve_then_drop);
     let root = TempDir::new().unwrap();
-    std::fs::create_dir(root.path().join("project")).unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
 
     let error = attach(root.path(), &url, 1);
     assert_eq!(error["error"]["code"], "node_unavailable");
-    assert!(!root.path().join("project/.javelin").exists());
+    assert_eq!(std::fs::read_dir(&project).unwrap().count(), 0);
+}
+
+#[test]
+fn attach_leaves_a_store_another_writer_created_alone() {
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    // Another writer creates its store while the fetch runs, then the node is lost.
+    let other = project.clone();
+    let url = fake_node(move |stream, body| {
+        if let Ok(Message::Resolve { .. }) = decode(body) {
+            resolve_then_drop(stream, body);
+        } else {
+            std::fs::create_dir_all(other.join(".javelin")).unwrap();
+            std::fs::write(other.join(".javelin/keep.txt"), b"theirs").unwrap();
+        }
+    });
+
+    let error = attach(root.path(), &url, 1);
+    assert_eq!(error["error"]["code"], "node_unavailable");
+    assert_eq!(
+        std::fs::read(project.join(".javelin/keep.txt")).unwrap(),
+        b"theirs"
+    );
+    let names: Vec<_> = std::fs::read_dir(&project)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![".javelin"]);
 }
 
 #[test]
@@ -312,7 +342,12 @@ fn attach_refuses_a_reply_larger_than_one_frame() {
 
     let error = attach(root.path(), &url, 1);
     assert_eq!(error["error"]["code"], "limit_exceeded");
-    assert!(!root.path().join("project/.javelin").exists());
+    assert_eq!(
+        std::fs::read_dir(root.path().join("project"))
+            .unwrap()
+            .count(),
+        0
+    );
     // The client read at most about one frame, so the node stopped well short of 64 MiB.
     assert!(
         SENT.load(Ordering::SeqCst) < 64 << 20,
