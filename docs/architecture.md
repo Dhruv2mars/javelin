@@ -202,7 +202,7 @@ Receiver (`src/receiver.rs`, `serve()`):
 - `Want` checks presence with `has_blob` and `has_tree` and rejects duplicate ids. Only ids the receiver lacks are reported as Missing.
 - `Objects` verifies each payload's id before storing it (`id_mismatch` otherwise). Blobs go to `put_blob`, chunks to `Repository::put_tree`, which refuses a chunk until every chunk, subdirectory and blob it names is stored. Having a tree therefore means having all of it, so a sender can stop probing at any chunk the receiver has.
 - `Publish` calls `Repository::advance_to_tree`. It diffs the candidate against the expected version's tree (unchanged subtrees are never read), validates the changed contents, and requires the root derived from that changeset to equal the candidate, which rejects any non-canonical tree. Work is O(named paths × depth), where named paths are the paths added, modified or deleted between the expected version's tree and the candidate. Shared subtrees are skipped, but a tree can name more paths than its bytes (see Known limits).
-- `Resolve` returns a version's (or the head's) number, ID and tree root. `Get` returns the longest prefix of the requested objects that fits one frame; the client asks again for the rest.
+- `Resolve` returns a version's (or the head's) number, ID and tree root. `Changeset` (tag 0x42) returns one part of a version's canonical changeset: `ChangesetPart` (tag 0x43) carries the total length and at most `MAX_CHANGESET_PART` bytes from the requested offset. `Get` returns the longest prefix of the requested objects that fits one frame; the client asks again for the rest.
 
 Sender (`src/sender.rs`, `push()`):
 
@@ -212,7 +212,9 @@ Sender (`src/sender.rs`, `push()`):
 
 Fetch (`src/fetch.rs`, `fetch()`):
 
-- Resolves the version, then reads its tree from the root down, one level per round trip, and the blobs last. Chunks already in the caller's `tree::Store` and blobs the caller has are not requested. Every object is checked against its id.
+- Resolves the version, then verifies its root against the version ID chain before reading anything else. The chain starts at World 0's fixed ID (`genesis_version_id`). For each version from 1 to the target, the client fetches its changeset in parts and hashes `VersionHasher::new(parent, root)` over them as they arrive, never holding a whole changeset; the result must equal the claimed ID. A mismatch is refused with `chain_mismatch` (`CHAIN_MISMATCH`), and nothing is stored first. A changeset larger than `MAX_CHANGESET` is refused with `limit_exceeded`.
+- Then reads the tree from the root down, one level per round trip, and the blobs last. Chunks already in the caller's `tree::Store` and blobs the caller has are not requested. Every object is checked against its id.
+- Every named path, file or directory the walk follows, and every chunk reference, counts once against `MAX_FETCH_PATHS`. Exceeding it is refused with `limit_exceeded`, so a lying server cannot make the walk expand a shared subtree without bound.
 - With a path prefix it follows only the chunks on the way to the prefix, using each internal chunk's last names (`Chunk::child_for`), then everything below it. The result lists the files at or below the prefix.
 - Replies that answer another version, carry unrequested objects or bytes that do not match their ids, or make no progress are refused.
 
@@ -223,6 +225,9 @@ Limits (`limits` module in `src/lib.rs`):
 - `MAX_TREE` `javelin::tree::MAX_CHUNK` (about 69 KiB): one tree chunk
 - `MAX_OBJECTS` 1024 objects per `Objects` frame
 - `MAX_WANT` 4096 ids per `Want`, `Missing` or `Get`
+- `MAX_CHANGESET_PART` `MAX_BLOB` (8 MiB): bytes of one `ChangesetPart`
+- `MAX_CHANGESET` 1 GiB (`1 << 30`): the largest changeset a fetch will hash
+- `MAX_FETCH_PATHS` 1,048,576 (`1 << 20`): named paths and chunk references one fetch expands
 - `MAX_DETAIL` 1024
 - Version 1's `MAX_MANIFESTS` and repository-wide `MAX_ENTRIES` (65,536) are gone: a snapshot spans as many chunks and frames as it needs. Paths are bounded natively (`MAX_PATH`, `MAX_DEPTH`); trees that would exceed them are refused when read.
 
@@ -283,7 +288,11 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 - Protocol frames, objects and item counts are capped by the `limits` constants; snapshots are not. Only protocol version 2 exists. `Get` serves any stored object by id; authorization is outside the crate.
 - Fetch returns files and stores chunks in a caller-supplied store; attaching a local repository to fetched versions is roadmap item 7.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
-- Tree work follows named paths, not tree bytes. A subtree can be named under several parents, so a few KB of canonical chunks can name 2^k files. `advance_to_tree` and `fetch` expand every named path with no cap, because snapshots are uncapped by design. Work and memory for a received tree are proportional to the paths it names. Accepted for Publish: the reference receiver accepts Objects and Publish from any caller, with no authentication in this crate, so the bound is safe only when callers authenticate and authorize outside it. Fetch from an untrusted server needs its own limit (follow-up).
+- Tree work follows named paths, not tree bytes. A subtree can be named under several parents, so a few KB of canonical chunks can name 2^k files. `advance_to_tree` expands every named path with no cap, because snapshots are uncapped by design. Work and memory for a received tree are proportional to the paths it names. Accepted for Publish: the reference receiver accepts Objects and Publish from any caller, with no authentication in this crate, so the bound is safe only when callers authenticate and authorize outside it. `fetch` is bounded for an untrusted server: it refuses past `MAX_FETCH_PATHS` named paths and checks the root against the version ID chain. Its costs:
+  - The chain walk starts at World 0 and costs two round trips per version (`Resolve`, then `Changeset` parts), so fetching version N costs O(N) round trips and transfers every changeset. A trust anchor stored by the caller would allow verifying only the new versions; that is not built yet.
+  - The server re-encodes the canonical changeset for each part, so a changeset larger than one part costs O(parts × size).
+  - Protocol version stays 2 with the new tags 0x42 and 0x43, so a new client against an old server fails at the first `Changeset` request, not at negotiation.
+  - Snapshots above `MAX_FETCH_PATHS` (about one million paths) cannot be fetched until the bound is raised against a measured memory budget.
 
 Code: src/capture.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs
 

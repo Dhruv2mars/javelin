@@ -214,6 +214,21 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             let outcome = repo.advance_to_tree(&operation, expected, tree)?;
             Ok(Message::Outcome(Outcome::from_native(&outcome)?))
         }
+        Message::Changeset { version, offset } => {
+            let bytes = repo.changeset(version)?.canonical_bytes();
+            let total = bytes.len();
+            let start = usize::try_from(offset)
+                .ok()
+                .filter(|start| *start <= total)
+                .ok_or_else(|| {
+                    ProtocolError::new("malformed", "changeset offset is past its end")
+                })?;
+            let end = total.min(start + MAX_CHANGESET_PART);
+            Ok(Message::ChangesetPart {
+                total: total as u64,
+                bytes: bytes[start..end].to_vec(),
+            })
+        }
         Message::Resolve { version } => {
             let world = match version {
                 Some(number) => repo.version(number)?,

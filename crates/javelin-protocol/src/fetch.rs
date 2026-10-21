@@ -1,15 +1,17 @@
-//! Reference fetch: resolves a version, then reads its tree from the root down,
-//! one level per round trip, and the blobs last. With a path prefix it reads only
-//! the chunks on the way to the prefix and the subtree below it. Objects already
-//! held locally are not requested, and every received object is checked against
-//! its ID before it is used.
+//! Reference fetch: resolves a version, verifies its tree root against the version ID
+//! chain from World 0, then reads the tree from the root down, one level per round
+//! trip, and the blobs last. With a path prefix it reads only the chunks on the way to
+//! the prefix and the subtree below it. Objects already held locally are not requested,
+//! every received object is checked against its ID before it is used, and the walk
+//! refuses to name more than `MAX_FETCH_PATHS` paths.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 
 use javelin::{
-    FileEntry, MAX_DEPTH, MAX_PATH, ObjectId, RepoPath, VersionNumber,
-    tree::{Chunk, Node, Store},
+    FileEntry, MAX_DEPTH, MAX_PATH, ObjectId, RepoPath, VersionHasher, VersionNumber,
+    genesis_version_id,
+    tree::{Chunk, Node, Store, empty},
 };
 
 use crate::{
@@ -18,6 +20,10 @@ use crate::{
     limits::*,
     sender::{exchange, unexpected},
 };
+
+/// A tree root that the version ID chain does not commit to: the server named a root,
+/// a changeset or an ID that does not hash to the chain.
+pub const CHAIN_MISMATCH: &str = "chain_mismatch";
 
 /// Where fetched blobs go.
 pub trait Blobs {
@@ -90,6 +96,7 @@ pub fn fetch(
         }
         _ => return Err(unexpected()),
     };
+    verify_chain(&mut call, number, id, root)?;
     let start = match prefix {
         None => Want::All { dir: String::new() },
         Some(prefix) => Want::Path {
@@ -106,6 +113,7 @@ pub fn fetch(
         blobs_received: 0,
     };
     let mut wanted_blobs = Vec::new();
+    let mut named = 0usize;
     let mut pending: Vec<Pending> = vec![(root, start, None)];
     while !pending.is_empty() {
         // The same chunk under the same want, reached by two parents, is read once.
@@ -134,13 +142,19 @@ pub fn fetch(
                     format!("chunk {id} does not match the parent that names it"),
                 ));
             }
-            walk(
+            named += walk(
                 &chunk,
                 want,
                 &mut next,
                 &mut fetched.files,
                 &mut wanted_blobs,
             )?;
+            if named > MAX_FETCH_PATHS {
+                return Err(ProtocolError::new(
+                    "limit_exceeded",
+                    format!("fetch names more than {MAX_FETCH_PATHS} paths"),
+                ));
+            }
         }
         pending = next;
     }
@@ -153,14 +167,98 @@ pub fn fetch(
     Ok(fetched)
 }
 
-/// Follows one chunk's references according to `want`.
+/// Checks that `tree` is the root that version `number` commits to. The version ID
+/// hashes its parent's ID, its root and its changeset, and World 0 has a fixed ID, so
+/// walking the chain from World 0 proves each root. Each changeset streams in parts
+/// and is hashed as it arrives, never held whole. Nothing is stored before this passes.
+fn verify_chain(
+    call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
+    number: VersionNumber,
+    id: ObjectId,
+    tree: ObjectId,
+) -> Result<(), ProtocolError> {
+    let mismatch = |version: VersionNumber| {
+        ProtocolError::new(
+            CHAIN_MISMATCH,
+            format!("version {version} does not commit to the tree its server named"),
+        )
+    };
+    if number.get() == 0 {
+        return if id == genesis_version_id() && tree == empty() {
+            Ok(())
+        } else {
+            Err(mismatch(number))
+        };
+    }
+    let mut parent = genesis_version_id();
+    for n in 1..=number.get() {
+        let version = VersionNumber::new(n)?;
+        let (claimed, root) = if version == number {
+            (id, tree)
+        } else {
+            match call(Message::Resolve {
+                version: Some(version),
+            })? {
+                Message::Resolved {
+                    number: got,
+                    id,
+                    tree,
+                } if got == version => (id, tree),
+                _ => return Err(unexpected()),
+            }
+        };
+        let mut hash = VersionHasher::new(Some(parent), root);
+        let mut offset = 0u64;
+        let mut total = None;
+        loop {
+            let Message::ChangesetPart {
+                total: whole,
+                bytes,
+            } = call(Message::Changeset { version, offset })?
+            else {
+                return Err(unexpected());
+            };
+            if whole > MAX_CHANGESET as u64 {
+                return Err(ProtocolError::new(
+                    "limit_exceeded",
+                    format!("changeset of version {version} exceeds {MAX_CHANGESET} bytes"),
+                ));
+            }
+            if *total.get_or_insert(whole) != whole || offset + bytes.len() as u64 > whole {
+                return Err(ProtocolError::new(
+                    "malformed",
+                    format!("changeset part of version {version} disagrees with its length"),
+                ));
+            }
+            if bytes.is_empty() && offset < whole {
+                return Err(ProtocolError::new(
+                    "malformed",
+                    format!("empty changeset part of version {version}"),
+                ));
+            }
+            hash.update(&bytes);
+            offset += bytes.len() as u64;
+            if offset == whole {
+                break;
+            }
+        }
+        if hash.finish() != claimed {
+            return Err(mismatch(version));
+        }
+        parent = claimed;
+    }
+    Ok(())
+}
+
+/// Follows one chunk's references according to `want`. Returns how many named paths
+/// or chunk references it followed, which the caller bounds by `MAX_FETCH_PATHS`.
 fn walk(
     chunk: &Chunk,
     want: Want,
     next: &mut Vec<Pending>,
     files: &mut BTreeMap<RepoPath, FileEntry>,
     blobs: &mut Vec<ObjectId>,
-) -> Result<(), ProtocolError> {
+) -> Result<usize, ProtocolError> {
     if chunk.level() > 0 {
         let level = chunk.level() - 1;
         let claim = |(last, id): (&str, ObjectId)| {
@@ -170,18 +268,21 @@ fn walk(
             };
             (id, want.clone(), Some(link))
         };
+        let before = next.len();
         match &want {
             Want::All { .. } => next.extend(chunk.child_links().map(claim)),
             Want::Path { rest, .. } => next.extend(chunk.child_for(&rest[0]).map(claim)),
         }
-        return Ok(());
+        return Ok(next.len() - before);
     }
+    let mut named = 0;
     for (name, node) in chunk.entries() {
         let (dir, below) = match &want {
             Want::All { dir } => (dir, None),
             Want::Path { dir, rest } if rest[0] == name => (dir, Some(&rest[1..])),
             Want::Path { .. } => continue,
         };
+        named += 1;
         let path = format!("{dir}{name}");
         if path.len() > MAX_PATH || path.matches('/').count() >= MAX_DEPTH {
             return Err(ProtocolError::new(
@@ -208,7 +309,7 @@ fn walk(
             )),
         }
     }
-    Ok(())
+    Ok(named)
 }
 
 /// Requests `ids` and hands each verified object to `store` as its reply arrives,

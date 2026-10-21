@@ -23,7 +23,7 @@ pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::{Capture, CheckpointSink};
 pub use domain::{
     Choice, FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath,
-    SparseChanges, VersionNumber,
+    SparseChanges, VersionHasher, VersionNumber, genesis_version_id,
 };
 pub use ignore::IgnoreRules;
 pub use layer::{
