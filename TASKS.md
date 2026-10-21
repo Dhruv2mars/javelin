@@ -353,3 +353,9 @@ Wave 3, after wave 2:
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
+
+## Post-hoc review of #48 and #52 on main
+
+- [x] Review #48 (radar) and #52 (protocol v2 trees) on main: Opus 5.5 fallback review, after Sol (Codex, Codex-swayu) was unavailable. No radar defects.
+- [x] #52 tree work bound: a few KB of shared-subtree chunks can name 2^k files. Accepted by decision; documented in docs/architecture.md Known limits.
+- [ ] Follow-up: fetch verifies the server's tree root against the version ID chain, and caps named paths for an untrusted server.
