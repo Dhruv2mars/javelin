@@ -6,6 +6,7 @@
 
 pub mod auth;
 mod log_do;
+pub mod review;
 mod server;
 mod world_log;
 

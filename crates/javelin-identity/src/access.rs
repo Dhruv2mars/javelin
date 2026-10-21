@@ -132,6 +132,11 @@ impl Access {
         &mut self.keys
     }
 
+    /// The applied permissions, or `None` before the first permissions push.
+    pub fn permissions(&self) -> Option<&AppliedPermissions> {
+        self.permissions.as_ref()
+    }
+
     /// The applied epoch, or `None` before the first permissions push.
     pub fn epoch(&self) -> Option<u64> {
         self.permissions.as_ref().map(|p| p.epoch)
