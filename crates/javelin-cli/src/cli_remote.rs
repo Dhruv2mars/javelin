@@ -138,36 +138,38 @@ impl Link {
         }
     }
 
-    fn round_trip(&self, body: &[u8]) -> std::result::Result<Vec<u8>, RemoteError> {
-        let unavailable = |e: io::Error| RemoteError::new("node_unavailable", e.to_string());
+    fn exchange(&self, body: &[u8]) -> io::Result<Vec<u8>> {
         let address = self
             .target
             .authority
-            .to_socket_addrs()
-            .map_err(unavailable)?
+            .to_socket_addrs()?
             .next()
-            .ok_or_else(|| RemoteError::new("node_unavailable", "no address for the node"))?;
-        let mut stream = TcpStream::connect_timeout(&address, TIMEOUT).map_err(unavailable)?;
-        stream
-            .set_read_timeout(Some(TIMEOUT))
-            .map_err(unavailable)?;
-        stream
-            .set_write_timeout(Some(TIMEOUT))
-            .map_err(unavailable)?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address for the node"))?;
+        let mut stream = TcpStream::connect_timeout(&address, TIMEOUT)?;
+        stream.set_read_timeout(Some(TIMEOUT))?;
+        stream.set_write_timeout(Some(TIMEOUT))?;
         let head = format!(
             "POST /v2/r/{} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             self.target.repository,
             self.target.authority,
             body.len()
         );
-        stream.write_all(head.as_bytes()).map_err(unavailable)?;
-        stream.write_all(body).map_err(unavailable)?;
+        stream.write_all(head.as_bytes())?;
+        stream.write_all(body)?;
         // Bounded in total, so a node cannot make the client buffer without limit.
         let mut reply = Vec::new();
-        stream
-            .take(MAX_REPLY + 1)
-            .read_to_end(&mut reply)
-            .map_err(unavailable)?;
+        stream.take(MAX_REPLY + 1).read_to_end(&mut reply)?;
+        Ok(reply)
+    }
+
+    fn round_trip(&self, body: &[u8]) -> std::result::Result<Vec<u8>, RemoteError> {
+        // Every request attach sends is a read, so repeating one is safe. Windows can reset a
+        // connection the node has just answered; one repeat covers that, and nothing else.
+        let reply = match self.exchange(body) {
+            Err(error) if is_reset(&error) => self.exchange(body),
+            done => done,
+        }
+        .map_err(|e| RemoteError::new("node_unavailable", e.to_string()))?;
         if reply.len() as u64 > MAX_REPLY {
             return Err(RemoteError::new(
                 "limit_exceeded",
@@ -264,6 +266,16 @@ fn unexpected() -> RemoteError {
 }
 
 /// The node's current head, from `Hello` and `Resolve`. Writes nothing locally.
+/// A connection the peer reset or dropped; the request may be sent again.
+fn is_reset(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::BrokenPipe
+    )
+}
+
 fn resolve(link: &RefCell<Link>) -> std::result::Result<RemoteHead, RemoteError> {
     match call(
         link,
