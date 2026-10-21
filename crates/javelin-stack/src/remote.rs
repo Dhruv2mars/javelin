@@ -48,12 +48,8 @@ pub fn stack(
 pub enum Refresh {
     /// The local head already holds the node's head.
     Current { seq: u64, head: ObjectId },
-    /// The local head moved to the node's head.
-    Imported {
-        seq: u64,
-        head: ObjectId,
-        update: LayerUpdate,
-    },
+    /// The local head moved to the node's head, as a Stack result.
+    Imported { seq: u64, head: ObjectId },
 }
 
 /// Brings the local Layer `layer` to the head the node holds for it.
@@ -132,12 +128,11 @@ pub fn refresh(
     fetch_blobs(link, repo, &changes)?;
     let operation = OperationId::parse(&format!("refresh-{}-{}", local.revision(), node.head))?;
     match repo.import_stacked_head(&operation, &local, &changes)? {
-        update @ LayerUpdate::Applied {
+        LayerUpdate::Applied {
             state: LayerState::Active { .. },
         } => Ok(Refresh::Imported {
             seq: node.seq,
             head: node.head,
-            update,
         }),
         _ => Err(ProtocolError::new(
             code::LAYER_STALE,

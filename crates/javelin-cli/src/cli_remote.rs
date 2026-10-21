@@ -1,7 +1,8 @@
 //! `javelin attach`: fetches a hosted repository's head into the local store over the
 //! node's HTTP transport, one protocol frame per request, then records the attachment.
 //! `javelin_protocol::fetch` runs unchanged on top of `Link`. See `docs/online-design.md`
-//! section 4.1 (U4).
+//! section 4.1 (U4). `javelin layer refresh` reads a Layer's head from the attached node
+//! over the same transport (section 4.3, U6).
 
 use std::{
     cell::RefCell,
@@ -13,13 +14,15 @@ use std::{
 };
 
 use javelin::{
-    Attachment, Error, ObjectId, RemoteHead, Repository, Result, VersionNumber, tree::MemoryStore,
+    Attachment, Error, LayerId, LayerState, ObjectId, RemoteHead, Repository, Result,
+    VersionNumber, tree::MemoryStore,
 };
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{VERSION, decode, encode, read_frame, write_frame},
     fetch::{Blobs, fetch},
 };
+use javelin_stack::remote::{self as stack_remote, Refresh};
 use serde_json::json;
 
 use crate::CliError;
@@ -649,6 +652,108 @@ fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
         attached.repository, attached.node, attached.head.number, head.number
     );
     (value, text, 0)
+}
+
+/// Both halves of one session, for protocol code that reads and writes one link.
+struct Session<'a>(&'a RefCell<Link>);
+
+impl Write for Session<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        Up(self.0).write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Read for Session<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Down(self.0).read(buf)
+    }
+}
+
+/// `javelin layer refresh ID [--repo DIR]`: brings the Layer to the head the attached node
+/// holds for it, such as one a Stack on the node produced, then brings its workspace there
+/// too. The directory is not captured first: its edits are kept by the workspace refresh,
+/// which plans against its sync record. Every request is a read, so a retry is safe.
+pub fn layer_refresh(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
+    let usage = "expected: javelin layer refresh ID [--repo DIR] [--json]";
+    let mut args = args.into_iter();
+    let mut layer = None;
+    let mut root = None;
+    while let Some(arg) = args.next() {
+        if arg == "--repo" && root.is_none() {
+            root = Some(PathBuf::from(
+                args.next()
+                    .ok_or_else(|| Error::InvalidInput(usage.into()))?,
+            ));
+        } else if layer.is_none() && !arg.to_string_lossy().starts_with('-') {
+            let id = arg
+                .to_str()
+                .ok_or_else(|| Error::InvalidInput("Layer IDs must be UTF-8".into()))?;
+            layer = Some(LayerId::parse(id)?);
+        } else {
+            return Err(Error::InvalidInput(usage.into()).into());
+        }
+    }
+    let layer = layer.ok_or_else(|| Error::InvalidInput(usage.into()))?;
+    let root = match root {
+        Some(root) => root,
+        None => std::env::current_dir().map_err(Error::from)?,
+    };
+    let mut repo = Repository::open(&root)?;
+    let attached = repo.attachment()?.ok_or_else(|| {
+        Error::InvalidInput("this repository is not attached to a node; attach first".into())
+    })?;
+    let link = Link::new(parse_target(&format!(
+        "{}/{}",
+        attached.node, attached.repository
+    ))?);
+    let refresh = stack_remote::refresh(&mut Session(&link), &mut repo, &layer)
+        .map_err(|e| CliError::Remote(remote(&link, e)))?;
+    let (status, seq, node_head) = match &refresh {
+        Refresh::Current { seq, head } => ("current", *seq, *head),
+        Refresh::Imported { seq, head, .. } => ("imported", *seq, *head),
+    };
+    let head = match repo.layer_state(&layer)? {
+        LayerState::Active { head } => head,
+        _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
+    };
+    let workspace = match repo
+        .workspace_root(&layer)?
+        .try_exists()
+        .map_err(Error::from)?
+    {
+        true => Some(repo.refresh_workspace(&layer)?),
+        false => None,
+    };
+    let mut text = match &refresh {
+        Refresh::Current { .. } => format!(
+            "Layer {} already holds the node's head (seq {seq})",
+            layer.as_str()
+        ),
+        Refresh::Imported { .. } => format!(
+            "Layer {} moved to the node's head {node_head} (seq {seq}) as revision {}",
+            layer.as_str(),
+            head.revision()
+        ),
+    };
+    if let Some(report) = &workspace {
+        text.push_str(&format!(
+            "\nWorkspace: {} paths applied, {} local edits kept",
+            report.applied, report.kept
+        ));
+    }
+    let value = json!({
+        "ok": true,
+        "command": "layer refresh",
+        "layer": layer,
+        "status": status,
+        "node": {"seq": seq, "head": node_head},
+        "head": head,
+        "workspace": workspace,
+    });
+    Ok((value, text, 0))
 }
 
 #[cfg(test)]
