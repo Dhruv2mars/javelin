@@ -59,7 +59,7 @@ the same assertions against `LocalNode` in CI and against this Worker on workerd
 then checks:
 
 1. The conformance suite passes against the Worker (`workerd_node_conforms`, `wrong_admin_token_is_refused`).
-2. `repo create acme/app` against a dead node fails with `node_unavailable`; the retry with the same operation ID succeeds at epoch 1 on the `cloudflare` provider.
+2. `repo create acme/app` against a node that refuses the token leaves the repository Provisioning; a retry naming another `--node-url` is refused as `operation_id_reused`; the retry with the same operation ID and node succeeds at epoch 1 on the `cloudflare` provider.
 3. Node state holds the genesis and the permissions; a repeat is idempotent; a name collision returns `conflict`.
 
 The test kills only the `wrangler` process it started.
