@@ -88,7 +88,7 @@ pub(crate) struct RepositoryRecord {
     #[serde(default)]
     pub provider: String,
     /// The node URL the repository was reserved for. Only a Provisioning record's node matters
-    /// on retry; a Ready record returns unchanged.
+    /// on a create retry; a Ready create returns unchanged.
     #[serde(default)]
     pub node_url: Option<String>,
     /// Set for a fork: its source repository and the version it was forked at.

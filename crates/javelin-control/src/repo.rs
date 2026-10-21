@@ -141,8 +141,8 @@ impl ControlPlane {
 }
 
 /// Reserves `request`'s name and operation as a new Provisioning record created by `creator`,
-/// on `node`. A retry with the same operation and request returns the record reserved first,
-/// but only while it is Provisioning and `node` is the one it was reserved on: a retry that
+/// on `node`. A retry with the same operation and request returns the record reserved first.
+/// A Provisioning record also needs `node` to be the one it was reserved on: a retry that
 /// names another node would finish the create there and leave the first node's object behind.
 /// A fork passes its origin, so a create and a fork never share an operation.
 pub(crate) fn reserve(
