@@ -98,11 +98,11 @@ pub fn merge<E>(
 /// Merges `ours` and `theirs` relative to `base`, applying `choices` to conflicting paths.
 /// `load` is called, in sorted path order, only for regular-file content that both sides
 /// changed. `aliases` receives every resolved path that remains, in sorted order, and returns
-/// the ones that alias an earlier path on the volume.
+/// every one that aliases another path in that list on the volume.
 ///
 /// A choice applies to a conflict, and to a path that collides with another after choices
 /// are applied. Collisions are never resolved by keeping both paths: the owner must choose
-/// a side that removes one of them.
+/// a side that removes one of them, and either member of an alias pair may be the one chosen.
 pub fn merge_resolved<E>(
     base: &Manifest,
     ours: &Manifest,

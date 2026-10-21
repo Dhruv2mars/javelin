@@ -458,7 +458,7 @@ fn case_alias_conflict_is_detected_on_a_case_insensitive_volume() {
             .all(|(kind, _)| kind == "Alias"),
         "{conflict}"
     );
-    // Alias conflicts list the one present path; choosing its absence drops that name.
+    // Either spelling resolves the alias: choosing the absence of one drops that name.
     let file = write_resolutions(dir.path(), "r.json", json!({"readme.md": "theirs"}));
     let applied = stack(root.path(), "stack", Some(&file), 0);
     assert_eq!(applied["update"]["outcome"], "applied");
@@ -666,4 +666,225 @@ fn refresh_resolved_to_ours_keeps_the_local_edit_and_publish_carries_it() {
     );
     assert_eq!(published["receipt"]["outcome"]["outcome"], "published");
     ok(root.path(), &["check"]);
+}
+
+#[test]
+fn alias_conflict_resolves_by_keeping_the_target_spelling() {
+    let probe = TempDir::new().unwrap();
+    fs::write(probe.path().join("probe"), b"").unwrap();
+    if !probe.path().join("PROBE").exists() {
+        eprintln!("skipped: the test volume is case-sensitive");
+        return;
+    }
+    let root = fixture(&[("keep.txt", b"keep\n")]);
+    capture(
+        root.path(),
+        "source",
+        &[("Readme.md", Edit::Text(b"a\n"))],
+        "s",
+    );
+    capture(
+        root.path(),
+        "target",
+        &[("readme.md", Edit::Text(b"b\n"))],
+        "t",
+    );
+    let dir = TempDir::new().unwrap();
+    // The earlier spelling is a conflict too, so the owner may choose it instead.
+    let file = write_resolutions(dir.path(), "r.json", json!({"Readme.md": "ours"}));
+    let applied = stack(root.path(), "stack", Some(&file), 0);
+    assert_eq!(applied["update"]["outcome"], "applied");
+    let (checkpoint, _) = head(root.path(), "target");
+    assert!(entry(root.path(), &checkpoint, "Readme.md").is_none());
+    assert_eq!(
+        text_at(root.path(), &checkpoint, "readme.md").unwrap(),
+        b"b\n"
+    );
+    ok(root.path(), &["check"]);
+}
+
+#[test]
+fn rename_on_both_sides_to_different_names_conflicts_on_refresh_until_both_are_chosen() {
+    let root = fixture(&[("old.txt", b"same\n")]);
+    let created = ok(
+        root.path(),
+        &["workspace", "create", "work", "--world", "1"],
+    );
+    let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    capture(
+        root.path(),
+        "source",
+        &[
+            ("old.txt", Edit::Remove),
+            ("theirs.txt", Edit::Text(b"same\n")),
+        ],
+        "s",
+    );
+    let stacked = ok(
+        root.path(),
+        &[
+            "layer",
+            "stack",
+            "work",
+            "--revision",
+            "0",
+            "--source",
+            &head(root.path(), "source").0,
+            "--operation",
+            "stack-work",
+        ],
+    );
+    assert_eq!(stacked["update"]["outcome"], "applied");
+    // The directory renames the same file to another name.
+    fs::remove_file(dir.join("old.txt")).unwrap();
+    fs::write(dir.join("ours.txt"), b"same\n").unwrap();
+
+    let refused = value(
+        invoke(root.path(), &["workspace", "refresh", "work", "--json"]),
+        1,
+    );
+    assert_eq!(refused["error"]["code"], "refresh_conflict");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("ours.txt") && message.contains("theirs.txt"),
+        "{message}"
+    );
+    assert!(!dir.join("theirs.txt").exists());
+
+    let resolutions = TempDir::new().unwrap();
+    let both = write_resolutions(
+        resolutions.path(),
+        "both.json",
+        json!({"ours.txt": "ours", "theirs.txt": "theirs"}),
+    );
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            both.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(fs::read(dir.join("ours.txt")).unwrap(), b"same\n");
+    assert_eq!(fs::read(dir.join("theirs.txt")).unwrap(), b"same\n");
+    assert!(!dir.join("old.txt").exists());
+}
+
+/// World 1 holds `keep.txt`. The Layer `work` is stacked with a head file `dir`, and its
+/// directory then gains `dir/inner.txt`, which the head's file blocks.
+fn file_over_directory_fixture() -> (TempDir, PathBuf, TempDir) {
+    let root = fixture(&[("keep.txt", b"keep\n")]);
+    let created = ok(
+        root.path(),
+        &["workspace", "create", "work", "--world", "1"],
+    );
+    let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    capture(
+        root.path(),
+        "source",
+        &[("dir", Edit::Text(b"file\n"))],
+        "s",
+    );
+    let stacked = ok(
+        root.path(),
+        &[
+            "layer",
+            "stack",
+            "work",
+            "--revision",
+            "0",
+            "--source",
+            &head(root.path(), "source").0,
+            "--operation",
+            "stack-work",
+        ],
+    );
+    assert_eq!(stacked["update"]["outcome"], "applied");
+    fs::create_dir(dir.join("dir")).unwrap();
+    fs::write(dir.join("dir/inner.txt"), b"inner\n").unwrap();
+    (root, dir, TempDir::new().unwrap())
+}
+
+#[test]
+fn head_file_over_a_local_directory_resolves_by_taking_the_head_or_keeping_the_directory() {
+    let (root, dir, resolutions) = file_over_directory_fixture();
+    let refused = value(
+        invoke(root.path(), &["workspace", "refresh", "work", "--json"]),
+        1,
+    );
+    assert_eq!(refused["error"]["code"], "refresh_conflict");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(message.contains("dir"), "{message}");
+    assert!(dir.join("dir").is_dir());
+
+    // Taking the head removes the local entry under `dir` first, so the file can take its place.
+    let theirs = write_resolutions(
+        resolutions.path(),
+        "theirs.json",
+        json!({"dir/inner.txt": "theirs", "dir": "theirs"}),
+    );
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            theirs.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(fs::read(dir.join("dir")).unwrap(), b"file\n");
+    ok(root.path(), &["check"]);
+}
+
+#[test]
+fn keeping_the_local_directory_cancels_the_head_file_write() {
+    let (root, dir, resolutions) = file_over_directory_fixture();
+    // Choosing the local entry alone leaves the head's file blocked by the directory.
+    let only_inner = write_resolutions(
+        resolutions.path(),
+        "inner.json",
+        json!({"dir/inner.txt": "ours"}),
+    );
+    let blocked = value(
+        invoke(
+            root.path(),
+            &[
+                "workspace",
+                "refresh",
+                "work",
+                "--resolutions",
+                only_inner.to_str().unwrap(),
+                "--json",
+            ],
+        ),
+        1,
+    );
+    assert_eq!(blocked["error"]["code"], "refresh_conflict");
+    assert!(
+        blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("dir")
+    );
+
+    let keep = write_resolutions(
+        resolutions.path(),
+        "keep.json",
+        json!({"dir/inner.txt": "ours", "dir": "ours"}),
+    );
+    ok(
+        root.path(),
+        &[
+            "workspace",
+            "refresh",
+            "work",
+            "--resolutions",
+            keep.to_str().unwrap(),
+        ],
+    );
+    assert!(dir.join("dir").is_dir());
+    assert!(dir.join("dir/inner.txt").exists());
 }

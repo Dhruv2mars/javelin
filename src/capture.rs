@@ -32,7 +32,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -846,7 +846,9 @@ impl Repository {
         let mut cache = StatCache::load(&cache_path);
         let rebuilt = cache.rebuilt();
         let manifest = self.checkpoint_manifest(checkpoint.id())?;
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let scan = scan_source(
             root,
             &mut cache,

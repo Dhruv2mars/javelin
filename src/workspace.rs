@@ -224,6 +224,7 @@ impl Repository {
                 self.apply(&staging, &before, changes)?
             };
             clone::barrier(&staging)?;
+            crate::repository::failpoint("workspace_open_before_rename");
             fs::rename(&staging, &root)?;
             sync_dir(&store.layers())?;
             self.write_sync(layer, head.checkpoint())?;
@@ -254,14 +255,26 @@ impl Repository {
         let store = Store::lock(self)?;
         let receipt = self.publish_layer(operation, expected, attribution, guard)?;
         if matches!(receipt.outcome, PublishOutcome::Published { .. }) {
-            let layer = expected.layer();
-            let root = store.layers().join(layer.as_str());
-            if root.try_exists()? {
-                store.trash(&root, &format!("layer~{}", layer.as_str()))?;
+            #[cfg(test)]
+            if let Some(hook) =
+                crate::repository::BEFORE_RECLAIM.with(|hook| hook.borrow_mut().take())
+            {
+                hook();
             }
-            store.recover(self, Some(RECLAIM_BUDGET))?;
+            // The World advanced and is durable. A failed reclaim must not report it as failed,
+            // since a retry would then look like a second Publish; a replay finishes the reclaim.
+            let _ = self.reclaim_published(&store, expected.layer());
         }
         Ok(receipt)
+    }
+
+    fn reclaim_published(&self, store: &Store, layer: &LayerId) -> Result<()> {
+        let root = store.layers().join(layer.as_str());
+        if root.try_exists()? {
+            store.trash(&root, &format!("layer~{}", layer.as_str()))?;
+        }
+        store.recover(self, Some(RECLAIM_BUDGET))?;
+        Ok(())
     }
 
     /// Records the terminal discard, then renames the directory into trash for later
@@ -278,6 +291,7 @@ impl Repository {
         if matches!(self.layer_state(layer)?, LayerState::Discarded { .. }) {
             let root = store.layers().join(layer.as_str());
             if root.try_exists()? {
+                crate::repository::failpoint("workspace_discard_before_trash");
                 store.trash(&root, &format!("layer~{}", layer.as_str()))?;
                 trashed = true;
             }
@@ -913,6 +927,42 @@ fn nonce() -> String {
 #[cfg(test)]
 mod tests {
     use super::windows_unrepresentable as bad;
+    use crate::{LayerId, PublishAttribution, PublishOutcome, Repository, VersionNumber};
+    use rusqlite::Connection;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HELD: RefCell<Option<Connection>> = const { RefCell::new(None) };
+    }
+
+    /// A Publish committed while another process holds the database lock still reports
+    /// success, and a replay finishes the reclaim it skipped.
+    #[test]
+    fn a_publish_committed_under_lock_contention_is_not_reported_busy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut repo = Repository::init(dir.path()).unwrap();
+        let layer = LayerId::parse("agent").unwrap();
+        let base = repo.layer_base(VersionNumber::new(0).unwrap()).unwrap();
+        let head = repo.create_layer(&layer, &base).unwrap();
+        let db = dir.path().join(".javelin/repository.sqlite3");
+        let hold: Box<dyn FnOnce()> = Box::new(move || {
+            let conn = Connection::open(db).unwrap();
+            conn.execute_batch("BEGIN EXCLUSIVE").unwrap();
+            HELD.with(|held| *held.borrow_mut() = Some(conn));
+        });
+        crate::repository::BEFORE_RECLAIM.with(|slot| *slot.borrow_mut() = Some(hold));
+        let op = crate::OperationId::parse("publish-contended").unwrap();
+        let receipt = repo
+            .publish_workspace(&op, &head, &PublishAttribution::Human, |_, _| Ok(()))
+            .unwrap();
+        assert!(matches!(receipt.outcome, PublishOutcome::Published { .. }));
+        drop(HELD.with(|held| held.take()));
+        let replay = repo
+            .publish_workspace(&op, &head, &PublishAttribution::Human, |_, _| Ok(()))
+            .unwrap();
+        assert_eq!(replay, receipt);
+        repo.check().unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

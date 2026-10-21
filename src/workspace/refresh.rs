@@ -23,8 +23,8 @@ use serde::Serialize;
 
 use super::{Store, WorkspaceRecovery, clone, native, remove_entry, representable, sync_dir};
 use crate::{
-    CheckpointId, Choice, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, RepoPath,
-    Repository, Result, SparseChanges,
+    CheckpointId, Choice, Error, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
+    RepoPath, Repository, Result, SparseChanges,
     capture::{Capture, Source, StatCache, changes_from, entry_at, scan, store_blob, write_atomic},
 };
 
@@ -57,8 +57,9 @@ struct Plan {
 }
 
 impl Repository {
-    /// Paths among `paths` that alias an earlier one on this volume, for Stack, which has no
-    /// workspace to probe. Paths must be sorted, so the first of an alias pair is kept.
+    /// Paths among `paths` that alias another one on this volume, for Stack, which has no
+    /// workspace to probe. Both members of an alias pair are returned, so the owner may
+    /// choose either spelling.
     pub fn aliased_paths(&self, paths: &[RepoPath]) -> Result<Vec<RepoPath>> {
         let store = Store::lock(self)?;
         Ok(probe_volume(&store, paths)?.into_iter().cloned().collect())
@@ -230,6 +231,20 @@ impl Repository {
                 plan.conflicts.insert(path.as_str().to_owned());
             }
         }
+        // A path both the local edits and the head renamed, to different destinations, is a
+        // rename conflict. Both destinations need the owner's choice, and the head's write
+        // to its destination waits for that choice.
+        let local_manifest = Manifest::new(scanned.entries.clone())?;
+        let (local_renames, head_renames) =
+            (base.renames_to(&local_manifest), base.renames_to(&target));
+        for (from, to) in &local_renames {
+            if let Some(other) = head_renames.get(from).filter(|other| *other != to) {
+                plan.conflicts.insert(to.as_str().to_owned());
+                plan.conflicts.insert(other.as_str().to_owned());
+            }
+        }
+        plan.apply
+            .retain(|(path, _)| !plan.conflicts.contains(path.as_str()));
         // Structural conflicts depend on what the head applies, so they are found again
         // after the choices change the apply list.
         let structural = |apply: &[(RepoPath, Option<FileEntry>)]| -> Result<BTreeSet<String>> {
@@ -253,6 +268,9 @@ impl Repository {
         }
         for (path, choice) in choices {
             plan.conflicts.remove(path.as_str());
+            // The choice replaces any head write the plan already made for the path, so the
+            // path gets exactly one change.
+            plan.apply.retain(|(applied, _)| applied != path);
             let change = match choice {
                 // The directory keeps its own entry, so nothing is written for the path.
                 Choice::Ours => continue,
@@ -414,9 +432,22 @@ fn aliased(store: &Store, apply: &[(RepoPath, Option<FileEntry>)]) -> Result<Vec
         .collect())
 }
 
-/// Paths in `paths` (in order) that name an entry an earlier path already made on this
-/// volume. The probe runs in the store's scratch area, which is removed afterwards.
+/// Paths in `paths` that name an entry another path already made on this volume, in sorted
+/// order. Both members of each alias pair are returned: probing forward flags the later
+/// spelling, and probing in reverse flags the earlier one. Each probe runs in its own scratch
+/// area in the store, which is removed afterwards.
 pub(crate) fn probe_volume<'a>(
+    store: &Store,
+    paths: impl IntoIterator<Item = &'a RepoPath>,
+) -> Result<Vec<&'a RepoPath>> {
+    let paths: Vec<&RepoPath> = paths.into_iter().collect();
+    let mut found = BTreeSet::new();
+    found.extend(probe_once(store, paths.iter().copied())?);
+    found.extend(probe_once(store, paths.iter().rev().copied())?);
+    Ok(found.into_iter().collect())
+}
+
+fn probe_once<'a>(
     store: &Store,
     paths: impl IntoIterator<Item = &'a RepoPath>,
 ) -> Result<Vec<&'a RepoPath>> {
@@ -530,6 +561,34 @@ fn freed(path: &str, gone: &BTreeSet<&str>) -> bool {
     false
 }
 
+/// Whether some path in `gone` lies under `dir`.
+fn removed_under(gone: &BTreeSet<&str>, dir: &str) -> bool {
+    gone.range(dir..)
+        .take_while(|path| path.starts_with(dir))
+        .any(|path| path.len() > dir.len() && path.as_bytes()[dir.len()] == b'/')
+}
+
+/// Whether the removals leave the directory `dir` with nothing in it: every entry under it is
+/// removed, or is a directory that the removals empty in turn.
+fn emptied(root: &Path, dir: &str, gone: &BTreeSet<&str>) -> Result<bool> {
+    for entry in fs::read_dir(native(root, dir))? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            return Ok(false);
+        };
+        let path = format!("{dir}/{name}");
+        let gone_entry = if entry.file_type()?.is_dir() {
+            removed_under(gone, &path) && emptied(root, &path, gone)?
+        } else {
+            gone.contains(path.as_str())
+        };
+        if !gone_entry {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Paths a file or directory on disk already blocks: a non-directory where the head needs
 /// a parent, or a directory where it needs a file. Symlinked parents also count, because
 /// writes never go through links. A path under a file or symlink the head deletes is free.
@@ -555,9 +614,16 @@ fn blocked(
             dir = parent;
         }
         // Reaching the path through a file fails with NotADirectory; the ancestor is already
-        // reported above, so the path itself counts as free.
+        // reported above, so the path itself counts as free. A directory the removals empty
+        // is free too: the removals delete it before the file is written.
         match fs::symlink_metadata(native(root, path.as_str())) {
-            Ok(meta) if meta.is_dir() => blocked.push(path.as_str().to_owned()),
+            Ok(meta)
+                if meta.is_dir()
+                    && !(removed_under(gone, path.as_str())
+                        && emptied(root, path.as_str(), gone)?) =>
+            {
+                blocked.push(path.as_str().to_owned())
+            }
             Ok(_) => {}
             Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
             Err(e) => return Err(e.into()),

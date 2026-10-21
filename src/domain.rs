@@ -274,22 +274,27 @@ pub struct Manifest(BTreeMap<RepoPath, FileEntry>);
 
 impl Manifest {
     /// Exact-entry renames from `self` to `later`: a path `later` removes whose entry `later`
-    /// adds at exactly one other path. Content is never compared by similarity, so an edited
-    /// rename is reported as a delete and an add. Ambiguous matches are not reported.
+    /// adds at exactly one other path, and which is the only path `self` removes with that
+    /// entry. Content is never compared by similarity, so an edited rename is reported as a
+    /// delete and an add. Ambiguous matches on either side are not reported.
     pub fn renames_to(&self, later: &Manifest) -> BTreeMap<RepoPath, RepoPath> {
+        let mut removed = BTreeMap::<&FileEntry, Vec<&RepoPath>>::new();
         let mut added = BTreeMap::<&FileEntry, Vec<&RepoPath>>::new();
+        for (path, entry) in &self.0 {
+            if !later.0.contains_key(path) {
+                removed.entry(entry).or_default().push(path);
+            }
+        }
         for (path, entry) in &later.0 {
             if !self.0.contains_key(path) {
                 added.entry(entry).or_default().push(path);
             }
         }
         let mut renames = BTreeMap::new();
-        for (path, entry) in &self.0 {
-            if later.0.contains_key(path) {
-                continue;
-            }
-            if let Some([to]) = added.get(entry).map(Vec::as_slice) {
-                renames.insert(path.clone(), (*to).clone());
+        for (entry, origins) in &removed {
+            if let ([from], Some([to])) = (origins.as_slice(), added.get(entry).map(Vec::as_slice))
+            {
+                renames.insert((*from).clone(), (*to).clone());
             }
         }
         renames
@@ -543,4 +548,40 @@ pub(crate) fn collisions(
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(bytes: &[u8]) -> FileEntry {
+        FileEntry::Regular {
+            content: ObjectId::for_blob(bytes),
+            executable: false,
+        }
+    }
+
+    fn manifest(entries: &[(&str, &[u8])]) -> Manifest {
+        Manifest::new(
+            entries
+                .iter()
+                .map(|(p, bytes)| (RepoPath::parse(p).unwrap(), entry(bytes))),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn renames_need_one_origin_and_one_destination_for_the_entry() {
+        let base = manifest(&[("a", b"x"), ("b", b"x"), ("c", b"y")]);
+        let later = manifest(&[("d", b"x"), ("c", b"y")]);
+        // Two deleted paths hold the same entry, so neither is a rename of `d`.
+        assert!(base.renames_to(&later).is_empty());
+
+        let base = manifest(&[("a", b"x"), ("c", b"y")]);
+        let renamed = base.renames_to(&manifest(&[("d", b"x"), ("c", b"y")]));
+        assert_eq!(
+            renamed.get(&RepoPath::parse("a").unwrap()),
+            Some(&RepoPath::parse("d").unwrap())
+        );
+    }
 }

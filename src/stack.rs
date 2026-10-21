@@ -185,6 +185,13 @@ pub(crate) fn check_stacks(conn: &Connection) -> Result<()> {
     {
         return Err(Error::CorruptRepository("orphan Stack attempt".into()));
     }
+    let mut bindings = conn.prepare("SELECT binding FROM stacks")?;
+    for binding in bindings.query_map([], |r| r.get::<_, String>(0))? {
+        let bytes = read_object(conn, decode_id(&binding?)?, ObjectKind::Blob)?;
+        if let Some(resolution) = stored_binding(&bytes)?.resolution {
+            read_object(conn, resolution, ObjectKind::Blob)?;
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +279,9 @@ pub(crate) fn verify_binding(
         return Err(Error::CorruptRepository(
             "Stack input binding disagrees".into(),
         ));
+    }
+    if let Some(resolution) = resolution {
+        read_object(conn, resolution, ObjectKind::Blob)?;
     }
     Ok(())
 }

@@ -138,7 +138,7 @@ workflow may invoke or interpret Git.
 - [x] Adopt existing non-Git project files through a Layer without accepting edits outside it. (PR #61)
 - [x] Implement Stack, refresh, structural conflicts, and explicit resolution.
 - [x] Bind supplied agent traces to immutable work, with missing-trace override.
-- [ ] Prove process concurrency, crash recovery, retries, and corruption detection.
+- [x] Prove process concurrency, crash recovery, retries, and corruption detection.
 - [ ] Build a real sample application using external agents and Javelin exclusively.
 - [ ] Verify the complete workflow on each supported operating system.
 - [x] Run native formatting, lint, test, and release-build checks on development
@@ -321,7 +321,7 @@ reclaim; Stack-head refresh and Publish; robustness proofs):
   (#66).
 - [x] Refresh a clone-backed directory from a Stack-produced head, then Publish from it.
 - [x] Reclaim a published Layer's directory (#66).
-- [ ] Process concurrency, crash recovery, retries and corruption proofs.
+- [x] Process concurrency, crash recovery, retries and corruption proofs.
 
 Wave 3, after wave 2:
 - [x] Stack, refresh, structural conflicts and explicit resolution end to end.

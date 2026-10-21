@@ -539,11 +539,12 @@ fn refresh_refuses_head_names_that_alias_each_other_on_this_volume() {
             continue;
         }
         let error = repo.refresh_workspace(&id("work")).unwrap_err();
-        // The later of the two in path order is refused; the earlier one already claims the entry.
+        // Both spellings are refused, so the owner may keep either one.
         match error {
             Error::RefreshConflict(paths) => {
-                assert_eq!(paths.len(), 1, "{paths:?}");
-                assert!([first, second].contains(&paths[0].as_str()), "{paths:?}");
+                assert_eq!(paths.len(), 2, "{paths:?}");
+                assert!(paths.iter().any(|p| p == first), "{paths:?}");
+                assert!(paths.iter().any(|p| p == second), "{paths:?}");
             }
             other => panic!("{other:?}"),
         }
