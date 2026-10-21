@@ -11,9 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 javelin = { path = "../.." }
+javelin-protocol = { path = "../javelin-protocol" }
 javelin-stack = { path = "../javelin-stack" }
 serde_json = "1.0.154"
 
 [dev-dependencies]
+javelin-node = { path = "../javelin-node" }
 rusqlite = "0.40.2"
 tempfile = "3.27.0"

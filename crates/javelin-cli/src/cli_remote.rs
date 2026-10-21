@@ -1,0 +1,411 @@
+//! `javelin attach`: fetches a hosted repository's head into the local store over the
+//! node's HTTP transport, one protocol frame per request, then records the attachment.
+//! `javelin_protocol::fetch` runs unchanged on top of `Link`. See `docs/online-design.md`
+//! section 4.1 (U4).
+
+use std::{
+    cell::RefCell,
+    ffi::OsString,
+    io::{self, Cursor, Read, Write},
+    net::{TcpStream, ToSocketAddrs},
+    path::PathBuf,
+    time::Duration,
+};
+
+use javelin::{
+    Attachment, Error, ObjectId, RemoteHead, Repository, Result, VersionNumber, tree::MemoryStore,
+};
+use javelin_protocol::{
+    Message, ProtocolError,
+    codec::{VERSION, decode, encode, read_frame, write_frame},
+    fetch::{Blobs, fetch},
+};
+use serde_json::json;
+
+use crate::CliError;
+use crate::cli::Output;
+
+const PROVIDER: &str = "self-hosted";
+const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A failure with a stable code, reported as the error code in output.
+#[derive(Clone, Debug)]
+pub struct RemoteError {
+    pub code: String,
+    pub detail: String,
+}
+
+impl RemoteError {
+    fn new(code: &str, detail: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            detail: detail.into(),
+        }
+    }
+}
+
+impl From<ProtocolError> for RemoteError {
+    fn from(error: ProtocolError) -> Self {
+        Self {
+            code: error.code,
+            detail: error.detail,
+        }
+    }
+}
+
+struct Target {
+    /// `http://HOST:PORT`, as stored in `attach.json`.
+    node: String,
+    /// `HOST:PORT`, for connecting.
+    authority: String,
+    repository: String,
+}
+
+fn parse_target(text: &str) -> Result<Target> {
+    let usage = "attach takes an http:// node URL ending in /REPOSITORY";
+    let rest = text
+        .strip_prefix("http://")
+        .ok_or_else(|| Error::InvalidInput(usage.into()))?;
+    let (authority, repository) = rest
+        .split_once('/')
+        .ok_or_else(|| Error::InvalidInput(usage.into()))?;
+    let valid_name = !repository.is_empty()
+        && repository
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+    if authority.is_empty() || !valid_name {
+        return Err(Error::InvalidInput(usage.into()));
+    }
+    Ok(Target {
+        node: format!("http://{authority}"),
+        authority: authority.into(),
+        repository: repository.into(),
+    })
+}
+
+/// The transport state shared by both halves of one protocol session.
+struct Link {
+    target: Target,
+    /// The frame the protocol is writing. It is sent when its reply is first read.
+    outbound: Vec<u8>,
+    inbox: Cursor<Vec<u8>>,
+    /// The transport failure behind a protocol error, if any.
+    failure: Option<RemoteError>,
+}
+
+impl Link {
+    fn new(target: Target) -> RefCell<Self> {
+        RefCell::new(Self {
+            target,
+            outbound: Vec::new(),
+            inbox: Cursor::new(Vec::new()),
+            failure: None,
+        })
+    }
+
+    /// Sends one frame and returns the reply, framed the same way. The node frames each
+    /// request by `Content-Length`, so the frame's own length prefix is dropped.
+    fn post(&mut self, frame: &[u8]) -> io::Result<Vec<u8>> {
+        let invalid = || io::Error::new(io::ErrorKind::InvalidData, "malformed outbound frame");
+        let (prefix, body) = frame.split_first_chunk::<4>().ok_or_else(invalid)?;
+        if u32::from_be_bytes(*prefix) as usize != body.len() {
+            return Err(invalid());
+        }
+        // Each POST is a session of one message, so there is nothing to negotiate with the
+        // node. The `/v2` path already names the version: answer `Hello` here.
+        if let Ok(Message::Hello { min, max }) = decode(body) {
+            let answer = if (min..=max).contains(&VERSION) {
+                Message::HelloOk { version: VERSION }
+            } else {
+                Message::Error {
+                    code: "unsupported_version".into(),
+                    detail: format!("supported versions: {VERSION}..={VERSION}"),
+                }
+            };
+            return Ok(framed(
+                &encode(&answer).map_err(|e| io::Error::other(e.detail))?,
+            ));
+        }
+        match self.round_trip(body) {
+            Ok(reply) => Ok(framed(&reply)),
+            Err(error) => {
+                let detail = error.detail.clone();
+                self.failure.get_or_insert(error);
+                Err(io::Error::other(detail))
+            }
+        }
+    }
+
+    fn round_trip(&self, body: &[u8]) -> std::result::Result<Vec<u8>, RemoteError> {
+        let unavailable = |e: io::Error| RemoteError::new("node_unavailable", e.to_string());
+        let address = self
+            .target
+            .authority
+            .to_socket_addrs()
+            .map_err(unavailable)?
+            .next()
+            .ok_or_else(|| RemoteError::new("node_unavailable", "no address for the node"))?;
+        let mut stream = TcpStream::connect_timeout(&address, TIMEOUT).map_err(unavailable)?;
+        stream
+            .set_read_timeout(Some(TIMEOUT))
+            .map_err(unavailable)?;
+        stream
+            .set_write_timeout(Some(TIMEOUT))
+            .map_err(unavailable)?;
+        let head = format!(
+            "POST /v2/r/{} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            self.target.repository,
+            self.target.authority,
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).map_err(unavailable)?;
+        stream.write_all(body).map_err(unavailable)?;
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).map_err(unavailable)?;
+        let split = reply
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or_else(|| RemoteError::new("node_unavailable", "malformed HTTP reply"))?;
+        let status = std::str::from_utf8(&reply[..split])
+            .ok()
+            .and_then(|head| head.split(' ').nth(1)?.parse::<u16>().ok());
+        match status {
+            Some(200) => Ok(reply[split + 4..].to_vec()),
+            Some(404) => Err(RemoteError::new(
+                "unknown_repository",
+                format!(
+                    "{} has no repository {}",
+                    self.target.node, self.target.repository
+                ),
+            )),
+            other => Err(RemoteError::new(
+                "node_error",
+                format!("the node answered HTTP {other:?}"),
+            )),
+        }
+    }
+}
+
+/// A message body with its length prefix, as `read_frame` expects it.
+fn framed(body: &[u8]) -> Vec<u8> {
+    let mut framed = (body.len() as u32).to_be_bytes().to_vec();
+    framed.extend_from_slice(body);
+    framed
+}
+
+/// The write half of a protocol session.
+struct Up<'a>(&'a RefCell<Link>);
+
+impl Write for Up<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.borrow_mut().outbound.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The read half of a protocol session. A read with no reply left sends the buffered
+/// frame first, so a reply is never read before its request has gone out.
+struct Down<'a>(&'a RefCell<Link>);
+
+impl Read for Down<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut link = self.0.borrow_mut();
+        if link.inbox.position() as usize >= link.inbox.get_ref().len() {
+            if link.outbound.is_empty() {
+                return Ok(0);
+            }
+            let frame = std::mem::take(&mut link.outbound);
+            link.inbox = Cursor::new(link.post(&frame)?);
+        }
+        link.inbox.read(buf)
+    }
+}
+
+/// The transport's own failure, when there was one, is more specific than the protocol
+/// error it caused.
+fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
+    link.borrow()
+        .failure
+        .clone()
+        .unwrap_or_else(|| error.into())
+}
+
+/// One request and its reply. A node's `Error` reply becomes the returned error.
+fn call(link: &RefCell<Link>, message: &Message) -> std::result::Result<Message, RemoteError> {
+    write_frame(&mut Up(link), message).map_err(|e| remote(link, e))?;
+    match read_frame(&mut Down(link)) {
+        Ok(Some(Message::Error { code, detail })) => Err(RemoteError { code, detail }),
+        Ok(Some(reply)) => Ok(reply),
+        Ok(None) => Err(RemoteError::new(
+            "truncated",
+            "the node closed without replying",
+        )),
+        Err(e) => Err(remote(link, e)),
+    }
+}
+
+fn unexpected() -> RemoteError {
+    RemoteError::new("unexpected_message", "unexpected reply from the node")
+}
+
+/// The node's current head, from `Hello` and `Resolve`. Writes nothing locally.
+fn resolve(link: &RefCell<Link>) -> std::result::Result<RemoteHead, RemoteError> {
+    match call(
+        link,
+        &Message::Hello {
+            min: VERSION,
+            max: VERSION,
+        },
+    )? {
+        Message::HelloOk { version } if version == VERSION => {}
+        _ => return Err(unexpected()),
+    }
+    match call(link, &Message::Resolve { version: None })? {
+        Message::Resolved { number, id, tree } => Ok(RemoteHead {
+            number: number.get(),
+            id,
+            tree,
+        }),
+        _ => Err(unexpected()),
+    }
+}
+
+/// Blobs go straight into the local store, which keys them by content.
+struct RepoBlobs<'a>(&'a mut Repository);
+
+impl Blobs for RepoBlobs<'_> {
+    fn has(&self, id: ObjectId) -> bool {
+        self.0.has_blob(id).unwrap_or(false)
+    }
+    fn put(&mut self, id: ObjectId, bytes: Vec<u8>) -> std::result::Result<(), ProtocolError> {
+        let stored = self.0.put_blob(&bytes)?;
+        if stored != id {
+            return Err(ProtocolError::new(
+                "id_mismatch",
+                format!("blob {id} has ID {stored}"),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// `javelin attach http://HOST:PORT/REPOSITORY [project-directory]`
+pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
+    let usage = "expected: javelin attach http://HOST:PORT/REPOSITORY [project-directory] [--json]";
+    let mut args = args.into_iter();
+    let url = args
+        .next()
+        .ok_or_else(|| Error::InvalidInput(usage.into()))?;
+    let root = match args.next() {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir().map_err(Error::from)?,
+    };
+    if args.next().is_some() {
+        return Err(Error::InvalidInput(usage.into()).into());
+    }
+    let url = url
+        .to_str()
+        .ok_or_else(|| Error::InvalidInput("the node URL must be UTF-8".into()))?;
+    let target = parse_target(url)?;
+    let node = target.node.clone();
+    let repository_name = target.repository.clone();
+
+    // Nothing local is written until the node has answered.
+    let link = Link::new(target);
+    let head = resolve(&link).map_err(CliError::Remote)?;
+
+    let opened = match Repository::open(&root) {
+        Ok(repo) => Some(repo),
+        Err(Error::NotInitialized(_)) => None,
+        Err(error) => return Err(error.into()),
+    };
+    if let Some(attached) = opened
+        .as_ref()
+        .map(|repo| repo.attachment())
+        .transpose()?
+        .flatten()
+    {
+        if attached.node != node || attached.repository != repository_name {
+            return Err(Error::InvalidInput(format!(
+                "this repository is attached to {} {}",
+                attached.node, attached.repository
+            ))
+            .into());
+        }
+        return Ok(already_attached(&attached, &head));
+    }
+    let mut repo = match opened {
+        Some(repo) => repo,
+        None => Repository::init(&root)?,
+    };
+    let local = repo.head()?;
+    if local.number.get() != 0 && local.tree != head.tree {
+        return Err(Error::InvalidInput(
+            "this repository already has World history; attach needs an empty repository at World 0"
+                .into(),
+        )
+        .into());
+    }
+
+    // Pinned to the number resolved above: World versions are immutable, so the fetch
+    // reads exactly the head this attach reports.
+    let trees = MemoryStore::default();
+    let fetched = {
+        let mut blobs = RepoBlobs(&mut repo);
+        let version = Some(VersionNumber::new(head.number)?);
+        fetch(Down(&link), Up(&link), &trees, &mut blobs, version, None)
+            .map_err(|e| CliError::Remote(remote(&link, e)))?
+    };
+    let fetched_head = RemoteHead {
+        number: fetched.number.get(),
+        id: fetched.id,
+        tree: fetched.tree,
+    };
+    repo.import_tree(&trees, fetched.tree)?;
+    let base = repo.attach_head(&fetched_head)?;
+    let attachment = Attachment {
+        node: node.clone(),
+        repository: repository_name.clone(),
+        provider: PROVIDER.into(),
+        head: fetched_head.clone(),
+    };
+    repo.write_attachment(&attachment)?;
+
+    let local = repo.head()?;
+    let value = json!({
+        "ok": true,
+        "command": "attach",
+        "attached": true,
+        "node": node,
+        "repository": repository_name,
+        "head": fetched_head,
+        "local_head": local,
+        "base": base,
+    });
+    let text = format!(
+        "Attached {repository_name} at {node}: remote World {} (tree {}). Rolling base holds {} paths.",
+        fetched_head.number, fetched_head.tree, base.changed_paths
+    );
+    Ok((value, text, 0))
+}
+
+fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
+    let value = json!({
+        "ok": true,
+        "command": "attach",
+        "attached": false,
+        "already_attached": true,
+        "node": attached.node,
+        "repository": attached.repository,
+        "attached_head": attached.head,
+        "remote_head": head,
+    });
+    let text = format!(
+        "Already attached to {} at {}: attached at World {}, remote head is World {}. Nothing changed.",
+        attached.repository, attached.node, attached.head.number, head.number
+    );
+    (value, text, 0)
+}

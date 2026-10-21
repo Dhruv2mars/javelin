@@ -4,6 +4,7 @@ use javelin::{Error, Repository, Result, VersionNumber};
 use serde_json::{Value, json};
 
 mod cli;
+mod cli_remote;
 
 const HELP: &str = cli::HELP;
 
@@ -51,6 +52,7 @@ fn main() -> ExitCode {
 enum CliError {
     Native(Error),
     Stack(javelin_stack::StackError),
+    Remote(cli_remote::RemoteError),
 }
 
 impl From<Error> for CliError {
@@ -71,6 +73,7 @@ impl CliError {
         match self {
             Self::Native(error) => error.code(),
             Self::Stack(_) => "stack_merge_error",
+            Self::Remote(error) => &error.code,
         }
     }
 }
@@ -79,6 +82,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Native(error) => error.fmt(f),
             Self::Stack(error) => error.fmt(f),
+            Self::Remote(error) => write!(f, "{}", error.detail),
         }
     }
 }
@@ -90,6 +94,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     }
     if args.first().is_some_and(|a| a == "blame") {
         return cli::blame(args.into_iter().skip(1).collect()).map_err(Into::into);
+    }
+    if args.first().is_some_and(|a| a == "attach") {
+        return cli_remote::attach(args.into_iter().skip(1).collect());
     }
     if args.first().is_some_and(|a| a == "adopt") {
         return cli::adopt(args.into_iter().skip(1).collect()).map_err(Into::into);
