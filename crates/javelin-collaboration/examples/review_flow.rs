@@ -32,11 +32,12 @@ fn proposal(repo: &mut Repository, n: u32, text: &str) -> Res<RevisionRef> {
         return Err("capture was not applied".into());
     };
     let checkpoint = repo.read_checkpoint(head.checkpoint())?;
-    let manifest = repo.put_manifest(&repo.checkpoint_manifest(checkpoint.id())?)?;
+    let tree = repo.put_snapshot(&repo.checkpoint_manifest(checkpoint.id())?)?;
     let context = repo.put_blob(format!("supplied context {n}").as_bytes())?;
     Ok(RevisionRef::new(
         checkpoint.base().version(),
-        manifest,
+        checkpoint.id().object(),
+        tree,
         Some(context),
     ))
 }
@@ -125,11 +126,11 @@ fn main() -> Res<()> {
             Err(refusal) => println!("{} refused {}", step.operation, refusal.code()),
         }
     }
-    for exact in [v1, v2] {
-        let result = check_publishable(&review, &exact, &perms, &p("mona")?);
+    for (index, exact) in [(1, v1), (2, v2)] {
+        let result = check_publishable(&review, index, &exact, &perms, &p("mona")?);
         println!(
-            "publishable revision manifest={} -> {:?}",
-            exact.manifest(),
+            "publishable revision {index} tree={} -> {:?}",
+            exact.tree(),
             result.map(|ok| ok.index).map_err(|r| r.code())
         );
     }

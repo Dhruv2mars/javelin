@@ -9,29 +9,41 @@ use std::{collections::BTreeMap, fmt};
 
 pub use javelin::{ObjectId, OperationId, VersionNumber};
 
-/// Exact proposal: native base version, native manifest, and an optional opaque
-/// context object. The context is an unvalidated reference; no trace kind,
-/// storage, or confidentiality is implied.
+/// Exact proposal: the native base version, the checkpoint that carries the
+/// changeset, the tree root that checkpoint composes to, and an optional opaque
+/// context object. The identity of a revision is its tree root (`G§2`). The
+/// context is an unvalidated reference; no trace kind, storage, or
+/// confidentiality is implied.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RevisionRef {
     base: VersionNumber,
-    manifest: ObjectId,
+    checkpoint: ObjectId,
+    tree: ObjectId,
     context: Option<ObjectId>,
 }
 
 impl RevisionRef {
-    pub fn new(base: VersionNumber, manifest: ObjectId, context: Option<ObjectId>) -> Self {
+    pub fn new(
+        base: VersionNumber,
+        checkpoint: ObjectId,
+        tree: ObjectId,
+        context: Option<ObjectId>,
+    ) -> Self {
         Self {
             base,
-            manifest,
+            checkpoint,
+            tree,
             context,
         }
     }
     pub fn base(&self) -> VersionNumber {
         self.base
     }
-    pub fn manifest(&self) -> ObjectId {
-        self.manifest
+    pub fn checkpoint(&self) -> ObjectId {
+        self.checkpoint
+    }
+    pub fn tree(&self) -> ObjectId {
+        self.tree
     }
     pub fn context(&self) -> Option<ObjectId> {
         self.context
@@ -171,6 +183,8 @@ pub struct Command {
 }
 
 /// Revision indexes start at 1. `expected` is the index the author last observed.
+/// `index` on `Approve` and `Publish` pins the revision the actor saw, so a stale
+/// view is refused rather than applied to a newer revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     Open {
@@ -184,10 +198,17 @@ pub enum Action {
         index: u32,
         revision: RevisionRef,
     },
+    /// `None` comments on the request; `Some(n)` comments on revision `n`.
     Comment {
-        index: u32,
+        index: Option<u32>,
         body: CommentBody,
     },
+    Publish {
+        index: u32,
+        revision: RevisionRef,
+    },
+    /// Only the author or a Maintain role holder may close an open request.
+    Close,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -268,8 +289,18 @@ pub struct Revision {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Comment {
     pub author: PrincipalId,
-    pub index: u32,
+    /// `None` for a request-level comment.
+    pub index: Option<u32>,
     pub body: CommentBody,
+}
+
+/// Lifecycle of one Publish Request. A request is `Open` from its `Open`
+/// command; `Published` and `Closed` are terminal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequestState {
+    Open,
+    Published,
+    Closed,
 }
 
 /// State of one Publish Request. Every transition returns a new value.
@@ -278,6 +309,7 @@ pub struct Review {
     repository: RepositoryId,
     request: RequestId,
     author: Option<PrincipalId>,
+    state: RequestState,
     epoch: u64,
     revisions: Vec<Revision>,
     comments: Vec<Comment>,
@@ -297,6 +329,7 @@ impl Review {
             repository,
             request,
             author: None,
+            state: RequestState::Open,
             epoch: 0,
             revisions: Vec::new(),
             comments: Vec::new(),
@@ -312,6 +345,9 @@ impl Review {
     }
     pub fn author(&self) -> Option<&PrincipalId> {
         self.author.as_ref()
+    }
+    pub fn state(&self) -> RequestState {
+        self.state
     }
     /// Highest permissions epoch applied so far.
     pub fn epoch(&self) -> u64 {
@@ -355,11 +391,52 @@ impl Review {
             }
             return Err(Refusal::OperationIdReused(command.operation.clone()));
         }
+        self.check(command, permissions)?;
+        Ok(Applied {
+            review: self.transition(command, permissions.epoch)?,
+            replayed: false,
+        })
+    }
+
+    /// Re-applies a command that was already accepted, without re-checking roles.
+    /// Storage uses this to rebuild state. Current grants must not be applied to
+    /// past decisions, so the caller passes the epoch recorded with the command.
+    pub fn replay(&self, command: &Command, epoch: u64) -> Result<Review, Refusal> {
+        self.transition(command, epoch)
+    }
+
+    /// Permission, role, and policy checks that depend on current grants.
+    fn check(&self, command: &Command, permissions: &AppliedPermissions) -> Result<(), Refusal> {
         self.check_permissions(permissions)?;
         let actor = &command.actor;
         if permissions.role(actor).is_none() {
             return Err(Refusal::NoAccess);
         }
+        match &command.action {
+            Action::Approve { .. } if !permissions.has(actor, Role::Review) => {
+                Err(Refusal::InsufficientRole {
+                    required: Role::Review,
+                })
+            }
+            Action::Close
+                if self.author.as_ref() != Some(actor)
+                    && !permissions.has(actor, Role::Maintain) =>
+            {
+                Err(Refusal::InsufficientRole {
+                    required: Role::Maintain,
+                })
+            }
+            Action::Publish { index, revision } => {
+                check_publishable(self, *index, revision, permissions, actor).map(|_| ())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// State transitions. Only facts recorded in the state are consulted, so
+    /// this is deterministic for a given command and epoch.
+    fn transition(&self, command: &Command, epoch: u64) -> Result<Review, Refusal> {
+        let actor = &command.actor;
         let mut next = self.clone();
         match &command.action {
             Action::Open { revision } => {
@@ -370,7 +447,7 @@ impl Review {
                 next.push_revision(*revision);
             }
             Action::Revise { expected, revision } => {
-                let current = self.current_open()?;
+                let current = self.open_revision()?;
                 if self.author.as_ref() != Some(actor) {
                     return Err(Refusal::NotAuthor);
                 }
@@ -385,12 +462,7 @@ impl Review {
                 next.push_revision(*revision);
             }
             Action::Approve { index, revision } => {
-                let current = self.current_open()?;
-                if !permissions.has(actor, Role::Review) {
-                    return Err(Refusal::InsufficientRole {
-                        required: Role::Review,
-                    });
-                }
+                let current = self.open_revision()?;
                 if self.author.as_ref() == Some(actor) {
                     return Err(Refusal::SelfApproval);
                 }
@@ -412,8 +484,10 @@ impl Review {
                 last.approvals.push(actor.clone());
             }
             Action::Comment { index, body } => {
-                self.current_open()?;
-                if *index == 0 || *index as usize > self.revisions.len() {
+                self.open_revision()?;
+                if let Some(index) = index
+                    && (*index == 0 || *index as usize > self.revisions.len())
+                {
                     return Err(Refusal::UnknownRevision);
                 }
                 next.comments.push(Comment {
@@ -422,13 +496,19 @@ impl Review {
                     body: body.clone(),
                 });
             }
+            Action::Publish { .. } => {
+                // Policy was checked in `check`; the transition only records it.
+                self.open_revision()?;
+                next.state = RequestState::Published;
+            }
+            Action::Close => {
+                self.open_revision()?;
+                next.state = RequestState::Closed;
+            }
         }
-        next.epoch = permissions.epoch;
+        next.epoch = epoch;
         next.history.push(command.clone());
-        Ok(Applied {
-            review: next,
-            replayed: false,
-        })
+        Ok(next)
     }
 
     fn check_permissions(&self, permissions: &AppliedPermissions) -> Result<(), Refusal> {
@@ -441,8 +521,12 @@ impl Review {
         Ok(())
     }
 
-    fn current_open(&self) -> Result<&Revision, Refusal> {
-        self.revisions.last().ok_or(Refusal::NotOpen)
+    /// The current revision, if the request is Open and has been opened.
+    fn open_revision(&self) -> Result<&Revision, Refusal> {
+        match (self.state, self.revisions.last()) {
+            (RequestState::Open, Some(current)) => Ok(current),
+            _ => Err(Refusal::NotOpen),
+        }
     }
 
     fn push_revision(&mut self, revision: RevisionRef) {
@@ -463,12 +547,14 @@ pub struct Publishable {
     pub approvals: Vec<PrincipalId>,
 }
 
-/// Evaluates whether `publisher` may Publish `exact` under `permissions` now.
-/// Counts approvals of the exact current revision by principals who currently
-/// hold `Review`, excluding the author. Does not compare `exact.base()` with the
-/// current World; publication handles that at its correctness boundary.
+/// Evaluates whether `publisher` may Publish revision `index`, which must be
+/// `exact`, under `permissions` now. Counts approvals of that revision by
+/// principals who currently hold `Review` or `Maintain`, excluding the author.
+/// Does not compare `exact.base()` with the current World; publication handles
+/// that at its correctness boundary.
 pub fn check_publishable(
     review: &Review,
+    index: u32,
     exact: &RevisionRef,
     permissions: &AppliedPermissions,
     publisher: &PrincipalId,
@@ -483,7 +569,12 @@ pub fn check_publishable(
             required: Role::Maintain,
         });
     }
-    let current = review.current_open()?;
+    let current = review.open_revision()?;
+    if index != current.index {
+        return Err(Refusal::StaleRevision {
+            current: current.index,
+        });
+    }
     if current.revision != *exact {
         return Err(Refusal::RevisionMismatch);
     }
