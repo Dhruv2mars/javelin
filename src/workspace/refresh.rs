@@ -251,13 +251,17 @@ impl Repository {
         // any choice is validated. An occupied path and the spellings holding it are all
         // conflicts, so the owner may choose either side.
         let holders = |path: &RepoPath| alias_holders(&store, &root, path);
+        // An unresolved head deletion frees nothing yet: it only frees paths once a choice
+        // takes it, and that choice adds it to the apply list.
         let candidate = |plan: &Plan| {
             let mut apply = plan.apply.clone();
             apply.extend(
                 theirs
                     .entries()
                     .iter()
-                    .filter(|(path, _)| plan.conflicts.contains(path.as_str()))
+                    .filter(|(path, change)| {
+                        change.is_some() && plan.conflicts.contains(path.as_str())
+                    })
                     .map(|(path, change)| (path.clone(), change.clone())),
             );
             apply

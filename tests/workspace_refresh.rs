@@ -448,6 +448,49 @@ fn a_head_edit_to_a_tracked_path_renamed_away_is_resolved_through_both_spellings
 }
 
 #[test]
+fn a_local_edit_to_a_path_the_head_renamed_away_keeps_both_spellings_as_conflicts() {
+    let root = scratch();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let version = world(&mut repo, &[("Readme.md", b"base")]);
+    let dir = open(&mut repo, "work", version);
+    fs::write(dir.join("Readme.md"), b"mine").unwrap();
+    if !dir.join("readme.md").exists() {
+        // A case-sensitive volume keeps both names apart, so there is no alias to resolve.
+        return;
+    }
+    let renamed = SparseChanges::new([
+        (RepoPath::parse("Readme.md").unwrap(), None),
+        (
+            RepoPath::parse("readme.md").unwrap(),
+            Some(FileEntry::Regular {
+                content: repo.put_blob(b"theirs").unwrap(),
+                executable: false,
+            }),
+        ),
+    ])
+    .unwrap();
+    stack_changes(&mut repo, "work", version, renamed, "rename");
+
+    let error = repo
+        .refresh_workspace_resolved(&id("work"), &BTreeMap::new())
+        .unwrap_err();
+    match error {
+        Error::RefreshConflict(paths) => assert_eq!(paths, ["Readme.md", "readme.md"]),
+        other => panic!("{other:?}"),
+    }
+
+    // Keeping the local file settles both spellings, so the refresh completes.
+    let kept = BTreeMap::from([
+        (RepoPath::parse("Readme.md").unwrap(), Choice::Ours),
+        (RepoPath::parse("readme.md").unwrap(), Choice::Ours),
+    ]);
+    let refresh = repo.refresh_workspace_resolved(&id("work"), &kept).unwrap();
+    assert!(refresh.refreshed);
+    let values: Vec<Vec<u8>> = contents(&dir).into_values().collect();
+    assert_eq!(values, [b"mine".to_vec()]);
+}
+
+#[test]
 fn an_explicit_overwrite_replaces_an_ignored_file_at_the_head_path() {
     let overwrites = [
         (Choice::Theirs, &b"theirs"[..]),
