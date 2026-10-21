@@ -12,11 +12,12 @@ use std::{
 };
 
 use javelin_control::{ControlError, ControlPlane, CreateRequest, Credentials, Poll, Publish};
+use javelin_node_worker::CloudflareNode;
 use serde_json::json;
 
 use crate::cli::Output;
 
-const USAGE: &str = "usage:\n  javelin control init\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self]";
+const USAGE: &str = "usage:\n  javelin control init\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
 
 pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args = args
@@ -102,6 +103,8 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
     let mut operation = None;
     let mut public = false;
     let mut publish = Publish::Direct;
+    let mut cloudflare = false;
+    let mut node_url = None;
     let mut flags = flags.iter();
     while let Some(flag) = flags.next() {
         let mut value = || {
@@ -129,18 +132,15 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
                 })?;
             }
             "--provider" => match value()? {
-                "self" => {}
-                "cloudflare" => {
-                    return Err(ControlError::InvalidInput(
-                        "provider cloudflare is not available yet; use --provider self".into(),
-                    ));
-                }
+                "self" => cloudflare = false,
+                "cloudflare" => cloudflare = true,
                 other => {
                     return Err(ControlError::InvalidInput(format!(
                         "--provider is self or cloudflare, got {other}"
                     )));
                 }
             },
+            "--node-url" => node_url = Some(value()?.to_owned()),
             other => {
                 return Err(ControlError::InvalidInput(format!(
                     "unknown flag {other}\n{USAGE}"
@@ -153,7 +153,23 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             "repo create needs --operation ID; reuse it when retrying".into(),
         )
     })?;
-    let plane = open()?;
+    let plane = if cloudflare {
+        let url = node_url.ok_or_else(|| {
+            ControlError::InvalidInput("--provider cloudflare needs --node-url URL".into())
+        })?;
+        let token = env::var("JAVELIN_NODE_ADMIN_TOKEN").map_err(|_| {
+            ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
+        })?;
+        let node = CloudflareNode::new(&url, &token)?;
+        ControlPlane::with_node(&control_dir()?, Box::new(node))?
+    } else {
+        if node_url.is_some() {
+            return Err(ControlError::InvalidInput(
+                "--node-url needs --provider cloudflare".into(),
+            ));
+        }
+        open()?
+    };
     let now = now()?;
     let bearer = match env::var("JAVELIN_ADMIN_TOKEN") {
         Ok(token) => token,

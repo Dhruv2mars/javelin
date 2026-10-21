@@ -342,6 +342,7 @@ Wave 3, after wave 2:
   - [x] U12 World log in one Durable Object: commit transaction on workerd (50 publishers, kill inside and after commit); deployed-object checks and replication re-check moved to U13.
   - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
     partition (`review.rs`), tree IDs in collaboration.
+  - [x] U13 Cloudflare managed node: Free-plan limits cited (unverified items marked), TypeScript Worker and Durable Object (wasm fallback, D23), `repo create --provider cloudflare` on workerd; deployed-only checks pending (`tools/node-cloudflare/README.md`).
   - [x] U10 restricted agent traces (`javelin-node` trace store: D25 visibility, Maintain-only
     restriction, wire fetch guard, `missing_agent_trace` node tests).
   - [x] U8 control plane minimum: admin-token bootstrap, device-code API, CLI login, repo create

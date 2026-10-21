@@ -136,7 +136,7 @@ fn login_then_repo_create_is_idempotent_and_refuses_collisions() {
     );
     assert!(!cloud.status.success());
     assert!(
-        error(&cloud).contains("not available yet"),
+        error(&cloud).contains("--provider cloudflare needs --node-url"),
         "{}",
         error(&cloud)
     );

@@ -46,6 +46,7 @@ fn build_uses_source_cargo_config_instead_of_caller_config() {
         "javelin-identity",
         "javelin-merge",
         "javelin-node",
+        "javelin-node-worker",
         "javelin-protocol",
         "javelin-stack",
     ] {

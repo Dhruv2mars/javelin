@@ -13,6 +13,7 @@ path = "src/main.rs"
 javelin = { path = "../.." }
 javelin-protocol = { path = "../javelin-protocol" }
 javelin-control = { path = "../javelin-control" }
+javelin-node-worker = { path = "../javelin-node-worker" }
 javelin-stack = { path = "../javelin-stack" }
 serde_json = "1.0.154"
 

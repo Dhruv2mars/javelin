@@ -1,0 +1,17 @@
+{
+  "name": "javelin-node-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "dev": "wrangler dev --port 18788",
+    "test": "bun run test/run.ts",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
+  }
+}
