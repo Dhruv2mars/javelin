@@ -102,14 +102,29 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
 
+      # Same Git guard as the Rust job: the managed-node test drives the javelin CLI.
+      - name: Install failing git shim
+        run: |
+          shim="$RUNNER_TEMP/git-shim" probe="$RUNNER_TEMP/git-probe"
+          mkdir -p "$shim" "$probe"
+          echo 'fn main() { let d = std::env::current_exe().unwrap(); std::fs::write(d.parent().unwrap().join("invoked"), b"").unwrap(); std::process::exit(97) }' > "$probe/shim.rs"
+          echo 'fn main() { std::process::exit(std::process::Command::new("git").status().ok().and_then(|s| s.code()).unwrap_or(1)) }' > "$probe/probe.rs"
+          rustc -o "$shim/git" "$probe/shim.rs"
+          rustc -o "$probe/probe" "$probe/probe.rs"
+          PATH="$shim:$PATH" "$probe/probe" && exit 1 || test $? -eq 97
+          rm "$shim/invoked"
+          echo "GIT_SHIM=$shim" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Test on workerd
-        run: bun run test
+      - name: Test on workerd with the git shim first on PATH
+        run: |
+          PATH="$GIT_SHIM:$PATH" bun run test
+          test ! -e "$GIT_SHIM/invoked"
 
   # Clone-backed Layers on each filesystem. Only volume setup uses sudo or admin;
   # the tests run as the ordinary runner user with no mount, helper or daemon.

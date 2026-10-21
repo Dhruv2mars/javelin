@@ -51,9 +51,10 @@ async function nodeState(repository: string) {
 }
 
 const wrangler = Bun.spawn(
-  ["bunx", "wrangler", "dev", "--port", String(port), "--persist-to", join(scratch, "state"),
+  [join(here, "node_modules/.bin/wrangler"), "dev", "--port", String(port), "--persist-to", join(scratch, "state"),
     "--var", `NODE_ADMIN_TOKEN:${adminToken}`],
-  { cwd: here, stdout: "pipe", stderr: "pipe" },
+  // Inherited, so wrangler never blocks on a full pipe; the logs show in the run output.
+  { cwd: here, stdout: "inherit", stderr: "inherit" },
 );
 
 try {
@@ -62,7 +63,7 @@ try {
 
   // 1. Rust conformance suite against workerd.
   const suite = await run(
-    ["cargo", "test", "-p", "javelin-node-worker", "--test", "workerd", "--", "--ignored", "--test-threads=1"],
+    ["cargo", "test", "--locked", "-p", "javelin-node-worker", "--test", "workerd", "--", "--ignored", "--test-threads=1"],
     repoRoot,
     { JAVELIN_NODE_URL: base, JAVELIN_NODE_ADMIN_TOKEN: adminToken },
   );
@@ -70,7 +71,7 @@ try {
   check(/2 passed/.test(suite.stdout), "Rust conformance suite passes against workerd");
 
   // 2. `repo create` end to end with the javelin CLI.
-  const build = await run(["cargo", "build", "-p", "javelin-cli"], repoRoot);
+  const build = await run(["cargo", "build", "--locked", "-p", "javelin-cli"], repoRoot);
   if (build.code !== 0) throw new Error(build.stderr);
   const javelin = join(repoRoot, "target/debug/javelin");
   const env = {

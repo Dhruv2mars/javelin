@@ -53,9 +53,18 @@ impl CloudflareNode {
             ));
         }
         // Plain http is allowed only to this machine, so the admin token never crosses a network in clear.
-        let loopback = uri.scheme_str() == Some("http")
-            && matches!(uri.host(), Some("127.0.0.1" | "localhost"));
-        if uri.scheme_str() != Some("https") && !loopback {
+        let loopback = uri
+            .scheme_str()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("http"))
+            && uri.host().is_some_and(|host| {
+                ["127.0.0.1", "localhost", "[::1]"]
+                    .iter()
+                    .any(|allowed| host.eq_ignore_ascii_case(allowed))
+            });
+        let https = uri
+            .scheme_str()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"));
+        if !https && !loopback {
             return Err(ControlError::InvalidInput(
                 "node URL must be https (http only on localhost)".into(),
             ));
@@ -63,11 +72,14 @@ impl CloudflareNode {
         if token.is_empty() {
             return Err(ControlError::Unauthorized("node admin token is empty"));
         }
-        let agent = ureq::Agent::config_builder()
+        let mut config = ureq::Agent::config_builder()
             .http_status_as_error(false)
-            .timeout_global(Some(TIMEOUT))
-            .build()
-            .into();
+            .timeout_global(Some(TIMEOUT));
+        if loopback {
+            // A proxy from the environment would see the admin token in clear.
+            config = config.proxy(None);
+        }
+        let agent = config.build().into();
         Ok(Self {
             base: base.into(),
             token: token.into(),
@@ -236,6 +248,8 @@ mod tests {
         assert!(CloudflareNode::new("https://node.example.workers.dev/", "t").is_ok());
         assert!(CloudflareNode::new("http://127.0.0.1:18788", "t").is_ok());
         assert!(CloudflareNode::new("http://localhost:18788", "t").is_ok());
+        assert!(CloudflareNode::new("http://LOCALHOST:18788", "t").is_ok());
+        assert!(CloudflareNode::new("http://[::1]:18788", "t").is_ok());
         assert!(CloudflareNode::new("http://evil.example", "t").is_err());
         assert!(CloudflareNode::new("http://localhost:80@evil.example", "t").is_err());
         assert!(CloudflareNode::new("https://user:pass@node.example", "t").is_err());

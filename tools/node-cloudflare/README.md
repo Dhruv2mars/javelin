@@ -64,8 +64,8 @@ then checks:
 
 The test kills only the `wrangler` process it started.
 
-CI does not run the Worker. `local_node_conforms` runs the same suite against `LocalNode` in the
-`javelin-node-worker` crate, so the shared assertions are gated in CI.
+CI runs the same checks in the `Node / Cloudflare (workerd)` job. `local_node_conforms` also runs the
+shared suite against `LocalNode` in the `javelin-node-worker` crate.
 
 ## Pending: deployed-only checks
 
@@ -80,4 +80,4 @@ Need a real Free-plan Cloudflare account, which this unit did not use (no creden
 ## Known gaps
 
 - The Worker holds provision, permissions and state. The World-log commit path (U12's spike) is not moved into the Worker.
-- `RepositoryRecord` does not store the provider. A retry of the same operation ID with a different `--provider` returns the existing record. `javelin-control` was left untouched to avoid conflicts with U8b and U11.
+- `RepositoryRecord` does not store the provider or node URL. A retry of an operation whose record is still `Provisioning` with a different `--provider` or `--node-url` can finish on the other node, and the Cloudflare object is left with a genesis and no permissions. Once the record is `Ready`, a retry returns it unchanged. The fix belongs in `javelin-control` (store both on the reserved record and refuse a mismatch as `OperationReused`); it was left out to avoid conflicts with U8b and U11.
