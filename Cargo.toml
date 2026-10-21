@@ -22,3 +22,6 @@ libc = "0.2.190"
 # hooks: the Publish write-transaction cost test counts SQLite VM instructions.
 rusqlite = { version = "0.40.2", features = ["bundled", "blob", "hooks"] }
 tempfile = "3.27.0"
+# outbox replay tests run against the loopback node. Dev-only: the library never depends on them.
+javelin-node = { path = "crates/javelin-node" }
+javelin-protocol = { path = "crates/javelin-protocol" }
