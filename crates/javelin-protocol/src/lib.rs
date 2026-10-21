@@ -27,6 +27,17 @@ pub mod limits {
     pub const MAX_OBJECTS: usize = 1024;
     /// Most IDs in one `Want`, `Get` or conflict list.
     pub const MAX_WANT: usize = 4096;
+    /// Most bytes of one `ChangesetPart`. A changeset streams in parts this size.
+    pub const MAX_CHANGESET_PART: usize = MAX_BLOB;
+    /// Most bytes of one version's changeset that a fetch will hash. A larger
+    /// changeset cannot be fetched, so a lying server cannot stream one without end.
+    pub const MAX_CHANGESET: usize = 1 << 30;
+    /// Most named paths one fetch expands from a server. Each file, directory and
+    /// chunk reference the walk follows counts once, so a shared subtree that names
+    /// 2^k paths from a few KB of chunks stops at this bound. Sized for a snapshot of
+    /// about a million paths; a larger snapshot needs a bound chosen against a measured
+    /// memory budget.
+    pub const MAX_FETCH_PATHS: usize = 1 << 20;
     pub const MAX_DETAIL: usize = 1024;
     /// Longest Publish Request comment body, in bytes.
     pub const MAX_COMMENT: usize = 64 << 10;

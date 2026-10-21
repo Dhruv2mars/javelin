@@ -46,6 +46,8 @@ const PUBLISH_OUTCOME: u8 = 0x39;
 const PUBLISH_REQUEST: u8 = 0x3a;
 const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
+const CHANGESET: u8 = 0x42;
+const CHANGESET_PART: u8 = 0x43;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -230,6 +232,18 @@ pub enum Message {
         number: VersionNumber,
         id: ObjectId,
         tree: ObjectId,
+    },
+    /// Fetch: the canonical changeset that `version` applied to its parent, from byte
+    /// `offset`. Reply: `ChangesetPart`.
+    Changeset {
+        version: VersionNumber,
+        offset: u64,
+    },
+    /// A part of the canonical changeset. `total` is its whole length; `bytes` is at
+    /// most `MAX_CHANGESET_PART`. The part is empty only when `total` is reached.
+    ChangesetPart {
+        total: u64,
+        bytes: Vec<u8>,
     },
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
@@ -476,6 +490,17 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             put_id(&mut out, id);
             put_id(&mut out, tree);
         }
+        Message::Changeset { version, offset } => {
+            out.push(CHANGESET);
+            out.extend_from_slice(&version.get().to_be_bytes());
+            out.extend_from_slice(&offset.to_be_bytes());
+        }
+        Message::ChangesetPart { total, bytes } => {
+            out.push(CHANGESET_PART);
+            out.extend_from_slice(&total.to_be_bytes());
+            put_u32(&mut out, bytes.len());
+            out.extend_from_slice(bytes);
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -642,6 +667,13 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         } => 1 + short(operation.as_str())? + short(request.as_str())? + 4 + 8,
         Message::Resolve { .. } => 10,
         Message::Resolved { .. } => 73,
+        Message::Changeset { .. } => 17,
+        Message::ChangesetPart { bytes, .. } => {
+            if bytes.len() > MAX_CHANGESET_PART {
+                return Err(limit("changeset part exceeds limit"));
+            }
+            13 + bytes.len()
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -839,6 +871,21 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
                     1 => Some(version),
                     _ => return Err(malformed("invalid version selector")),
                 },
+            }
+        }
+        CHANGESET => Message::Changeset {
+            version: r.version()?,
+            offset: r.u64()?,
+        },
+        CHANGESET_PART => {
+            let total = r.u64()?;
+            let len = r.u32()? as usize;
+            if len > MAX_CHANGESET_PART {
+                return Err(limit("changeset part exceeds limit"));
+            }
+            Message::ChangesetPart {
+                total,
+                bytes: r.take(len)?.to_vec(),
             }
         }
         RESOLVED => Message::Resolved {

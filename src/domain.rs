@@ -376,7 +376,8 @@ impl SparseChanges {
             .collect()
     }
 
-    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
+    /// The bytes a version's identity hashes. A changeset served to a client is these bytes.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(&self.encoded()).expect("changeset encoding")
     }
 
@@ -399,12 +400,39 @@ pub(crate) fn version_id(
     tree: ObjectId,
     changes: &SparseChanges,
 ) -> ObjectId {
-    let mut hash = Sha256::new();
-    hash.update(b"javelin-version-v2\0");
-    hash.update(parent.map_or([0; 32], |p| p.0));
-    hash.update(tree.0);
-    hash.update(changes.canonical_bytes());
-    ObjectId(hash.finalize().into())
+    let mut hash = VersionHasher::new(parent, tree);
+    hash.update(&changes.canonical_bytes());
+    hash.finish()
+}
+
+/// Version identity in parts: `H(parent || root || canonical changeset)`. A client that
+/// receives a changeset in pieces hashes each piece as it arrives, so it never holds the
+/// whole changeset.
+pub struct VersionHasher(Sha256);
+
+impl VersionHasher {
+    /// Starts a version over `parent` (None for World 0) with root `tree`.
+    pub fn new(parent: Option<ObjectId>, tree: ObjectId) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(b"javelin-version-v2\0");
+        hash.update(parent.map_or([0; 32], |p| p.0));
+        hash.update(tree.0);
+        Self(hash)
+    }
+
+    /// Feeds the next bytes of the canonical changeset, in order.
+    pub fn update(&mut self, changes: &[u8]) {
+        self.0.update(changes);
+    }
+
+    pub fn finish(self) -> ObjectId {
+        ObjectId(self.0.finalize().into())
+    }
+}
+
+/// The identity of World 0: the empty root, no parent, and the empty changeset.
+pub fn genesis_version_id() -> ObjectId {
+    version_id(None, crate::tree::empty(), &SparseChanges::default())
 }
 
 /// Point reads over one immutable World snapshot. The storage engine supplies it
