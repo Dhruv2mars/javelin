@@ -9,13 +9,17 @@ use std::{
     path::PathBuf,
 };
 
-use javelin::Repository;
+use javelin::{Repository, VersionNumber};
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::KeySet;
-use javelin_node::auth::Gate;
+use javelin_node::{FileWorldLog, auth::Gate, fork::Forked};
 use serde::{Deserialize, Serialize};
 
-use crate::{ControlError, control::NodeLink, secret};
+use crate::{
+    ControlError,
+    control::{ForkPlan, NodeLink},
+    secret,
+};
 
 const PERMISSIONS_FILE: &str = "permissions.json";
 const LOCK_FILE: &str = "node.lock";
@@ -87,6 +91,30 @@ impl NodeLink for LocalNode {
         Repository::init(&dir)
             .map(|_| ())
             .map_err(|error| ControlError::Node(error.to_string()))
+    }
+
+    fn head(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        let repo = Repository::open(self.repository_dir(repository))
+            .map_err(|error| ControlError::Node(error.to_string()))?;
+        let head = repo
+            .head()
+            .map_err(|error| ControlError::Node(error.to_string()))?;
+        Ok(head.number)
+    }
+
+    /// Opens each repository with its own node lock, which `FileWorldLog` takes. No lock from
+    /// `locked` is held here, because the two would conflict on the same file.
+    fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
+        let open = |repository: &RepositoryId| {
+            FileWorldLog::open(self.repository_dir(repository))
+                .map_err(|error| ControlError::Node(error.to_string()))
+        };
+        let source = open(&plan.source)?;
+        let mut target = open(&plan.target)?;
+        let at = VersionNumber::new(plan.at)
+            .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
+        javelin_node::fork::fork(&source, plan.source.as_str(), &mut target, at, plan.reader)
+            .map_err(ControlError::Refused)
     }
 
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {

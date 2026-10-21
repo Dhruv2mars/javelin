@@ -11,7 +11,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ControlError, secret};
+use crate::{
+    ControlError,
+    passkey::{BrowserRecord, CeremonyRecord, PasskeyRecord},
+    secret,
+};
 
 const STATE_FILE: &str = "control.json";
 const LOCK_FILE: &str = "control.lock";
@@ -31,6 +35,12 @@ pub(crate) struct State {
     pub repositories: BTreeMap<String, RepositoryRecord>,
     /// Operation ID to the repository it created.
     pub operations: BTreeMap<String, String>,
+    /// Enrolled passkeys, keyed by credential ID.
+    pub passkeys: BTreeMap<String, PasskeyRecord>,
+    /// Passkey ceremonies in flight, keyed by ceremony ID.
+    pub ceremonies: BTreeMap<String, CeremonyRecord>,
+    /// Browser sign-ins, keyed by the hash of their token.
+    pub browser_sessions: BTreeMap<String, BrowserRecord>,
 }
 
 impl State {
@@ -73,6 +83,16 @@ pub(crate) struct RepositoryRecord {
     pub operation: String,
     pub phase: Phase,
     pub epoch: u64,
+    /// Set for a fork: its source repository and the version it was forked at.
+    #[serde(default)]
+    pub fork: Option<ForkOf>,
+}
+
+/// Where a fork came from. Its version ID comes from the node, which holds the copied log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ForkOf {
+    pub source: String,
+    pub number: u64,
 }
 
 /// The state directory: the document plus the lock that serializes every call.

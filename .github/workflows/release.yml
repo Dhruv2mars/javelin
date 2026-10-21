@@ -282,7 +282,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.plan.outputs.version }}
         run: |
+          # This job has no checkout, so name the repository instead of letting gh read .git.
           gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --prerelease \
             --title "Javelin $TAG (pre-GA)" \

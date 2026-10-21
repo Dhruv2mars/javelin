@@ -344,6 +344,17 @@ Wave 3, after wave 2:
   - [x] U8 control plane minimum: admin-token bootstrap, device-code API, CLI login, repo create
     (`javelin-control`, in-process and file-backed; applied-permission push to the self-hosted
     node; no passkeys, which are U8b).
+  - [x] U11 forks with inherited history (`javelin-node` fork: log copy to N with source IDs,
+    object copy into the fork's store, `fork_of` provenance, traces omitted with a marker unless
+    the forker is Maintain; `javelin-control` fork op, in-process node; wire pull deferred).
+  - [x] U8b passkey sign-in for device approval: WebAuthn enrollment and sign-in (webauthn-rs,
+    software-authenticator tests), browser approval page over loopback HTTP, no email (D5).
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
+
+## Post-hoc review of #48 and #52 on main
+
+- [x] Review #48 (radar) and #52 (protocol v2 trees) on main: Opus 5.5 fallback review, after Sol (Codex, Codex-swayu) was unavailable. No radar defects.
+- [x] #52 tree work bound: a few KB of shared-subtree chunks can name 2^k files. Accepted by decision; documented in docs/architecture.md Known limits.
+- [ ] Follow-up: fetch verifies the server's tree root against the version ID chain, and caps named paths for an untrusted server.

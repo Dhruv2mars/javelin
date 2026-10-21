@@ -4,9 +4,10 @@
 use std::path::Path;
 
 use ed25519_dalek::SigningKey;
-use javelin_collaboration::AppliedPermissions;
-use javelin_collaboration::RepositoryId;
+use javelin::VersionNumber;
+use javelin_collaboration::{AppliedPermissions, RepositoryId, Role};
 use javelin_identity::{Claims, Issuer, KeySet, MAX_LIFETIME, Scope, verify};
+use javelin_node::fork::Forked;
 
 use crate::{
     ControlError, LocalNode, secret,
@@ -32,13 +33,34 @@ pub(crate) const SESSION_SCOPES: [Scope; 7] = [
     Scope::Import,
 ];
 
-/// The node side of the control plane's pushes. Both methods are idempotent, so a retry
-/// after a lost reply repeats them safely.
+/// A fork to make on the node: `source` at version `at`, copied into `target`. `reader` is the
+/// role the forker holds in `source`, which decides whether restricted traces are copied.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForkPlan {
+    pub source: RepositoryId,
+    pub target: RepositoryId,
+    pub at: u64,
+    pub reader: Role,
+}
+
+/// The node side of the control plane's pushes. Each method is idempotent, so a retry
+/// after a lost reply repeats it safely.
 pub trait NodeLink {
     /// Creates the repository's node, empty World included. Repeating it changes nothing.
     fn provision(&self, repository: &RepositoryId) -> Result<(), ControlError>;
     /// Pushes applied permissions. The node accepts the applied epoch again only if it is identical.
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError>;
+    /// The repository's current World version. A fork refuses a fork point past it.
+    fn head(&self, _repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        Err(ControlError::Node(
+            "this node cannot report its head".into(),
+        ))
+    }
+    /// Copies the source's log into the target. Repeating it finishes an interrupted copy;
+    /// a finished fork returns the origin it was made with.
+    fn fork(&self, _plan: &ForkPlan) -> Result<Forked, ControlError> {
+        Err(ControlError::Node("this node cannot fork".into()))
+    }
 }
 
 pub struct ControlPlane {
