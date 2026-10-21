@@ -239,7 +239,7 @@ the stacked work, and capture never reverts it (see "Daemonless checkpoint").
 merges local edits against the head and writes only paths the head changed. Local edits
 that do not touch those paths are kept, and the next capture includes them. When a local
 edit and a head change touch the same path or a file and directory collide, refresh
-reports `refresh_conflict` with the paths and changes nothing. Each path is replaced by
+reports `refresh_conflict` with the paths and changes nothing. A path both sides renamed to different names is a conflict on both destinations. Each path is replaced by
 an atomic rename, so an interrupted refresh leaves whole files and running refresh again
 converges. Refresh does not capture first. Afterwards `workspace publish` publishes the
 stacked work with the local edits.
