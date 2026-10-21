@@ -487,3 +487,53 @@ fn refresh_imports_the_nodes_stacked_head() {
     assert_eq!(active(&local, "target"), mine);
     served.finish().repo().check().unwrap();
 }
+
+#[test]
+fn layers_at_the_same_step_refresh_to_the_same_head() {
+    // `twin` holds the same capture as `target` on both stores, so a node Stack of the
+    // same source gives both the same head, at the same local revision.
+    let twin = |dir: &Path| {
+        let mut repo = Repository::open(dir).unwrap();
+        let base = repo.layer_base(v(1)).unwrap();
+        let head = repo.create_layer(&layer("twin"), &base).unwrap();
+        let ours = changes(vec![("notes.txt", file(&mut repo, OURS))]);
+        capture(&mut repo, "twin-1", &head, &ours)
+    };
+    let local_dir = TempDir::new().unwrap();
+    seed(local_dir.path(), OURS, THEIRS);
+    twin(local_dir.path());
+    let node_dir = TempDir::new().unwrap();
+    let (node_target, node_source) = seed(node_dir.path(), OURS, THEIRS);
+    let node_twin = twin(node_dir.path());
+    assert_eq!(node_twin.checkpoint(), node_target.checkpoint());
+    let served = serve_node(node_dir.path());
+    let mut link = Link::new(served.addr);
+    let mut heads = Vec::new();
+    for name in ["target", "twin"] {
+        let outcome = remote::stack(
+            &mut link,
+            &op(&format!("stack-{name}")),
+            &layer(name),
+            node_target.checkpoint().object(),
+            node_source.checkpoint().object(),
+        )
+        .unwrap();
+        let LayerOutcome::Accepted { checkpoint, .. } = outcome else {
+            panic!("{outcome:?}");
+        };
+        heads.push(checkpoint);
+    }
+    assert_eq!(heads[0], heads[1]);
+
+    let mut local = Repository::open(local_dir.path()).unwrap();
+    for name in ["target", "twin"] {
+        let refreshed = remote::refresh(&mut link, &mut local, &layer(name)).unwrap();
+        assert!(
+            matches!(refreshed, Refresh::Imported { .. }),
+            "{refreshed:?}"
+        );
+        assert_eq!(active(&local, name).revision(), 2);
+    }
+    local.check().unwrap();
+    served.finish().repo().check().unwrap();
+}

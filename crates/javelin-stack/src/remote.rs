@@ -126,7 +126,15 @@ pub fn refresh(
         ));
     }
     fetch_blobs(link, repo, &changes)?;
-    let operation = OperationId::parse(&format!("refresh-{}-{}", local.revision(), node.head))?;
+    // Operation IDs are per repository, so the ID names the Layer as well as the step.
+    let step = format!(
+        "javelin-refresh\0{}\0{}\0{}",
+        layer.as_str(),
+        local.revision(),
+        node.head
+    );
+    let operation =
+        OperationId::parse(&format!("refresh-{}", ObjectId::for_blob(step.as_bytes())))?;
     match repo.import_stacked_head(&operation, &local, &changes)? {
         LayerUpdate::Applied {
             state: LayerState::Active { .. },
