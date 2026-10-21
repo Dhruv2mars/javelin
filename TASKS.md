@@ -163,8 +163,9 @@ workflow may invoke or interpret Git.
 - [ ] Verify control-plane outage behavior and provider-outage local work.
 - [ ] Resolve CI execution design and verify the accepted workflow syntax.
   - [x] Design written: `docs/ci-execution.md` (PR on `docs/ci-execution`), with examples in `docs/examples/ci/`.
-  - [ ] Hub confirms the dialect. The contract accepts "CI workflow syntax compatibility" without naming one; the working reading is GitHub Actions YAML (CI1).
-  - [ ] Hub adds U17 (check ingestion and required-check gate) to the unit table.
+  - [x] Hub confirms the dialect: GitHub Actions YAML (CI1, confirmed 2026-10-21). The contract accepts "CI workflow syntax compatibility" without naming one.
+  - [x] Hub adds U17 (check ingestion and required-check gate) and U18 (validator) to the unit table.
+  - [ ] U17 check ingestion and required-check gate (`docs/ci-execution.md` §11, tests 1–15).
   - [x] U18 validator (`tools/ci-validate/`) passes examples 01–07, rejects 08–09 with the expected codes and rejects duplicate-key fixture 10. `validator_fixtures_match_readme` runs in the CI Rust job on all three OSes.
 - [ ] Measure hot-repository contention, many repositories, transfer costs, and quotas.
 
@@ -175,7 +176,7 @@ workflow may invoke or interpret Git.
   - [x] Install scripts verify SHA-256 before writing; corrupted archive is refused.
   - [x] Clean-machine job per target: install previous build, seed repo, upgrade, reopen, smoke, no Git invoked.
   - [x] Windows `install.ps1` and PowerShell path verified on `windows-2025`.
-  - [ ] Tag-triggered pre-release publish (not run; needs the user's go-ahead).
+  - [x] Tag-triggered pre-release publish: `v0.1.0-alpha.1` published 2026-10-21 with the user's go-ahead (5 targets, attested, clean-machine checked; fixes #83, #85).
 - [ ] Publish tutorials, command reference, hosting setup, and recovery documentation.
 - [x] Add contribution guidance, support policy, security reporting, and license checks
   (PR #56; `licenses.yml` run `39434261246` passed at `51fd153`). Private vulnerability
