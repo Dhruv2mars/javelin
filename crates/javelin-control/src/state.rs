@@ -73,6 +73,16 @@ pub(crate) struct RepositoryRecord {
     pub operation: String,
     pub phase: Phase,
     pub epoch: u64,
+    /// Set for a fork: its source repository and the version it was forked at.
+    #[serde(default)]
+    pub fork: Option<ForkOf>,
+}
+
+/// Where a fork came from. Its version ID comes from the node, which holds the copied log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ForkOf {
+    pub source: String,
+    pub number: u64,
 }
 
 /// The state directory: the document plus the lock that serializes every call.

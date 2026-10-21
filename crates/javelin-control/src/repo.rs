@@ -1,6 +1,6 @@
 //! Repository create. It is idempotent per operation ID and provisions the node in steps.
 //! A crash leaves the repository `Provisioning`; a retry with the same operation ID resumes
-//! it, and every step it repeats is idempotent.
+//! it, and every step it repeats is idempotent. Forks reuse these steps (see `fork.rs`).
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ use crate::{
     control::{authenticate, issue},
     device::{ACCESS_TTL, AccessToken},
     secret,
-    state::{Phase, RepositoryRecord},
+    state::{ForkOf, Phase, RepositoryRecord, State},
 };
 
 /// How a repository accepts changes.
@@ -102,10 +102,7 @@ impl ControlPlane {
         request: &CreateRequest,
         now: u64,
     ) -> Result<Created, ControlError> {
-        validate_slug("owner", &request.owner)?;
-        validate_slug("repository name", &request.name)?;
-        validate_operation(&request.operation)?;
-        let publish = request.publish.as_str();
+        validate_request(request)?;
         let (repository, record, inserted) = self.store.update(|state| {
             let caller = authenticate(state, bearer, now)?;
             if caller.repo != "*" {
@@ -114,42 +111,7 @@ impl ControlPlane {
                 ));
             }
             caller.require(Scope::RepoCreate, "token does not carry repo:create")?;
-            if let Some(id) = state.operations.get(&request.operation) {
-                let record = state.repositories.get(id).ok_or_else(|| {
-                    ControlError::Storage("operation names a missing repository".into())
-                })?;
-                let same = record.owner == request.owner
-                    && record.name == request.name
-                    && record.public == request.public
-                    && record.publish == publish;
-                if !same {
-                    return Err(ControlError::OperationReused);
-                }
-                return Ok((id.clone(), record.clone(), false));
-            }
-            if state
-                .repositories
-                .values()
-                .any(|record| record.owner == request.owner && record.name == request.name)
-            {
-                return Err(ControlError::NameTaken);
-            }
-            let id = secret::id("repo_");
-            let record = RepositoryRecord {
-                owner: request.owner.clone(),
-                name: request.name.clone(),
-                public: request.public,
-                publish: publish.into(),
-                creator: caller.principal,
-                operation: request.operation.clone(),
-                phase: Phase::Provisioning,
-                epoch: 0,
-            };
-            state.repositories.insert(id.clone(), record.clone());
-            state
-                .operations
-                .insert(request.operation.clone(), id.clone());
-            Ok((id, record, true))
+            reserve(state, &caller.principal, request, None)
         })?;
 
         let repository_id = RepositoryId::parse(&repository)
@@ -158,29 +120,94 @@ impl ControlPlane {
             return Ok(created(&repository, &record, inserted));
         }
         self.node.provision(&repository_id)?;
-        let permissions = AppliedPermissions {
-            repository: repository_id.clone(),
-            epoch: 1,
-            visibility: if record.public {
-                Visibility::Public
-            } else {
-                Visibility::Private
-            },
-            roles: creator_roles(&record.creator)?,
-            required_approvals: 0,
-        };
-        self.node.apply(&permissions)?;
-        let ready = self.store.update(|state| {
+        self.node
+            .apply(&initial_permissions(&repository_id, &record)?)?;
+        let ready = self.mark_ready(&repository)?;
+        Ok(created(&repository, &ready, inserted))
+    }
+
+    /// Marks a repository Ready once its node holds the initial permissions.
+    pub(crate) fn mark_ready(&self, repository: &str) -> Result<RepositoryRecord, ControlError> {
+        self.store.update(|state| {
             let record = state
                 .repositories
-                .get_mut(&repository)
+                .get_mut(repository)
                 .ok_or_else(|| ControlError::Storage("repository vanished during create".into()))?;
             record.phase = Phase::Ready;
             record.epoch = 1;
             Ok(record.clone())
-        })?;
-        Ok(created(&repository, &ready, inserted))
+        })
     }
+}
+
+/// Reserves `request`'s name and operation as a new Provisioning record created by `creator`.
+/// A retry with the same operation and request returns the record reserved first. A fork
+/// passes its origin, so a create and a fork never share an operation.
+pub(crate) fn reserve(
+    state: &mut State,
+    creator: &str,
+    request: &CreateRequest,
+    fork: Option<ForkOf>,
+) -> Result<(String, RepositoryRecord, bool), ControlError> {
+    let publish = request.publish.as_str();
+    if let Some(id) = state.operations.get(&request.operation) {
+        let record = state
+            .repositories
+            .get(id)
+            .ok_or_else(|| ControlError::Storage("operation names a missing repository".into()))?;
+        let same = record.owner == request.owner
+            && record.name == request.name
+            && record.public == request.public
+            && record.publish == publish
+            && record.fork == fork
+            && record.creator == creator;
+        if !same {
+            return Err(ControlError::OperationReused);
+        }
+        return Ok((id.clone(), record.clone(), false));
+    }
+    if state
+        .repositories
+        .values()
+        .any(|record| record.owner == request.owner && record.name == request.name)
+    {
+        return Err(ControlError::NameTaken);
+    }
+    let id = secret::id("repo_");
+    let record = RepositoryRecord {
+        owner: request.owner.clone(),
+        name: request.name.clone(),
+        public: request.public,
+        publish: publish.into(),
+        creator: creator.into(),
+        operation: request.operation.clone(),
+        phase: Phase::Provisioning,
+        epoch: 0,
+        fork,
+    };
+    state.repositories.insert(id.clone(), record.clone());
+    state
+        .operations
+        .insert(request.operation.clone(), id.clone());
+    Ok((id, record, true))
+}
+
+/// The permissions a new repository starts with: its creator as Maintain, at epoch 1.
+pub(crate) fn initial_permissions(
+    repository: &RepositoryId,
+    record: &RepositoryRecord,
+) -> Result<AppliedPermissions, ControlError> {
+    Ok(AppliedPermissions {
+        repository: repository.clone(),
+        epoch: 1,
+        visibility: if record.public {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        },
+        roles: creator_roles(&record.creator)?,
+        required_approvals: 0,
+    })
 }
 
 fn creator_roles(creator: &str) -> Result<BTreeMap<PrincipalId, Role>, ControlError> {
@@ -189,7 +216,7 @@ fn creator_roles(creator: &str) -> Result<BTreeMap<PrincipalId, Role>, ControlEr
     Ok(BTreeMap::from([(principal, Role::Maintain)]))
 }
 
-fn created(repository: &str, record: &RepositoryRecord, inserted: bool) -> Created {
+pub(crate) fn created(repository: &str, record: &RepositoryRecord, inserted: bool) -> Created {
     Created {
         repository: repository.into(),
         owner: record.owner.clone(),
@@ -203,6 +230,12 @@ fn created(repository: &str, record: &RepositoryRecord, inserted: bool) -> Creat
         epoch: record.epoch,
         created: inserted,
     }
+}
+
+pub(crate) fn validate_request(request: &CreateRequest) -> Result<(), ControlError> {
+    validate_slug("owner", &request.owner)?;
+    validate_slug("repository name", &request.name)?;
+    validate_operation(&request.operation)
 }
 
 fn validate_slug(what: &str, value: &str) -> Result<(), ControlError> {
@@ -230,4 +263,31 @@ fn validate_operation(value: &str) -> Result<(), ControlError> {
                 "operation ID must be 1 to 128 ASCII letters, digits, '-', '_', '.' or ':'".into(),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replayed_operation_stays_with_its_creator() {
+        let mut state = State::default();
+        let request = CreateRequest {
+            owner: "acme".into(),
+            name: "app".into(),
+            public: false,
+            publish: Publish::Direct,
+            operation: "op-1".into(),
+        };
+        assert!(matches!(
+            reserve(&mut state, "alice", &request, None),
+            Ok((_, _, true))
+        ));
+        assert!(matches!(
+            reserve(&mut state, "alice", &request, None),
+            Ok((_, _, false))
+        ));
+        let other = reserve(&mut state, "bob", &request, None).unwrap_err();
+        assert_eq!(other.code(), "operation_id_reused");
+    }
 }

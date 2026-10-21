@@ -8,14 +8,16 @@ mod control;
 mod credentials;
 mod device;
 mod error;
+mod fork;
 mod node;
 mod repo;
 mod secret;
 mod state;
 
-pub use control::{ADMIN_PRINCIPAL, ControlPlane, NodeLink};
+pub use control::{ADMIN_PRINCIPAL, ControlPlane, ForkPlan, NodeLink};
 pub use credentials::Credentials;
 pub use device::{AccessToken, DeviceStart, Poll, Session};
 pub use error::ControlError;
+pub use fork::{ForkRequest, ForkedRepository};
 pub use node::LocalNode;
 pub use repo::{CreateRequest, Created, Publish};
