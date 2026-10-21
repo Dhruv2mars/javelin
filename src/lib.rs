@@ -20,7 +20,7 @@ mod workspace;
 pub use adopt::Adoption;
 pub use attach::{Attachment, RemoteHead};
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
-pub use capture::Capture;
+pub use capture::{Capture, CheckpointSink};
 pub use domain::{
     Choice, FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath,
     SparseChanges, VersionNumber,

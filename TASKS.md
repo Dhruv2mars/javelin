@@ -335,6 +335,7 @@ Wave 3, after wave 2:
   - [x] U1 protocol v2 hosting messages (#67)
   - [x] U2 node core: file-backed World log, loopback transport, idempotent PublishLayer.
   - [x] U4 attach: `.javelin/attach.json` written last, full fetch into the rolling base, refusal on local World history.
+  - [x] U5 streaming checkpoints: captures upload changes and blobs, `LayerAppend` appends them with idempotent replay and stale refusal, `LayerHead` reads the node head (`crates/javelin-node/tests/checkpoints.rs`).
   - [x] U3 client outbox: checksummed append-only journal, replay in journal order, fault-injection proxy against the loopback node.
   - [x] U7 scoped tokens, applied permissions, epochs and revocation on the node
     (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and

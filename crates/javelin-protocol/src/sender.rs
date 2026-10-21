@@ -6,13 +6,13 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 
 use javelin::{
-    ObjectId, OperationId, Repository, VersionNumber,
+    FileEntry, LayerId, ObjectId, OperationId, Repository, SparseChanges, VersionNumber,
     tree::{Chunk, Node},
 };
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{OBJECT_OVERHEAD, VERSION, read_frame, write_frame},
+    codec::{LayerOutcome, LayerStatus, OBJECT_OVERHEAD, VERSION, read_frame, write_frame},
     limits::*,
 };
 
@@ -186,12 +186,168 @@ fn consistent(
     }
 }
 
+/// One message on a link that carries one request per exchange, such as a node's
+/// `/v2` POST. The caller answers `Hello` before any other message.
+fn request(link: &mut (impl Read + Write), message: &Message) -> Result<Message, ProtocolError> {
+    write_frame(&mut *link, message)?;
+    read_reply(&mut *link)
+}
+
+/// Uploads the blobs `changes` reference that the node does not hold. Blobs are read
+/// from `source`, the repository that captured them.
+pub fn upload_blobs(
+    link: &mut (impl Read + Write),
+    source: &Repository,
+    changes: &SparseChanges,
+) -> Result<(), ProtocolError> {
+    let wanted: Vec<(Kind, ObjectId)> = changes
+        .entries()
+        .values()
+        .flatten()
+        .filter_map(|entry| match entry {
+            FileEntry::Regular { content, .. } => Some((Kind::Blob, *content)),
+            FileEntry::Symlink { .. } => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let missing = match request(link, &Message::Want(wanted.clone()))? {
+        Message::Missing(items) if items.iter().all(|item| wanted.contains(item)) => items,
+        _ => return Err(unexpected()),
+    };
+    let mut batch = Batch::default();
+    let mut send = |message: Message| request(link, &message);
+    for (kind, id) in missing {
+        let bytes = source.read_blob_bounded(id, MAX_BLOB)?;
+        batch.push(&mut send, (kind, id, bytes))?;
+    }
+    batch.flush(&mut send)
+}
+
+/// Uploads `changes` as a checkpoint object and returns its ID. An object the node
+/// already holds is not sent again.
+pub fn upload_changes(
+    link: &mut (impl Read + Write),
+    changes: &SparseChanges,
+) -> Result<ObjectId, ProtocolError> {
+    let bytes = changes.canonical_bytes();
+    let id = Kind::Checkpoint.id(&bytes);
+    match request(link, &Message::Want(vec![(Kind::Checkpoint, id)]))? {
+        Message::Missing(items) if items.is_empty() => return Ok(id),
+        Message::Missing(items) if items == [(Kind::Checkpoint, id)] => {}
+        _ => return Err(unexpected()),
+    }
+    match request(link, &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]))? {
+        Message::Stored { count: 1 } => Ok(id),
+        _ => Err(unexpected()),
+    }
+}
+
+/// Appends the uploaded changes `changes` to `layer` after `parent`. `parent` must be
+/// the node's head for the outcome to be `Accepted`; otherwise it is `Stale`.
+pub fn append(
+    link: &mut (impl Read + Write),
+    operation: &OperationId,
+    layer: &LayerId,
+    parent: Option<ObjectId>,
+    changes: ObjectId,
+) -> Result<LayerOutcome, ProtocolError> {
+    let message = Message::LayerAppend {
+        operation: operation.clone(),
+        layer: layer.clone(),
+        parent,
+        checkpoint: changes,
+    };
+    match request(link, &message)? {
+        Message::LayerOutcome(outcome) => Ok(outcome),
+        _ => Err(unexpected()),
+    }
+}
+
+/// A node's view of one Layer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeLayer {
+    pub base: VersionNumber,
+    pub seq: u64,
+    pub head: ObjectId,
+    pub status: LayerStatus,
+}
+
+pub fn layer_head(
+    link: &mut (impl Read + Write),
+    layer: &LayerId,
+) -> Result<NodeLayer, ProtocolError> {
+    match request(
+        link,
+        &Message::LayerHead {
+            layer: layer.clone(),
+        },
+    )? {
+        Message::LayerState {
+            layer: reported,
+            base,
+            seq,
+            head,
+            state,
+        } if reported == *layer => Ok(NodeLayer {
+            base,
+            seq,
+            head,
+            status: state,
+        }),
+        _ => Err(unexpected()),
+    }
+}
+
+/// Uploads captures to one Layer on a node. Each append names the head the node last
+/// accepted from this uploader, so a retry after a lost reply names the same parent and
+/// replays the same operation.
+pub struct Uploader {
+    layer: LayerId,
+    parent: Option<ObjectId>,
+}
+
+impl Uploader {
+    /// `parent` is the node's head for `layer` when uploading starts.
+    pub fn new(layer: LayerId, parent: ObjectId) -> Self {
+        Self {
+            layer,
+            parent: Some(parent),
+        }
+    }
+
+    /// Uploads the blobs and changes, then appends them under `operation`. Only an
+    /// accepted append moves the parent on.
+    pub fn upload(
+        &mut self,
+        link: &mut (impl Read + Write),
+        source: &Repository,
+        operation: &OperationId,
+        changes: &SparseChanges,
+    ) -> Result<LayerOutcome, ProtocolError> {
+        upload_blobs(link, source, changes)?;
+        let id = upload_changes(link, changes)?;
+        let outcome = append(link, operation, &self.layer, self.parent, id)?;
+        if let LayerOutcome::Accepted { checkpoint, .. } = &outcome {
+            self.parent = Some(*checkpoint);
+        }
+        Ok(outcome)
+    }
+}
+
 pub(crate) fn exchange(
     r: &mut impl Read,
     w: &mut impl Write,
     message: &Message,
 ) -> Result<Message, ProtocolError> {
     write_frame(w, message)?;
+    read_reply(r)
+}
+
+fn read_reply(r: &mut impl Read) -> Result<Message, ProtocolError> {
     match read_frame(r)? {
         None => Err(ProtocolError::new(
             "truncated",
