@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first.\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID\n                           Stack a frozen source checkpoint into exact target revision N\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  refresh ID               Bring the directory to its head after Stack moved it, keeping
                            local edits; refuses without changing anything on conflict
-  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
+  recover                  Finish interrupted steps and reclaim all trash\n\nOutbox:\n  outbox status --remote NAME [--repo DIR]\n                           Queued records waiting for the node, and any damaged tail\n                           that was ignored when the journal was opened\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -575,6 +575,51 @@ fn radar_text(radar: &Radar) -> String {
 
 /// `adopt [project-directory] --operation ID`: one command from an existing project
 /// directory to a repository whose World 1 holds its files. Retry with the same operation.
+/// `javelin outbox status --remote NAME`: read-only view of the client outbox. Replay
+/// needs a node address, which attach (U4) provides.
+pub fn outbox_status(args: Vec<OsString>) -> Result<Output> {
+    let args = Args::parse(args, &["--repo", "--remote"], 0)?;
+    let name = text(args.required("--remote")?)?;
+    let root = args.root()?;
+    Repository::open(&root)?;
+    let outbox = javelin::outbox::Outbox::open(&root, name)?;
+    let pending: Vec<Value> = outbox
+        .pending()
+        .map(|entry| {
+            json!({
+                "seq": entry.seq,
+                "kind": entry.kind.as_str(),
+                "scope": entry.scope,
+                "operation": entry.operation.as_str(),
+                "bytes": entry.payload.len(),
+            })
+        })
+        .collect();
+    let damage = outbox.damage().map(
+        |damage| json!({"offset": damage.offset, "bytes": damage.bytes, "reason": damage.reason}),
+    );
+    let mut lines = vec![format!("{} pending in outbox {name}", pending.len())];
+    for entry in outbox.pending() {
+        lines.push(format!(
+            "  seq {} {} {} {}",
+            entry.seq,
+            entry.kind.as_str(),
+            entry.scope,
+            entry.operation.as_str()
+        ));
+    }
+    if let Some(damage) = outbox.damage() {
+        lines.push(format!(
+            "Ignored {} bytes at offset {} ({}); they are moved aside on the next append",
+            damage.bytes, damage.offset, damage.reason
+        ));
+    }
+    Ok(success(
+        json!({"ok": true, "command": "outbox status", "remote": name, "pending": pending, "damage": damage}),
+        lines.join("\n"),
+    ))
+}
+
 pub fn adopt(args: Vec<OsString>) -> Result<Output> {
     let mut root = None;
     let mut operation = None;
