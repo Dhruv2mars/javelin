@@ -63,7 +63,13 @@ export function validateText(file: string, text: string): Finding[] {
     add("", "yaml_error", doc.errors[0].message);
     return findings;
   }
-  const root: unknown = doc.toJS();
+  let root: unknown;
+  try {
+    root = doc.toJS();
+  } catch (err) {
+    add("", "yaml_error", (err as Error).message);
+    return findings;
+  }
   if (!isObject(root)) {
     add("", "missing_required", "workflow must be a mapping");
     return findings;
@@ -82,14 +88,24 @@ export function validateText(file: string, text: string): Finding[] {
       add(joinPath(path, "timeout-minutes"), "bad_value", "timeout-minutes must be an integer from 1 to 360");
     }
   };
-  const checkExpressions = (value: unknown, path: string) => {
+  // `ancestors` holds the containers on the current path; a repeat means a recursive alias.
+  const checkExpressions = (value: unknown, path: string, ancestors = new Set<object>()) => {
     if (typeof value === "string") {
       if (unbalancedExpression(value)) add(path, "bad_expression", "unbalanced ${{ or }}");
-    } else if (Array.isArray(value)) {
-      value.forEach((v, i) => checkExpressions(v, `${path}[${i}]`));
-    } else if (isObject(value)) {
-      for (const [k, v] of Object.entries(value)) checkExpressions(v, joinPath(path, k));
+      return;
     }
+    if (typeof value !== "object" || value === null) return;
+    if (ancestors.has(value)) {
+      add(path, "yaml_error", "recursive alias");
+      return;
+    }
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => checkExpressions(v, `${path}[${i}]`, ancestors));
+    } else {
+      for (const [k, v] of Object.entries(value)) checkExpressions(v, joinPath(path, k), ancestors);
+    }
+    ancestors.delete(value);
   };
 
   checkKeys(root, "", TOP_KEYS, TOP_UNSUPPORTED);
@@ -187,7 +203,10 @@ export function validateText(file: string, text: string): Finding[] {
     } else if (uses.startsWith("docker://")) {
       add(at, "unsupported_uses", "docker:// actions are not supported");
     } else if (uses.startsWith("./") || uses.startsWith("../")) {
-      if (posix.normalize(uses).startsWith("..")) add(at, "unsupported_uses", "local action escapes the revision");
+      const normalized = posix.normalize(uses);
+      if (normalized === ".." || normalized.startsWith("../")) {
+        add(at, "unsupported_uses", "local action escapes the revision");
+      }
     } else {
       const ref = uses.slice(uses.lastIndexOf("@") + 1);
       if (!uses.includes("@") || !SHA.test(ref)) {

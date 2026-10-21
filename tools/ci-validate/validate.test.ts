@@ -70,6 +70,8 @@ const manySteps = "on: push\njobs:\n  test:\n    runs-on: x\n    steps:\n" + "  
 
 const cases: [string, string, string][] = [
   ["yaml_error", "", "on: push\non: pull_request\njobs: {}\n"],
+  ["yaml_error", "", VALID.replace("runs-on: ubuntu-latest", "runs-on: *missing")],
+  ["yaml_error", "jobs.test.env.A", "on: push\njobs:\n  test:\n    runs-on: x\n    env: &e {A: *e}\n    steps:\n      - run: echo\n"],
   ["too_large", "", bigComment],
   ["too_large", "jobs", manyJobs],
   ["too_large", "jobs.test.steps", manySteps],
@@ -108,6 +110,9 @@ test("accepts a minimal workflow", () => {
 });
 
 test("accepts a pinned third-party action and a local action", () => {
-  const text = VALID.replace("- run: echo hi", "- uses: ./.javelin/actions/setup\n      - uses: owner/repo@" + "a".repeat(40));
+  const text = VALID.replace(
+    "- run: echo hi",
+    "- uses: ./.javelin/actions/setup\n      - uses: ./..setup\n      - uses: owner/repo@" + "a".repeat(40),
+  );
   expect(validateText("case.yml", text)).toEqual([]);
 });
