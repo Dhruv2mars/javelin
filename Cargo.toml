@@ -22,3 +22,12 @@ libc = "0.2.190"
 # hooks: the Publish write-transaction cost test counts SQLite VM instructions.
 rusqlite = { version = "0.40.2", features = ["bundled", "blob", "hooks"] }
 tempfile = "3.27.0"
+# The hosted acceptance suite (tests/hosted_*.rs, U14) drives the control plane and nodes.
+javelin-collaboration = { path = "crates/javelin-collaboration" }
+javelin-control = { path = "crates/javelin-control" }
+javelin-identity = { path = "crates/javelin-identity" }
+javelin-node = { path = "crates/javelin-node" }
+javelin-node-worker = { path = "crates/javelin-node-worker" }
+javelin-protocol = { path = "crates/javelin-protocol" }
+webauthn-authenticator-rs = { version = "=0.6.1-dev", default-features = false, features = ["softpasskey"] }
+webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
