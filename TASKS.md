@@ -333,6 +333,7 @@ Wave 3, after wave 2:
 - [ ] Online units from `docs/online-design.md`, in its order.
   - [x] U1 protocol v2 hosting messages (#67)
   - [x] U2 node core: file-backed World log, loopback transport, idempotent PublishLayer.
+  - [x] U3 client outbox: checksummed append-only journal, replay in journal order, fault-injection proxy against the loopback node.
   - [x] U7 scoped tokens, applied permissions, epochs and revocation on the node
     (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and
     authenticated control-plane pushes remain open.
