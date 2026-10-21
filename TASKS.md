@@ -337,6 +337,8 @@ Wave 3, after wave 2:
     (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and
     authenticated control-plane pushes remain open.
   - [x] U12 World log in one Durable Object: commit transaction on workerd (50 publishers, kill inside and after commit); deployed-object checks and replication re-check moved to U13.
+  - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
+    partition (`review.rs`), tree IDs in collaboration.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
