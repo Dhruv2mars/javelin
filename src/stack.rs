@@ -75,24 +75,9 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        verify_head(&tx, expected)?;
-        crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
-        checkpoint_in(&tx, source.object())?;
-        let before = checkpoint_in(&tx, expected.checkpoint().object())?;
-        let mut sources = before.stack_sources().to_vec();
-        sources.push(source);
-        sources.sort();
-        sources.dedup();
         let provenance = self.provenance.as_ref();
-        let candidate = prepare_checkpoint(&tx, before.base(), changes, &sources, provenance)?;
-        let outcome = update_in(
-            &tx,
-            operation,
-            expected,
-            candidate,
-            false,
-            Some(source),
-            resolution,
+        let outcome = stack_in(
+            &tx, operation, expected, source, changes, resolution, provenance,
         )?;
         #[cfg(test)]
         crate::repository::test_boundary("stack_before_commit");
@@ -101,6 +86,91 @@ impl Repository {
         crate::repository::test_boundary("stack_after_commit");
         Ok(outcome)
     }
+
+    /// The stored bytes of checkpoint `id`, after verifying it. The bytes hash to `id`,
+    /// so another store can check them before reading their changes.
+    pub fn checkpoint_object(&self, id: CheckpointId) -> Result<Vec<u8>> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        checkpoint_in(&tx, id.object())?;
+        let bytes = read_object(&tx, id.object(), ObjectKind::Checkpoint)?;
+        tx.commit()?;
+        Ok(bytes)
+    }
+
+    /// The changes in checkpoint bytes from another store, such as a node's Layer head.
+    /// Only the encoding is checked: the base names the other store's World.
+    pub fn foreign_checkpoint_changes(bytes: &[u8]) -> Result<SparseChanges> {
+        #[derive(Deserialize)]
+        struct Encoded {
+            changes: std::collections::BTreeMap<String, Option<crate::FileEntry>>,
+        }
+        let id = ObjectId::for_checkpoint(bytes);
+        let encoded: Encoded =
+            serde_json::from_slice(bytes).map_err(|_| Error::CorruptObject(id))?;
+        SparseChanges::new(
+            encoded
+                .changes
+                .into_iter()
+                .map(|(path, entry)| Ok((crate::RepoPath::parse(&path)?, entry)))
+                .collect::<Result<Vec<_>>>()?,
+        )
+        .map_err(|_| Error::CorruptObject(id))
+    }
+
+    /// Moves `expected` to a head another store produced, such as a Stack on a node.
+    /// `changes` is that head's delta against the same base. The changes are stored as a
+    /// standalone checkpoint and stacked onto `expected` in one transaction, so the new head
+    /// is a Stack result: capture treats a directory that does not hold it as behind, and
+    /// a refresh brings the directory to it. Blobs must already be stored. A retry with the
+    /// same operation replays the original outcome.
+    pub fn import_stacked_head(
+        &mut self,
+        operation: &OperationId,
+        expected: &LayerHead,
+        changes: &SparseChanges,
+    ) -> Result<LayerUpdate> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_format(&tx)?;
+        verify_head(&tx, expected)?;
+        let before = checkpoint_in(&tx, expected.checkpoint().object())?;
+        let imported = prepare_checkpoint(&tx, before.base(), changes, &[], None)?;
+        let outcome = stack_in(&tx, operation, expected, imported.id, changes, None, None)?;
+        tx.commit()?;
+        Ok(outcome)
+    }
+}
+
+/// Commits a prepared Stack inside the caller's transaction.
+fn stack_in(
+    tx: &Connection,
+    operation: &OperationId,
+    expected: &LayerHead,
+    source: CheckpointId,
+    changes: &SparseChanges,
+    resolution: Option<ObjectId>,
+    provenance: Option<&crate::Provenance>,
+) -> Result<LayerUpdate> {
+    verify_head(tx, expected)?;
+    crate::publish::refuse_published_in(tx, operation, expected.layer())?;
+    checkpoint_in(tx, source.object())?;
+    let before = checkpoint_in(tx, expected.checkpoint().object())?;
+    let mut sources = before.stack_sources().to_vec();
+    sources.push(source);
+    sources.sort();
+    sources.dedup();
+    let candidate = prepare_checkpoint(tx, before.base(), changes, &sources, provenance)?;
+    update_in(
+        tx,
+        operation,
+        expected,
+        candidate,
+        false,
+        Some(source),
+        resolution,
+    )
 }
 
 fn replay_in(

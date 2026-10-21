@@ -155,7 +155,7 @@ pub(crate) fn layer_head(repo: &Repository, layer: &LayerId) -> Result<Message, 
 
 /// The reply for a parent that is not current. An active Layer is stale against its
 /// head; a Layer that is no longer active has no head to be stale against.
-fn stale_or_refused(state: LayerState) -> LayerOutcome {
+pub(crate) fn stale_or_refused(state: LayerState) -> LayerOutcome {
     match state {
         LayerState::Active { head } => LayerOutcome::Stale {
             head: head.checkpoint().object(),
@@ -184,7 +184,7 @@ fn load_changes(
         .transpose()
 }
 
-fn refused(code: &str) -> LayerOutcome {
+pub(crate) fn refused(code: &str) -> LayerOutcome {
     LayerOutcome::Refused { code: code.into() }
 }
 
@@ -192,6 +192,6 @@ fn storage(error: rusqlite::Error) -> ProtocolError {
     storage_detail(&error.to_string())
 }
 
-fn storage_detail(detail: &str) -> ProtocolError {
+pub(crate) fn storage_detail(detail: &str) -> ProtocolError {
     ProtocolError::new("storage", detail)
 }
