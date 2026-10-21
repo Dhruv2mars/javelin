@@ -1193,6 +1193,7 @@ name = "javelin-cli"
 version = "0.1.0"
 dependencies = [
  "javelin",
+ "javelin-collaboration",
  "javelin-control",
  "javelin-node",
  "javelin-protocol",
