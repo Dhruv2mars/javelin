@@ -96,6 +96,8 @@ fn read_request(reader: &mut impl BufRead) -> Result<Request, Reply> {
     let (Some(method), Some(path)) = (parts.next(), parts.next()) else {
         return Err(bad());
     };
+    // The page reads `?code=` itself, so routing only needs the path.
+    let path = path.split('?').next().unwrap_or_default();
     let (method, path) = (method.to_string(), path.to_string());
     let mut headers = Vec::new();
     loop {

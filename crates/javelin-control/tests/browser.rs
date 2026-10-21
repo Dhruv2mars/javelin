@@ -6,7 +6,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{TcpListener, TcpStream},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use javelin_control::{ControlPlane, Poll, RelyingParty, answer};
@@ -90,7 +90,10 @@ fn client_flow(addr: String, admin: String, user_code: String) -> Vec<String> {
     assert_eq!(page.status, 200);
     assert!(page.headers.contains("content-type: text/html"));
     assert!(page.body.contains("Approve a Javelin sign-in"));
-    notes.push("GET / serves the page".into());
+    // The page reads `?code=` itself, so a prefilled link must still serve the page.
+    let prefilled = call(&addr, "GET", "/?code=BCDF-GHJK", &[], None);
+    assert_eq!(prefilled.status, 200);
+    notes.push("GET / serves the page, with or without ?code=".into());
 
     // Enrollment: the admin token in the header.
     let auth = format!("Bearer {admin}");
@@ -201,7 +204,12 @@ fn approval_page_flow_over_loopback() {
     let plane = ControlPlane::open(dir.path()).expect("open");
     let admin = plane.bootstrap().expect("bootstrap");
     let rp = RelyingParty::new(ORIGIN).expect("relying party");
-    let start = plane.device_start(1_800_000_000).expect("device start");
+    // The server reads the real clock, so the device code must use it too.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs();
+    let start = plane.device_start(now).expect("device start");
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     listener.set_nonblocking(true).expect("non-blocking");
@@ -228,10 +236,7 @@ fn approval_page_flow_over_loopback() {
     let notes = client.join().expect("client flow passed");
     assert!(!notes.is_empty());
 
-    match plane
-        .device_poll(&start.device_code, 1_800_000_000)
-        .expect("poll")
-    {
+    match plane.device_poll(&start.device_code, now).expect("poll") {
         Poll::Approved(session) => assert_eq!(session.principal, "admin"),
         Poll::Pending => panic!("the page's approval left the code pending"),
     }
