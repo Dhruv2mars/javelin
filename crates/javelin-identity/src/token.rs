@@ -30,6 +30,10 @@ pub struct Claims {
     pub scopes: Vec<Scope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<String>,
+    /// Check-name globs this token may report, the `<pattern>` of `checks:report:<pattern>`.
+    /// Used only with the `checks:report` scope.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
     pub iat: u64,
     pub exp: u64,
     pub jti: String,

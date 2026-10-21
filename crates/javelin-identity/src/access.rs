@@ -27,6 +27,9 @@ pub enum Scope {
     RepoCreate,
     #[serde(rename = "import")]
     Import,
+    /// Report completed check results for the names in the token's `checks` patterns.
+    #[serde(rename = "checks:report")]
+    CheckReport,
 }
 
 /// What one request needs: a scope, and the Layer it acts on, if it acts on one.
@@ -42,6 +45,8 @@ pub struct Need<'a> {
 pub struct Grant {
     pub principal: Option<String>,
     pub role: Role,
+    /// The check-name globs the token may report. Empty unless the token carries them.
+    pub checks: Vec<String>,
 }
 
 /// A refusal, with its protocol code. `Unauthorized` means the caller is not
@@ -98,7 +103,7 @@ pub enum Revocation {
 /// repository role grants, so a node never honors it.
 fn role_allows(role: Role, scope: Scope) -> bool {
     match scope {
-        Scope::Read | Scope::LayerWrite | Scope::ReviewWrite => true,
+        Scope::Read | Scope::LayerWrite | Scope::ReviewWrite | Scope::CheckReport => true,
         Scope::ReviewApprove => role >= Role::Review,
         Scope::Publish | Scope::Import => role >= Role::Maintain,
         Scope::RepoCreate => false,
@@ -219,6 +224,7 @@ impl Access {
         Ok(Grant {
             principal: Some(claims.sub),
             role,
+            checks: claims.checks,
         })
     }
 
@@ -230,6 +236,7 @@ impl Access {
                 Ok(Grant {
                     principal: None,
                     role: Role::Read,
+                    checks: Vec::new(),
                 })
             }
             _ => Err(Refusal::Unauthorized("a token is required")),
