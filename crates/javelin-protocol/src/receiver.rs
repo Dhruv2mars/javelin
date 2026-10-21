@@ -42,11 +42,14 @@ pub trait WorldLog {
 }
 
 /// Serves one message: a hosted write goes to the log, anything else to the repository.
+/// The legacy `Publish` is not served here: it would skip the log's operation records,
+/// so one operation ID could mean two different things.
 pub fn handle_request<L: WorldLog>(
     log: &mut L,
     message: Message,
 ) -> Result<Message, ProtocolError> {
     match message {
+        Message::Publish { .. } => Err(unexpected()),
         Message::PublishLayer {
             operation,
             layer,

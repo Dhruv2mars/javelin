@@ -1,10 +1,12 @@
 use javelin::{
-    Error, FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, SparseChanges,
-    VersionNumber,
+    Error, FileEntry, LayerId, Manifest, ObjectId, OperationId, PublishAttribution, RepoPath,
+    SparseChanges, VersionNumber,
 };
 use javelin_node::FileWorldLog;
 use javelin_protocol::{
+    Message,
     codec::{PublishOutcome, code},
+    handle_request,
     receiver::{WorldLog, refusal},
 };
 use tempfile::TempDir;
@@ -275,4 +277,33 @@ fn a_recorded_operation_refuses_each_changed_request_field() {
         publish(&mut log, "publish-1", "work", expected, 0),
         published
     );
+}
+
+#[test]
+fn a_legacy_publish_cannot_reuse_a_hosted_operation() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, expected) = seeded(&dir);
+    assert_eq!(
+        publish(&mut log, "same-op", "missing", expected, 0),
+        refused(refusal::UNKNOWN_LAYER)
+    );
+
+    // A valid tree over World 0, so the legacy path would accept it if it reached the repository.
+    let content = log.repository().put_blob(b"two").unwrap();
+    let manifest = Manifest::new([(
+        RepoPath::parse("b.txt").unwrap(),
+        FileEntry::Regular {
+            content,
+            executable: false,
+        },
+    )])
+    .unwrap();
+    let tree = log.repository().put_snapshot(&manifest).unwrap();
+    let legacy = Message::Publish {
+        operation: op("same-op"),
+        expected: v(0),
+        tree,
+    };
+    assert!(handle_request(&mut log, legacy).is_err());
+    assert_eq!(log.head().unwrap().number, v(0));
 }
