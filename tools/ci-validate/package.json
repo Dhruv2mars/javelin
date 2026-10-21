@@ -1,0 +1,11 @@
+{
+  "name": "ci-validate",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "yaml": "2"
+  }
+}
