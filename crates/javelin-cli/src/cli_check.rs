@@ -2,7 +2,9 @@
 //! (`docs/ci-execution.md` section 4; unit U17). The node is the one the control plane
 //! provisions under `<control dir>/nodes/<repository>`, and its trusted keys come from the
 //! control plane. The reporter's token is read from `JAVELIN_TOKEN`, so it stays out of argv.
-//! Attach (U4) will address remote nodes; until then, reports go to a local node.
+//! The command opens the node's directory in process, so it needs the node not to be
+//! serving: the loopback transport cannot carry the reporter's token yet (U7 left wire
+//! carriage open), and a serving node holds the directory, which makes this `busy`.
 
 use std::{
     env,
@@ -21,8 +23,8 @@ use serde_json::json;
 use crate::cli::Output;
 
 const USAGE: &str = "usage: javelin check report --repository ID --operation ID --tree HASH --name NAME \
---conclusion success|failure|neutral|cancelled|timed_out|skipped [--checkpoint HASH] \
-[--details-url URL] [--summary TEXT] [--started UNIX] [--completed UNIX] [--control DIR]";
+--conclusion success|failure|neutral|cancelled|timed_out|skipped --completed UNIX \
+[--checkpoint HASH] [--details-url URL] [--summary TEXT] [--started UNIX] [--control DIR]";
 
 const OPTIONS: &[&str] = &[
     "--repository",
@@ -153,7 +155,8 @@ fn now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// The parsed command line. Its `started` and `completed` default to now.
+/// The parsed command line. `completed` is required and `started` defaults to it, so the
+/// same arguments always make the same message and a retry replays the original result.
 struct Request {
     repository: String,
     operation: OperationId,
@@ -207,7 +210,7 @@ impl Request {
                 .map(|value| ObjectId::parse(value).map_err(|error| usage(&error.to_string())))
                 .transpose()
         };
-        let now = now();
+        let completed = number("--completed")?.ok_or_else(|| usage("missing --completed"))?;
         Ok(Self {
             repository: required("--repository")?,
             operation: OperationId::parse(&required("--operation")?)?,
@@ -217,8 +220,8 @@ impl Request {
             conclusion,
             details_url: options.get("--details-url").cloned(),
             summary: options.get("--summary").cloned(),
-            started: number("--started")?.unwrap_or(now),
-            completed: number("--completed")?.unwrap_or(now),
+            started: number("--started")?.unwrap_or(completed),
+            completed,
             control: options.get("--control").map(PathBuf::from),
         })
     }
@@ -310,9 +313,44 @@ mod tests {
             Err(Error::InvalidInput(_))
         ));
         assert!(matches!(
-            with(&["--conclusion", "success", "--started", "soon"]),
+            with(&[
+                "--conclusion",
+                "success",
+                "--completed",
+                "20",
+                "--started",
+                "soon"
+            ]),
             Err(Error::InvalidInput(_))
         ));
+        assert!(matches!(
+            with(&["--conclusion", "success"]),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn same_arguments_make_the_same_message_for_retry() {
+        let parse = || {
+            Request::parse(args(&[
+                "--repository",
+                "repo-1",
+                "--operation",
+                "report-1",
+                "--tree",
+                TREE,
+                "--name",
+                "ci/unit",
+                "--conclusion",
+                "success",
+                "--completed",
+                "20",
+            ]))
+            .unwrap()
+        };
+        let first = parse();
+        assert_eq!((first.started, first.completed), (20, 20));
+        assert_eq!(first.message(), parse().message());
     }
 
     #[test]
@@ -329,6 +367,8 @@ mod tests {
             "ci/unit",
             "--conclusion",
             "success",
+            "--completed",
+            "20",
             "--control",
             dir.path().to_str().unwrap(),
         ]))
