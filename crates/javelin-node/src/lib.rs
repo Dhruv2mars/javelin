@@ -8,9 +8,11 @@ pub mod auth;
 mod log_do;
 pub mod review;
 mod server;
+mod trace;
 mod world_log;
 
 pub use log_do::{CommitReply, ComposedVersion, DoLog, Publish};
 
 pub use server::{bind_loopback, serve};
+pub use trace::{TraceVisibility, Traces};
 pub use world_log::FileWorldLog;

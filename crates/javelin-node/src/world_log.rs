@@ -21,6 +21,8 @@ use javelin_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::trace::Traces;
+
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
 
@@ -32,6 +34,7 @@ const RECORDS: &str = "node.db";
 pub struct FileWorldLog {
     repo: Repository,
     records: Connection,
+    traces: Traces,
     _lock: File,
 }
 
@@ -65,9 +68,11 @@ impl FileWorldLog {
                 outcome BLOB NOT NULL
             );",
         )?;
+        let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
             repo,
             records,
+            traces,
             _lock: lock,
         })
     }
@@ -81,6 +86,11 @@ impl FileWorldLog {
     /// storage (the review partition in `review.rs`).
     pub(crate) fn parts(&mut self) -> (&mut Repository, &mut Connection) {
         (&mut self.repo, &mut self.records)
+    }
+
+    /// The trace store, which keeps its visibility beside the decided operations.
+    pub fn traces(&self) -> &Traces {
+        &self.traces
     }
 
     pub fn head(&self) -> Result<WorldVersion> {
