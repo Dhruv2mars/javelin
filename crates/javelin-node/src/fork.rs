@@ -11,6 +11,8 @@
 //! stored tree is complete, and a version is written by one transaction. The origin is written
 //! last, so a fork with an origin is finished.
 
+use std::collections::BTreeMap;
+
 use javelin::{
     AdvanceOutcome, ObjectId, OperationId, PublishAttribution, Repository, VersionNumber,
     tree::{Chunk, MAX_CHUNK, Node},
@@ -25,14 +27,16 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::{trace::TraceVisibility, world_log::FileWorldLog};
 
-/// The fork's record of where it came from, and the traces it left out.
+/// The fork's record of where it came from, the traces it left out, and the traces it inherited
+/// (with the earliest version that named each), so a fork of this fork inherits them too.
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS fork_origin (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 0),
     source TEXT NOT NULL,
     number INTEGER NOT NULL,
     version TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS fork_omitted_traces (trace TEXT PRIMARY KEY);";
+CREATE TABLE IF NOT EXISTS fork_omitted_traces (trace TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS fork_traces (trace TEXT PRIMARY KEY, number INTEGER NOT NULL);";
 
 /// `fork_of`: the source repository, the version forked at, and that version's ID.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,8 +167,9 @@ pub fn omitted_traces(log: &FileWorldLog) -> Result<Vec<ObjectId>, ProtocolError
 }
 
 /// Copies every trace that a publication up to `upto` named. Each trace is copied, marked
-/// restricted if it was, or omitted and marked when the reader may not see it. Every step is
-/// idempotent, so a resumed fork repeats them safely.
+/// restricted if it was, or omitted and marked when the reader may not see it. A trace the source
+/// already omitted has no bytes to copy, so it stays omitted. Every step is idempotent, so a
+/// resumed fork repeats them safely.
 fn copy_traces(
     source: &FileWorldLog,
     target: &mut FileWorldLog,
@@ -172,9 +177,26 @@ fn copy_traces(
     reader: Role,
 ) -> Result<Vec<ObjectId>, ProtocolError> {
     let mut omitted = Vec::new();
-    for trace in inherited_traces(source, upto)? {
+    for (trace, number) in inherited_traces(source, upto)? {
+        target
+            .records()
+            .execute(
+                "INSERT OR IGNORE INTO fork_traces (trace, number) VALUES (?1, ?2)",
+                params![trace.to_string(), number.get() as i64],
+            )
+            .map_err(storage)?;
         let visibility = source.traces().visibility(trace)?;
-        if visibility == TraceVisibility::Restricted && reader < Role::Maintain {
+        let absent = source
+            .records()
+            .query_row(
+                "SELECT 1 FROM fork_omitted_traces WHERE trace = ?1",
+                [trace.to_string()],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(storage)?
+            .is_some();
+        if absent || (visibility == TraceVisibility::Restricted && reader < Role::Maintain) {
             target
                 .records()
                 .execute(
@@ -195,11 +217,15 @@ fn copy_traces(
     Ok(omitted)
 }
 
-/// The traces named by the source's `PublishLayer` outcomes up to `upto`, deduplicated.
+/// The traces up to `upto`, each with the earliest version that named it. They come from the
+/// source's own `PublishLayer` outcomes and from the traces the source inherited when it was
+/// forked. A fork's inherited versions have no outcomes of their own, so only the second kind
+/// reaches them.
 fn inherited_traces(
     source: &FileWorldLog,
     upto: VersionNumber,
-) -> Result<Vec<ObjectId>, ProtocolError> {
+) -> Result<Vec<(ObjectId, VersionNumber)>, ProtocolError> {
+    let mut earliest = BTreeMap::new();
     let mut statement = source
         .records()
         .prepare("SELECT request, outcome FROM decided")
@@ -209,7 +235,6 @@ fn inherited_traces(
             Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))
         })
         .map_err(storage)?;
-    let mut traces = Vec::new();
     for row in rows {
         let (request, outcome) = row.map_err(storage)?;
         let Message::PublishOutcome(PublishOutcome::Published { number, .. }) = decode(&outcome)?
@@ -230,11 +255,32 @@ fn inherited_traces(
         else {
             continue;
         };
-        if !traces.contains(&trace) {
-            traces.push(trace);
-        }
+        note(&mut earliest, trace, number.get());
     }
-    Ok(traces)
+    let mut statement = source
+        .records()
+        .prepare("SELECT trace, number FROM fork_traces")
+        .map_err(storage)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(storage)?;
+    for row in rows {
+        let (trace, number) = row.map_err(storage)?;
+        note(&mut earliest, ObjectId::parse(&trace)?, number as u64);
+    }
+    earliest
+        .into_iter()
+        .filter(|(_, number)| *number <= upto.get())
+        .map(|(trace, number)| Ok((ObjectId::parse(&trace)?, VersionNumber::new(number)?)))
+        .collect()
+}
+
+/// Keeps the earliest version that named `trace`.
+fn note(earliest: &mut BTreeMap<String, u64>, trace: ObjectId, number: u64) {
+    let first = earliest.entry(trace.to_string()).or_insert(number);
+    *first = (*first).min(number);
 }
 
 /// Copies one tree chunk and everything under it. A chunk already in `to` is complete, so the

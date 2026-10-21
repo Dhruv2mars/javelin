@@ -261,6 +261,39 @@ fn a_reader_who_cannot_see_a_restricted_trace_gets_a_marker_and_no_bytes() {
 }
 
 #[test]
+fn a_fork_of_a_fork_inherits_the_traces_and_omissions_of_its_source() {
+    let (src_dir, first_dir, second_dir) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let (src, public, secret) = source(src_dir.path());
+    let source_shape = shape(&src);
+    {
+        let mut first = FileWorldLog::open(first_dir.path()).unwrap();
+        fork::fork(&src, "repo-src", &mut first, v(4), Role::Read).unwrap();
+    }
+    // The first fork's versions have no publish outcomes of their own, so its traces come only
+    // from what it inherited.
+    let first = FileWorldLog::open(first_dir.path()).unwrap();
+    let mut second = FileWorldLog::open(second_dir.path()).unwrap();
+
+    let forked = fork::fork(&first, "repo-first", &mut second, v(4), Role::Maintain).unwrap();
+
+    assert_eq!(
+        forked.omitted,
+        vec![secret],
+        "omitted in the first fork, so still omitted"
+    );
+    assert!(
+        second.repo().has_blob(public).unwrap(),
+        "the public trace is inherited"
+    );
+    assert!(!second.repo().has_blob(secret).unwrap());
+    assert_eq!(shape(&second), source_shape);
+}
+
+#[test]
 fn a_maintainer_fork_keeps_a_restricted_trace_restricted() {
     let (src_dir, dst_dir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let (src, _, secret) = source(src_dir.path());
