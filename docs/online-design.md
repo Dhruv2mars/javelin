@@ -751,10 +751,12 @@ merged first, or a verified unmerged base with the dependent PR naming it (`C§W
 | U14 | `test: hosted acceptance suite` (contract gate 4 assertions, outage matrix, git stand-in with positive control) | new `tools/acceptance/`, `tests/hosted_*.rs` | U3, U5, U9, U11, U13 |
 | U15 | `docs: CI execution design` (docs only; check ingestion and runner options) | new `docs/ci-execution.md` | D4 (can start now; no code) |
 | U16 | `test: hosting measurements` (gate 6 fixtures, limits, cost) | `tools/` | U14; measurements committed before the run (`C§Verification gates` 6) |
+| U17 | `feat: check ingestion and required-check gate` (`CheckReport` ingestion, required-check gate in `PublishLayer` and `PublishRequest`, `javelin check report`; spec and tests 1–15 in `docs/ci-execution.md` §11) | new `crates/javelin-node/src/checks.rs`, `crates/javelin-protocol/src/codec.rs` (tags `0x60`, `0x61`), `crates/javelin-cli` (`check report` only), `tests/checks_*.rs` | U2, U7, U9; CI1 |
+| U18 | `feat: CI workflow validator` (GitHub Actions YAML, bun script; spec in `docs/ci-execution.md` §10; examples 01–07 pass, 08–09 rejected with the expected codes) | new `tools/ci-validate/` | U15; CI1 |
 
 Order that gets working behavior fastest: U1 → U2 → U3 → U5 (checkpoints and publish on a
 local node) with U4 as soon as the rolling base merges; then U7 → U8 → U8b → U9; then U10 → U11; then
-U12 → U13; then U14. U15 runs in parallel at any time.
+U12 → U13; then U14. U15 runs in parallel at any time; U18 after U15, and U17 after U9.
 
 ## 9. Sources
 
