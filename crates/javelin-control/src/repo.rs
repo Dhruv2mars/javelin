@@ -264,3 +264,30 @@ fn validate_operation(value: &str) -> Result<(), ControlError> {
             )
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replayed_operation_stays_with_its_creator() {
+        let mut state = State::default();
+        let request = CreateRequest {
+            owner: "acme".into(),
+            name: "app".into(),
+            public: false,
+            publish: Publish::Direct,
+            operation: "op-1".into(),
+        };
+        assert!(matches!(
+            reserve(&mut state, "alice", &request, None),
+            Ok((_, _, true))
+        ));
+        assert!(matches!(
+            reserve(&mut state, "alice", &request, None),
+            Ok((_, _, false))
+        ));
+        let other = reserve(&mut state, "bob", &request, None).unwrap_err();
+        assert_eq!(other.code(), "operation_id_reused");
+    }
+}

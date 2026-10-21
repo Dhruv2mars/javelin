@@ -294,6 +294,61 @@ fn a_fork_of_a_fork_inherits_the_traces_and_omissions_of_its_source() {
 }
 
 #[test]
+fn a_fork_of_a_fork_carries_only_the_traces_up_to_its_fork_point() {
+    let (src_dir, first_dir, second_dir) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let (src, public, secret) = source(src_dir.path());
+    {
+        let mut first = FileWorldLog::open(first_dir.path()).unwrap();
+        fork::fork(&src, "repo-src", &mut first, v(4), Role::Maintain).unwrap();
+    }
+    let first = FileWorldLog::open(first_dir.path()).unwrap();
+    let mut second = FileWorldLog::open(second_dir.path()).unwrap();
+
+    // Version 3 names the public trace; the secret trace is first named at version 4.
+    let forked = fork::fork(&first, "repo-first", &mut second, v(3), Role::Maintain).unwrap();
+
+    assert!(forked.omitted.is_empty());
+    assert!(second.repo().has_blob(public).unwrap());
+    assert!(!second.repo().has_blob(secret).unwrap());
+}
+
+#[test]
+fn restriction_passes_through_a_fork_chain() {
+    let (src_dir, first_dir, read_dir, maintain_dir) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let (src, _, secret) = source(src_dir.path());
+    {
+        let mut first = FileWorldLog::open(first_dir.path()).unwrap();
+        fork::fork(&src, "repo-src", &mut first, v(4), Role::Maintain).unwrap();
+    }
+    let first = FileWorldLog::open(first_dir.path()).unwrap();
+
+    {
+        let mut read = FileWorldLog::open(read_dir.path()).unwrap();
+        let forked = fork::fork(&first, "repo-first", &mut read, v(4), Role::Read).unwrap();
+        assert_eq!(forked.omitted, vec![secret]);
+        assert!(!read.repo().has_blob(secret).unwrap());
+    }
+
+    let mut maintain = FileWorldLog::open(maintain_dir.path()).unwrap();
+    let forked = fork::fork(&first, "repo-first", &mut maintain, v(4), Role::Maintain).unwrap();
+    assert!(forked.omitted.is_empty());
+    assert!(maintain.repo().has_blob(secret).unwrap());
+    assert_eq!(
+        maintain.traces().visibility(secret).unwrap(),
+        TraceVisibility::Restricted
+    );
+}
+
+#[test]
 fn a_maintainer_fork_keeps_a_restricted_trace_restricted() {
     let (src_dir, dst_dir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let (src, _, secret) = source(src_dir.path());

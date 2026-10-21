@@ -1,6 +1,6 @@
 //! Fork through the control plane, over the in-process self-hosted node.
 
-use std::{cell::Cell, path::Path};
+use std::{cell::Cell, path::Path, rc::Rc};
 
 use javelin::{
     FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, SparseChanges,
@@ -125,6 +125,58 @@ impl NodeLink for LoseFirstApply {
     fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
         self.node.fork(plan)
     }
+}
+
+/// A node that counts the permissions pushes it receives.
+struct CountApplies {
+    node: LocalNode,
+    applies: Rc<Cell<u32>>,
+}
+
+impl NodeLink for CountApplies {
+    fn provision(&self, repository: &RepositoryId) -> Result<(), ControlError> {
+        self.node.provision(repository)
+    }
+
+    fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {
+        self.applies.set(self.applies.get() + 1);
+        self.node.apply(permissions)
+    }
+
+    fn head(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        self.node.head(repository)
+    }
+
+    fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
+        self.node.fork(plan)
+    }
+}
+
+#[test]
+fn retrying_a_finished_fork_pushes_no_permissions_again() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (plane, admin) = open(dir.path());
+    let nodes = dir.path().join("nodes");
+    let source = source(&plane, &admin, &nodes);
+    let fork = fork_request(&source.repository, 2, "fork", "op-fork");
+    let first = plane.fork_repository(&admin, &fork, T0).expect("fork");
+
+    let applies = Rc::new(Cell::new(0));
+    let counting = ControlPlane::with_node(
+        dir.path(),
+        Box::new(CountApplies {
+            node: LocalNode::new(nodes),
+            applies: applies.clone(),
+        }),
+    )
+    .expect("open");
+    let again = counting
+        .fork_repository(&admin, &fork, T0 + 1)
+        .expect("retry");
+
+    assert_eq!(applies.get(), 0, "a Ready retry must not reset the epoch");
+    assert_eq!(again.repository.epoch, 1);
+    assert_eq!(again.origin, first.origin);
 }
 
 #[test]
