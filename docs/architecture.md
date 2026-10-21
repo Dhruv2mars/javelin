@@ -201,7 +201,7 @@ Receiver (`src/receiver.rs`, `serve()`):
 - `negotiate()` requires Hello as the first message.
 - `Want` checks presence with `has_blob` and `has_tree` and rejects duplicate ids. Only ids the receiver lacks are reported as Missing.
 - `Objects` verifies each payload's id before storing it (`id_mismatch` otherwise). Blobs go to `put_blob`, chunks to `Repository::put_tree`, which refuses a chunk until every chunk, subdirectory and blob it names is stored. Having a tree therefore means having all of it, so a sender can stop probing at any chunk the receiver has.
-- `Publish` calls `Repository::advance_to_tree`. It diffs the candidate against the expected version's tree (unchanged subtrees are never read), validates the changed contents, and requires the root derived from that changeset to equal the candidate, which rejects any non-canonical tree. Work is O(change × depth).
+- `Publish` calls `Repository::advance_to_tree`. It diffs the candidate against the expected version's tree (unchanged subtrees are never read), validates the changed contents, and requires the root derived from that changeset to equal the candidate, which rejects any non-canonical tree. Work is O(named paths × depth), where named paths are the changed paths the candidate names. Shared subtrees are skipped, but a tree can name more paths than its bytes (see Known limits).
 - `Resolve` returns a version's (or the head's) number, ID and tree root. `Get` returns the longest prefix of the requested objects that fits one frame; the client asks again for the rest.
 
 Sender (`src/sender.rs`, `push()`):
@@ -283,6 +283,7 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 - Protocol frames, objects and item counts are capped by the `limits` constants; snapshots are not. Only protocol version 2 exists. `Get` serves any stored object by id; authorization is outside the crate.
 - Fetch returns files and stores chunks in a caller-supplied store; attaching a local repository to fetched versions is roadmap item 7.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
+- Tree work follows named paths, not tree bytes. A subtree can be named under several parents, so a few KB of canonical chunks can name 2^k files. `advance_to_tree` and `fetch` expand every named path with no cap, because snapshots are uncapped by design. Work and memory for a received tree are proportional to the paths it names. Accepted for Publish: only an authenticated publisher can load its own repository. Fetch from an untrusted server needs its own limit (follow-up).
 
 Code: src/capture.rs, crates/javelin-merge/src/resources.rs, crates/javelin-protocol/src/lib.rs, crates/javelin-collaboration/src/lib.rs
 
