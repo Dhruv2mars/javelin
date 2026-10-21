@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-protocol", "crates/javelin-stack"]
-default-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-protocol", "crates/javelin-stack"]
+members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
+default-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
 resolver = "3"
 
 [package]

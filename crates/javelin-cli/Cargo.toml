@@ -12,9 +12,10 @@ path = "src/main.rs"
 [dependencies]
 javelin = { path = "../.." }
 javelin-collaboration = { path = "../javelin-collaboration" }
+javelin-protocol = { path = "../javelin-protocol" }
 javelin-control = { path = "../javelin-control" }
 javelin-node = { path = "../javelin-node" }
-javelin-protocol = { path = "../javelin-protocol" }
+javelin-node-worker = { path = "../javelin-node-worker" }
 javelin-stack = { path = "../javelin-stack" }
 serde_json = "1.0.154"
 
@@ -22,3 +23,4 @@ serde_json = "1.0.154"
 rusqlite = "0.40.2"
 tempfile = "3.27.0"
 # outbox replay tests run against the loopback node. Dev-only: nothing else depends on javelin-cli.
+javelin-node = { path = "../javelin-node" }
