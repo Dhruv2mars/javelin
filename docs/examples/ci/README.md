@@ -18,6 +18,7 @@ Each file parses as YAML (checked with `Bun.YAML` in bun 1.3.13; that parser kee
 | `07-pinned-uses.yml` | Local `./` action, third-party action pinned to a full SHA (placeholder) | valid |
 | `08-invalid-unknown-key.yml` | Typo `runson` | invalid: `unknown_key` at `jobs.test.runson` |
 | `09-invalid-checkout.yml` | `actions/checkout`, which cannot fetch a Javelin revision | invalid: `git_checkout` at `jobs.test.steps[0].uses` |
+| `10-invalid-duplicate-key.yml` | Duplicate `runs-on` key; `Bun.YAML` would keep the last value | invalid: `yaml_error` |
 
-Files 08 and 09 are invalid by design. Their first comment line states the expected code.
+Files 08, 09 and 10 are invalid by design. Their first comment line states the expected code.
 The validator PR should assert the exact code and path for each.
