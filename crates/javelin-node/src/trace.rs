@@ -93,6 +93,12 @@ impl Traces {
                 format!("trace {trace} is not stored"),
             ));
         }
+        self.mark_restricted(trace)
+    }
+
+    /// Records a stored trace as restricted, with no gate check. The fork copies a restriction
+    /// this way, since the forker's right to see the trace was checked when it was copied.
+    pub(crate) fn mark_restricted(&self, trace: ObjectId) -> Result<(), ProtocolError> {
         self.db
             .execute(
                 "INSERT OR IGNORE INTO restricted_traces (trace) VALUES (?1)",

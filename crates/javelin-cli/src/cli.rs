@@ -11,7 +11,7 @@ pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javeli
                            Bring the directory to its head after Stack moved it, keeping
                            local edits; refuses without changing anything on conflict.
                            FILE resolves conflicting paths as for layer stack
-  recover                  Finish interrupted steps and reclaim all trash\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
+  recover                  Finish interrupted steps and reclaim all trash\n\nOutbox:\n  outbox status --remote NAME [--repo DIR]\n                           Queued records waiting for the node, and any damaged tail\n                           that was ignored when the journal was opened\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -577,6 +577,51 @@ fn radar_text(radar: &Radar) -> String {
 
 /// `adopt [project-directory] --operation ID`: one command from an existing project
 /// directory to a repository whose World 1 holds its files. Retry with the same operation.
+/// `javelin outbox status --remote NAME`: read-only view of the client outbox. Replay
+/// needs a node address, which attach (U4) provides.
+pub fn outbox_status(args: Vec<OsString>) -> Result<Output> {
+    let args = Args::parse(args, &["--repo", "--remote"], 0)?;
+    let name = text(args.required("--remote")?)?;
+    let root = args.root()?;
+    Repository::open(&root)?;
+    let outbox = javelin::outbox::Outbox::open(&root, name)?;
+    let pending: Vec<Value> = outbox
+        .pending()
+        .map(|entry| {
+            json!({
+                "seq": entry.seq,
+                "kind": entry.kind.as_str(),
+                "scope": entry.scope,
+                "operation": entry.operation.as_str(),
+                "bytes": entry.payload.len(),
+            })
+        })
+        .collect();
+    let damage = outbox.damage().map(
+        |damage| json!({"offset": damage.offset, "bytes": damage.bytes, "reason": damage.reason}),
+    );
+    let mut lines = vec![format!("{} pending in outbox {name}", pending.len())];
+    for entry in outbox.pending() {
+        lines.push(format!(
+            "  seq {} {} {} {}",
+            entry.seq,
+            entry.kind.as_str(),
+            entry.scope,
+            entry.operation.as_str()
+        ));
+    }
+    if let Some(damage) = outbox.damage() {
+        lines.push(format!(
+            "Ignored {} bytes at offset {} ({}); they are moved aside on the next append",
+            damage.bytes, damage.offset, damage.reason
+        ));
+    }
+    Ok(success(
+        json!({"ok": true, "command": "outbox status", "remote": name, "pending": pending, "damage": damage}),
+        lines.join("\n"),
+    ))
+}
+
 pub fn adopt(args: Vec<OsString>) -> Result<Output> {
     let mut root = None;
     let mut operation = None;
