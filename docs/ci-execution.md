@@ -20,7 +20,7 @@ Source tags follow `docs/online-design.md`: `C§` = `docs/build-contract.md`, `G
   verifying each object. No Git, no attach, no packfile.
 - **Outage:** checks are not queued. Reporters retry with the same operation ID. A queued Publish
   re-checks required checks at replay.
-- **First slice:** `CheckReport` ingestion plus a required-check gate at Publish (U17, proposed,
+- **First slice:** `CheckReport` ingestion plus a required-check gate at Publish (U17,
   §11). Its tests are in §11.
 
 ## 1. Accepted workflow syntax
@@ -237,7 +237,7 @@ the hub decides (CI4).
 
 ## 9. Open decisions (defaults above)
 
-- **CI1. Dialect.** GitHub Actions YAML (§1). Hub to confirm.
+- **CI1. Dialect.** GitHub Actions YAML (§1). Confirmed by the hub on 2026-10-21.
 - **CI2. Composed-tree gating.** Default: source tree only (§7). Alternative: second result per base.
 - **CI3. Override for required checks.** Default: none (§7).
 - **CI4. Checks in the D7 queue.** Default: not queued (§8).
@@ -284,10 +284,10 @@ duplicate-key fixture.
 **Not in this spec.** Expression semantics, `if` evaluation, action metadata resolution, and any
 runner behavior.
 
-## 11. Smallest first implementation slice (U17, proposed)
+## 11. Smallest first implementation slice (U17)
 
-Proposed unit, not in the `O§8` table. The hub adds it. Depends on U2 (`PublishLayer`) and U7 (token
-scopes). It is not U15's job to build it.
+Unit U17 in the `O§8` table. Depends on U2 (`PublishLayer`), U7 (token scopes) and U9 (the
+`PublishRequest` gate). It is not U15's job to build it.
 
 **Owned paths:** `crates/javelin-node/src/checks.rs` (new), `crates/javelin-protocol/src/codec.rs`
 (tags `0x60`, `0x61`), `crates/javelin-cli` (`check report` subcommand only), `tests/checks_*.rs`.
