@@ -3,6 +3,9 @@
 
 [graph]
 all-features = true
+# Dev-dependencies are never linked into a shipped binary. The root package's dev-dependencies
+# pull every workspace crate in for the hosted acceptance suite (tests/hosted_acceptance).
+exclude-dev = true
 # The platforms in docs/build-contract.md. Platform-specific crates (libc, windows-sys,
 # linux-raw-sys) are checked on each.
 targets = [

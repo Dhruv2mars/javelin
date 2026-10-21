@@ -126,6 +126,13 @@ jobs:
           PATH="$GIT_SHIM:$PATH" bun run test
           test ! -e "$GIT_SHIM/invoked"
 
+      # U14: gate 4 and the outage matrix against the self-hosted node and the Worker on
+      # workerd. The script builds its own git stand-in with a positive control as well.
+      - name: Hosted acceptance suite
+        run: |
+          PATH="$GIT_SHIM:$PATH" bun run ../acceptance/run.ts
+          test ! -e "$GIT_SHIM/invoked"
+
   # Clone-backed Layers on each filesystem. Only volume setup uses sudo or admin;
   # the tests run as the ordinary runner user with no mount, helper or daemon.
   workspace:
