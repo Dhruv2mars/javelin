@@ -3,6 +3,7 @@
 //! without a daemon (docs/workspace-approach.md).
 
 mod adopt;
+mod attach;
 mod blame;
 pub mod capture;
 mod domain;
@@ -17,6 +18,7 @@ pub mod tree;
 mod workspace;
 
 pub use adopt::Adoption;
+pub use attach::{Attachment, RemoteHead};
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::Capture;
 pub use domain::{

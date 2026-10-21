@@ -212,6 +212,8 @@ impl FileWorldLog {
         if self.base_of(&head)? != base {
             return Ok(refused(code::INVALID_INPUT));
         }
+        // No reporter-revocation check here: PublishLayer has no applied permissions until
+        // its path is authenticated. PublishRequest checks them (review.rs).
         let (repo, records) = self.parts();
         if let Some(refusal) = checks::gate(records, repo, head.checkpoint(), None)? {
             return Ok(refused(refusal));

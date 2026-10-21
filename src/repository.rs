@@ -576,7 +576,7 @@ fn connect(path: &Path, create: bool) -> Result<Connection> {
     Ok(conn)
 }
 
-fn sync_directory(path: &Path) -> Result<()> {
+pub(crate) fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     fs::File::open(path)?.sync_all()?;
     #[cfg(not(unix))]

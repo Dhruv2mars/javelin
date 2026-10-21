@@ -58,11 +58,19 @@ pub fn set_required(
     log: &mut FileWorldLog,
     required: &[RequiredCheck],
 ) -> Result<(), ProtocolError> {
-    if let Some(check) = required.iter().find(|check| !valid_name(&check.name)) {
-        return Err(ProtocolError::new(
-            code::CHECK_NAME_INVALID,
-            format!("invalid check name {:?}", check.name),
-        ));
+    for check in required {
+        if !valid_name(&check.name) {
+            return Err(ProtocolError::new(
+                code::CHECK_NAME_INVALID,
+                format!("invalid check name {:?}", check.name),
+            ));
+        }
+        if is_reserved(&check.name) {
+            return Err(ProtocolError::new(
+                code::FORBIDDEN,
+                format!("{:?} is reserved for the node", check.name),
+            ));
+        }
     }
     let (_, records) = log.parts();
     let tx = records.transaction().map_err(storage)?;
@@ -268,7 +276,7 @@ fn check_name(grant: &Grant, name: &str) -> Result<(), &'static str> {
     if !valid_name(name) {
         return Err(code::CHECK_NAME_INVALID);
     }
-    if RESERVED.contains(&name.split('/').next().unwrap_or_default()) {
+    if is_reserved(name) {
         return Err(code::FORBIDDEN);
     }
     if grant.checks.iter().any(|pattern| glob(pattern, name)) {
@@ -276,6 +284,11 @@ fn check_name(grant: &Grant, name: &str) -> Result<(), &'static str> {
     } else {
         Err(code::CHECK_NAME_NOT_ALLOWED)
     }
+}
+
+/// Whether the node alone may write `name`: its first segment is a reserved prefix.
+fn is_reserved(name: &str) -> bool {
+    RESERVED.contains(&name.split('/').next().unwrap_or_default())
 }
 
 /// `^[a-z0-9_.-]+(/[a-z0-9_.()-]+)*$`, at most `MAX_NAME` bytes.

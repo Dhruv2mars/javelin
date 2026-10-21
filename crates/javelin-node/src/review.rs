@@ -193,8 +193,11 @@ pub fn handle(
                 Decision::Replayed(reply) => Ok(reply),
                 Decision::Refused(refused_code) => Ok(publish_refused(refused_code)),
                 Decision::Accepted(_) => {
-                    if let Some(refusal) =
-                        checks::gate_tree(records, pinned.tree(), Some(permissions))?
+                    // A lost record is completed, not re-judged: a receipt means the World
+                    // already published this operation, so the checks no longer decide it.
+                    if repo.publication(operation)?.is_none()
+                        && let Some(refusal) =
+                            checks::gate_tree(records, pinned.tree(), Some(permissions))?
                     {
                         return Ok(publish_refused(refusal));
                     }

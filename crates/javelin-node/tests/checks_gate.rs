@@ -283,3 +283,16 @@ fn reporter_revoked_before_publish_is_refused() {
         refused(code::STALE_PERMISSIONS)
     );
 }
+
+#[test]
+fn policy_refuses_names_only_the_node_writes() {
+    let dir = TempDir::new().unwrap();
+    let mut log = new_node(&dir);
+    let policy = [checks::RequiredCheck {
+        name: "publish/x".into(),
+        reporter: None,
+    }];
+
+    let refusal = checks::set_required(&mut log, &policy).unwrap_err();
+    assert_eq!(refusal.code, code::FORBIDDEN);
+}
