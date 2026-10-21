@@ -166,7 +166,24 @@ fn read_request(
 /// One message through the trace guard, then the protocol handler.
 fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, ProtocolError> {
     log.traces().refuse_wire_fetch(&message)?;
-    handle_request(log, message)
+    match message {
+        Message::LayerStack {
+            operation,
+            target,
+            target_head,
+            source,
+        } => Ok(Message::LayerOutcome(crate::stack::stack(
+            log.parts().0,
+            &operation,
+            &target,
+            target_head,
+            source,
+        )?)),
+        Message::Get(items) if crate::stack::all_checkpoints(&items) => {
+            crate::stack::get_checkpoints(log.repo(), items)
+        }
+        message => handle_request(log, message),
+    }
 }
 
 /// One line without its terminator, bounded by `MAX_LINE`. An overlong or non-UTF-8

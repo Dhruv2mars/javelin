@@ -1274,7 +1274,9 @@ dependencies = [
  "javelin",
  "javelin-collaboration",
  "javelin-identity",
+ "javelin-merge",
  "javelin-protocol",
+ "javelin-stack",
  "rusqlite",
  "serde_json",
  "tempfile",
@@ -1309,6 +1311,7 @@ version = "0.1.0"
 dependencies = [
  "javelin",
  "javelin-merge",
+ "javelin-protocol",
  "serde_json",
  "tempfile",
 ]
