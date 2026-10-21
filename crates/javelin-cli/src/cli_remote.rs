@@ -26,6 +26,8 @@ use crate::CliError;
 use crate::cli::Output;
 
 const PROVIDER: &str = "self-hosted";
+/// Lock file inside a staging directory, held by the attach that owns it.
+const STAGING_LOCK: &str = "attach.lock";
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// One framed message plus the HTTP head in front of it.
 const MAX_REPLY: u64 = javelin_protocol::limits::MAX_FRAME as u64 + 16 * 1024;
@@ -386,6 +388,9 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
         .map_or(0, |d| d.as_nanos());
     let staging = root.join(format!(".javelin-attach-{}-{nanos}", std::process::id()));
     std::fs::create_dir(&staging).map_err(Error::from)?;
+    // Held until the staging is removed, so a concurrent attach's sweep leaves it alone.
+    let lock = std::fs::File::create(staging.join(STAGING_LOCK)).map_err(Error::from)?;
+    lock.lock().map_err(Error::from)?;
     let built = Repository::init(&staging)
         .map_err(CliError::from)
         .and_then(|repo| stage(repo, &link, &head))
@@ -403,6 +408,8 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
             })?;
             Ok(output)
         });
+    // Released before removal: Windows cannot delete a file that is still open.
+    drop(lock);
     let cleanup = remove_staging(&staging);
     match (built, cleanup) {
         (Ok(output), Ok(())) => Ok(output),
@@ -419,20 +426,38 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
 
 /// Removes staging directories that an attach killed mid-way left in the project directory.
 /// They hold only objects fetched by that attach, never a store, so removing them is safe.
-/// Best effort: a directory that cannot be removed is left for the next attach.
+/// A live attach holds its directory's lock, so only a killed attach's directory is free to
+/// remove. Best effort: a directory that cannot be removed is left for the next attach.
 fn sweep_staging(root: &Path) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".javelin-attach-")
-        {
-            let _ = remove_staging(&entry.path());
+        if !is_staging_name(&entry.file_name().to_string_lossy()) {
+            continue;
         }
+        let path = entry.path();
+        let Ok(lock) = std::fs::File::open(path.join(STAGING_LOCK)) else {
+            continue;
+        };
+        if lock.try_lock().is_err() {
+            continue;
+        }
+        drop(lock);
+        let _ = remove_staging(&path);
     }
+}
+
+/// Whether `name` is a staging directory this module generates: `.javelin-attach-<pid>-<nanos>`.
+fn is_staging_name(name: &str) -> bool {
+    let Some((pid, nanos)) = name
+        .strip_prefix(".javelin-attach-")
+        .and_then(|rest| rest.split_once('-'))
+    else {
+        return false;
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    digits(pid) && digits(nanos)
 }
 
 /// Removes a private staging directory. A warmed rolling base is sealed (mode 000), so its

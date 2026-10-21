@@ -88,15 +88,20 @@ impl Repository {
         Ok(())
     }
 
-    /// Whether an attach was interrupted before `attach.json` was written. Only attach writes
-    /// an `attach-` World, so such a store holds nothing but its own earlier attach steps.
+    /// Whether an attach was interrupted before `attach.json` was written. Attach advances
+    /// without a publication receipt, while adopt and publish always record one. So an
+    /// `attach-` head with no receipt and no attachment is an attach's own World, whatever
+    /// operation name a user chose.
     fn interrupted_attach(&self) -> Result<bool> {
         let local = self.head()?;
-        Ok(self.attachment()?.is_none()
-            && local
-                .operation
-                .as_ref()
-                .is_some_and(|op| op.as_str().starts_with(ATTACH_PREFIX)))
+        let Some(operation) = local
+            .operation
+            .as_ref()
+            .filter(|op| op.as_str().starts_with(ATTACH_PREFIX))
+        else {
+            return Ok(false);
+        };
+        Ok(self.attachment()?.is_none() && self.publication(operation)?.is_none())
     }
 
     /// Refuses an attach this store cannot take, whatever its tree. Only World 0 takes an

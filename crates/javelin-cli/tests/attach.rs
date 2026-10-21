@@ -431,6 +431,8 @@ fn attach_sweeps_staging_an_earlier_attach_left_behind() {
     let stale = project.join(".javelin-attach-4242-1");
     std::fs::create_dir_all(stale.join("bases")).unwrap();
     std::fs::write(stale.join("left.txt"), b"left").unwrap();
+    // A killed attach released its lock, so the directory is free to sweep.
+    std::fs::File::create(stale.join("attach.lock")).unwrap();
 
     attach(root.path(), &url, 0);
     let names: Vec<_> = std::fs::read_dir(&project)
@@ -438,4 +440,56 @@ fn attach_sweeps_staging_an_earlier_attach_left_behind() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(names, vec![".javelin"]);
+}
+
+#[test]
+fn attach_leaves_a_staging_directory_a_live_attach_holds() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let live = project.join(".javelin-attach-4242-1");
+    std::fs::create_dir_all(&live).unwrap();
+    let held = std::fs::File::create(live.join("attach.lock")).unwrap();
+    held.lock().unwrap();
+
+    attach(root.path(), &url, 0);
+    assert!(live.join("attach.lock").exists());
+    drop(held);
+}
+
+#[test]
+fn attach_leaves_user_directories_that_only_look_like_staging() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let notes = project.join(".javelin-attach-notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("keep.txt"), b"mine").unwrap();
+
+    attach(root.path(), &url, 0);
+    assert_eq!(std::fs::read(notes.join("keep.txt")).unwrap(), b"mine");
+}
+
+#[test]
+fn attach_refuses_a_user_world_named_like_an_attach() {
+    let node = TempDir::new().unwrap();
+    let url = start_node(node.path(), SMALL);
+    let root = TempDir::new().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("local.txt"), b"mine").unwrap();
+    json(
+        root.path(),
+        &["adopt", "project", "--operation", "attach-mine"],
+        0,
+    );
+
+    let error = attach(root.path(), &url, 2);
+    assert_eq!(error["error"]["code"], "invalid_input");
+    assert!(!project.join(".javelin/attach.json").exists());
+    assert!(project.join("local.txt").exists());
 }
