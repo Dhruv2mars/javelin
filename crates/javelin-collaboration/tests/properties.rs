@@ -78,7 +78,7 @@ fn random_command(
         29..=38 => comment(index, "note"),
         39..=44 => request_comment("note"),
         45 => publish(index, rev),
-        46 => Action::Close,
+        46 => Action::Close { index },
         _ => comment(index, "note"),
     };
     let c = cmd(&format!("op-{n}"), PEOPLE[rng.below(PEOPLE.len())], action);

@@ -207,8 +207,11 @@ pub enum Action {
         index: u32,
         revision: RevisionRef,
     },
-    /// Only the author or a Maintain role holder may close an open request.
-    Close,
+    /// Only the author or a Maintain role holder may close an open request. `index` pins
+    /// the revision being closed, so a close prepared for one revision cannot close a later one.
+    Close {
+        index: u32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -418,7 +421,7 @@ impl Review {
                     required: Role::Review,
                 })
             }
-            Action::Close
+            Action::Close { .. }
                 if self.author.as_ref() != Some(actor)
                     && !permissions.has(actor, Role::Maintain) =>
             {
@@ -501,8 +504,13 @@ impl Review {
                 self.open_revision()?;
                 next.state = RequestState::Published;
             }
-            Action::Close => {
-                self.open_revision()?;
+            Action::Close { index } => {
+                let current = self.open_revision()?;
+                if *index != current.index {
+                    return Err(Refusal::StaleRevision {
+                        current: current.index,
+                    });
+                }
                 next.state = RequestState::Closed;
             }
         }
@@ -527,6 +535,14 @@ impl Review {
             (RequestState::Open, Some(current)) => Ok(current),
             _ => Err(Refusal::NotOpen),
         }
+    }
+
+    /// The same request, Published. Storage uses this when the World already holds the
+    /// current revision's publication, whose record was lost before it was written.
+    pub fn published_by_world(&self) -> Self {
+        let mut next = self.clone();
+        next.state = RequestState::Published;
+        next
     }
 
     fn push_revision(&mut self, revision: RevisionRef) {

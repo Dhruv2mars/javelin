@@ -16,7 +16,7 @@ use javelin::{
 };
 use javelin_collaboration::{
     Action, AppliedPermissions, Command, CommentBody, PrincipalId, Refusal, RepositoryId,
-    RequestId, Review, RevisionRef,
+    RequestId, RequestState, Review, RevisionRef,
 };
 use javelin_identity::{Grant, Need, Scope};
 use javelin_protocol::{
@@ -74,7 +74,7 @@ pub fn handle(
                 actor,
                 action: Action::Open { revision },
             };
-            let review = restore(records, &permissions.repository, &id)?;
+            let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
             let decision = decide(records, permissions, &review, &id, &command)?;
             settle_review(
                 records,
@@ -95,6 +95,7 @@ pub fn handle(
             let id = review_id(request)?;
             let (grant, permissions, review) =
                 target(records, gate, token, now, Scope::ReviewWrite, &id)?;
+            let review = settled(repo, review)?;
             let actor = principal(&grant)?;
             let revision = match revision_ref(repo, *checkpoint, *base)? {
                 Ok(revision) => revision,
@@ -119,6 +120,7 @@ pub fn handle(
             let id = review_id(request)?;
             let (grant, permissions, review) =
                 target(records, gate, token, now, Scope::ReviewApprove, &id)?;
+            let review = settled(repo, review)?;
             let actor = principal(&grant)?;
             // Approval pins the revision's content as it is at this index.
             let Some(pinned) = pinned(&review, *revision) else {
@@ -144,6 +146,7 @@ pub fn handle(
             let id = review_id(request)?;
             let (grant, permissions, review) =
                 target(records, gate, token, now, Scope::ReviewWrite, &id)?;
+            let review = settled(repo, review)?;
             let actor = principal(&grant)?;
             let Ok(body) = CommentBody::parse(body) else {
                 return Ok(review_refused(code::INVALID_INPUT));
@@ -183,6 +186,19 @@ pub fn handle(
                     revision: pinned,
                 },
             };
+            // The World accepted this revision's publication, but its record was lost before
+            // being written. Record it now under this operation, so the reply is kept.
+            if review.state() == RequestState::Open
+                && review
+                    .current()
+                    .is_some_and(|current| current.index == *revision)
+                && recorded(records, operation)?.is_none()
+                && let Some(reply) = world_publication(repo, &id, *revision)?
+            {
+                let reply = Message::PublishOutcome(reply);
+                persist(records, &id, &command, permissions.epoch, &reply, None)?;
+                return Ok(reply);
+            }
             match decide(records, permissions, &review, &id, &command)? {
                 Decision::Replayed(reply) => Ok(reply),
                 Decision::Refused(refused_code) => Ok(publish_refused(refused_code)),
@@ -203,7 +219,7 @@ pub fn handle(
             if layer.is_none() {
                 return Err(unknown_request());
             }
-            let review = restore(records, &permissions.repository, &id)?;
+            let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
             Ok(Message::RequestState {
                 request: request.clone(),
                 state: status(review.state()),
@@ -268,6 +284,46 @@ fn settle_review(
     }
 }
 
+/// The Layer that publishes revision `index` of request `id`.
+fn revision_layer(id: &RequestId, index: u32) -> Result<LayerId, ProtocolError> {
+    Ok(LayerId::parse(&format!(
+        "review-{}",
+        ObjectId::for_blob(format!("{id}/{index}").as_bytes())
+    ))?)
+}
+
+/// The World's publication of revision `index`, if it has one.
+fn world_publication(
+    repo: &Repository,
+    id: &RequestId,
+    index: u32,
+) -> Result<Option<PublishOutcome>, ProtocolError> {
+    match repo.layer_state(&revision_layer(id, index)?) {
+        Ok(LayerState::Published { version, .. }) => Ok(Some(PublishOutcome::Published {
+            number: version.number,
+            id: version.id,
+            tree: version.tree,
+        })),
+        Ok(_) | Err(Error::InvalidInput(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Reads the World's publications into a request that is still Open, so that no action is
+/// accepted after its current revision was already published.
+fn settled(repo: &Repository, review: Review) -> Result<Review, ProtocolError> {
+    if review.state() != RequestState::Open {
+        return Ok(review);
+    }
+    let Some(current) = review.current() else {
+        return Ok(review);
+    };
+    match world_publication(repo, review.request(), current.index)? {
+        Some(_) => Ok(review.published_by_world()),
+        None => Ok(review),
+    }
+}
+
 /// Publishes the checkpoint of revision `index`, into a Layer named for that revision.
 /// A retry after a lost reply, or after a crash between the publish and its record,
 /// finds the receipt by operation and answers with the same version.
@@ -278,10 +334,7 @@ fn publish_checkpoint(
     index: u32,
     revision: &RevisionRef,
 ) -> Result<PublishOutcome, ProtocolError> {
-    let layer = LayerId::parse(&format!(
-        "review-{}",
-        ObjectId::for_blob(format!("{id}/{index}").as_bytes())
-    ))?;
+    let layer = revision_layer(id, index)?;
     if let Some(receipt) = repo.publication(operation)? {
         if receipt.expected.layer() != &layer
             || receipt.expected.checkpoint().object() != revision.checkpoint()
@@ -291,7 +344,11 @@ fn publish_checkpoint(
         return outcome(receipt.outcome);
     }
     let head = match repo.layer_state(&layer) {
-        Ok(LayerState::Active { head }) => head,
+        // The Layer must hold the approved checkpoint, not whatever head it was created with.
+        Ok(LayerState::Active { head }) if head.checkpoint().object() == revision.checkpoint() => {
+            head
+        }
+        Ok(LayerState::Active { .. }) => return Ok(refused(code::LAYER_STALE)),
         Ok(LayerState::Published { .. }) => return Ok(refused(code::LAYER_PUBLISHED)),
         Ok(LayerState::Discarded { .. }) => return Ok(refused(refusal::LAYER_DISCARDED)),
         Err(Error::InvalidInput(_)) => {
@@ -522,7 +579,7 @@ fn encode_command(id: &RequestId, command: &Command) -> Vec<u8> {
         Action::Publish { index, revision } => {
             format!("publish {index} {}", revision_fields(revision))
         }
-        Action::Close => "close".to_string(),
+        Action::Close { index } => format!("close {index}"),
     };
     format!("{id} {} {} {action}", command.operation, command.actor).into_bytes()
 }
@@ -582,7 +639,9 @@ fn decode_command(bytes: &[u8]) -> Result<(RequestId, Command), ProtocolError> {
                 body: CommentBody::parse(&body).map_err(|_| malformed_record())?,
             }
         }
-        "close" => Action::Close,
+        "close" => Action::Close {
+            index: number(&mut tokens)?,
+        },
         _ => return Err(malformed_record()),
     };
     Ok((

@@ -659,6 +659,22 @@ fn publish_pins_the_index_and_moves_the_request_to_published() {
 }
 
 #[test]
+fn close_refuses_a_revision_it_was_not_prepared_for() {
+    let mut fx = Fixture::new();
+    let a = fx.proposal(1, "a", None);
+    let b = fx.proposal(2, "b", None);
+    let p = team(1);
+    let r = ok(&review(), cmd("o1", "alice", open(a)), &p);
+    let r = ok(&r, cmd("v2", "alice", revise(1, b)), &p);
+    assert_eq!(
+        refused(&r, cmd("cl1", "alice", Action::Close { index: 1 }), &p),
+        Refusal::StaleRevision { current: 2 }
+    );
+    let closed = ok(&r, cmd("cl2", "alice", Action::Close { index: 2 }), &p);
+    assert_eq!(closed.state(), RequestState::Closed);
+}
+
+#[test]
 fn closed_request_refuses_approval_and_publish() {
     let mut fx = Fixture::new();
     let rev = fx.proposal(1, "a", None);
@@ -667,12 +683,12 @@ fn closed_request_refuses_approval_and_publish() {
     let r = ok(&r, cmd("a1", "rita", approve(1, rev)), &p);
     // Only the author or a Maintain holder may close.
     assert_eq!(
-        refused(&r, cmd("x", "rita", Action::Close), &p),
+        refused(&r, cmd("x", "rita", Action::Close { index: 1 }), &p),
         Refusal::InsufficientRole {
             required: Role::Maintain
         }
     );
-    let closed = ok(&r, cmd("cl", "alice", Action::Close), &p);
+    let closed = ok(&r, cmd("cl", "alice", Action::Close { index: 1 }), &p);
     assert_eq!(closed.state(), RequestState::Closed);
     // The approval exists, but the request is Closed.
     assert_eq!(
