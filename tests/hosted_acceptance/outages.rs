@@ -188,9 +188,9 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
         )
         .unwrap();
     drop(outbox);
-    let cache_path = home.path().join("tokens.json");
+    let cache_path = home.path().join("tokens").join(format!("repo-{id}.json"));
     let mut cache: Value = serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
-    cache[&id]["expires_at"] = json!(now() - 1);
+    cache["expires_at"] = json!(now() - 1);
     fs::write(&cache_path, cache.to_string()).unwrap();
     let forwarded = proxy.forwarded();
     let (code, expired) = replay();
@@ -230,7 +230,7 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
     assert_eq!(back["delivered"][0]["outcome"]["published"], 2);
     assert_eq!(head(&dir), v(2));
     let renewed: Value = serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
-    assert!(renewed[&id]["expires_at"].as_u64().unwrap() > now());
+    assert!(renewed["expires_at"].as_u64().unwrap() > now());
     verified(
         "outage.node-down-queue",
         "node down (proxy resets): upload, LayerAppend and PublishLayer stay queued in the outbox \

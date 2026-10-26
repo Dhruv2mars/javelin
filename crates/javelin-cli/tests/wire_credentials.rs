@@ -7,16 +7,18 @@
 
 use std::{
     fs,
-    net::{SocketAddr, TcpListener},
+    io::{BufRead, BufReader, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::PathBuf,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
+    sync::{Arc, Mutex},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use javelin::{
-    FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, Repository,
-    SparseChanges, VersionNumber, outbox::Outbox,
+    Attachment, FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RemoteHead,
+    RepoPath, Repository, SparseChanges, VersionNumber, outbox::Outbox,
 };
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_control::{
@@ -24,7 +26,11 @@ use javelin_control::{
 };
 use javelin_identity::{Scope, test_keys};
 use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, serve};
-use javelin_protocol::{Message, codec::encode, receiver::WorldLog};
+use javelin_protocol::{
+    Message,
+    codec::{PublishOutcome, encode},
+    receiver::WorldLog,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -53,6 +59,7 @@ fn closed_url() -> String {
 
 struct Deployment {
     temp: TempDir,
+    admin: String,
     repository: String,
     /// The control plane's HTTP API.
     control_url: String,
@@ -163,6 +170,7 @@ impl Deployment {
         });
         Self {
             temp,
+            admin,
             repository,
             control_url,
             node_url,
@@ -237,19 +245,26 @@ impl Deployment {
         (output.status.code(), stdout(&output))
     }
 
+    /// The repository's token cache file.
+    fn cache_path(&self) -> PathBuf {
+        self.home()
+            .join("tokens")
+            .join(format!("repo-{}.json", self.repository))
+    }
+
     fn cache(&self) -> Value {
-        serde_json::from_slice(&fs::read(self.home().join("tokens.json")).unwrap()).unwrap()
+        serde_json::from_slice(&fs::read(self.cache_path()).unwrap()).unwrap()
+    }
+
+    fn write_cache(&self, cache: &Value) {
+        fs::write(self.cache_path(), serde_json::to_vec(cache).unwrap()).unwrap();
     }
 
     /// Marks the cached token for the repository as expired.
     fn expire_cache(&self) {
         let mut cache = self.cache();
-        cache[&self.repository]["expires_at"] = 0.into();
-        fs::write(
-            self.home().join("tokens.json"),
-            serde_json::to_vec(&cache).unwrap(),
-        )
-        .unwrap();
+        cache["expires_at"] = 0.into();
+        self.write_cache(&cache);
     }
 }
 
@@ -287,18 +302,10 @@ fn the_outbox_waits_for_a_credential_and_refreshes_it_through_the_control_plane(
     );
     assert_eq!(attached.status.code(), Some(0), "{attached:?}");
     let cached = deployment.cache();
-    let token = cached[&deployment.repository]["access_token"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let token = cached["access_token"].as_str().unwrap().to_string();
+    assert!(cached["expires_at"].as_u64().unwrap() > now() + 3000);
     assert!(
-        cached[&deployment.repository]["expires_at"]
-            .as_u64()
-            .unwrap()
-            > now() + 3000
-    );
-    assert!(
-        !fs::read_to_string(deployment.home().join("tokens.json"))
+        !fs::read_to_string(deployment.cache_path())
             .unwrap()
             .contains("jav_refresh_"),
         "the refresh token stays in the credentials file"
@@ -327,7 +334,7 @@ fn the_outbox_waits_for_a_credential_and_refreshes_it_through_the_control_plane(
     assert_eq!(value["delivered"][0]["outcome"]["published"], 2);
     assert_eq!(value["pending"], 0);
     assert_eq!(deployment.node_head(), 2);
-    let renewed = deployment.cache()[&deployment.repository]["access_token"]
+    let renewed = deployment.cache()["access_token"]
         .as_str()
         .unwrap()
         .to_string();
@@ -335,7 +342,7 @@ fn the_outbox_waits_for_a_credential_and_refreshes_it_through_the_control_plane(
 
     // Signed out, nothing cached: the node refuses the anonymous write and the record waits.
     fs::remove_file(deployment.home().join("credentials")).unwrap();
-    fs::remove_file(deployment.home().join("tokens.json")).unwrap();
+    fs::remove_dir_all(deployment.home().join("tokens")).unwrap();
     deployment.queue_publish("r");
     let (code, value) = deployment.replay(&deployment.control_url);
     assert_eq!(code, Some(1), "{value}");
@@ -356,12 +363,8 @@ fn a_stale_cached_token_is_renewed_when_the_node_refuses_it() {
     assert_eq!(attached.status.code(), Some(0), "{attached:?}");
     // The cache claims a long life for a token the node does not accept.
     let mut cache = deployment.cache();
-    cache[&deployment.repository]["access_token"] = "not.a.token".into();
-    fs::write(
-        deployment.home().join("tokens.json"),
-        serde_json::to_vec(&cache).unwrap(),
-    )
-    .unwrap();
+    cache["access_token"] = "not.a.token".into();
+    deployment.write_cache(&cache);
     deployment.queue_publish("p");
     let (code, value) = deployment.replay(&deployment.control_url);
     assert_eq!(code, Some(0), "{value}");
@@ -474,4 +477,251 @@ fn empty_tree() -> String {
         .unwrap()
         .tree
         .to_string()
+}
+
+#[test]
+fn a_cached_token_from_another_sign_in_is_never_sent() {
+    let deployment = Deployment::start();
+    let project = deployment.project();
+    let attach_url = format!("{}/{}", deployment.node_url, deployment.repository);
+    let attached = deployment.javelin(
+        &deployment.control_url,
+        &["attach", &attach_url, project.to_str().unwrap()],
+    );
+    assert_eq!(attached.status.code(), Some(0), "{attached:?}");
+    assert!(deployment.cache_path().exists());
+
+    // Another sign-in replaces the credentials but not the cache. Its token is not the old one's,
+    // so the CLI must ask the control plane, which is down.
+    let credentials = deployment.home().join("credentials");
+    let mut other: Value = serde_json::from_slice(&fs::read(&credentials).unwrap()).unwrap();
+    other["device"] = "dev_other".into();
+    fs::write(&credentials, serde_json::to_vec(&other).unwrap()).unwrap();
+    deployment.queue_publish("p");
+    let (code, value) = deployment.replay(&closed_url());
+    assert_eq!(code, Some(1), "{value}");
+    assert_eq!(value["code"], "control_plane_unavailable");
+    assert_eq!(
+        deployment.node_head(),
+        0,
+        "the old sign-in's token was not sent"
+    );
+}
+
+#[test]
+fn login_clears_tokens_cached_for_the_previous_sign_in() {
+    let deployment = Deployment::start();
+    let project = deployment.project();
+    let attach_url = format!("{}/{}", deployment.node_url, deployment.repository);
+    let attached = deployment.javelin(
+        &deployment.control_url,
+        &["attach", &attach_url, project.to_str().unwrap()],
+    );
+    assert_eq!(attached.status.code(), Some(0), "{attached:?}");
+    assert!(deployment.cache_path().exists());
+
+    let mut login = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .arg("login")
+        .env("JAVELIN_HOME", deployment.home())
+        .env("JAVELIN_CONTROL_URL", &deployment.control_url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = BufReader::new(login.stderr.take().unwrap());
+    let mut line = String::new();
+    let code = loop {
+        line.clear();
+        assert!(
+            stderr.read_line(&mut line).unwrap() > 0,
+            "login printed no code"
+        );
+        if let Some((_, code)) = line.trim().rsplit_once("javelin control approve ") {
+            break code.to_string();
+        }
+    };
+    let approve = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .args(["control", "approve", &code])
+        .env("JAVELIN_HOME", deployment.home())
+        .env("JAVELIN_CONTROL_URL", &deployment.control_url)
+        .env("JAVELIN_ADMIN_TOKEN", &deployment.admin)
+        .output()
+        .unwrap();
+    assert!(approve.status.success(), "{approve:?}");
+    assert!(login.wait().unwrap().success());
+    assert!(
+        !deployment.home().join("tokens").exists(),
+        "the new sign-in starts with no cached tokens"
+    );
+}
+
+/// A node that answers every request with whatever `reply` holds, and counts requests.
+fn scripted_node(reply: Arc<Mutex<Vec<u8>>>, seen: Arc<Mutex<usize>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            if read_body(&mut stream).is_none() {
+                continue;
+            }
+            *seen.lock().unwrap() += 1;
+            let body = reply.lock().unwrap().clone();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(&body);
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.read_to_end(&mut Vec::new());
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// One request's body, by its `content-length`.
+fn read_body(stream: &mut TcpStream) -> Option<Vec<u8>> {
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).ok()?;
+        head.push(byte[0]);
+    }
+    let head = String::from_utf8(head).ok()?.to_ascii_lowercase();
+    let length: usize = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))?
+        .trim()
+        .parse()
+        .ok()?;
+    let mut body = vec![0; length];
+    stream.read_exact(&mut body).ok()?;
+    Some(body)
+}
+
+#[test]
+fn only_a_recorded_outcome_takes_a_record_off_the_queue() {
+    let temp = TempDir::new().unwrap();
+    let reply = Arc::new(Mutex::new(
+        encode(&Message::Error {
+            code: "storage_error".into(),
+            detail: "disk full".into(),
+        })
+        .unwrap(),
+    ));
+    let seen = Arc::new(Mutex::new(0));
+    let node = scripted_node(reply.clone(), seen.clone());
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let repo = Repository::init(&project).unwrap();
+    let world = repo.head().unwrap();
+    repo.write_attachment(&Attachment {
+        node: node.clone(),
+        repository: "repo-1".into(),
+        provider: "self-hosted".into(),
+        head: RemoteHead {
+            number: world.number.get(),
+            id: world.id,
+            tree: world.tree,
+        },
+    })
+    .unwrap();
+    drop(repo);
+    let payload = encode(&Message::PublishLayer {
+        operation: op("publish-1"),
+        layer: layer("work"),
+        expected: ObjectId::for_blob(b"head"),
+        base: VersionNumber::new(0).unwrap(),
+        attribution: PublishAttribution::Human,
+    })
+    .unwrap();
+    Outbox::open(&project, "repo-1")
+        .unwrap()
+        .enqueue(
+            javelin::outbox::Kind::Publish,
+            "work",
+            &op("publish-1"),
+            &payload,
+        )
+        .unwrap();
+    let replay = |token: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_javelin"));
+        command
+            .args(["--json", "outbox", "replay", "--remote", "repo-1", "--repo"])
+            .arg(&project)
+            .env("JAVELIN_HOME", temp.path().join("home"))
+            .env_remove("JAVELIN_TOKEN")
+            .env_remove("JAVELIN_CONTROL_URL");
+        if let Some(token) = token {
+            command.env("JAVELIN_TOKEN", token);
+        }
+        let output = command.output().unwrap();
+        (output.status.code(), stdout(&output))
+    };
+
+    // Signed out: nothing is sent at all.
+    let (code, value) = replay(None);
+    assert_eq!(code, Some(1), "{value}");
+    assert_eq!(value["code"], "unauthorized");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        0,
+        "no write goes out without a token"
+    );
+
+    // The node fails to store the write: the record stays queued under the node's code.
+    let (code, value) = replay(Some("token"));
+    assert_eq!(code, Some(1), "{value}");
+    assert_eq!(value["code"], "storage_error");
+    assert_eq!(value["pending"], 1);
+    assert_eq!(*seen.lock().unwrap(), 1);
+
+    // A refusal is the node's recorded outcome for the operation: the record is done.
+    *reply.lock().unwrap() = encode(&Message::PublishOutcome(PublishOutcome::Refused {
+        code: "stale_base".into(),
+    }))
+    .unwrap();
+    let (code, value) = replay(Some("token"));
+    assert_eq!(code, Some(0), "{value}");
+    assert_eq!(value["pending"], 0);
+    assert_eq!(value["delivered"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn credentials_go_only_over_https_off_this_machine() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let run = |args: &[&str], control: &str| {
+        Command::new(env!("CARGO_BIN_EXE_javelin"))
+            .arg("--json")
+            .args(args)
+            .env("JAVELIN_HOME", temp.path().join("home"))
+            .env("JAVELIN_CONTROL_URL", control)
+            .env("JAVELIN_ADMIN_TOKEN", "jav_admin_unused")
+            .output()
+            .unwrap()
+    };
+    let attach = run(
+        &[
+            "attach",
+            "http://node.example/repo-1",
+            project.to_str().unwrap(),
+        ],
+        "https://control.example",
+    );
+    assert_eq!(error_code(&attach), "invalid_input");
+    assert!(String::from_utf8_lossy(&attach.stderr).contains("https"));
+    let create = run(
+        &["repo", "create", "acme/app", "--operation", "op-1"],
+        "http://control.example",
+    );
+    assert_eq!(error_code(&create), "invalid_input");
+    let serve = run(
+        &["control", "serve", "0.0.0.0:0"],
+        "https://control.example",
+    );
+    assert_eq!(error_code(&serve), "invalid_input");
+    assert!(String::from_utf8_lossy(&serve.stderr).contains("TLS-terminating proxy"));
 }
