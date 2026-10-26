@@ -65,10 +65,12 @@ fn serve_node(log: FileWorldLog) -> Served {
 }
 
 impl Served {
-    /// Stops the node and returns its log. One last connection wakes the accept loop.
+    /// Stops the node and returns its log. One last connection wakes the accept loop. It
+    /// is a bare connect whose errors are ignored: the node may reset it, which on Linux
+    /// fails any read or write the waker attempts.
     fn finish(self) -> FileWorldLog {
         self.stop.store(true, Ordering::SeqCst);
-        let _ = exchange(self.addr, "GET /v2/r/demo HTTP/1.1\r\n\r\n", &[]);
+        let _ = TcpStream::connect(self.addr);
         self.thread.join().unwrap()
     }
 }

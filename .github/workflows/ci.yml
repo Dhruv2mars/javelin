@@ -133,6 +133,57 @@ jobs:
           PATH="$GIT_SHIM:$PATH" bun run ../acceptance/run.ts
           test ! -e "$GIT_SHIM/invoked"
 
+  # The forge's read-only pages: the TypeScript codec and page data against a real
+  # `javelin-node serve` on loopback, seeded with the `javelin` CLI.
+  forge:
+    name: Forge / self-hosted node
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/forge
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      # Same Git guard as the Rust job: the tests drive the javelin CLI and node.
+      - name: Install failing git shim
+        run: |
+          shim="$RUNNER_TEMP/git-shim" probe="$RUNNER_TEMP/git-probe"
+          mkdir -p "$shim" "$probe"
+          echo 'fn main() { let d = std::env::current_exe().unwrap(); std::fs::write(d.parent().unwrap().join("invoked"), b"").unwrap(); std::process::exit(97) }' > "$probe/shim.rs"
+          echo 'fn main() { std::process::exit(std::process::Command::new("git").status().ok().and_then(|s| s.code()).unwrap_or(1)) }' > "$probe/probe.rs"
+          rustc -o "$shim/git" "$probe/shim.rs"
+          rustc -o "$probe/probe" "$probe/probe.rs"
+          PATH="$shim:$PATH" "$probe/probe" && exit 1 || test $? -eq 97
+          rm "$shim/invoked"
+          echo "GIT_SHIM=$shim" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck and build
+        run: |
+          bun run typecheck
+          bun run build
+
+      - name: Build the node and CLI
+        run: cargo build --locked -p javelin-cli -p javelin-node
+
+      - name: Test against the self-hosted node with the git shim first on PATH
+        run: |
+          PATH="$GIT_SHIM:$PATH" JAVELIN_BIN_DIR="$GITHUB_WORKSPACE/target/debug" bun test
+          test ! -e "$GIT_SHIM/invoked"
+
   # Clone-backed Layers on each filesystem. Only volume setup uses sudo or admin;
   # the tests run as the ordinary runner user with no mount, helper or daemon.
   workspace:

@@ -409,6 +409,14 @@ Wave 3, after wave 2:
     - [ ] `cargo deny` checks only the root package (not `--workspace`), so the member crates'
       licenses are unchecked: BSD-3-Clause (`ed25519-dalek`), ISC (`ring`, `rustls-webpki`) and
       MPL-2.0 (`crypto-glue`, via `webauthn-rs`) are linked into `javelin-control` today.
+  - [x] Forge first read-only pages (`apps/forge/`): repo home with README, file view (text
+    highlighted, binary notice), history with attribution and changed-path counts, version
+    diff against its parent. The browser reads the node directly over protocol v2 through one
+    shared TypeScript codec (`packages/protocol/`); new read message `Attribution` 0x44; CORS on
+    the self-hosted node for read messages only, writes from a browser origin refused. `bun test`
+    runs against a real seeded `javelin-node serve`; CI job `Forge / self-hosted node`.
+    - [ ] Control-plane lookup of `owner/repo` → node (today `?node=&repository=` or
+      `forge.config.json`), and the Worker that serves `dist/`.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.

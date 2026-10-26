@@ -585,3 +585,50 @@ fn hosting_bodies_encode_at_their_documented_sizes() {
     assert_eq!(state.len(), 1 + 1 + 7 + 8 + 8 + 32 + 1);
     assert_eq!(state[0], LAYER_STATE);
 }
+
+#[test]
+fn attribution_messages_round_trip_canonically() {
+    roundtrip(Message::Attribution {
+        version: version(3),
+    });
+    for publication in [
+        None,
+        Some((layer(), PublishAttribution::Human)),
+        Some((
+            layer(),
+            PublishAttribution::Agent {
+                context: Some(id(4)),
+                allow_missing_trace: false,
+            },
+        )),
+        Some((
+            layer(),
+            PublishAttribution::Agent {
+                context: None,
+                allow_missing_trace: true,
+            },
+        )),
+    ] {
+        roundtrip(Message::Attributed {
+            number: version(3),
+            publication,
+        });
+    }
+    // Absence is a zero flag and an empty Layer, and nothing else.
+    let mut body = vec![0x45];
+    body.extend_from_slice(&3u64.to_be_bytes());
+    body.extend_from_slice(&[0, 0]);
+    assert_eq!(
+        decode(&body).unwrap(),
+        Message::Attributed {
+            number: version(3),
+            publication: None
+        }
+    );
+    let mut named = body[..9].to_vec();
+    named.extend_from_slice(&[0, 1, b'a']);
+    assert_eq!(refused(&named), code::MALFORMED);
+    let mut extra = body.clone();
+    extra.push(0);
+    assert_eq!(refused(&extra), code::MALFORMED);
+}

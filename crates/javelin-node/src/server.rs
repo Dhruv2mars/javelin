@@ -7,6 +7,11 @@
 //! reply that cannot be sent within its deadline is abandoned.
 //!
 //! The server has no authentication yet, so it binds loopback addresses only.
+//!
+//! Browsers may read: `OPTIONS` answers a CORS preflight, and replies to the read
+//! messages (`Resolve`, `Get`, `Changeset`, `Attribution`) allow any origin. Any other
+//! message that arrives with an `Origin` header is refused with `forbidden` before it
+//! is served, so a web page can never write through a visitor's browser.
 
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -17,7 +22,7 @@ use std::{
 
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{decode, encode},
+    codec::{code, decode, encode},
     handle_request,
     limits::MAX_FRAME,
 };
@@ -95,10 +100,21 @@ fn handle_connection(stream: TcpStream, name: &str, log: &mut FileWorldLog) -> i
     let replies = stream.try_clone()?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
     match read_request(&mut reader, name, log) {
-        Ok(body) => respond(&mut Deadline::new(replies, RESPONSE_DEADLINE), 200, &body),
+        Ok(Reply::Message { body, cors }) => respond(
+            &mut Deadline::new(replies, RESPONSE_DEADLINE),
+            200,
+            if cors { ALLOW_ORIGIN } else { "" },
+            &body,
+        ),
+        Ok(Reply::Preflight) => respond(
+            &mut Deadline::new(replies, RESPONSE_DEADLINE),
+            204,
+            PREFLIGHT,
+            &[],
+        ),
         Err(Fault::Status(status)) => {
             let mut writer = Deadline::new(replies, RESPONSE_DEADLINE);
-            respond(&mut writer, status, &[])?;
+            respond(&mut writer, status, "", &[])?;
             // Read what the peer is still sending, so closing does not reset the reply.
             writer.stream.shutdown(Shutdown::Write)?;
             let _ = io::copy(&mut (&mut reader).take(MAX_FRAME as u64), &mut io::sink());
@@ -108,16 +124,38 @@ fn handle_connection(stream: TcpStream, name: &str, log: &mut FileWorldLog) -> i
     }
 }
 
-/// Reads one request and returns the encoded reply, or the status to reply with.
+/// A reply to a well-formed request: one encoded message, which a browser may read
+/// when `cors` is set, or the answer to a CORS preflight.
+enum Reply {
+    Message { body: Vec<u8>, cors: bool },
+    Preflight,
+}
+
+const ALLOW_ORIGIN: &str = "Access-Control-Allow-Origin: *\r\n";
+const PREFLIGHT: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Max-Age: 600\r\n";
+
+/// Messages that only read the repository, which a browser may send.
+fn is_read(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Resolve { .. }
+            | Message::Get(_)
+            | Message::Changeset { .. }
+            | Message::Attribution { .. }
+    )
+}
+
+/// Reads one request and returns the reply, or the status to reply with.
 fn read_request(
     reader: &mut impl BufRead,
     name: &str,
     log: &mut FileWorldLog,
-) -> Result<Vec<u8>, Fault> {
+) -> Result<Reply, Fault> {
     let request = read_line(reader)?;
     let mut parts = request.split(' ');
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut length = None;
+    let mut origin = false;
     let mut headers = 0;
     loop {
         let line = read_line(reader)?;
@@ -137,12 +175,18 @@ fn read_request(
         if key.eq_ignore_ascii_case("content-length") {
             length = value.trim().parse::<usize>().ok();
         }
+        if key.eq_ignore_ascii_case("origin") {
+            origin = true;
+        }
     }
-    if method != "POST" {
+    if method != "POST" && method != "OPTIONS" {
         return Err(Fault::Status(405));
     }
     if path != format!("/v2/r/{name}") {
         return Err(Fault::Status(404));
+    }
+    if method == "OPTIONS" {
+        return Ok(Reply::Preflight);
     }
     let Some(length) = length else {
         return Err(Fault::Status(411));
@@ -152,15 +196,26 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    let reply = match decode(&body).and_then(|message| serve_one(log, message)) {
+    let mut cors = false;
+    let reply = match decode(&body).and_then(|message| {
+        cors = is_read(&message);
+        if origin && !cors {
+            return Err(ProtocolError::new(
+                code::FORBIDDEN,
+                "a browser origin may only send read messages",
+            ));
+        }
+        serve_one(log, message)
+    }) {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
-    Ok(match encode(&reply) {
+    let body = match encode(&reply) {
         Ok(bytes) => bytes,
         Err(ProtocolError { code, detail }) => encode(&Message::Error { code, detail })
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.detail))?,
-    })
+    };
+    Ok(Reply::Message { body, cors })
 }
 
 /// One message through the trace guard, then the protocol handler.
@@ -215,9 +270,11 @@ fn read_line(reader: &mut impl BufRead) -> Result<String, Fault> {
     Ok(text.trim_end_matches(['\r', '\n']).to_string())
 }
 
-fn respond(writer: &mut impl Write, status: u16, body: &[u8]) -> io::Result<()> {
+/// Writes one response. `extra` is zero or more whole header lines.
+fn respond(writer: &mut impl Write, status: u16, extra: &str, body: &[u8]) -> io::Result<()> {
     let text = match status {
         200 => "OK",
+        204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
@@ -226,7 +283,7 @@ fn respond(writer: &mut impl Write, status: u16, body: &[u8]) -> io::Result<()> 
     };
     write!(
         writer,
-        "HTTP/1.1 {status} {text}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {text}\r\nContent-Type: application/octet-stream\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     )?;
     writer.write_all(body)?;
