@@ -8,7 +8,7 @@ use javelin::{
 };
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{LayerOutcome, LayerStatus, code},
+    codec::{LayerOutcome, LayerStatus, LeaseHolder, code},
     receiver::refusal,
 };
 use rusqlite::{Connection, OptionalExtension, params};
@@ -150,6 +150,8 @@ pub(crate) fn layer_head(repo: &Repository, layer: &LayerId) -> Result<Message, 
         seq,
         head,
         state: status,
+        // The lease is the caller's view; `lease::layer_head` fills it in.
+        lease: LeaseHolder::Free,
     })
 }
 

@@ -18,8 +18,8 @@ mod hosting;
 mod wire;
 
 pub use hosting::{
-    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
-    RequestStatus, ReviewOutcome, Role, Visibility,
+    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome,
+    RequestId, RequestStatus, ReviewOutcome, Role, Visibility,
 };
 use wire::*;
 
@@ -209,13 +209,15 @@ pub enum Message {
     LayerHead {
         layer: LayerId,
     },
-    /// Reply to `LayerHead`. `seq` is the head's sequence number.
+    /// Reply to `LayerHead`. `seq` is the head's sequence number; `lease` says whether the
+    /// caller's device holds the writer lease.
     LayerState {
         layer: LayerId,
         base: VersionNumber,
         seq: u64,
         head: ObjectId,
         state: LayerStatus,
+        lease: LeaseHolder,
     },
     /// Stack `source` onto `target`, which must still be at `target_head`.
     LayerStack {
@@ -444,6 +446,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             seq,
             head,
             state,
+            lease,
         } => {
             out.push(LAYER_STATE);
             put_short(&mut out, layer.as_str());
@@ -451,6 +454,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.extend_from_slice(&seq.to_be_bytes());
             put_id(&mut out, head);
             out.push(state.code());
+            out.push(lease.code());
         }
         Message::LayerStack {
             operation,
@@ -700,7 +704,7 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
             LayerOutcome::Refused { code } => 2 + short(code)?,
         },
         Message::LayerHead { layer } => 1 + short(layer.as_str())?,
-        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 1,
+        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 2,
         Message::LayerStack {
             operation, target, ..
         } => 1 + short(operation.as_str())? + short(target.as_str())? + 64,
@@ -905,6 +909,7 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             seq: r.u64()?,
             head: r.id()?,
             state: r.layer_status()?,
+            lease: r.lease_holder()?,
         },
         LAYER_STACK => Message::LayerStack {
             operation: r.operation()?,

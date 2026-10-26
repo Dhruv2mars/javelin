@@ -60,6 +60,25 @@ impl LayerStatus {
     }
 }
 
+/// Who holds a Layer's writer lease, as the caller sees it. Wire codes: 0 Free, 1 Caller
+/// (the device of the request's token), 2 Other. Device IDs are never sent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LeaseHolder {
+    Free,
+    Caller,
+    Other,
+}
+
+impl LeaseHolder {
+    pub(super) fn code(self) -> u8 {
+        match self {
+            Self::Free => 0,
+            Self::Caller => 1,
+            Self::Other => 2,
+        }
+    }
+}
+
 /// Publish Request state. Wire codes: 0 Open, 1 Published, 2 Closed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestStatus {

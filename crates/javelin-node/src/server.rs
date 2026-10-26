@@ -324,6 +324,7 @@ fn serve_one(
             &target,
             |log| crate::stack::stack(log.parts().0, &operation, &target, target_head, source),
         )?)),
+        Message::LayerHead { layer } => lease::layer_head(log, grant.as_ref(), &layer),
         Message::LayerTake { operation, layer } => Ok(Message::LayerOutcome(lease::take(
             log,
             &writer()?,
