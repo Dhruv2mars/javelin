@@ -1,14 +1,17 @@
 //! The credential this client sends to a node, as `Authorization: Bearer` (D6,
 //! `docs/online-design.md` section 4.7). `JAVELIN_TOKEN`, when set, is sent as it is and never
 //! refreshed, which suits a CI reporter. Otherwise the device's sign-in is used: the access
-//! token for each repository is cached in its own file under `$JAVELIN_HOME/tokens/` until
-//! shortly before it expires, and a fresh one comes from the control plane with the refresh
-//! token in `$JAVELIN_HOME/credentials`. The refresh token itself is never sent to a node.
+//! token for each repository is cached until shortly before it expires, and a fresh one comes
+//! from the control plane with the refresh token in `$JAVELIN_HOME/credentials`. The refresh
+//! token itself is never sent to a node.
 //!
-//! A cached token is used only for the principal and device it was issued to, so a token from
-//! another sign-in is never sent, and `javelin login` clears the cache. Each repository's file
-//! is replaced by rename, so processes refreshing different repositories never overwrite each
-//! other's tokens.
+//! The cache is `$JAVELIN_HOME/tokens/<principal>+<device>/repo-<repository>.json`: one
+//! directory per sign-in, one file per repository, each replaced by rename. A token from
+//! another sign-in is therefore never read, processes refreshing different repositories
+//! never overwrite each other, and `javelin login` only switches directories. It removes
+//! another sign-in's directory only once nothing in it has changed for `STALE_AFTER`, so it
+//! never deletes a file a running command is writing. A token that cannot be cached is still
+//! used for the command that fetched it.
 //!
 //! While a cached token is valid, node work needs no control plane. Once it has expired, a
 //! control plane that cannot be reached is `control_plane_unavailable`, and a sign-in the
@@ -19,7 +22,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, ErrorKind, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use javelin::outbox::Fault;
@@ -32,6 +35,9 @@ use crate::cli_control;
 /// flight or on a node whose clock runs ahead.
 const MARGIN: u64 = 60;
 const CACHE_DIR: &str = "tokens";
+/// Another sign-in's cache directory is removed once nothing in it changed for this long:
+/// twice the one-hour access-token life (D6), so every token in it has expired.
+const STALE_AFTER: Duration = Duration::from_secs(2 * 3600);
 
 pub struct Credential {
     repository: String,
@@ -90,12 +96,14 @@ impl Credential {
                 let token = control
                     .repository_token(&signin.access_token, &self.repository, now)
                     .map_err(fault)?;
-                store(
+                // The token is good whether or not it can be cached: a failed write costs only
+                // a refresh on the next command.
+                let _ = store(
                     &self.repository,
                     &credentials,
                     &token.access_token,
                     now + token.expires_in,
-                )?;
+                );
                 Ok(token.access_token)
             }
         }
@@ -129,40 +137,55 @@ fn signed_in() -> Result<Option<Credentials>, Fault> {
     Credentials::load(&path).map(Some).map_err(fault)
 }
 
-fn cache_dir() -> Result<PathBuf, Fault> {
-    Ok(cli_control::javelin_home().map_err(local)?.join(CACHE_DIR))
+fn cache_root() -> io::Result<PathBuf> {
+    cli_control::javelin_home()
+        .map(|home| home.join(CACHE_DIR))
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
-/// The cache file of `repository`. Bytes outside `[A-Za-z0-9_.-]` are escaped, so an ID with
-/// `:` is still a valid file name on Windows, and the prefix keeps `.` and `..` out.
-fn cache_path(repository: &str) -> Result<PathBuf, Fault> {
-    let mut name = String::from("repo-");
-    for byte in repository.bytes() {
+/// `value` as a file name: bytes outside `[A-Za-z0-9_.-]` are escaped as `%XX`, so an ID with
+/// `:` is still valid on Windows.
+fn escape(value: &str) -> String {
+    let mut name = String::new();
+    for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || b"_.-".contains(&byte) {
             name.push(byte as char);
         } else {
             name.push_str(&format!("%{byte:02X}"));
         }
     }
-    name.push_str(".json");
-    Ok(cache_dir()?.join(name))
+    name
 }
 
-/// The cached token for `repository`, if it was issued to this sign-in and is still good for
-/// `MARGIN` seconds.
+/// The cache directory of one sign-in. `+` never survives `escape`, so it separates the two
+/// IDs unambiguously, and neither half can be `.` or `..` on its own.
+fn sign_in_dir(credentials: &Credentials) -> String {
+    format!(
+        "{}+{}",
+        escape(&credentials.principal),
+        escape(&credentials.device)
+    )
+}
+
+/// The cache file of `repository` for this sign-in.
+fn cache_path(repository: &str, credentials: &Credentials) -> Result<PathBuf, Fault> {
+    Ok(cache_root()
+        .map_err(local)?
+        .join(sign_in_dir(credentials))
+        .join(format!("repo-{}.json", escape(repository))))
+}
+
+/// The cached token for `repository`, if this sign-in has one still good for `MARGIN` seconds.
 fn cached(repository: &str, credentials: &Credentials, now: u64) -> Result<Option<String>, Fault> {
-    let entry: Value = match fs::read(cache_path(repository)?) {
-        // A damaged entry only costs a refresh.
+    // The cache is only an optimization: a missing, unreadable or damaged entry costs a refresh.
+    let entry: Value = match fs::read(cache_path(repository, credentials)?) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(local(error)),
+        Err(_) => return Ok(None),
     };
-    let ours = entry["principal"] == credentials.principal.as_str()
-        && entry["device"] == credentials.device.as_str();
     let fresh = entry["expires_at"]
         .as_u64()
         .is_some_and(|expires_at| expires_at > now.saturating_add(MARGIN));
-    Ok((ours && fresh)
+    Ok(fresh
         .then(|| entry["access_token"].as_str().map(str::to_owned))
         .flatten())
 }
@@ -173,25 +196,48 @@ fn store(
     token: &str,
     expires_at: u64,
 ) -> Result<(), Fault> {
-    let entry = json!({
-        "principal": credentials.principal,
-        "device": credentials.device,
-        "access_token": token,
-        "expires_at": expires_at,
-    });
+    let entry = json!({"access_token": token, "expires_at": expires_at});
     let bytes = serde_json::to_vec_pretty(&entry).map_err(local)?;
-    write_private(&cache_path(repository)?, &bytes).map_err(local)
+    write_private(&cache_path(repository, credentials)?, &bytes).map_err(local)
 }
 
-/// Forgets every cached token. `javelin login` calls this when it replaces the sign-in.
-pub fn clear_cache() -> io::Result<()> {
-    let dir = cli_control::javelin_home()
-        .map_err(|error| io::Error::other(error.to_string()))?
-        .join(CACHE_DIR);
-    match fs::remove_dir_all(dir) {
-        Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
+/// Removes other sign-ins' cache directories in which nothing changed for `STALE_AFTER`.
+/// `javelin login` calls this after saving `current`. The current sign-in's directory, and any
+/// directory a command may still be writing to, is left alone.
+pub fn remove_stale_sign_ins(current: &Credentials) -> io::Result<()> {
+    let root = cache_root()?;
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let keep = sign_in_dir(current);
+    let now = SystemTime::now();
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy() == keep || !entry.file_type()?.is_dir() {
+            continue;
+        }
+        if newest_change(&entry.path())?
+            .is_none_or(|newest| now.duration_since(newest).unwrap_or_default() >= STALE_AFTER)
+        {
+            match fs::remove_dir_all(entry.path()) {
+                Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+                _ => {}
+            }
+        }
     }
+    Ok(())
+}
+
+/// The latest modification time of a file in `dir`, or `None` when it holds none.
+fn newest_change(dir: &Path) -> io::Result<Option<SystemTime>> {
+    let mut newest = None;
+    for entry in fs::read_dir(dir)? {
+        let modified = entry?.metadata()?.modified()?;
+        newest = newest.max(Some(modified));
+    }
+    Ok(newest)
 }
 
 /// Writes through a temporary file, private to the owner on Unix.

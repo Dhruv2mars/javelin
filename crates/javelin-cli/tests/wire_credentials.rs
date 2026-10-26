@@ -247,9 +247,20 @@ impl Deployment {
 
     /// The repository's token cache file.
     fn cache_path(&self) -> PathBuf {
-        self.home()
-            .join("tokens")
+        self.sign_in_dir()
             .join(format!("repo-{}.json", self.repository))
+    }
+
+    /// The cache directory of the sign-in in the credentials file: `<principal>+<device>`.
+    /// Both IDs here are plain, so nothing in them is escaped.
+    fn sign_in_dir(&self) -> PathBuf {
+        let credentials: Value =
+            serde_json::from_slice(&fs::read(self.home().join("credentials")).unwrap()).unwrap();
+        self.home().join("tokens").join(format!(
+            "{}+{}",
+            credentials["principal"].as_str().unwrap(),
+            credentials["device"].as_str().unwrap()
+        ))
     }
 
     fn cache(&self) -> Value {
@@ -509,7 +520,7 @@ fn a_cached_token_from_another_sign_in_is_never_sent() {
 }
 
 #[test]
-fn login_clears_tokens_cached_for_the_previous_sign_in() {
+fn login_switches_cache_directories_and_removes_only_stale_ones() {
     let deployment = Deployment::start();
     let project = deployment.project();
     let attach_url = format!("{}/{}", deployment.node_url, deployment.repository);
@@ -518,7 +529,15 @@ fn login_clears_tokens_cached_for_the_previous_sign_in() {
         &["attach", &attach_url, project.to_str().unwrap()],
     );
     assert_eq!(attached.status.code(), Some(0), "{attached:?}");
-    assert!(deployment.cache_path().exists());
+    let previous = deployment.cache_path();
+    assert!(previous.exists());
+    // A sign-in from long ago: nothing in its directory changed for three hours.
+    let ghost = deployment.home().join("tokens").join("ghost+dev_old");
+    fs::create_dir_all(&ghost).unwrap();
+    let old = fs::File::create(ghost.join("repo-x.json")).unwrap();
+    old.set_modified(SystemTime::now() - std::time::Duration::from_secs(3 * 3600))
+        .unwrap();
+    drop(old);
 
     let mut login = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .arg("login")
@@ -549,10 +568,30 @@ fn login_clears_tokens_cached_for_the_previous_sign_in() {
         .unwrap();
     assert!(approve.status.success(), "{approve:?}");
     assert!(login.wait().unwrap().success());
-    assert!(
-        !deployment.home().join("tokens").exists(),
-        "the new sign-in starts with no cached tokens"
+
+    // The new sign-in has its own, empty directory; the previous one's files are untouched,
+    // since a command signed in as it may still be writing there. Only the stale one is gone.
+    assert_ne!(deployment.cache_path(), previous);
+    assert!(!deployment.cache_path().exists());
+    assert!(previous.exists());
+    assert!(!ghost.exists());
+}
+
+#[test]
+fn a_token_that_cannot_be_cached_still_serves_its_command() {
+    let deployment = Deployment::start();
+    let project = deployment.project();
+    // The sign-in's cache directory cannot be created: a file sits at its path.
+    let blocked = deployment.sign_in_dir();
+    fs::create_dir_all(blocked.parent().unwrap()).unwrap();
+    fs::write(&blocked, b"not a directory").unwrap();
+    let attach_url = format!("{}/{}", deployment.node_url, deployment.repository);
+    let attached = deployment.javelin(
+        &deployment.control_url,
+        &["attach", &attach_url, project.to_str().unwrap()],
     );
+    assert_eq!(attached.status.code(), Some(0), "{attached:?}");
+    assert!(blocked.is_file(), "nothing was cached");
 }
 
 /// A node that answers every request with whatever `reply` holds, and counts requests.

@@ -129,8 +129,9 @@ fn login() -> Result<Output, ControlError> {
     };
     let path = credentials_path()?;
     credentials.save(&path)?;
-    // Tokens cached for the previous sign-in must not be sent for this one.
-    crate::cli_auth::clear_cache().map_err(|error| ControlError::Storage(error.to_string()))?;
+    // The new sign-in caches its tokens in its own directory, so the previous sign-in's tokens
+    // are never sent for it. Tidying old directories is best effort.
+    let _ = crate::cli_auth::remove_stale_sign_ins(&credentials);
     let text = format!(
         "Signed in as {} on device {}. Credentials saved to {}.",
         session.principal,

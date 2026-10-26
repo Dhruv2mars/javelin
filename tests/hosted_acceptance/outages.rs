@@ -188,7 +188,14 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
         )
         .unwrap();
     drop(outbox);
-    let cache_path = home.path().join("tokens").join(format!("repo-{id}.json"));
+    let cache_path = home
+        .path()
+        .join("tokens")
+        .join(format!(
+            "{}+{}",
+            hosted.session.principal, hosted.session.device
+        ))
+        .join(format!("repo-{id}.json"));
     let mut cache: Value = serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
     cache["expires_at"] = json!(now() - 1);
     fs::write(&cache_path, cache.to_string()).unwrap();
