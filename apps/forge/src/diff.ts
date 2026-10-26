@@ -12,46 +12,65 @@ export const MAX_EDITS = 4000;
 /** Most diagonal steps the search may take, about (N+M)·D. */
 export const MAX_WORK = 50_000_000;
 
-/** Text files hold no NUL (a NUL makes a file binary), so it marks a missing final newline. */
-const NO_EOL = "\0";
+/** A text's lines without their newlines, and whether its last line lacks one. */
+export type Split = { lines: string[]; noEol: boolean };
 
-/** Lines without their newlines. A last line without a final newline keeps a marker, so
- *  adding or removing that newline is a change. */
-export function splitLines(text: string): string[] {
-  if (text === "") return [];
+export function splitLines(text: string): Split {
+  if (text === "") return { lines: [], noEol: false };
   const lines = text.split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-  else lines[lines.length - 1] += NO_EOL;
-  return lines;
+  const noEol = lines[lines.length - 1] !== "";
+  if (!noEol) lines.pop();
+  return { lines, noEol };
 }
 
-function line(kind: Line["kind"], raw: string, old: number | null, now: number | null): Line {
-  const eof = raw.endsWith(NO_EOL);
-  return { kind, text: eof ? raw.slice(0, -1) : raw, old, new: now, ...(eof ? { eof } : {}) };
+/**
+ * One side of a diff. Two lines are equal when their text is equal and either both or
+ * neither is a last line without a newline, so adding or removing the final newline is a
+ * change. The flag travels beside the text, never inside it.
+ */
+type Side = { lines: string[]; noEolAt: number };
+
+const side = (s: Split): Side => ({ lines: s.lines, noEolAt: s.noEol ? s.lines.length - 1 : -1 });
+
+function line(kind: Line["kind"], text: string, old: number | null, now: number | null, eof: boolean): Line {
+  return { kind, text, old, new: now, ...(eof ? { eof } : {}) };
 }
 
 /** The shortest edit script from `a` to `b`, or null when it exceeds the search bounds. */
-export function diffScript(a: string[], b: string[]): Line[] | null {
+export function diffScript(before: Split, after: Split): Line[] | null {
+  const a = side(before);
+  const b = side(after);
+  const same = (i: number, j: number) => a.lines[i] === b.lines[j] && (i === a.noEolAt) === (j === b.noEolAt);
+  const ctx = (i: number, j: number) => line("ctx", a.lines[i], i + 1, j + 1, i === a.noEolAt);
   let start = 0;
-  while (start < a.length && start < b.length && a[start] === b[start]) start++;
-  let endA = a.length;
-  let endB = b.length;
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+  while (start < a.lines.length && start < b.lines.length && same(start, start)) start++;
+  let endA = a.lines.length;
+  let endB = b.lines.length;
+  while (endA > start && endB > start && same(endA - 1, endB - 1)) {
     endA--;
     endB--;
   }
-  const head = a.slice(0, start).map((t, i) => line("ctx", t, i + 1, i + 1));
-  const tail = a.slice(endA).map((t, i) => line("ctx", t, endA + i + 1, endB + i + 1));
-  const middle = search(a.slice(start, endA), b.slice(start, endB), start);
+  const head = Array.from({ length: start }, (_, i) => ctx(i, i));
+  const tail = Array.from({ length: a.lines.length - endA }, (_, i) => ctx(endA + i, endB + i));
+  const middle = search(a, b, same, start, endA, endB);
   return middle && [...head, ...middle, ...tail];
 }
 
-/** Myers over the differing middle. `base` is the number of lines before it on both sides. */
-function search(a: string[], b: string[], base: number): Line[] | null {
-  const n = a.length;
-  const m = b.length;
-  if (n === 0) return b.map((t, j) => line("add", t, null, base + j + 1));
-  if (m === 0) return a.map((t, i) => line("del", t, base + i + 1, null));
+/** Myers over `a[base..endA]` and `b[base..endB]`, the differing middle. */
+function search(
+  a: Side,
+  b: Side,
+  same: (i: number, j: number) => boolean,
+  base: number,
+  endA: number,
+  endB: number,
+): Line[] | null {
+  const n = endA - base;
+  const m = endB - base;
+  const add = (j: number) => line("add", b.lines[base + j], null, base + j + 1, base + j === b.noEolAt);
+  const del = (i: number) => line("del", a.lines[base + i], base + i + 1, null, base + i === a.noEolAt);
+  if (n === 0) return Array.from({ length: m }, (_, j) => add(j));
+  if (m === 0) return Array.from({ length: n }, (_, i) => del(i));
   const offset = n + m + 1;
   const v = new Int32Array(2 * offset + 1);
   // trace[d] holds v[-d..d] as it was before step d, the only range step d reads.
@@ -64,7 +83,7 @@ function search(a: string[], b: string[], base: number): Line[] | null {
     for (let k = -d; k <= d; k += 2) {
       let x = k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1]) ? v[offset + k + 1] : v[offset + k - 1] + 1;
       let y = x - k;
-      while (x < n && y < m && a[x] === b[y]) {
+      while (x < n && y < m && same(base + x, base + y)) {
         x++;
         y++;
         work++;
@@ -93,14 +112,12 @@ function search(a: string[], b: string[], base: number): Line[] | null {
       prevY = prevX - prevK;
     }
     while (x > prevX && y > prevY) {
-      out.push(line("ctx", a[x - 1], base + x, base + y));
+      const i = base + x - 1;
+      out.push(line("ctx", a.lines[i], i + 1, base + y, i === a.noEolAt));
       x--;
       y--;
     }
-    if (d > 0) {
-      if (down) out.push(line("add", b[prevY], null, base + prevY + 1));
-      else out.push(line("del", a[prevX], base + prevX + 1, null));
-    }
+    if (d > 0) out.push(down ? add(prevY) : del(prevX));
     x = prevX;
     y = prevY;
   }
