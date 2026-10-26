@@ -37,6 +37,9 @@ const MAX_HEADERS: usize = 64;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 /// Time to send one reply.
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
+/// Time to wait, after the reply and our FIN, for the peer to close. Closing while the peer's
+/// bytes sit unread makes the OS reset the connection, which can destroy the reply in flight.
+const LINGER: Duration = Duration::from_secs(1);
 
 /// Binds `addr`, which must be a loopback address.
 pub fn bind_loopback(addr: &str) -> io::Result<TcpListener> {
@@ -57,11 +60,13 @@ fn is_loopback(ip: IpAddr) -> bool {
 }
 
 /// Serves `name` from `log`, one connection at a time, which makes every request
-/// ordered at the single coordinator. `gate` decides every message. Stops after `connections` connections, or runs
-/// until the listener fails when that is `None`. Each connection is bounded by
-/// `REQUEST_DEADLINE` and `RESPONSE_DEADLINE`, so a stalled peer delays the next one by
-/// at most that long. A connection that fails mid-request is dropped; the peer's retry
-/// of the same operation is the recovery.
+/// ordered at the single coordinator. `gate` decides every message. Stops after
+/// `connections` connections, or runs until the listener fails when that is `None`. Each
+/// connection is bounded by `REQUEST_DEADLINE`, `RESPONSE_DEADLINE` and `LINGER`, so a
+/// stalled peer delays the next one by at most that long. A connection that fails
+/// mid-request is dropped and reported on stderr; the peer's retry of the same operation is
+/// the recovery. A peer that gives up while queued fails only its own accept, so the
+/// listener, and every connection queued behind it, stays up.
 pub fn serve(
     listener: &TcpListener,
     name: &str,
@@ -71,13 +76,33 @@ pub fn serve(
 ) -> io::Result<()> {
     let mut served = 0;
     for stream in listener.incoming() {
-        let _ = handle_connection(stream?, name, log, gate);
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(error) if transient(&error) => {
+                eprintln!("javelin-node: accept failed: {error}");
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = handle_connection(stream, name, log, gate) {
+            eprintln!("javelin-node: connection dropped: {error}");
+        }
         served += 1;
         if connections == Some(served) {
             break;
         }
     }
     Ok(())
+}
+
+/// An accept failure that belongs to one queued connection, not to the listener.
+fn transient(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+    )
 }
 
 /// A request that gets a status reply, or an I/O failure that ends the connection
@@ -101,21 +126,24 @@ fn handle_connection(
 ) -> io::Result<()> {
     // Nonblocking, so every read and write returns to `Deadline`, which checks the clock.
     // Socket timeouts are not used: they do not bound a call that keeps making progress.
+    // One handle reads and writes: a cloned handle is a second socket descriptor on Windows.
     stream.set_nonblocking(true)?;
-    let replies = stream.try_clone()?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
-    match read_request(&mut reader, name, log, gate) {
-        Ok(body) => respond(&mut Deadline::new(replies, RESPONSE_DEADLINE), 200, &body),
-        Err(Fault::Status(status)) => {
-            let mut writer = Deadline::new(replies, RESPONSE_DEADLINE);
-            respond(&mut writer, status, &[])?;
-            // Read what the peer is still sending, so closing does not reset the reply.
-            writer.stream.shutdown(Shutdown::Write)?;
-            let _ = io::copy(&mut (&mut reader).take(MAX_FRAME as u64), &mut io::sink());
-            Ok(())
-        }
-        Err(Fault::Io(error)) => Err(error),
-    }
+    let (status, body) = match read_request(&mut reader, name, log, gate) {
+        Ok(body) => (200, body),
+        Err(Fault::Status(status)) => (status, Vec::new()),
+        Err(Fault::Io(error)) => return Err(error),
+    };
+    let connection = reader.get_mut();
+    connection.restart(RESPONSE_DEADLINE);
+    respond(connection, status, &body)?;
+    // Close gracefully: our FIN goes after the reply, then whatever the peer still sends is
+    // read until it closes, so closing never discards unread bytes, which would reset the
+    // connection and could destroy the reply before the peer reads it.
+    connection.stream.shutdown(Shutdown::Write)?;
+    connection.restart(LINGER);
+    let _ = io::copy(&mut reader.take(MAX_FRAME as u64), &mut io::sink());
+    Ok(())
 }
 
 /// Reads one request and returns the encoded reply, or the status to reply with.
@@ -319,6 +347,11 @@ impl Deadline {
             stream,
             until: Instant::now() + limit,
         }
+    }
+
+    /// Starts a new deadline, `limit` from now, for the next phase of the connection.
+    fn restart(&mut self, limit: Duration) {
+        self.until = Instant::now() + limit;
     }
 
     fn left(&self) -> io::Result<Duration> {
