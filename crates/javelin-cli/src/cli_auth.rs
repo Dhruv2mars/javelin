@@ -1,16 +1,20 @@
 //! The credential this client sends to a node, as `Authorization: Bearer` (D6,
 //! `docs/online-design.md` section 4.7). `JAVELIN_TOKEN`, when set, is sent as it is and never
 //! refreshed, which suits a CI reporter. Otherwise the device's sign-in is used: the access
-//! token for the repository is cached in `$JAVELIN_HOME/tokens.json` until shortly before it
-//! expires, and a fresh one comes from the control plane with the refresh token in
-//! `$JAVELIN_HOME/credentials`. The refresh token itself is never sent to a node.
+//! token for each repository is cached in its own file under `$JAVELIN_HOME/tokens/` until
+//! shortly before it expires, and a fresh one comes from the control plane with the refresh
+//! token in `$JAVELIN_HOME/credentials`. The refresh token itself is never sent to a node.
+//!
+//! A cached token is used only for the principal and device it was issued to, so a token from
+//! another sign-in is never sent, and `javelin login` clears the cache. Each repository's file
+//! is replaced by rename, so processes refreshing different repositories never overwrite each
+//! other's tokens.
 //!
 //! While a cached token is valid, node work needs no control plane. Once it has expired, a
 //! control plane that cannot be reached is `control_plane_unavailable`, and a sign-in the
 //! control plane refuses is `unauthorized`.
 
 use std::{
-    collections::BTreeMap,
     env,
     fs::{self, OpenOptions},
     io::{self, ErrorKind, Write},
@@ -27,7 +31,7 @@ use crate::cli_control;
 /// A cached token is renewed this many seconds before it expires, so it does not lapse in
 /// flight or on a node whose clock runs ahead.
 const MARGIN: u64 = 60;
-const CACHE_FILE: &str = "tokens.json";
+const CACHE_DIR: &str = "tokens";
 
 pub struct Credential {
     repository: String,
@@ -54,19 +58,18 @@ impl Credential {
         }
     }
 
-    /// The token to send now, or `None` for an anonymous request when this device is not
-    /// signed in. An expired cached token is renewed through the control plane first.
+    /// The token to send now, or `None` when this device is not signed in. An expired cached token is renewed through the control plane first.
     pub fn bearer(&mut self, now: u64) -> Result<Option<String>, Fault> {
         match &self.source {
             Source::Static(token) => Ok(Some(token.clone())),
             Source::Device => {
-                if let Some(token) = cached(&self.repository, now)? {
-                    return Ok(Some(token));
-                }
-                if !credentials_path()?.exists() {
+                let Some(credentials) = signed_in()? else {
                     return Ok(None);
+                };
+                match cached(&self.repository, &credentials, now)? {
+                    Some(token) => Ok(Some(token)),
+                    None => self.renew(now).map(Some),
                 }
-                self.renew(now).map(Some)
             }
         }
     }
@@ -89,6 +92,7 @@ impl Credential {
                     .map_err(fault)?;
                 store(
                     &self.repository,
+                    &credentials,
                     &token.access_token,
                     now + token.expires_in,
                 )?;
@@ -116,42 +120,78 @@ fn credentials_path() -> Result<PathBuf, Fault> {
     cli_control::credentials_path().map_err(local)
 }
 
-fn cache_path() -> Result<PathBuf, Fault> {
-    Ok(cli_control::javelin_home().map_err(local)?.join(CACHE_FILE))
-}
-
-fn read_cache(path: &Path) -> Result<BTreeMap<String, Value>, Fault> {
-    match fs::read(path) {
-        // A damaged cache only costs a refresh.
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(error) => Err(local(error)),
-    }
-}
-
-/// The cached token for `repository`, if it is still good for `MARGIN` seconds.
-fn cached(repository: &str, now: u64) -> Result<Option<String>, Fault> {
-    let cache = read_cache(&cache_path()?)?;
-    let Some(entry) = cache.get(repository) else {
+/// This device's sign-in, or `None` when it is signed out.
+fn signed_in() -> Result<Option<Credentials>, Fault> {
+    let path = credentials_path()?;
+    if !path.exists() {
         return Ok(None);
+    }
+    Credentials::load(&path).map(Some).map_err(fault)
+}
+
+fn cache_dir() -> Result<PathBuf, Fault> {
+    Ok(cli_control::javelin_home().map_err(local)?.join(CACHE_DIR))
+}
+
+/// The cache file of `repository`. Bytes outside `[A-Za-z0-9_.-]` are escaped, so an ID with
+/// `:` is still a valid file name on Windows, and the prefix keeps `.` and `..` out.
+fn cache_path(repository: &str) -> Result<PathBuf, Fault> {
+    let mut name = String::from("repo-");
+    for byte in repository.bytes() {
+        if byte.is_ascii_alphanumeric() || b"_.-".contains(&byte) {
+            name.push(byte as char);
+        } else {
+            name.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    name.push_str(".json");
+    Ok(cache_dir()?.join(name))
+}
+
+/// The cached token for `repository`, if it was issued to this sign-in and is still good for
+/// `MARGIN` seconds.
+fn cached(repository: &str, credentials: &Credentials, now: u64) -> Result<Option<String>, Fault> {
+    let entry: Value = match fs::read(cache_path(repository)?) {
+        // A damaged entry only costs a refresh.
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(local(error)),
     };
+    let ours = entry["principal"] == credentials.principal.as_str()
+        && entry["device"] == credentials.device.as_str();
     let fresh = entry["expires_at"]
         .as_u64()
         .is_some_and(|expires_at| expires_at > now.saturating_add(MARGIN));
-    Ok(fresh
+    Ok((ours && fresh)
         .then(|| entry["access_token"].as_str().map(str::to_owned))
         .flatten())
 }
 
-fn store(repository: &str, token: &str, expires_at: u64) -> Result<(), Fault> {
-    let path = cache_path()?;
-    let mut cache = read_cache(&path)?;
-    cache.insert(
-        repository.into(),
-        json!({"access_token": token, "expires_at": expires_at}),
-    );
-    let bytes = serde_json::to_vec_pretty(&cache).map_err(local)?;
-    write_private(&path, &bytes).map_err(local)
+fn store(
+    repository: &str,
+    credentials: &Credentials,
+    token: &str,
+    expires_at: u64,
+) -> Result<(), Fault> {
+    let entry = json!({
+        "principal": credentials.principal,
+        "device": credentials.device,
+        "access_token": token,
+        "expires_at": expires_at,
+    });
+    let bytes = serde_json::to_vec_pretty(&entry).map_err(local)?;
+    write_private(&cache_path(repository)?, &bytes).map_err(local)
+}
+
+/// Forgets every cached token. `javelin login` calls this when it replaces the sign-in.
+pub fn clear_cache() -> io::Result<()> {
+    let dir = cli_control::javelin_home()
+        .map_err(|error| io::Error::other(error.to_string()))?
+        .join(CACHE_DIR);
+    match fs::remove_dir_all(dir) {
+        Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 /// Writes through a temporary file, private to the owner on Unix.
@@ -159,7 +199,11 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    // Unique per process and call, so concurrent writers never share a temporary file.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let tmp = path.with_extension(format!("tmp-{}-{nanos}", std::process::id()));
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
