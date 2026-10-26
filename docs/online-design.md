@@ -117,6 +117,7 @@ Additions, all in `codec.rs`:
 | 0x53 | `Approve` | `{ operation, request, revision: u32 }` | `ReviewOutcome` |
 | 0x54 | `Comment` | `{ operation, request, revision: Option<u32>, body }` | `ReviewOutcome` |
 | 0x55 | `ReadRequest` | `{ request }` | `RequestState` 0x56 |
+| 0x44 | `Attribution` | `{ version }` | `Attributed` 0x45: `{ number, publication: Option<(layer, attribution)> }` |
 
 Outcome shapes:
 
@@ -129,6 +130,14 @@ Outcome shapes:
 - `attribution` in `PublishLayer`: `Human`, or `Agent { context: Option<ObjectId>,
   allow_missing_trace: bool }`. A missing trace without the override refuses with
   `missing_agent_trace` (`A§Publish`).
+
+`Attribution` serves the forge's history: the Layer and declared attribution of the Publish
+that made a version, absent for World 0 and for versions advanced without a Layer.
+
+Browsers read the node directly (`C§Hosting ownership`). The self-hosted node answers a CORS
+preflight and allows any origin on the read messages (`Resolve`, `Get`, `Changeset`,
+`Attribution`). Any other message that carries an `Origin` header is refused with `forbidden`
+before it is served.
 
 Unchanged: `Want`/`Missing` for push, `Get`/`Objects` for fetch, `Resolve`/`Resolved` for the
 version head. Tree-level `Publish` (0x30) is refused with `forbidden` unless the token carries

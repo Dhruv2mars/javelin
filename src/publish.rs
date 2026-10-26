@@ -2,7 +2,7 @@
 //! the World with a short compare-and-swap write transaction.
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 
 use crate::{
@@ -228,6 +228,40 @@ impl Repository {
             .transpose()?;
         tx.commit()?;
         Ok(receipt)
+    }
+
+    /// The Layer and declared attribution of the Publish that made World `version`.
+    /// None for World 0 and for versions advanced without a Layer. One indexed read.
+    pub fn version_publication(
+        &self,
+        version: VersionNumber,
+    ) -> Result<Option<(LayerId, PublishAttribution)>> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        version_in(&tx, version)?;
+        let row: Option<(String, i64, Option<String>, i64)> = tx
+            .prepare_cached(
+                "SELECT layer,attribution,context,allow_missing_trace FROM publications \
+                 WHERE result=?1 AND outcome=1",
+            )?
+            .query_row([version.sql()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .optional()?;
+        tx.commit()?;
+        let Some((layer, actor, context, allow_missing)) = row else {
+            return Ok(None);
+        };
+        let layer = LayerId::parse(&layer).map_err(|_| corrupt("invalid publication Layer"))?;
+        let attribution = match (actor, allow_missing, context) {
+            (0, 0, None) => PublishAttribution::Human,
+            (1, flag @ (0 | 1), context) => PublishAttribution::Agent {
+                context: context.as_deref().map(decode_id).transpose()?,
+                allow_missing_trace: flag == 1,
+            },
+            _ => return Err(corrupt("invalid publication attribution")),
+        };
+        Ok(Some((layer, attribution)))
     }
 }
 

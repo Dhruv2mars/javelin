@@ -240,6 +240,10 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                 tree: world.tree,
             })
         }
+        Message::Attribution { version } => Ok(Message::Attributed {
+            number: version,
+            publication: repo.version_publication(version)?,
+        }),
         // The reply is the longest prefix of the request that fits one frame.
         Message::Get(items) => {
             unique(&items)?;
