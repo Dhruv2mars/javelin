@@ -162,7 +162,13 @@ fn a_fetch_after_the_anchor_hashes_only_the_new_versions() {
 
     // At the anchor itself, nothing is hashed.
     let (_d, repo) = worlds(4, "a");
-    let (fetched, log) = through(repo, &MemoryStore::default(), Some(&anchor), Some(v(2)), honest);
+    let (fetched, log) = through(
+        repo,
+        &MemoryStore::default(),
+        Some(&anchor),
+        Some(v(2)),
+        honest,
+    );
     assert_eq!(fetched.unwrap().anchor(), anchor);
     assert!(linked(&log).is_empty());
 }
@@ -202,7 +208,13 @@ fn refuses_a_server_whose_chain_does_not_pass_through_the_anchor() {
     let foreign = anchor_of(&other, 2);
     for version in [None, Some(v(3)), Some(v(2)), Some(v(1))] {
         let (_d, repo) = worlds(4, "a");
-        let (result, _) = through(repo, &MemoryStore::default(), Some(&foreign), version, honest);
+        let (result, _) = through(
+            repo,
+            &MemoryStore::default(),
+            Some(&foreign),
+            version,
+            honest,
+        );
         assert_eq!(result.unwrap_err().code, CHAIN_MISMATCH, "{version:?}");
     }
     // The server names another root, or another ID, for the anchor itself.
@@ -265,12 +277,24 @@ fn verifies_an_older_version_down_from_the_anchor() {
     let (_d, repo) = worlds(4, "a");
     let anchor = anchor_of(&repo, 4);
     let expected = repo.manifest_at(v(2)).unwrap();
-    let (fetched, log) = through(repo, &MemoryStore::default(), Some(&anchor), Some(v(2)), honest);
+    let (fetched, log) = through(
+        repo,
+        &MemoryStore::default(),
+        Some(&anchor),
+        Some(v(2)),
+        honest,
+    );
     assert_eq!(&fetched.unwrap().files, expected.entries());
     // Down from the anchor, plus one link for World 2's own root; World 1 is not hashed.
     assert_eq!(linked(&log), [4, 3, 2]);
     let (_d, repo) = worlds(4, "a");
-    let (fetched, log) = through(repo, &MemoryStore::default(), Some(&anchor), Some(v(0)), honest);
+    let (fetched, log) = through(
+        repo,
+        &MemoryStore::default(),
+        Some(&anchor),
+        Some(v(0)),
+        honest,
+    );
     let fetched = fetched.unwrap();
     assert!(fetched.files.is_empty());
     assert_eq!(fetched.tree, empty());
