@@ -36,7 +36,7 @@ export class NodeClient {
     if (!response.ok) {
       throw new ProtocolError("node_unavailable", `${this.url} answered HTTP ${response.status}`);
     }
-    const reply = decode(new Uint8Array(await response.arrayBuffer()));
+    const reply = decode(await readBounded(response, limits.MAX_FRAME));
     if (reply.type === "error") throw new ProtocolError(reply.code, reply.detail);
     return reply;
   }
@@ -126,6 +126,40 @@ export class NodeClient {
   async chunk(id: Hex): Promise<Chunk> {
     return decodeChunk((await this.objects(Kind.Tree, [id])).get(id)!);
   }
+}
+
+/**
+ * The response body, read chunk by chunk. A declared or actual length past `max` cancels
+ * the stream and refuses, so a node cannot make a reader buffer without bound.
+ */
+export async function readBounded(response: Response, max: number): Promise<Uint8Array> {
+  const tooLarge = () => new ProtocolError("limit_exceeded", `reply exceeds ${max} bytes`);
+  const declared = Number(response.headers.get("content-length"));
+  if (declared > max) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  if (!response.body) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
 }
 
 function unexpected() {
