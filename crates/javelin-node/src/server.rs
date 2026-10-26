@@ -313,16 +313,17 @@ fn serve_one(
     }
 }
 
-/// What one message needs from the caller's token. Writes name the Layer they act on, so a
-/// Layer-limited token reaches only its Layer. Everything else, replies sent as requests
-/// included, needs `read`.
+/// What one message needs from the caller's token. Messages that name a Layer carry it, so a
+/// Layer-limited token reaches only its own Layer there. Object uploads (`Want`, `Objects`)
+/// name none: they need `layer:write`, and change no reference, since objects are addressed
+/// by content. Everything else, replies sent as requests included, needs `read`.
 fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
         Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
         Message::Publish { .. } => (Scope::Publish, None),
-        Message::Objects(_) => (Scope::LayerWrite, None),
+        Message::Want(_) | Message::Objects(_) => (Scope::LayerWrite, None),
         Message::LayerHead { layer } => (Scope::Read, Some(layer)),
         _ => (Scope::Read, None),
     };

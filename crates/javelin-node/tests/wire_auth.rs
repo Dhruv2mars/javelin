@@ -21,7 +21,9 @@ use javelin_node::{
 };
 use javelin_protocol::{
     Message,
-    codec::{CheckOutcome, CheckReport, Conclusion, PublishOutcome, decode, encode},
+    codec::{
+        CheckOutcome, CheckReport, Conclusion, Kind, LayerOutcome, PublishOutcome, decode, encode,
+    },
     receiver::WorldLog,
 };
 use tempfile::TempDir;
@@ -277,6 +279,93 @@ fn a_check_report_goes_over_the_wire_with_the_reporter_token() {
     assert!(
         matches!(again, Some(Message::CheckOutcome(CheckOutcome::Accepted { seq: s, .. })) if s == seq),
         "a retry replays the stored result"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn a_layer_limited_token_uploads_objects_but_writes_only_its_own_layer() {
+    let dir = TempDir::new().unwrap();
+    let (mut log, head, _) = seeded(&dir, Visibility::Private);
+    // A second Layer the agent's token does not name.
+    let other = LayerId::parse("other").unwrap();
+    log.create_layer(&other, VersionNumber::new(0).unwrap())
+        .unwrap();
+    let mut permissions = permissions(REPO, Visibility::Private);
+    permissions
+        .roles
+        .insert(PrincipalId::parse("agent").unwrap(), Role::Maintain);
+    auth::write_permissions(dir.path(), &permissions).unwrap();
+    let (addr, server) = start(&dir, log, 6);
+    let t = now();
+    let mut claims = test_keys::claims(
+        "agent",
+        REPO,
+        &[Scope::Read, Scope::LayerWrite, Scope::Publish],
+        t,
+        t + 600,
+        "agent-work",
+    );
+    claims.layer = Some("work".into());
+    let agent = bearer(&test_keys::issuer().issue(&claims).unwrap());
+
+    // Content-addressed uploads name no Layer: scope and role decide them.
+    let content = b"two".to_vec();
+    let blob = Kind::Blob.id(&content);
+    let changes = SparseChanges::new([(
+        RepoPath::parse("a.txt").unwrap(),
+        Some(FileEntry::Regular {
+            content: blob,
+            executable: false,
+        }),
+    )])
+    .unwrap();
+    let bytes = changes.canonical_bytes();
+    let checkpoint = Kind::Checkpoint.id(&bytes);
+    let (_, missing) = send(addr, &agent, &Message::Want(vec![(Kind::Blob, blob)]));
+    assert_eq!(missing, Some(Message::Missing(vec![(Kind::Blob, blob)])));
+    let (_, stored) = send(
+        addr,
+        &agent,
+        &Message::Objects(vec![(Kind::Blob, blob, content)]),
+    );
+    assert_eq!(stored, Some(Message::Stored { count: 1 }));
+    let (_, stored) = send(
+        addr,
+        &agent,
+        &Message::Objects(vec![(Kind::Checkpoint, checkpoint, bytes)]),
+    );
+    assert_eq!(stored, Some(Message::Stored { count: 1 }));
+
+    // Its own Layer takes the append; another Layer refuses it, and refuses its Publish.
+    let append = |layer: &str, parent: Option<ObjectId>| Message::LayerAppend {
+        operation: op(&format!("append-{layer}")),
+        layer: LayerId::parse(layer).unwrap(),
+        parent,
+        checkpoint,
+    };
+    let (_, appended) = send(addr, &agent, &append("work", Some(head)));
+    assert!(
+        matches!(
+            appended,
+            Some(Message::LayerOutcome(LayerOutcome::Accepted { .. }))
+        ),
+        "{appended:?}"
+    );
+    assert_eq!(
+        error_code(send(addr, &agent, &append("other", None)).1),
+        "forbidden"
+    );
+    let publish_other = Message::PublishLayer {
+        operation: op("publish-other"),
+        layer: other,
+        expected: head,
+        base: VersionNumber::new(0).unwrap(),
+        attribution: PublishAttribution::Human,
+    };
+    assert_eq!(
+        error_code(send(addr, &agent, &publish_other).1),
+        "forbidden"
     );
     server.join().unwrap();
 }

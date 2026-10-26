@@ -441,7 +441,10 @@ and the revocation set. It verifies tokens offline with cached public keys.
 **Token** (signed; claims): `sub` (principal), `dev` (device), `repo` (repository ID, or
 `*` for discovery), `scopes` (`read`, `layer:write`, `publish`, `review:write`,
 `review:approve`, `repo:create`, `import`), optional `layer` (narrows agent or harness work to
-one Layer, D26), `iat`, `exp`, `jti`.
+one Layer, D26), `iat`, `exp`, `jti`. The `layer` claim must match exactly on messages that
+name a Layer (`LayerAppend`, `LayerStack`, `PublishLayer`, `LayerHead`, review messages);
+messages that name none are decided by scope and role alone (`Want` and `Objects` need
+`layer:write`, reads need `read`), since content-addressed uploads change no reference.
 
 **Effective rights** = scopes ∩ role at the current epoch.
 
