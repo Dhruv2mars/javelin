@@ -180,7 +180,7 @@ pub(crate) fn stale_or_refused(state: LayerState) -> LayerOutcome {
     }
 }
 
-fn load_changes(
+pub(crate) fn load_changes(
     records: &Connection,
     id: ObjectId,
 ) -> Result<Option<SparseChanges>, ProtocolError> {

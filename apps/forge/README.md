@@ -37,7 +37,9 @@ The self-hosted node allows any origin on read messages (`Resolve`, `Get`, `Chan
 
 `bun run dev` takes `FORGE_PORT`, `NODE_PORT`, and `FORGE_REPO` (serve an existing repository
 directory instead of the demo). Tests and `dev` build the binaries with cargo unless
-`JAVELIN_BIN_DIR` names a directory that holds them.
+`JAVELIN_BIN_DIR` names a directory that holds them. The node refuses anonymous callers unless
+the repository is public, so a directory with no `permissions.json` gets a public one, which
+the forge reads without a token.
 
 ## Layout
 

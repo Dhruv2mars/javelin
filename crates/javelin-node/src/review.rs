@@ -63,6 +63,12 @@ pub fn handle(
                 authorize(gate, token, now, Scope::ReviewWrite, Some(layer.as_str()))?;
             let actor = principal(&grant)?;
             let id = review_id(request)?;
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                *checkpoint,
+                Some(*base),
+            )?;
             if repo.layer_state(layer).is_err() {
                 return Ok(review_refused(refusal::UNKNOWN_LAYER));
             }
@@ -98,6 +104,12 @@ pub fn handle(
                 target(records, gate, token, now, Scope::ReviewWrite, &id)?;
             let review = settled(repo, review)?;
             let actor = principal(&grant)?;
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                *checkpoint,
+                Some(*base),
+            )?;
             let revision = match revision_ref(repo, *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
@@ -179,6 +191,12 @@ pub fn handle(
             if pinned.base() != *base {
                 return Ok(publish_refused(code::INVALID_INPUT));
             }
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                pinned.checkpoint(),
+                Some(*base),
+            )?;
             let command = Command {
                 operation: operation.clone(),
                 actor,

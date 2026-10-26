@@ -120,6 +120,7 @@ impl ControlPlane {
             return Ok(created(&repository, &record, inserted));
         }
         self.node.provision(&repository_id)?;
+        self.node.trust(&repository_id, &self.node_keys()?)?;
         self.node
             .apply(&initial_permissions(&repository_id, &record)?)?;
         let ready = self.mark_ready(&repository)?;

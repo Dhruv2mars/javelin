@@ -200,7 +200,7 @@ fn the_wire_never_serves_a_restricted_trace() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(&listener, "demo", &mut log, &public, Some(2)).unwrap();
     });
     let refused = fetch(addr, &[(Kind::Blob, restricted)]);
     let served = fetch(addr, &[(Kind::Blob, inherited)]);

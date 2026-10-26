@@ -19,6 +19,9 @@ use javelin_protocol::codec::LayerOutcome;
 use serde_json::Value;
 use tempfile::TempDir;
 
+#[path = "../../javelin-node/tests/wire_support/mod.rs"]
+mod wire_support;
+
 const BASE: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
 const OURS: &[u8] = b"ONE\ntwo\nthree\nfour\nfive\n";
 const THEIRS: &[u8] = b"one\ntwo\nthree\nfour\nFIVE\n";
@@ -99,7 +102,14 @@ fn start_node(dir: &Path) -> (String, SocketAddr, LayerHead, LayerHead) {
     let dir = dir.to_path_buf();
     thread::spawn(move || {
         let mut log = FileWorldLog::open(&dir).unwrap();
-        serve(&listener, "demo", &mut log, None).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            None,
+        )
+        .unwrap();
     });
     (format!("http://{addr}/demo"), addr, target, source)
 }
@@ -132,7 +142,8 @@ impl Read for Link {
             let mut stream = TcpStream::connect(self.addr)?;
             write!(
                 stream,
-                "POST /v2/r/demo HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+                "POST /v2/r/demo HTTP/1.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\n\r\n",
+                wire_support::token("demo"),
                 body.len()
             )?;
             stream.write_all(body)?;
@@ -150,8 +161,14 @@ impl Read for Link {
 }
 
 fn javelin(cwd: &Path, args: &[&str]) -> Output {
+    // No sign-in and no token: the public node is read anonymously.
     Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(cwd)
+        .env(
+            "JAVELIN_HOME",
+            std::env::temp_dir().join("javelin-test-signed-out"),
+        )
+        .env_remove("JAVELIN_TOKEN")
         .args(args)
         .output()
         .unwrap()

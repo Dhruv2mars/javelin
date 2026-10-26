@@ -109,8 +109,10 @@ pub(crate) struct Store {
 }
 
 impl Store {
+    /// Opens the state directory. A directory that cannot be created or locked is a control
+    /// plane that cannot be reached, not damaged state.
     pub fn open(dir: &Path) -> Result<Self, ControlError> {
-        fs::create_dir_all(dir).map_err(storage)?;
+        fs::create_dir_all(dir).map_err(|error| unreachable(dir, error))?;
         Ok(Self {
             dir: dir.to_path_buf(),
         })
@@ -145,8 +147,8 @@ impl Store {
             .truncate(false)
             .write(true)
             .open(self.dir.join(LOCK_FILE))
-            .map_err(storage)?;
-        file.lock().map_err(storage)?;
+            .map_err(|error| unreachable(&self.dir, error))?;
+        file.lock().map_err(|error| unreachable(&self.dir, error))?;
         Ok(file)
     }
 
@@ -158,6 +160,10 @@ impl Store {
             Err(error) => Err(storage(error)),
         }
     }
+}
+
+fn unreachable(dir: &Path, error: std::io::Error) -> ControlError {
+    ControlError::Unavailable(format!("cannot open {}: {error}", dir.display()))
 }
 
 fn storage(error: std::io::Error) -> ControlError {

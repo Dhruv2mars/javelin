@@ -79,26 +79,47 @@ pub struct Entry {
     pub outcome: Option<Vec<u8>>,
 }
 
-/// Why the node did not decide a record. The record stays queued in both cases.
+/// Why the node did not decide a record. The record stays queued in every case: nothing is
+/// dropped while it waits for the node or for a credential.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Fault {
     /// The node is unreachable, failed, or could not decide (`node_unavailable`).
     NodeUnavailable(String),
-    /// The credential has expired and cannot be refreshed (`control_plane_unavailable`).
+    /// The credential has expired and the control plane that refreshes it cannot be reached
+    /// (`control_plane_unavailable`).
     ControlPlaneUnavailable(String),
+    /// No credential could be had, or the node refused a fresh one: the device must sign in
+    /// again (`unauthorized`).
+    Unauthorized(String),
+    /// The node answered with an error instead of an outcome, such as a storage failure, so
+    /// nothing was recorded for the operation. `code` is the node's.
+    Refused { code: String, detail: String },
 }
 
 impl Fault {
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> &str {
         match self {
             Self::NodeUnavailable(_) => "node_unavailable",
             Self::ControlPlaneUnavailable(_) => "control_plane_unavailable",
+            Self::Unauthorized(_) => "unauthorized",
+            Self::Refused { code, .. } => code,
+        }
+    }
+
+    /// What went wrong, without the code.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::NodeUnavailable(detail)
+            | Self::ControlPlaneUnavailable(detail)
+            | Self::Unauthorized(detail)
+            | Self::Refused { detail, .. } => detail,
         }
     }
 }
 
-/// Delivers one record to the node. `Ok` is the node's reply and is recorded as the
-/// outcome. `Err` means no decision: replay stops, and the same operation is retried later.
+/// Delivers one record to the node. `Ok` is the outcome the node recorded for the operation,
+/// such as `Published`, `Conflict` or `Refused`, and acknowledges the record. `Err` means no
+/// recorded outcome: replay stops, and the same operation is retried later.
 pub trait Transport {
     fn deliver(&mut self, entry: &Entry) -> std::result::Result<Vec<u8>, Fault>;
 }

@@ -149,8 +149,20 @@ export async function freePort(): Promise<number> {
 
 export type RunningNode = { url: string; repository: string; dir: string; stop: () => Promise<void> };
 
-/** Serves `dir` as `repository` with `javelin-node serve` on a free loopback port. */
+/**
+ * Makes `dir` a public repository for `javelin-node serve`, as the control plane does when it
+ * creates one: the node refuses every caller until permissions are applied, and anonymous
+ * callers may only read a public repository. Existing permissions are left alone.
+ */
+async function publishPublicly(dir: string, repository: string): Promise<void> {
+  const path = join(dir, "permissions.json");
+  if (await Bun.file(path).exists()) return;
+  await writeFile(path, JSON.stringify({ repository, epoch: 1, public: true, roles: {}, required_approvals: 0 }));
+}
+
+/** Serves `dir` as public `repository` with `javelin-node serve` on a free loopback port. */
 export async function startNode(node: string, dir: string, repository = DEMO_REPOSITORY, port?: number): Promise<RunningNode> {
+  await publishPublicly(dir, repository);
   const at = port ?? (await freePort());
   const proc = Bun.spawn([node, "serve", dir, repository, `127.0.0.1:${at}`], { stdout: "ignore", stderr: "pipe" });
   const url = `http://127.0.0.1:${at}`;

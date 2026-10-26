@@ -6,7 +6,10 @@
 //! A request that is not received within its deadline is dropped without a reply, and a
 //! reply that cannot be sent within its deadline is abandoned.
 //!
-//! The server has no authentication yet, so it binds loopback addresses only.
+//! Every message passes the node's gate (`auth.rs`) with the request's
+//! `Authorization: Bearer` token, or as an anonymous caller without one, so an anonymous
+//! caller can only read a public repository. Refusals are `Error` replies with status 200.
+//! The transport has no TLS, so the server binds loopback addresses only.
 //!
 //! Browsers may read: `OPTIONS` answers a CORS preflight, and replies to the read
 //! messages (`Resolve`, `Get`, `Changeset`, `Attribution`) allow any origin. Any other
@@ -20,14 +23,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+use javelin::LayerState;
+use javelin_identity::{Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{code, decode, encode},
-    handle_request,
+    handle_request_as,
     limits::MAX_FRAME,
 };
 
-use crate::FileWorldLog;
+use crate::{
+    FileWorldLog,
+    auth::{self, Gate},
+    checks, review,
+};
 
 /// Longest request line or header line, in bytes.
 const MAX_LINE: usize = 8 << 10;
@@ -38,6 +47,9 @@ const MAX_HEADERS: usize = 64;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 /// Time to send one reply.
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
+/// Time to wait, after the reply and our FIN, for the peer to close. Closing while the peer's
+/// bytes sit unread makes the OS reset the connection, which can destroy the reply in flight.
+const LINGER: Duration = Duration::from_secs(1);
 
 /// Binds `addr`, which must be a loopback address.
 pub fn bind_loopback(addr: &str) -> io::Result<TcpListener> {
@@ -47,7 +59,7 @@ pub fn bind_loopback(addr: &str) -> io::Result<TcpListener> {
     if !is_loopback(parsed.ip()) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "the node refuses non-loopback addresses until authentication exists",
+            "the node refuses non-loopback addresses until its transport has TLS",
         ));
     }
     TcpListener::bind(parsed)
@@ -58,26 +70,49 @@ fn is_loopback(ip: IpAddr) -> bool {
 }
 
 /// Serves `name` from `log`, one connection at a time, which makes every request
-/// ordered at the single coordinator. Stops after `connections` connections, or runs
-/// until the listener fails when that is `None`. Each connection is bounded by
-/// `REQUEST_DEADLINE` and `RESPONSE_DEADLINE`, so a stalled peer delays the next one by
-/// at most that long. A connection that fails mid-request is dropped; the peer's retry
-/// of the same operation is the recovery.
+/// ordered at the single coordinator. `gate` decides every message. Stops after
+/// `connections` connections, or runs until the listener fails when that is `None`. Each
+/// connection is bounded by `REQUEST_DEADLINE`, `RESPONSE_DEADLINE` and `LINGER`, so a
+/// stalled peer delays the next one by at most that long. A connection that fails
+/// mid-request is dropped and reported on stderr; the peer's retry of the same operation is
+/// the recovery. A peer that gives up while queued fails only its own accept, so the
+/// listener, and every connection queued behind it, stays up.
 pub fn serve(
     listener: &TcpListener,
     name: &str,
     log: &mut FileWorldLog,
+    gate: &Gate,
     connections: Option<usize>,
 ) -> io::Result<()> {
     let mut served = 0;
     for stream in listener.incoming() {
-        let _ = handle_connection(stream?, name, log);
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(error) if transient(&error) => {
+                eprintln!("javelin-node: accept failed: {error}");
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = handle_connection(stream, name, log, gate) {
+            eprintln!("javelin-node: connection dropped: {error}");
+        }
         served += 1;
         if connections == Some(served) {
             break;
         }
     }
     Ok(())
+}
+
+/// An accept failure that belongs to one queued connection, not to the listener.
+fn transient(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted
+    )
 }
 
 /// A request that gets a status reply, or an I/O failure that ends the connection
@@ -93,35 +128,33 @@ impl From<io::Error> for Fault {
     }
 }
 
-fn handle_connection(stream: TcpStream, name: &str, log: &mut FileWorldLog) -> io::Result<()> {
+fn handle_connection(
+    stream: TcpStream,
+    name: &str,
+    log: &mut FileWorldLog,
+    gate: &Gate,
+) -> io::Result<()> {
     // Nonblocking, so every read and write returns to `Deadline`, which checks the clock.
     // Socket timeouts are not used: they do not bound a call that keeps making progress.
+    // One handle reads and writes: a cloned handle is a second socket descriptor on Windows.
     stream.set_nonblocking(true)?;
-    let replies = stream.try_clone()?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
-    match read_request(&mut reader, name, log) {
-        Ok(Reply::Message { body, cors }) => respond(
-            &mut Deadline::new(replies, RESPONSE_DEADLINE),
-            200,
-            if cors { ALLOW_ORIGIN } else { "" },
-            &body,
-        ),
-        Ok(Reply::Preflight) => respond(
-            &mut Deadline::new(replies, RESPONSE_DEADLINE),
-            204,
-            PREFLIGHT,
-            &[],
-        ),
-        Err(Fault::Status(status)) => {
-            let mut writer = Deadline::new(replies, RESPONSE_DEADLINE);
-            respond(&mut writer, status, "", &[])?;
-            // Read what the peer is still sending, so closing does not reset the reply.
-            writer.stream.shutdown(Shutdown::Write)?;
-            let _ = io::copy(&mut (&mut reader).take(MAX_FRAME as u64), &mut io::sink());
-            Ok(())
-        }
-        Err(Fault::Io(error)) => Err(error),
-    }
+    let (status, extra, body) = match read_request(&mut reader, name, log, gate) {
+        Ok(Reply::Message { body, cors }) => (200, if cors { ALLOW_ORIGIN } else { "" }, body),
+        Ok(Reply::Preflight) => (204, PREFLIGHT, Vec::new()),
+        Err(Fault::Status(status)) => (status, "", Vec::new()),
+        Err(Fault::Io(error)) => return Err(error),
+    };
+    let connection = reader.get_mut();
+    connection.restart(RESPONSE_DEADLINE);
+    respond(connection, status, extra, &body)?;
+    // Close gracefully: our FIN goes after the reply, then whatever the peer still sends is
+    // read until it closes, so closing never discards unread bytes, which would reset the
+    // connection and could destroy the reply before the peer reads it.
+    connection.stream.shutdown(Shutdown::Write)?;
+    connection.restart(LINGER);
+    let _ = io::copy(&mut reader.take(MAX_FRAME as u64), &mut io::sink());
+    Ok(())
 }
 
 /// A reply to a well-formed request: one encoded message, which a browser may read
@@ -150,11 +183,13 @@ fn read_request(
     reader: &mut impl BufRead,
     name: &str,
     log: &mut FileWorldLog,
+    gate: &Gate,
 ) -> Result<Reply, Fault> {
     let request = read_line(reader)?;
     let mut parts = request.split(' ');
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut length = None;
+    let mut token = None;
     let mut origin = false;
     let mut headers = 0;
     loop {
@@ -174,6 +209,19 @@ fn read_request(
         }
         if key.eq_ignore_ascii_case("content-length") {
             length = value.trim().parse::<usize>().ok();
+        }
+        if key.eq_ignore_ascii_case("authorization") {
+            // Only the Bearer scheme carries a token. Two credentials are a framing error.
+            let value = value.trim();
+            let bearer = value
+                .split_once(' ')
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                .map(|(_, token)| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+                .ok_or(Fault::Status(400))?;
+            if token.replace(bearer).is_some() {
+                return Err(Fault::Status(400));
+            }
         }
         if key.eq_ignore_ascii_case("origin") {
             origin = true;
@@ -196,16 +244,21 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
     let mut cors = false;
     let reply = match decode(&body).and_then(|message| {
         cors = is_read(&message);
+        // Refused before the gate or the handler sees it: a page in a visitor's browser
+        // never writes, whatever credential the browser holds.
         if origin && !cors {
             return Err(ProtocolError::new(
                 code::FORBIDDEN,
                 "a browser origin may only send read messages",
             ));
         }
-        serve_one(log, message)
+        serve_one(log, gate, token.as_deref(), now, message)
     }) {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
@@ -218,10 +271,40 @@ fn read_request(
     Ok(Reply::Message { body, cors })
 }
 
-/// One message through the trace guard, then the protocol handler. The wire carries no
-/// caller identity yet, so every request reads as an outsider: hidden entries reach it as
-/// commitments only.
-fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, ProtocolError> {
+/// One message through the gate and the trace guard, then its handler. The review
+/// partition and check reports authorize inside their handlers, because what they need
+/// depends on stored state, such as the Layer a request belongs to.
+fn serve_one(
+    log: &mut FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: Message,
+) -> Result<Message, ProtocolError> {
+    match &message {
+        Message::OpenRequest { .. }
+        | Message::Revise { .. }
+        | Message::Approve { .. }
+        | Message::Comment { .. }
+        | Message::PublishRequest { .. }
+        | Message::ReadRequest { .. } => return review::handle(log, gate, token, now, &message),
+        Message::CheckReport(report) => {
+            return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
+        }
+        _ => {}
+    }
+    // Version negotiation reveals nothing about the repository, so it needs no grant.
+    let grant = match &message {
+        Message::Hello { .. } => None,
+        other => Some(gate.check(token, now, need(other))?),
+    };
+    // Hidden entries follow the caller's role: anonymous is an outsider.
+    let reader = grant
+        .as_ref()
+        .map_or_else(javelin::Reader::outsider, |grant| gate.reader(grant));
+    if grant.is_some() {
+        check_writes(log, &reader, &message)?;
+    }
     log.traces().refuse_wire_fetch(&message)?;
     match message {
         Message::LayerStack {
@@ -237,9 +320,72 @@ fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, Protoc
             source,
         )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
-            crate::stack::get_checkpoints(log.repo(), items, &javelin::Reader::outsider())
+            crate::stack::get_checkpoints(log.repo(), items, &reader)
         }
-        message => handle_request(log, message),
+        message => handle_request_as(log, message, &reader),
+    }
+}
+
+/// Refuses a write that would change a path outside the caller's audiences, before it
+/// reaches its handler: an append's staged changes over the Layer's base, the source of a
+/// Stack over the target's base, and the whole Layer for a Publish.
+fn check_writes(
+    log: &mut FileWorldLog,
+    writer: &javelin::Reader,
+    message: &Message,
+) -> Result<(), ProtocolError> {
+    match message {
+        Message::LayerAppend {
+            layer, checkpoint, ..
+        } => {
+            let Some(changes) = crate::layer::load_changes(log.records(), *checkpoint)? else {
+                return Ok(());
+            };
+            let Ok(LayerState::Active { head }) = log.repo().layer_state(layer) else {
+                return Ok(());
+            };
+            let base = log
+                .repo()
+                .read_checkpoint(head.checkpoint())?
+                .base()
+                .version();
+            auth::check_write(log.repo(), writer, &changes, base)
+        }
+        Message::LayerStack {
+            target_head,
+            source,
+            ..
+        } => {
+            let base = javelin::CheckpointId::parse(&target_head.to_string())
+                .ok()
+                .and_then(|id| log.repo().read_checkpoint(id).ok())
+                .map(|target| target.base().version());
+            auth::check_checkpoint_write(log.repo(), writer, *source, base)
+        }
+        Message::PublishLayer { expected, .. } => {
+            auth::check_checkpoint_write(log.repo(), writer, *expected, None)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// What one message needs from the caller's token. Messages that name a Layer carry it, so a
+/// Layer-limited token reaches only its own Layer there. Object uploads (`Want`, `Objects`)
+/// name none: they need `layer:write`, and change no reference, since objects are addressed
+/// by content. Everything else, replies sent as requests included, needs `read`.
+fn need(message: &Message) -> Need<'_> {
+    let (scope, layer) = match message {
+        Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
+        Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
+        Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
+        Message::Publish { .. } => (Scope::Publish, None),
+        Message::Want(_) | Message::Objects(_) => (Scope::LayerWrite, None),
+        Message::LayerHead { layer } => (Scope::Read, Some(layer)),
+        _ => (Scope::Read, None),
+    };
+    Need {
+        scope,
+        layer: layer.map(|layer| layer.as_str()),
     }
 }
 
@@ -305,6 +451,11 @@ impl Deadline {
             stream,
             until: Instant::now() + limit,
         }
+    }
+
+    /// Starts a new deadline, `limit` from now, for the next phase of the connection.
+    fn restart(&mut self, limit: Duration) {
+        self.until = Instant::now() + limit;
     }
 
     fn left(&self) -> io::Result<Duration> {

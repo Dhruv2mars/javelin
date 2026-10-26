@@ -97,6 +97,7 @@ impl ControlPlane {
         let source_id = RepositoryId::parse(&request.source)
             .map_err(|error| ControlError::Storage(error.to_string()))?;
         self.node.provision(&repository_id)?;
+        self.node.trust(&repository_id, &self.node_keys()?)?;
         let forked = self.node.fork(&ForkPlan {
             source: source_id,
             target: repository_id.clone(),
