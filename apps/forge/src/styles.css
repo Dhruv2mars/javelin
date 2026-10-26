@@ -652,6 +652,13 @@ main {
   color: var(--del-ink);
 }
 
+.eof {
+  margin-left: 1em;
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 /* Index and failures */
 .index,
 .failure {
