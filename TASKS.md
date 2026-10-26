@@ -23,8 +23,8 @@ CI left open. Work from it, in roughly this order:
   IDs for every reader. Must land before any real repository is stored. Format 10,
   `.javelinpolicy`, `Open`/`Opened`; tests in `tests/superposition.rs`,
   `crates/javelin-protocol/tests/superposition.rs`, `crates/javelin-node/tests/fork_hidden.rs`.
-  - [ ] Wire the caller's role into the node's reads and `check_writer` into its writes once
-    tokens reach the node (#96).
+  - [x] Wire the caller's role into the node's reads and `check_writer` into its writes
+    (`crates/javelin-node/tests/wire_hidden.rs`).
   - [ ] Authorize Layer object reads, so an unpublished hidden edit cannot be confirmed by ID.
   - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
