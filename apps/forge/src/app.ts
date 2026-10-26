@@ -123,7 +123,9 @@ function directoryPage(r: { owner: string; repo: string }, d: DirectoryPage) {
   const readme = d.readme
     ? `<article class="readme"><h2 class="readme-name">${esc(d.readme.name)}</h2><div class="prose">${renderMarkdown(
         d.readme.text,
-        (p) => href.file(r.owner, r.repo, v, p),
+        // A link routes by the kind of entry it names; a missing target opens the file page,
+        // which says it is missing.
+        (p) => (d.readme!.links[p] === "dir" ? href.tree(r.owner, r.repo, v, p) : href.file(r.owner, r.repo, v, p)),
         d.path,
       )}</div></article>`
     : "";
@@ -151,7 +153,7 @@ function fileBody(f: FilePage) {
   return `<div class="source"><table><tbody>${rows}</tbody></table></div>`;
 }
 
-function filePage(r: { owner: string; repo: string }, f: FilePage, head: number) {
+function filePage(r: { owner: string; repo: string }, f: FilePage) {
   const v = f.version.number;
   const c = f.contents;
   const facts = [
@@ -161,7 +163,7 @@ function filePage(r: { owner: string; repo: string }, f: FilePage, head: number)
     f.entry.kind === "regular" && f.entry.executable ? "Executable" : null,
   ].filter(Boolean);
   return `
-    ${masthead(r, v, head, "code", `Reading <code>${esc(f.path)}</code> as of this version`)}
+    ${masthead(r, v, f.head, "code", `Reading <code>${esc(f.path)}</code> as of this version`)}
     <section class="file" aria-label="${esc(f.path)}">
       ${crumbs(r, v, f.path)}
       <div class="file-head">
@@ -208,7 +210,8 @@ function hunkRows(h: Hunk, whole: boolean) {
     h.lines
       .map((l) => {
         const sign = { add: "+", del: "−", ctx: "" }[l.kind];
-        return `<tr class="d-${l.kind}"><td class="ln">${l.old ?? ""}</td><td class="ln">${l.new ?? ""}</td><td class="code"><span class="sign" aria-hidden="true">${sign}</span>${esc(l.text) || " "}</td></tr>`;
+        const eof = l.eof ? `<span class="eof">No newline at end of file</span>` : "";
+        return `<tr class="d-${l.kind}"><td class="ln">${l.old ?? ""}</td><td class="ln">${l.new ?? ""}</td><td class="code"><span class="sign" aria-hidden="true">${sign}</span>${esc(l.text) || (eof ? "" : " ")}${eof}</td></tr>`;
       })
       .join("")
   );
@@ -273,6 +276,7 @@ function failure(error: unknown, target: Target | null) {
     node_unavailable: `Can't reach ${where}. Check that the node is running and that the address is right.`,
     not_found: esc(e.detail.charAt(0).toUpperCase() + e.detail.slice(1)) + ".",
     missing_version: "That World version doesn't exist yet.",
+    chain_mismatch: `${esc(e.detail)}, so ${where} may be serving altered files. Nothing from it is shown.`,
   };
   const technical = e.code === "node_unavailable" ? `<p class="muted"><code>${esc(e.detail)}</code></p>` : "";
   return `<section class="failure" role="alert"><h1>${fix[e.code] ? "Nothing to show" : "The node refused this read"}</h1><p>${fix[e.code] ?? `${esc(e.code)}: ${esc(e.detail)}`}</p>${technical}</section>`;
@@ -311,8 +315,7 @@ async function render() {
         return show(directoryPage(r, d), route.path ? `${route.path} in ${key}` : key);
       }
       case "file": {
-        const [f, head] = await Promise.all([loadFile(client, route.version, route.path), client.resolve()]);
-        return show(filePage(r, f, head.number), `${route.path} in ${key}`);
+        return show(filePage(r, await loadFile(client, route.version, route.path)), `${route.path} in ${key}`);
       }
       case "history":
         return show(historyPage(r, await loadHistory(client, route.from)), `History of ${key}`);

@@ -14,6 +14,7 @@ import {
   lookup,
 } from "../../../packages/protocol/src";
 import { type Hunk, diffLines } from "./diff";
+import { relativeTargets } from "./markdown";
 
 export { NodeClient, ProtocolError };
 export type { Publication, Resolved, TreeItem };
@@ -51,8 +52,31 @@ export type DirectoryPage = {
   publication: Publication | null;
   path: string;
   entries: TreeItem[];
-  readme: { name: string; text: string } | null;
+  /** `links` gives the entry kind of each relative link target in the README that exists. */
+  readme: { name: string; text: string; links: Record<string, "dir" | "file"> } | null;
 };
+
+/** Most README links whose targets are looked up. */
+const MAX_README_LINKS = 64;
+
+/**
+ * Version `version` (default the head), refused unless its ID hashes from its parent's ID,
+ * its root and its changeset, the same check the history and version pages make. Code pages
+ * show files from that root, so a substituted tree is refused rather than shown.
+ */
+export async function verifiedRoot(client: NodeClient, version: number | null) {
+  const head = await client.resolve();
+  const number = version ?? head.number;
+  const parent = number > 0 ? await client.resolve(number - 1) : null;
+  const { resolved, linked } = await client.verifiedVersion(number, parent);
+  if (!linked) {
+    throw new ProtocolError(
+      "chain_mismatch",
+      `World ${number}'s ID does not hash from its parent, root and changeset`,
+    );
+  }
+  return { at: resolved, head: Math.max(head.number, resolved.number) };
+}
 
 /** Repository home or a directory: its entries at a version (default the head) and its README. */
 export async function loadDirectory(
@@ -60,8 +84,7 @@ export async function loadDirectory(
   version: number | null = null,
   path = "",
 ): Promise<DirectoryPage> {
-  const head = await client.resolve();
-  const at = version === null || version === head.number ? head : await client.resolve(version);
+  const { at, head } = await verifiedRoot(client, version);
   const found = await lookup(client, at.tree, path);
   if (found?.type !== "dir") throw new ProtocolError("not_found", `no directory ${path || "/"} in World ${at.number}`);
   const entries = sorted(await listDirectory(client, found.id));
@@ -69,11 +92,19 @@ export async function loadDirectory(
   let readme: DirectoryPage["readme"] = null;
   if (readmeItem?.type === "file") {
     const shown = contents(readmeItem.entry, await client.blob(entryBlob(readmeItem.entry)));
-    if (shown.kind === "text") readme = { name: readmeItem.name, text: shown.text };
+    if (shown.kind === "text") {
+      const targets = relativeTargets(shown.text, path).slice(0, MAX_README_LINKS);
+      const kinds = await Promise.all(targets.map((t) => lookup(client, at.tree, t).catch(() => null)));
+      const links: Record<string, "dir" | "file"> = {};
+      targets.forEach((t, i) => {
+        if (kinds[i]) links[t] = kinds[i]!.type;
+      });
+      readme = { name: readmeItem.name, text: shown.text, links };
+    }
   }
   return {
     version: at,
-    head: head.number,
+    head,
     publication: await client.attribution(at.number),
     path,
     entries,
@@ -81,15 +112,23 @@ export async function loadDirectory(
   };
 }
 
-export type FilePage = { version: Resolved; path: string; entry: FileEntry; blob: Hex; contents: Contents };
+export type FilePage = {
+  version: Resolved;
+  head: number;
+  path: string;
+  entry: FileEntry;
+  blob: Hex;
+  contents: Contents;
+};
 
 /** One file at a version. */
 export async function loadFile(client: NodeClient, version: number, path: string): Promise<FilePage> {
-  const at = await client.resolve(version);
+  const { at, head } = await verifiedRoot(client, version);
   const found = await lookup(client, at.tree, path);
   if (found?.type !== "file") throw new ProtocolError("not_found", `no file ${path} in World ${at.number}`);
   const blob = entryBlob(found.entry);
-  return { version: at, path, entry: found.entry, blob, contents: contents(found.entry, await client.blob(blob)) };
+  const shown = contents(found.entry, await client.blob(blob));
+  return { version: at, head, path, entry: found.entry, blob, contents: shown };
 }
 
 export type HistoryRow = {
@@ -191,7 +230,10 @@ function change(
   let hunks: Hunk[] | null = null;
   if (status === "mode") note = modeNote(before!, after!);
   else if (a === null || b === null) note = [old, now].some((c) => c?.kind === "large") ? "File too large to diff" : "Binary file changed";
-  else hunks = diffLines(a, b);
+  else {
+    hunks = diffLines(a, b);
+    if (!hunks) note = "Diff too large to show";
+  }
   const count = (kind: "add" | "del") =>
     (hunks ?? []).reduce((n, h) => n + h.lines.filter((l) => l.kind === kind).length, 0);
   return { path, status, before, after, hunks, note, added: count("add"), removed: count("del") };
