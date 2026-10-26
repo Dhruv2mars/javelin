@@ -45,6 +45,7 @@ const LAYER_STACK: u8 = 0x37;
 const PUBLISH_LAYER: u8 = 0x38;
 const PUBLISH_OUTCOME: u8 = 0x39;
 const PUBLISH_REQUEST: u8 = 0x3a;
+const LAYER_TAKE: u8 = 0x3b;
 const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
 const CHANGESET: u8 = 0x42;
@@ -222,6 +223,13 @@ pub enum Message {
         target: LayerId,
         target_head: ObjectId,
         source: ObjectId,
+    },
+    /// Move `layer`'s writer lease to the caller's device. Only the Layer's owner may take
+    /// it. Reply: `LayerOutcome`, `Accepted` with the node's head. A repeated operation
+    /// replays its recorded outcome.
+    LayerTake {
+        operation: OperationId,
+        layer: LayerId,
     },
     /// Publish a whole Layer as the next World version, over `base`.
     PublishLayer {
@@ -455,6 +463,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             put_short(&mut out, target.as_str());
             put_id(&mut out, target_head);
             put_id(&mut out, source);
+        }
+        Message::LayerTake { operation, layer } => {
+            out.push(LAYER_TAKE);
+            put_short(&mut out, operation.as_str());
+            put_short(&mut out, layer.as_str());
         }
         Message::PublishLayer {
             operation,
@@ -691,6 +704,9 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         Message::LayerStack {
             operation, target, ..
         } => 1 + short(operation.as_str())? + short(target.as_str())? + 64,
+        Message::LayerTake { operation, layer } => {
+            1 + short(operation.as_str())? + short(layer.as_str())?
+        }
         Message::PublishLayer {
             operation,
             layer,
@@ -895,6 +911,10 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             target: r.layer()?,
             target_head: r.id()?,
             source: r.id()?,
+        },
+        LAYER_TAKE => Message::LayerTake {
+            operation: r.operation()?,
+            layer: r.layer()?,
         },
         PUBLISH_LAYER => Message::PublishLayer {
             operation: r.operation()?,

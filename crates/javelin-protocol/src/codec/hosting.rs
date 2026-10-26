@@ -104,7 +104,7 @@ impl RequestId {
     }
 }
 
-/// Reply to `LayerAppend` and `LayerStack`. A replayed `LayerAppend` returns the
+/// Reply to `LayerAppend`, `LayerStack` and `LayerTake`. A replayed `LayerAppend` returns the
 /// original `seq`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LayerOutcome {

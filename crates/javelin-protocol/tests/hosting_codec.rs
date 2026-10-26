@@ -131,6 +131,10 @@ fn every_hosting_message_round_trips() {
             target_head: id(1),
             source: id(2),
         },
+        Message::LayerTake {
+            operation: op("take-1"),
+            layer: layer(),
+        },
         Message::PublishLayer {
             operation: op("publish-1"),
             layer: layer(),
