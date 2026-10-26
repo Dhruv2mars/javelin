@@ -18,8 +18,8 @@ pub use javelin::{
 };
 pub use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 pub use javelin_control::{
-    ControlError, ControlPlane, CreateRequest, Created, ForkRequest, LocalNode, NodeLink,
-    NodeTarget, Poll, Publish, RelyingParty, Session, answer,
+    ControlError, ControlPlane, CreateRequest, Created, Credentials, ForkRequest, LocalNode,
+    NodeLink, NodeTarget, Poll, Publish, RelyingParty, Session, answer,
 };
 pub use javelin_identity::{KeySet, Need, Scope, test_keys};
 pub use javelin_node::{
@@ -535,21 +535,23 @@ pub fn review_rows(node_dir: &Path, id: &str) -> Vec<ReviewRow> {
     .unwrap()
 }
 
-/// Serves `log` on loopback until the process exits. The server holds the node's lock.
-pub fn serve_forever(log: FileWorldLog, name: &str) -> SocketAddr {
+/// Serves `log` behind `gate` on loopback until the process exits. The server holds the
+/// node's lock.
+pub fn serve_forever(log: FileWorldLog, gate: Gate, name: &str) -> SocketAddr {
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let name = name.to_string();
     thread::spawn(move || {
         let mut log = log;
-        let _ = serve(&listener, &name, &mut log, None);
+        let _ = serve(&listener, &name, &mut log, &gate, None);
     });
     addr
 }
 
-/// Serves exactly `connections` connections, then hands the log back.
+/// Serves exactly `connections` connections behind `gate`, then hands the log back.
 pub fn serve_then_return(
     log: FileWorldLog,
+    gate: Gate,
     name: &str,
     connections: usize,
 ) -> (SocketAddr, thread::JoinHandle<FileWorldLog>) {
@@ -558,21 +560,30 @@ pub fn serve_then_return(
     let name = name.to_string();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, &name, &mut log, Some(connections)).unwrap();
+        serve(&listener, &name, &mut log, &gate, Some(connections)).unwrap();
         log
     });
     (addr, server)
 }
 
-/// One request body over loopback HTTP, as a client sends it. No reply, a reset, or a status
-/// other than 200 is `node_unavailable`: the node did not decide, as far as the client knows.
-pub fn post(addr: SocketAddr, name: &str, body: &[u8]) -> Result<Vec<u8>, &'static str> {
+/// One request body over loopback HTTP, as a client sends it, with `token` as its bearer. No
+/// reply, a reset, or a status other than 200 is `node_unavailable`: the node did not decide,
+/// as far as the client knows.
+pub fn post(
+    addr: SocketAddr,
+    name: &str,
+    token: Option<&str>,
+    body: &[u8],
+) -> Result<Vec<u8>, &'static str> {
+    let authorization = token
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
     let exchange = || -> io::Result<Vec<u8>> {
         let mut stream = TcpStream::connect(addr)?;
         stream.set_read_timeout(Some(Duration::from_secs(20)))?;
         write!(
             stream,
-            "POST /v2/r/{name} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "POST /v2/r/{name} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         )?;
         stream.write_all(body)?;
@@ -591,8 +602,19 @@ pub fn post(addr: SocketAddr, name: &str, body: &[u8]) -> Result<Vec<u8>, &'stat
     Ok(reply[split + 4..].to_vec())
 }
 
+/// One message from an anonymous caller.
 pub fn call(addr: SocketAddr, name: &str, message: &Message) -> Result<Message, &'static str> {
-    let reply = post(addr, name, &encode(message).unwrap())?;
+    call_as(addr, name, None, message)
+}
+
+/// One message with `token` as its bearer, or anonymous.
+pub fn call_as(
+    addr: SocketAddr,
+    name: &str,
+    token: Option<&str>,
+    message: &Message,
+) -> Result<Message, &'static str> {
+    let reply = post(addr, name, token, &encode(message).unwrap())?;
     Ok(decode(&reply).unwrap())
 }
 
@@ -730,33 +752,18 @@ pub fn forward(upstream: SocketAddr, request: &[u8]) -> Vec<u8> {
     reply
 }
 
-/// This suite's stand-in for a client outbox transport, which the product does not have yet:
-/// each record's payload is one request to the node. It models token expiry only: an expired
-/// token needs the control plane, and while that is down the record waits with
-/// `control_plane_unavailable`. No credential reaches the node.
-pub struct Wire<'a> {
+/// A plain outbox transport for in-process checks: each record's payload is one request to
+/// the node with `token`. The product's transport, with credential refresh, is `javelin outbox
+/// replay`, which `outages.rs` drives.
+pub struct Wire {
     pub addr: SocketAddr,
     pub name: String,
-    pub clock: u64,
-    pub token_expires: u64,
-    pub refresh_token: String,
-    pub plane: Option<&'a ControlPlane>,
+    pub token: String,
 }
 
-impl Transport for Wire<'_> {
+impl Transport for Wire {
     fn deliver(&mut self, entry: &Entry) -> Result<Vec<u8>, Fault> {
-        if self.clock >= self.token_expires {
-            let plane = self.plane.ok_or_else(|| {
-                Fault::ControlPlaneUnavailable(
-                    "the token has expired and the control plane is unreachable".into(),
-                )
-            })?;
-            let fresh = plane
-                .refresh(&self.refresh_token, self.clock)
-                .map_err(|error| Fault::ControlPlaneUnavailable(error.to_string()))?;
-            self.token_expires = self.clock + fresh.expires_in;
-        }
-        post(self.addr, &self.name, &entry.payload)
+        post(self.addr, &self.name, Some(&self.token), &entry.payload)
             .map_err(|code| Fault::NodeUnavailable(code.into()))
     }
 }
@@ -778,4 +785,86 @@ pub fn head(node_dir: &Path) -> VersionNumber {
 
 pub fn code_of<T: std::fmt::Debug>(result: Result<T, ProtocolError>) -> String {
     result.unwrap_err().code
+}
+
+// ---------------------------------------------------------------------------------------------
+// The `javelin` binary.
+
+/// The `javelin` binary: `JAVELIN_ACCEPTANCE_CLI`, or the workspace's debug build.
+pub fn cli() -> PathBuf {
+    if let Some(path) = env::var_os("JAVELIN_ACCEPTANCE_CLI") {
+        return path.into();
+    }
+    let target = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target"));
+    let path = target
+        .join("debug")
+        .join(format!("javelin{}", env::consts::EXE_SUFFIX));
+    assert!(
+        path.exists(),
+        "build the CLI first (cargo build -p javelin-cli) or set JAVELIN_ACCEPTANCE_CLI"
+    );
+    path
+}
+
+pub fn error_code(output: &std::process::Output) -> String {
+    let text = String::from_utf8_lossy(&output.stderr);
+    let value: Value =
+        serde_json::from_str(text.trim()).unwrap_or_else(|_| panic!("stderr is not JSON: {text}"));
+    value["error"]["code"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no error code: {value}"))
+        .to_string()
+}
+
+/// Serves the control plane in `dir` over HTTP (its approval page and API) on loopback until
+/// the process exits. The control plane is not `Send`, so the thread opens its own.
+pub fn serve_control_plane(dir: &Path) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let dir = dir.to_path_buf();
+    thread::spawn(move || {
+        let plane = ControlPlane::open(&dir).unwrap();
+        let rp = RelyingParty::new(&format!("http://localhost:{}", addr.port())).unwrap();
+        let _ = javelin_control::serve(&plane, &rp, &listener);
+    });
+    addr
+}
+
+/// A device home signed in with `session`: the refresh token in `credentials`.
+pub fn signed_in_home(session: &Session) -> TempDir {
+    let home = TempDir::new().unwrap();
+    Credentials {
+        principal: session.principal.clone(),
+        device: session.device.clone(),
+        refresh_token: session.refresh_token.clone(),
+    }
+    .save(&home.path().join("credentials"))
+    .unwrap();
+    home
+}
+
+/// Runs `javelin --json ARGS` as a device with `home`, against the control plane at `control`.
+pub fn javelin(home: &Path, control: SocketAddr, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(cli())
+        .arg("--json")
+        .args(args)
+        .env("JAVELIN_HOME", home)
+        .env("JAVELIN_CONTROL_URL", format!("http://{control}"))
+        .env_remove("JAVELIN_TOKEN")
+        .env_remove("JAVELIN_ADMIN_TOKEN")
+        .env_remove("JAVELIN_CONTROL_DIR")
+        .output()
+        .unwrap()
+}
+
+pub fn stdout_json(output: &std::process::Output) -> Value {
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+        panic!(
+            "stdout is not JSON: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
 }

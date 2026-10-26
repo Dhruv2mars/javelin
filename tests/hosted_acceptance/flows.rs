@@ -166,15 +166,73 @@ fn public_and_private_repository_flows_permissions_and_retries() {
          stale permissions push is stale_permissions and changes nothing",
     );
 
-    // The node's wire: the public repository's World 0 over loopback HTTP.
-    let (addr, server) = serve_then_return(hosted.log(&site.repository), &site.repository, 1);
+    // The node's wire: every message passes the gate with the request's bearer token.
+    let (addr, server) = serve_then_return(
+        hosted.log(&site.repository),
+        hosted.gate(&site.repository),
+        &site.repository,
+        2,
+    );
     let resolved = call(addr, &site.repository, &Message::Resolve { version: None }).unwrap();
+    let anonymous_write = call(
+        addr,
+        &site.repository,
+        &Message::PublishLayer {
+            operation: op("wire-publish"),
+            layer: layer("absent"),
+            expected: ObjectId::from_bytes([0; 32]),
+            base: v(0),
+            attribution: PublishAttribution::Human,
+        },
+    )
+    .unwrap();
     server.join().unwrap();
     assert!(matches!(resolved, Message::Resolved { number, .. } if number == v(0)));
-    not_verified(
+    assert!(matches!(anonymous_write, Message::Error { ref code, .. } if code == "unauthorized"));
+    let (addr, server) = serve_then_return(
+        hosted.log(&vault.repository),
+        hosted.gate(&vault.repository),
+        &vault.repository,
+        4,
+    );
+    let resolve = Message::Resolve { version: None };
+    let anonymous = call(addr, &vault.repository, &resolve).unwrap();
+    let elsewhere = call_as(
+        addr,
+        &vault.repository,
+        Some(&hosted.token(&site.repository)),
+        &resolve,
+    )
+    .unwrap();
+    let signin = call_as(
+        addr,
+        &vault.repository,
+        Some(&hosted.session.access_token),
+        &resolve,
+    )
+    .unwrap();
+    let creator = call_as(
+        addr,
+        &vault.repository,
+        Some(&hosted.token(&vault.repository)),
+        &resolve,
+    )
+    .unwrap();
+    server.join().unwrap();
+    let code = |reply: &Message| match reply {
+        Message::Error { code, .. } => code.clone(),
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    assert_eq!(code(&anonymous), "unauthorized");
+    assert_eq!(code(&elsewhere), "forbidden");
+    assert_eq!(code(&signin), "forbidden");
+    assert!(matches!(creator, Message::Resolved { .. }));
+    verified(
         "flow.wire-authentication",
-        "the self-hosted node's HTTP server carries no token and binds loopback only \
-         (crates/javelin-node/src/server.rs); permissions are proved at the node's gate instead",
+        "over the node's loopback HTTP, with Authorization: Bearer: an anonymous read of the \
+         public repository succeeds and an anonymous write is unauthorized; the private \
+         repository refuses an anonymous read (unauthorized), another repository's token and the \
+         `*` sign-in token (forbidden), and serves the creator's repository token",
     );
     not_verified(
         "flow.membership",

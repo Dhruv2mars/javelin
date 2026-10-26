@@ -212,8 +212,9 @@ fn one_durable_outcome_after_a_lost_reply() {
         );
         heads.insert(name, head);
     }
+    let token = hosted.token(&id);
     // The node serves one connection, so it can stop after the lost reply.
-    let (addr, server) = serve_then_return(log, &id, 1);
+    let (addr, server) = serve_then_return(log, hosted.gate(&id), &id, 1);
     let proxy = Proxy::start(addr);
 
     // PublishLayer: the node commits, the reply is lost, the node restarts, the client retries.
@@ -225,7 +226,10 @@ fn one_durable_outcome_after_a_lost_reply() {
         attribution: PublishAttribution::Human,
     };
     proxy.set(Mode::DropReplyOnce);
-    assert_eq!(call(proxy.addr, &id, &publish_a), Err(NODE_UNAVAILABLE));
+    assert_eq!(
+        call_as(proxy.addr, &id, Some(&token), &publish_a),
+        Err(NODE_UNAVAILABLE)
+    );
     assert_eq!(
         head(&dir),
         v(1),
@@ -233,9 +237,9 @@ fn one_durable_outcome_after_a_lost_reply() {
     );
     // The node stops and reopens from disk: the retry meets only what it stored.
     drop(server.join().unwrap());
-    let proxy = Proxy::start(serve_forever(hosted.log(&id), &id));
-    let retry = call(proxy.addr, &id, &publish_a).unwrap();
-    let again = call(proxy.addr, &id, &publish_a).unwrap();
+    let proxy = Proxy::start(serve_forever(hosted.log(&id), hosted.gate(&id), &id));
+    let retry = call_as(proxy.addr, &id, Some(&token), &publish_a).unwrap();
+    let again = call_as(proxy.addr, &id, Some(&token), &publish_a).unwrap();
     assert_eq!(published(&retry).0, v(1));
     assert_eq!(retry, again);
     assert_eq!(head(&dir), v(1), "one World version for the operation");
@@ -247,7 +251,7 @@ fn one_durable_outcome_after_a_lost_reply() {
         attribution: PublishAttribution::Human,
     };
     assert_eq!(
-        call(proxy.addr, &id, &other).unwrap(),
+        call_as(proxy.addr, &id, Some(&token), &other).unwrap(),
         Message::PublishOutcome(PublishOutcome::Refused {
             code: "operation_id_reused".into()
         })
@@ -267,10 +271,7 @@ fn one_durable_outcome_after_a_lost_reply() {
     let mut wire = Wire {
         addr: proxy.addr,
         name: id.clone(),
-        clock: now(),
-        token_expires: now() + hosted.session.expires_in,
-        refresh_token: hosted.session.refresh_token.clone(),
-        plane: hosted.plane.as_ref(),
+        token: token.clone(),
     };
     proxy.set(Mode::DropReplyOnce);
     let lost = outbox.replay(&mut wire).unwrap();
@@ -594,7 +595,7 @@ fn restricted_traces_stay_with_maintainers() {
     );
 
     // The wire never serves it, while ordinary content is served.
-    let (addr, server) = serve_then_return(log, &id, 2);
+    let (addr, server) = serve_then_return(log, hosted.gate(&id), &id, 2);
     let refused_get = call(addr, &id, &Message::Get(vec![(Kind::Blob, trace)])).unwrap();
     let served = call(addr, &id, &Message::Get(vec![(Kind::Blob, content)])).unwrap();
     let log = server.join().unwrap();

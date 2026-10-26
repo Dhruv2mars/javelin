@@ -1,27 +1,28 @@
 //! The self-hosted node the control plane provisions in-process. Each repository gets a
-//! directory holding a native repository with World 0 and its applied permissions. The
+//! directory holding a native repository with World 0, its applied permissions and the
+//! keys it trusts, in the files `javelin_node::auth` reads when the node serves. The
 //! permissions are checked by the node's own gate, so the epoch rules are the node's.
 
 use std::{
-    collections::BTreeMap,
     fs::{self},
     io::ErrorKind,
     path::PathBuf,
 };
 
 use javelin::{Repository, VersionNumber};
-use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
+use javelin_collaboration::{AppliedPermissions, RepositoryId};
 use javelin_identity::KeySet;
-use javelin_node::{FileWorldLog, auth::Gate, fork::Forked};
-use serde::{Deserialize, Serialize};
+use javelin_node::{
+    FileWorldLog,
+    auth::{self, Gate},
+    fork::Forked,
+};
 
 use crate::{
     ControlError,
     control::{ForkPlan, NodeLink},
-    secret,
 };
 
-const PERMISSIONS_FILE: &str = "permissions.json";
 const LOCK_FILE: &str = "node.lock";
 
 /// Self-hosted nodes under one directory: `root/<repository>/`.
@@ -67,17 +68,13 @@ impl LocalNode {
         &self,
         repository: &RepositoryId,
     ) -> Result<Option<AppliedPermissions>, ControlError> {
-        let path = self.repository_dir(repository).join(PERMISSIONS_FILE);
-        match fs::read(&path) {
-            Ok(bytes) => {
-                let stored: Stored = serde_json::from_slice(&bytes).map_err(|error| {
-                    ControlError::Storage(format!("permissions are corrupt: {error}"))
-                })?;
-                stored.into_permissions().map(Some)
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(node_error(error)),
-        }
+        auth::read_permissions(&self.repository_dir(repository)).map_err(read_error)
+    }
+
+    /// Replaces the keys `repository`'s node trusts. A serving node reads them when it starts.
+    pub fn trust_keys(&self, repository: &RepositoryId, keys: &KeySet) -> Result<(), ControlError> {
+        let _lock = self.locked(repository)?;
+        auth::write_keys(&self.repository_dir(repository), keys).map_err(node_error)
     }
 }
 
@@ -129,10 +126,12 @@ impl NodeLink for LocalNode {
         if stored.as_ref() == Some(permissions) {
             return Ok(());
         }
-        let dir = self.repository_dir(&permissions.repository);
-        let bytes = serde_json::to_vec_pretty(&Stored::from(permissions))
-            .map_err(|error| ControlError::Storage(error.to_string()))?;
-        secret::write_private(&dir.join(PERMISSIONS_FILE), &bytes).map_err(node_error)
+        auth::write_permissions(&self.repository_dir(&permissions.repository), permissions)
+            .map_err(node_error)
+    }
+
+    fn trust(&self, repository: &RepositoryId, keys: &KeySet) -> Result<(), ControlError> {
+        self.trust_keys(repository, keys)
     }
 }
 
@@ -140,73 +139,12 @@ fn node_error(error: std::io::Error) -> ControlError {
     ControlError::Node(error.to_string())
 }
 
-#[derive(Serialize, Deserialize)]
-struct Stored {
-    repository: String,
-    epoch: u64,
-    public: bool,
-    roles: BTreeMap<String, String>,
-    required_approvals: u32,
-}
-
-impl From<&AppliedPermissions> for Stored {
-    fn from(permissions: &AppliedPermissions) -> Self {
-        Self {
-            repository: permissions.repository.as_str().into(),
-            epoch: permissions.epoch,
-            public: permissions.visibility == Visibility::Public,
-            roles: permissions
-                .roles
-                .iter()
-                .map(|(principal, role)| (principal.as_str().into(), role_name(*role).into()))
-                .collect(),
-            required_approvals: permissions.required_approvals,
-        }
-    }
-}
-
-impl Stored {
-    fn into_permissions(self) -> Result<AppliedPermissions, ControlError> {
-        let corrupt =
-            |what: &str| ControlError::Storage(format!("permissions are corrupt: {what}"));
-        let repository =
-            RepositoryId::parse(&self.repository).map_err(|_| corrupt("repository"))?;
-        let roles = self
-            .roles
-            .iter()
-            .map(|(principal, role)| {
-                let principal = PrincipalId::parse(principal).map_err(|_| corrupt("principal"))?;
-                let role = parse_role(role).ok_or_else(|| corrupt("role"))?;
-                Ok((principal, role))
-            })
-            .collect::<Result<_, ControlError>>()?;
-        Ok(AppliedPermissions {
-            repository,
-            epoch: self.epoch,
-            visibility: if self.public {
-                Visibility::Public
-            } else {
-                Visibility::Private
-            },
-            roles,
-            required_approvals: self.required_approvals,
-        })
-    }
-}
-
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Read => "read",
-        Role::Review => "review",
-        Role::Maintain => "maintain",
-    }
-}
-
-fn parse_role(value: &str) -> Option<Role> {
-    match value {
-        "read" => Some(Role::Read),
-        "review" => Some(Role::Review),
-        "maintain" => Some(Role::Maintain),
-        _ => None,
+/// A stored file that does not parse is the node's state, corrupt; anything else means the
+/// node could not be reached.
+fn read_error(error: std::io::Error) -> ControlError {
+    if error.kind() == ErrorKind::InvalidData {
+        ControlError::Storage(error.to_string())
+    } else {
+        node_error(error)
     }
 }

@@ -34,10 +34,37 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
         .unwrap()
         .checkpoint()
         .object();
-    let proxy = Proxy::start(serve_forever(log, &id));
+    let proxy = Proxy::start(serve_forever(log, hosted.gate(&id), &id));
+    // The control plane over HTTP, behind its own proxy, and this device signed in to it.
+    let control = Proxy::start(serve_control_plane(hosted.dir.path()));
+    let home = signed_in_home(&hosted.session);
+    let project = TempDir::new().unwrap();
+    let project_dir = project.path().to_str().unwrap();
+    let replay = || {
+        let output = javelin(
+            home.path(),
+            control.addr,
+            &["outbox", "replay", "--remote", &id, "--repo", project_dir],
+        );
+        (output.status.code(), stdout_json(&output))
+    };
+
+    // Attach while both are up: the CLI gets a token for the private repository and caches it.
+    let attached = javelin(
+        home.path(),
+        control.addr,
+        &[
+            "attach",
+            &format!("http://{}/{id}", proxy.addr),
+            project_dir,
+        ],
+    );
+    assert_eq!(attached.status.code(), Some(0), "{attached:?}");
+    let (node_seen, control_seen) = (proxy.forwarded(), control.forwarded());
 
     // Both down. Local work needs neither.
     proxy.set(Mode::Reset);
+    control.set(Mode::Reset);
     let plane = hosted.plane.take().unwrap();
     drop(plane);
     let local = TempDir::new().unwrap();
@@ -62,8 +89,7 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
     let changes = file("c.txt", content);
     let bytes = changes.canonical_bytes();
     let checkpoint = Kind::Checkpoint.id(&bytes);
-    let client = TempDir::new().unwrap();
-    let mut outbox = Outbox::open(client.path(), "vault").unwrap();
+    let mut outbox = Outbox::open(project.path(), &id).unwrap();
     assert_eq!(Kind::Blob.id(b"written offline"), content);
     // Changes objects travel apart from content objects.
     let blob = encode(&Message::Objects(vec![(
@@ -102,26 +128,20 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
             &publish_payload("publish-p", "p", heads["p"], 0),
         )
         .unwrap();
-    let mut wire = Wire {
-        addr: proxy.addr,
-        name: id.clone(),
-        clock: now(),
-        token_expires: now() + hosted.session.expires_in,
-        refresh_token: hosted.session.refresh_token.clone(),
-        plane: None,
-    };
-    let down = outbox.replay(&mut wire).unwrap();
-    assert!(down.delivered.is_empty());
-    let node_fault = down.stalled.unwrap().fault;
-    assert_eq!(node_fault.code(), NODE_UNAVAILABLE);
-    assert_eq!(outbox.pending().count(), 4);
+    drop(outbox);
+    let (code, down) = replay();
+    assert_eq!(code, Some(1), "{down}");
+    assert!(down["delivered"].as_array().unwrap().is_empty());
+    let node_fault = down["code"].as_str().unwrap().to_string();
+    assert_eq!(node_fault, NODE_UNAVAILABLE);
+    assert_eq!(down["pending"], 4);
     assert_eq!(
         call(proxy.addr, &id, &Message::Resolve { version: None }),
         Err(NODE_UNAVAILABLE),
         "a direct read (what attach does) refuses"
     );
     assert_eq!(head(&dir), v(0));
-    assert_eq!(proxy.forwarded(), 0, "nothing reached the node");
+    assert_eq!(proxy.forwarded(), node_seen, "nothing reached the node");
 
     // Control plane down, token still valid: node actions continue under applied permissions.
     proxy.set(Mode::Pass);
@@ -134,14 +154,15 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
         },
     )
     .unwrap();
-    let up = outbox.replay(&mut wire).unwrap();
-    assert!(up.stalled.is_none());
-    assert_eq!(up.delivered.len(), 4);
-    let outcomes: Vec<Message> = up
-        .delivered
-        .iter()
-        .map(|delivered| decode(&delivered.outcome).unwrap())
+    let (code, up) = replay();
+    assert_eq!(code, Some(0), "{up}");
+    assert_eq!(up["delivered"].as_array().unwrap().len(), 4);
+    assert_eq!(up["pending"], 0);
+    let outbox = Outbox::open(project.path(), &id).unwrap();
+    let outcomes: Vec<Message> = (1..=4)
+        .map(|seq| decode(outbox.entry(seq).unwrap().outcome.as_ref().unwrap()).unwrap())
         .collect();
+    drop(outbox);
     assert_eq!(outcomes[0], Message::Stored { count: 1 });
     assert_eq!(outcomes[1], Message::Stored { count: 1 });
     assert!(matches!(
@@ -150,8 +171,14 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
     ));
     assert_eq!(published(&outcomes[3]).0, v(1));
     assert_eq!(head(&dir), v(1));
+    assert_eq!(
+        control.forwarded(),
+        control_seen,
+        "the control plane was not reached"
+    );
 
     // Control plane down, token expired: the record waits with control_plane_unavailable.
+    let mut outbox = Outbox::open(project.path(), &id).unwrap();
     outbox
         .enqueue(
             Record::Publish,
@@ -160,47 +187,82 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
             &publish_payload("publish-q", "q", heads["q"], 0),
         )
         .unwrap();
-    wire.clock = wire.token_expires;
-    let expired = outbox.replay(&mut wire).unwrap();
-    assert!(expired.delivered.is_empty());
-    let plane_fault = expired.stalled.unwrap().fault;
-    assert_eq!(plane_fault.code(), CONTROL_PLANE_UNAVAILABLE);
-    assert_ne!(plane_fault.code(), node_fault.code());
-    assert_eq!(outbox.pending().count(), 1);
-    assert_eq!(head(&dir), v(1), "nothing was sent without a credential");
-
-    // The control plane is back: refresh, then the record replays once.
-    let plane = ControlPlane::open(hosted.dir.path()).unwrap();
-    let mut wire = Wire {
-        plane: Some(&plane),
-        ..wire
-    };
-    let back = outbox.replay(&mut wire).unwrap();
-    assert!(back.stalled.is_none());
+    drop(outbox);
+    let cache_path = home
+        .path()
+        .join("tokens")
+        .join(format!(
+            "{}+{}",
+            hosted.session.principal, hosted.session.device
+        ))
+        .join(format!("repo-{id}.json"));
+    let mut cache: Value = serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
+    cache["expires_at"] = json!(now() - 1);
+    fs::write(&cache_path, cache.to_string()).unwrap();
+    let forwarded = proxy.forwarded();
+    let (code, expired) = replay();
+    assert_eq!(code, Some(1), "{expired}");
+    assert!(expired["delivered"].as_array().unwrap().is_empty());
+    let plane_fault = expired["code"].as_str().unwrap().to_string();
+    assert_eq!(plane_fault, CONTROL_PLANE_UNAVAILABLE);
+    assert_ne!(plane_fault, node_fault);
+    assert_eq!(expired["pending"], 1);
+    assert_eq!(head(&dir), v(1));
     assert_eq!(
-        published(&decode(&back.delivered[0].outcome).unwrap()).0,
-        v(2)
+        proxy.forwarded(),
+        forwarded,
+        "nothing was sent without a credential"
     );
+
+    // The control plane refuses everything else that needs it, with the same code.
+    let create = javelin(
+        home.path(),
+        control.addr,
+        &[
+            "repo",
+            "create",
+            "acme/other",
+            "--operation",
+            "create-other",
+        ],
+    );
+    assert_eq!(error_code(&create), CONTROL_PLANE_UNAVAILABLE);
+    let login = javelin(home.path(), control.addr, &["login"]);
+    assert_eq!(error_code(&login), CONTROL_PLANE_UNAVAILABLE);
+
+    // The control plane is back: the CLI refreshes the token, then the record replays once.
+    control.set(Mode::Pass);
+    let (code, back) = replay();
+    assert_eq!(code, Some(0), "{back}");
+    assert_eq!(back["delivered"][0]["outcome"]["published"], 2);
     assert_eq!(head(&dir), v(2));
+    let renewed: Value = serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
+    assert!(renewed["expires_at"].as_u64().unwrap() > now());
     verified(
         "outage.node-down-queue",
         "node down (proxy resets): upload, LayerAppend and PublishLayer stay queued in the outbox \
-         with node_unavailable, nothing reaches the node and a direct read refuses; node back with \
-         the control plane down: the node's gate authorizes the still-valid token without the \
-         control plane and the queue drains in order, once",
+         and `javelin outbox replay` reports node_unavailable, nothing reaches the node and a \
+         direct read refuses; node back with the control plane down: the CLI sends its cached \
+         token, the node's gate authorizes it without the control plane, and the queue drains \
+         in order, once",
     );
-    not_verified(
+    verified(
         "gate4.distinct-outage-outcomes",
-        "the product has no client transport yet that sends a credential and refreshes it at the \
-         control plane, so control_plane_unavailable on an expired token comes from this suite's \
-         own transport; only the outbox keeping a record queued under each fault, with distinct \
-         codes, and replaying it once is proven (TASKS.md U14)",
+        "with the product's transport (`javelin outbox replay`, which sends the access token as \
+         Authorization: Bearer): node down is node_unavailable; control plane down with the \
+         cached token expired is control_plane_unavailable and nothing is sent; both keep the \
+         record queued, and it replays once after the CLI refreshes the token through the \
+         control plane's HTTP API with the device refresh token",
+    );
+    verified(
+        "outage.control-plane-refusals",
+        "with the control plane's HTTP API unreachable: repo create, login and the token \
+         refresh behind a replay each fail with control_plane_unavailable",
     );
     not_verified(
-        "outage.control-plane-refusals",
-        "repo create, fork and refresh against an unreachable control plane: the product has no \
-         network control-plane client yet, and an unreadable control directory surfaces as \
-         storage_error rather than control_plane_unavailable (TASKS.md U14; the ignored gap_* tests)",
+        "outage.control-plane-fork",
+        "fork has no client path yet (javelin_control::ControlPlane::fork_repository runs in \
+         process only), and there is no membership API",
     );
     not_verified(
         "outage.stack-node-down",
@@ -209,7 +271,7 @@ fn control_plane_and_node_outages_have_distinct_outcomes() {
     not_verified(
         "outage.review-node-down",
         "Revise queueing and Approve/Comment refusal need a client path for review messages; \
-         review is served in-process only (javelin_node::review), not on the node's wire",
+         the node's wire serves them, but no client sends them yet",
     );
     not_verified(
         "outage.coordinator-transactions",

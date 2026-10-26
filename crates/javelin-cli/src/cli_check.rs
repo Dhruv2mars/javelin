@@ -1,10 +1,9 @@
-//! `javelin check report`: posts one completed check result to a self-hosted node
-//! (`docs/ci-execution.md` section 4; unit U17). The node is the one the control plane
-//! provisions under `<control dir>/nodes/<repository>`, and its trusted keys come from the
-//! control plane. The reporter's token is read from `JAVELIN_TOKEN`, so it stays out of argv.
-//! The command opens the node's directory in process, so it needs the node not to be
-//! serving: the loopback transport cannot carry the reporter's token yet (U7 left wire
-//! carriage open), and a serving node holds the directory, which makes this `busy`.
+//! `javelin check report`: posts one completed check result to a node (`docs/ci-execution.md`
+//! section 4; unit U17). The reporter's token is read from `JAVELIN_TOKEN`, so it stays out of
+//! argv. With `--node https://HOST[:PORT]` the report goes over the wire to the serving node,
+//! which checks the token at its gate. Without it, the command opens the node the control
+//! plane provisions under `<control dir>/nodes/<repository>` in process, trusting the control
+//! plane's keys; a serving node holds that directory, which makes this `busy`.
 
 use std::{
     env,
@@ -17,14 +16,17 @@ use javelin::{Error, ObjectId, OperationId, Repository, Result};
 use javelin_collaboration::RepositoryId;
 use javelin_control::{ControlPlane, LocalNode};
 use javelin_node::{FileWorldLog, checks};
-use javelin_protocol::codec::{CheckOutcome, CheckReport, Conclusion};
+use javelin_protocol::{
+    Message,
+    codec::{CheckOutcome, CheckReport, Conclusion},
+};
 use serde_json::json;
 
 use crate::cli::Output;
 
 const USAGE: &str = "usage: javelin check report --repository ID --operation ID --tree HASH --name NAME \
 --conclusion success|failure|neutral|cancelled|timed_out|skipped --completed UNIX \
-[--checkpoint HASH] [--details-url URL] [--summary TEXT] [--started UNIX] [--control DIR]";
+[--checkpoint HASH] [--details-url URL] [--summary TEXT] [--started UNIX] [--node URL | --control DIR]";
 
 const OPTIONS: &[&str] = &[
     "--repository",
@@ -38,12 +40,16 @@ const OPTIONS: &[&str] = &[
     "--started",
     "--completed",
     "--control",
+    "--node",
 ];
 
 /// Parses the arguments after `check report`, then posts the result. A refusal by the node
 /// or the control plane is an outcome with exit code 1. Bad arguments are usage errors.
 pub fn report(args: Vec<OsString>) -> Result<Output> {
     let request = Request::parse(args)?;
+    if let Some(node) = &request.node {
+        return Ok(render(&request, post_wire(node, &request)));
+    }
     let control = match &request.control {
         Some(dir) => dir.clone(),
         None => control_dir()?,
@@ -54,10 +60,34 @@ pub fn report(args: Vec<OsString>) -> Result<Output> {
 
 /// Posts `request` and renders the node's answer, or the failure that stopped it.
 fn respond(request: &Request, control: &Path, token: Option<&str>) -> Output {
-    match post(control, request, token) {
+    render(request, post(control, request, token))
+}
+
+fn render(
+    request: &Request,
+    answer: std::result::Result<CheckOutcome, (String, String)>,
+) -> Output {
+    match answer {
         Ok(CheckOutcome::Accepted { id, seq }) => accepted(request, id, seq),
         Ok(CheckOutcome::Refused { code }) => refused(request, &code, ""),
         Err((code, detail)) => refused(request, &code, &detail),
+    }
+}
+
+/// The serving node's answer over the wire. The credential is `JAVELIN_TOKEN`, else this
+/// device's sign-in for the repository; without either, nothing is sent (`unauthorized`).
+fn post_wire(node: &str, request: &Request) -> std::result::Result<CheckOutcome, (String, String)> {
+    match crate::cli_remote::call_node(
+        node,
+        &request.repository,
+        &Message::CheckReport(request.message()),
+    ) {
+        Ok(Message::CheckOutcome(outcome)) => Ok(outcome),
+        Ok(_) => Err((
+            "unexpected_message".into(),
+            "the node did not answer with a check outcome".into(),
+        )),
+        Err(error) => Err((error.code, error.detail)),
     }
 }
 
@@ -169,6 +199,7 @@ struct Request {
     started: u64,
     completed: u64,
     control: Option<PathBuf>,
+    node: Option<String>,
 }
 
 impl Request {
@@ -211,6 +242,9 @@ impl Request {
                 .transpose()
         };
         let completed = number("--completed")?.ok_or_else(|| usage("missing --completed"))?;
+        if options.contains_key("--node") && options.contains_key("--control") {
+            return Err(usage("--node and --control name different nodes; pass one"));
+        }
         Ok(Self {
             repository: required("--repository")?,
             operation: OperationId::parse(&required("--operation")?)?,
@@ -223,6 +257,7 @@ impl Request {
             started: number("--started")?.unwrap_or(completed),
             completed,
             control: options.get("--control").map(PathBuf::from),
+            node: options.get("--node").cloned(),
         })
     }
 

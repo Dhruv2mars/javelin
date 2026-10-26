@@ -308,9 +308,11 @@ fn a_token_limited_to_one_layer_is_forbidden_on_any_other_layer() {
         code_of(access.authorize(Some(&limited), NOW, on_b)),
         "forbidden"
     );
-    assert_eq!(
-        code_of(access.authorize(Some(&limited), NOW, need(Scope::LayerWrite))),
-        "forbidden"
+    // A request that names no Layer, such as an object upload, is decided by scope and role.
+    assert!(
+        access
+            .authorize(Some(&limited), NOW, need(Scope::LayerWrite))
+            .is_ok()
     );
 }
 

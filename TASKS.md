@@ -197,10 +197,9 @@ workflow may invoke or interpret Git.
   - [x] Hub confirms the dialect: GitHub Actions YAML (CI1, confirmed 2026-10-21). The contract accepts "CI workflow syntax compatibility" without naming one.
   - [x] Hub adds U17 (check ingestion and required-check gate) and U18 (validator) to the unit table.
   - [x] U17 check ingestion and required-check gate (`docs/ci-execution.md` §11, tests 1–15): `CheckReport` 0x60 and `CheckOutcome` 0x61, name-pattern tokens (`checks:report`), tree binding, required-check gate in `PublishLayer` and `PublishRequest`, `javelin check report`.
-  - [ ] `javelin check report` to a serving node: needs wire carriage of the reporter token
-    (open from U7). Until then the command opens the node directory in process and gets `busy`
-    while `javelin-node serve` holds it; the loopback transport answers 0x60 with
-    `unexpected_message`.
+  - [x] `javelin check report --node URL` posts to a serving node over the wire with the
+    reporter token (`JAVELIN_TOKEN`) as `Authorization: Bearer`; the node's gate checks it
+    (`crates/javelin-cli/tests/wire_credentials.rs`, `crates/javelin-node/tests/wire_auth.rs`).
   - [x] U18 validator (`tools/ci-validate/`) passes examples 01–07, rejects 08–09 with the expected codes and rejects duplicate-key fixture 10. `validator_fixtures_match_readme` runs in the CI Rust job on all three OSes.
 - [ ] Measure hot-repository contention, many repositories, transfer costs, and quotas.
 
@@ -375,8 +374,14 @@ Wave 3, after wave 2:
   - [x] U6 server-side Stack and refresh from head: `LayerStack` on the node with the local engine and limits (golden test pinned), conflicts and `merge_limit` refusals that write nothing, stale `target_head` then retry, checkpoint `Get`, `javelin layer refresh` (`crates/javelin-node/tests/stack.rs`, `crates/javelin-cli/tests/layer_refresh.rs`).
   - [x] U3 client outbox: checksummed append-only journal, replay in journal order, fault-injection proxy against the loopback node.
   - [x] U7 scoped tokens, applied permissions, epochs and revocation on the node
-    (`javelin-identity`, `javelin-node` auth gate, test keys). Wire carriage of tokens and
-    authenticated control-plane pushes remain open.
+    (`javelin-identity`, `javelin-node` auth gate, test keys). Authenticated control-plane
+    pushes remain open.
+  - [x] Tokens on the wire: every `POST /v2/r/{repo}` carries `Authorization: Bearer`, and the
+    node's server decides every message at its gate, loaded from the node directory
+    (`keys.json`, `permissions.json`); anonymous callers read public repositories only (D24).
+    The CLI caches repository tokens and refreshes them with the device refresh token through
+    the control plane; `javelin outbox replay` never sends a write without one. The control
+    plane serves an HTTP API (`javelin control serve`) that `JAVELIN_CONTROL_URL` selects.
   - [x] U12 World log in one Durable Object: commit transaction on workerd (50 publishers, kill inside and after commit); deployed-object checks and replication re-check moved to U13.
   - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
     partition (`review.rs`), tree IDs in collaboration.
@@ -408,14 +413,14 @@ Wave 3, after wave 2:
     workerd by default, a deployed node later); a failing `git` stand-in with a positive control
     and a marker check. Assertions only a deployed node or an unbuilt piece can prove report
     NOT VERIFIED with the reason. Product gaps found, each with an ignored failing `gap_*` test:
-    - [ ] Control plane unreachable is `storage_error`, not `control_plane_unavailable`
-      (`docs/online-design.md` section 5): `repo create` with an unreadable control directory.
-      There is no network control-plane client, so no code path emits the designed code.
-    - [ ] A node answering HTTP 5xx is `node_error`, not `node_unavailable` (section 4.4 and 5):
-      `crates/javelin-cli/src/cli_remote.rs` maps every non-200, non-404 status to `node_error`.
-    - [ ] No client outbox transport carries a credential or refreshes it at the control plane,
-      so gate 4's distinct control-plane outcome (expired token, control plane down) is NOT
-      VERIFIED end to end; the suite proves only the outbox's handling of each fault.
+    - [x] Control plane unreachable is `control_plane_unavailable`, in process (an unopenable
+      control directory) and over HTTP (`RemoteControl`, `JAVELIN_CONTROL_URL`); `gap_*` test
+      un-ignored.
+    - [x] A node answering HTTP 5xx, or not answering, is `node_unavailable`; `gap_*` test
+      un-ignored.
+    - [x] The client outbox transport (`NodeTransport`, `javelin outbox replay`) carries the
+      credential and refreshes it at the control plane; gate 4's distinct outcomes are VERIFIED
+      end to end with the CLI (`tests/hosted_acceptance/outages.rs`).
     - [ ] `cargo deny` checks only the root package (not `--workspace`), so the member crates'
       licenses are unchecked: BSD-3-Clause (`ed25519-dalek`), ISC (`ring`, `rustls-webpki`) and
       MPL-2.0 (`crypto-glue`, via `webauthn-rs`) are linked into `javelin-control` today.

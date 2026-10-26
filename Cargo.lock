@@ -1219,6 +1219,7 @@ dependencies = [
  "javelin",
  "javelin-collaboration",
  "javelin-control",
+ "javelin-identity",
  "javelin-node",
  "javelin-node-worker",
  "javelin-protocol",
@@ -1226,6 +1227,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -1252,6 +1254,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
+ "ureq",
  "webauthn-authenticator-rs",
  "webauthn-rs",
 ]
@@ -1286,6 +1289,7 @@ dependencies = [
  "javelin-protocol",
  "javelin-stack",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
 ]

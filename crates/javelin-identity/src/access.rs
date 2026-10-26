@@ -32,7 +32,9 @@ pub enum Scope {
     CheckReport,
 }
 
-/// What one request needs: a scope, and the Layer it acts on, if it acts on one.
+/// What one request needs: a scope, and the Layer it acts on, if it acts on one. A token's
+/// `layer` claim narrows only requests that name a Layer; a request that names none, such as
+/// uploading content-addressed objects or reading, is decided by scope and role alone.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Need<'a> {
     pub scope: Scope,
@@ -216,8 +218,8 @@ impl Access {
                 "caller's role does not allow this scope",
             ));
         }
-        if let Some(layer) = &claims.layer
-            && need.layer != Some(layer.as_str())
+        if let (Some(limit), Some(target)) = (&claims.layer, need.layer)
+            && limit != target
         {
             return Err(Refusal::Forbidden("token is limited to another Layer"));
         }
