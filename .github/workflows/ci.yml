@@ -21,7 +21,8 @@ jobs:
   rust:
     name: Rust / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # The Windows test run takes 22 to 25 minutes and grows with the suite.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
