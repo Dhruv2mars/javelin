@@ -21,7 +21,7 @@ use std::{
 };
 
 use javelin::{
-    Attachment, Error, LayerId, LayerState, ObjectId, RemoteHead, Repository, Result,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository, Result,
     VersionNumber,
     outbox::{Entry, Fault, Outbox, Transport},
     tree::MemoryStore,
@@ -29,8 +29,9 @@ use javelin::{
 use javelin_control::Endpoint;
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{PublishOutcome, VERSION, code, decode, encode, read_frame, write_frame},
+    codec::{LayerOutcome, PublishOutcome, VERSION, code, decode, encode, read_frame, write_frame},
     fetch::{Blobs, fetch},
+    sender,
 };
 use javelin_stack::remote::{self as stack_remote, Refresh};
 use serde_json::{Value, json};
@@ -849,6 +850,143 @@ pub fn layer_refresh(args: Vec<OsString>) -> std::result::Result<Output, CliErro
     Ok((value, text, 0))
 }
 
+/// `javelin layer take ID [--operation OP] [--repo DIR]`: moves the Layer's writer lease on
+/// the attached node to this device, then brings the Layer there: a Layer this repository
+/// lacks is created over the node's base, its head moves to the node's (as `layer refresh`
+/// does), and its clone-backed directory is opened, or refreshed when it exists. Only the
+/// Layer's owner can take the lease. The take is recorded under OP; without one, a fresh ID
+/// is used, which is safe because taking a lease this device holds changes nothing.
+pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
+    let usage = "expected: javelin layer take ID [--operation OP] [--repo DIR] [--json]";
+    let mut args = args.into_iter();
+    let (mut layer, mut operation, mut root) = (None, None, None);
+    while let Some(arg) = args.next() {
+        let mut value = || args.next().ok_or_else(|| Error::InvalidInput(usage.into()));
+        if arg == "--repo" && root.is_none() {
+            root = Some(PathBuf::from(value()?));
+        } else if arg == "--operation" && operation.is_none() {
+            let value = value()?;
+            let id = value
+                .to_str()
+                .ok_or_else(|| Error::InvalidInput("operation IDs must be UTF-8".into()))?;
+            operation = Some(OperationId::parse(id)?);
+        } else if layer.is_none() && !arg.to_string_lossy().starts_with('-') {
+            let id = arg
+                .to_str()
+                .ok_or_else(|| Error::InvalidInput("Layer IDs must be UTF-8".into()))?;
+            layer = Some(LayerId::parse(id)?);
+        } else {
+            return Err(Error::InvalidInput(usage.into()).into());
+        }
+    }
+    let layer = layer.ok_or_else(|| Error::InvalidInput(usage.into()))?;
+    let operation = match operation {
+        Some(operation) => operation,
+        None => fresh_operation("take", &layer)?,
+    };
+    let root = match root {
+        Some(root) => root,
+        None => std::env::current_dir().map_err(Error::from)?,
+    };
+    let mut repo = Repository::open(&root)?;
+    let attached = repo.attachment()?.ok_or_else(|| {
+        Error::InvalidInput("this repository is not attached to a node; attach first".into())
+    })?;
+    let link = Link::writing(parse_target(&format!(
+        "{}/{}",
+        attached.node, attached.repository
+    ))?);
+    let (seq, node_head) = match call(
+        &link,
+        &Message::LayerTake {
+            operation: operation.clone(),
+            layer: layer.clone(),
+        },
+    )
+    .map_err(CliError::Remote)?
+    {
+        Message::LayerOutcome(LayerOutcome::Accepted { seq, checkpoint }) => (seq, checkpoint),
+        Message::LayerOutcome(LayerOutcome::Refused { code }) => {
+            return Err(CliError::Remote(RemoteError::new(
+                &code,
+                format!("the node refused to move Layer {}'s lease", layer.as_str()),
+            )));
+        }
+        _ => return Err(CliError::Remote(unexpected())),
+    };
+    let created = match repo.layer_state(&layer) {
+        Ok(_) => false,
+        Err(Error::InvalidInput(_)) => {
+            let node = sender::layer_head(&mut Session(&link), &layer)
+                .map_err(|e| CliError::Remote(remote(&link, e)))?;
+            let base = repo.layer_base(node.base)?;
+            repo.create_layer(&layer, &base)?;
+            true
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let refresh = stack_remote::refresh(&mut Session(&link), &mut repo, &layer)
+        .map_err(|e| CliError::Remote(remote(&link, e)))?;
+    let head = match repo.layer_state(&layer)? {
+        LayerState::Active { head } => head,
+        _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
+    };
+    let exists = repo
+        .workspace_root(&layer)?
+        .try_exists()
+        .map_err(Error::from)?;
+    let (workspace, refreshed) = if exists {
+        (None, Some(repo.refresh_workspace(&layer)?))
+    } else {
+        (Some(repo.open_workspace(&layer)?), None)
+    };
+    let root = repo.workspace_root(&layer)?;
+    let mut text = format!(
+        "This device now holds Layer {}'s writer lease, at the node's head {node_head} (seq {seq})",
+        layer.as_str()
+    );
+    if let Some(report) = &refreshed {
+        text.push_str(&format!(
+            "\nWorkspace {}: {} paths applied, {} local edits kept",
+            root.display(),
+            report.applied,
+            report.kept
+        ));
+    } else {
+        text.push_str(&format!("\nWorkspace: {}", root.display()));
+    }
+    let value = json!({
+        "ok": true,
+        "command": "layer take",
+        "layer": layer,
+        "operation": operation,
+        "node": {"seq": seq, "head": node_head},
+        "created": created,
+        "status": match refresh {
+            Refresh::Current { .. } => "current",
+            Refresh::Imported { .. } => "imported",
+        },
+        "head": head,
+        "root": root,
+        "workspace": workspace,
+        "refresh": refreshed,
+    });
+    Ok((value, text, 0))
+}
+
+/// An operation ID no earlier command used, for a step that is safe to repeat under a new one.
+fn fresh_operation(step: &str, layer: &LayerId) -> Result<OperationId> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let seed = format!(
+        "javelin-{step}\0{}\0{nanos}\0{}",
+        layer.as_str(),
+        std::process::id()
+    );
+    OperationId::parse(&format!("{step}-{}", ObjectId::for_blob(seed.as_bytes())))
+}
+
 /// Delivers outbox records to a node, one request each, with the repository's credential.
 /// A write never goes out without a token: no sign-in stalls the record with `unauthorized`,
 /// and an expired token that cannot be renewed with `control_plane_unavailable`. A node that
@@ -943,7 +1081,8 @@ pub fn outbox_replay(args: Vec<OsString>) -> std::result::Result<Output, CliErro
         Some(root) => root,
         None => std::env::current_dir().map_err(Error::from)?,
     };
-    let attached = Repository::open(&root)?.attachment()?.ok_or_else(|| {
+    let repo = Repository::open(&root)?;
+    let attached = repo.attachment()?.ok_or_else(|| {
         Error::InvalidInput("this repository is not attached to a node; attach first".into())
     })?;
     if attached.repository != name {
@@ -970,6 +1109,17 @@ pub fn outbox_replay(args: Vec<OsString>) -> std::result::Result<Output, CliErro
         })
         .collect();
     let pending = outbox.pending().count();
+    // Only this replay's stale answers: earlier ones were reported when they came back, and
+    // `outbox status` lists them all.
+    let stale: Vec<Value> = stale_appends(&outbox, &repo)
+        .into_iter()
+        .filter(|record| {
+            replay
+                .delivered
+                .iter()
+                .any(|delivered| record["seq"] == delivered.seq)
+        })
+        .collect();
     let mut text = format!(
         "Delivered {} records to {} at {}; {pending} pending.",
         delivered.len(),
@@ -990,24 +1140,87 @@ pub fn outbox_replay(args: Vec<OsString>) -> std::result::Result<Output, CliErro
                 1,
             )
         }
+        None if !stale.is_empty() => (Value::Null, json!(code::LAYER_STALE), 1),
         None => (Value::Null, Value::Null, 0),
     };
+    for line in stale_lines(&stale) {
+        text.push('\n');
+        text.push_str(&line);
+    }
     let value = json!({
-        "ok": replay.stalled.is_none(),
+        "ok": replay.stalled.is_none() && stale.is_empty(),
         "command": "outbox replay",
         "remote": name,
         "node": attached.node,
         "delivered": delivered,
         "stalled": stalled,
+        "stale": stale,
         "code": code,
         "pending": pending,
     });
     Ok((value, text, exit))
 }
 
+/// The appends in `outbox` the node answered as stale: another device holds the Layer's
+/// writer lease, or the Layer moved on. They stay in the journal with that outcome. Each
+/// names the node's head, and the local Layer head that holds the checkpoints the node
+/// lacks, which `javelin layer clone NEW --checkpoint HEAD` turns into a new Layer.
+pub(crate) fn stale_appends(outbox: &Outbox, repo: &Repository) -> Vec<Value> {
+    outbox
+        .entries()
+        .filter(|entry| entry.kind == javelin::outbox::Kind::Append)
+        .filter_map(|entry| {
+            let Ok(Message::LayerOutcome(LayerOutcome::Stale { head })) =
+                decode(entry.outcome.as_deref()?)
+            else {
+                return None;
+            };
+            let local = LayerId::parse(&entry.scope).ok().and_then(|layer| {
+                match repo.layer_state(&layer) {
+                    Ok(LayerState::Active { head }) => Some(head.checkpoint()),
+                    _ => None,
+                }
+            });
+            Some(json!({
+                "seq": entry.seq,
+                "layer": entry.scope,
+                "operation": entry.operation.as_str(),
+                "code": code::LAYER_STALE,
+                "node_head": head,
+                "local_head": local,
+            }))
+        })
+        .collect()
+}
+
+/// Text lines for `stale_appends`.
+pub(crate) fn stale_lines(stale: &[Value]) -> Vec<String> {
+    stale
+        .iter()
+        .map(|record| {
+            let recover = match record["local_head"].as_str() {
+                Some(head) => {
+                    format!("; keep its work with `javelin layer clone NEW --checkpoint {head}`")
+                }
+                None => String::new(),
+            };
+            format!(
+                "Record {} for Layer {} is layer_stale: the node holds {} and another device \
+                 may hold the writer lease{recover}",
+                record["seq"],
+                record["layer"].as_str().unwrap_or_default(),
+                record["node_head"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
 /// A short view of a node's reply, for output.
 fn summary(outcome: &[u8]) -> Value {
     match decode(outcome) {
+        Ok(Message::LayerOutcome(LayerOutcome::Stale { head })) => {
+            json!({"stale": head})
+        }
         Ok(Message::PublishOutcome(PublishOutcome::Published { number, .. })) => {
             json!({"published": number})
         }
