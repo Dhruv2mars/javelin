@@ -1,0 +1,11 @@
+// A short-lived probe Worker for the Free-plan measurements in ../README.md. `bun run probe`
+// deploys it, measures, and deletes it. It is never left running.
+{
+  "name": "javelin-free-probe",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "PROBE", "class_name": "Probe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Probe"] }]
+}

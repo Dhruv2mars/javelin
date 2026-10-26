@@ -24,5 +24,5 @@ fn local_node_conforms() {
             .ok()
             .map(|bytes| serde_json::from_slice(&bytes).expect("permissions.json")),
     };
-    common::run(&node, &snapshot);
+    common::run(&node, &repository, &snapshot);
 }

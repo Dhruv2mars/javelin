@@ -6,13 +6,18 @@
 //      restart; the retry commits exactly once.
 //   3. SIGKILL after commit, before the reply: the retry replays the same version.
 // Results go to evidence/results.json. Exit code 1 on any failed check.
+//
+// With SPIKE_URL set, it runs against a deployed WorldLog instead (no wrangler, no kills):
+// checks 1 and 1b, then a lost reply after commit and a request abandoned in flight, each
+// retried with the same operation. Results go to evidence/results-deployed.json.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, openSync, writeFileSync } from "node:fs";
 
 const PORT = Number(process.env.SPIKE_PORT ?? 18787);
-const BASE = `http://127.0.0.1:${PORT}`;
+const DEPLOYED = process.env.SPIKE_URL?.replace(/\/$/, "");
+const BASE = DEPLOYED ?? `http://127.0.0.1:${PORT}`;
 const PUBLISHERS = 50;
 const RUN = Date.now().toString(36);
 
@@ -291,9 +296,71 @@ async function killAfterCommit() {
   );
 }
 
+// --- test 4 (deployed): a lost reply and an abandoned request -----------------------------
+// A deployed object cannot be killed from here, so the client loses the reply instead. The
+// object's state is the same either way: the commit is durable before the reply leaves (the
+// output gate), so the client's loss is all that a dropped reply or a killed caller can cause.
+
+async function lostReplyDeployed() {
+  const repo = `lost-${RUN}`;
+  await post(`/r/${repo}/layers`, { layer: "a", head: "c-a" });
+  await post(`/r/${repo}/layers`, { layer: "b", head: "c-b" });
+
+  // The reply is discarded unread: the caller never learns the outcome.
+  const lost = commitFor(repo, "lost-op", "a", { n: 0 });
+  const response = await fetch(`${BASE}/r/${repo}/commit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(lost),
+  });
+  await response.body?.cancel();
+  const retry = await post(`/r/${repo}/commit`, lost);
+  check(
+    "deployed: retry after a lost reply replays the same version",
+    retry.outcome === "published" && retry.replayed === true && retry.n === 1,
+    JSON.stringify(retry),
+  );
+
+  // The caller gives up while the request is in flight. The object may still commit it, even
+  // after the read below, so the retry may replay or commit; the stored state below decides
+  // exactly-once. A record seen before the retry must be replayed.
+  const abandoned = commitFor(repo, "abandoned-op", "b", { n: 1 });
+  await post(`/r/${repo}/commit`, abandoned, 5).catch(() => undefined);
+  const before = await get(`/r/${repo}/publication?operation=abandoned-op`);
+  const again = await post(`/r/${repo}/commit`, abandoned);
+  check(
+    "deployed: retry after an abandoned request publishes version 2",
+    again.outcome === "published" && again.n === 2 && (!before.found || again.replayed === true),
+    `committed before the retry: ${before.found}; ${JSON.stringify(again)}`,
+  );
+
+  const state = await get(`/r/${repo}/state`);
+  const ops = state.world.map((w: Json) => w.operation);
+  check(
+    "deployed: one version per operation after the retries",
+    state.world.length === 3 && ops[1] === "lost-op" && ops[2] === "abandoned-op",
+    JSON.stringify(ops),
+  );
+}
+
 // --- run -----------------------------------------------------------------------------
 
+async function mainDeployed() {
+  const started = Date.now();
+  await concurrentPublishers();
+  await layerLifecycle();
+  await lostReplyDeployed();
+  const ok = checks.every((c) => c.ok);
+  writeFileSync(
+    "evidence/results-deployed.json",
+    JSON.stringify({ run: RUN, url: BASE, seconds: (Date.now() - started) / 1000, ok, checks }, null, 2),
+  );
+  console.log(ok ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED");
+  process.exit(ok ? 0 : 1);
+}
+
 async function main() {
+  if (DEPLOYED) return mainDeployed();
   await start();
   try {
     await concurrentPublishers();

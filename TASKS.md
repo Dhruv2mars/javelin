@@ -381,6 +381,16 @@ Wave 3, after wave 2:
   - [x] U9 author-owned revisions and exact approvals: `PublishRequest`, the node review
     partition (`review.rs`), tree IDs in collaboration.
   - [x] U13 Cloudflare managed node: Free-plan limits cited (unverified items marked), TypeScript Worker and Durable Object (wasm fallback, D23), `repo create --provider cloudflare` on workerd; deployed-only checks pending (`tools/node-cloudflare/README.md`).
+  - [x] U13 deployed: `javelin-node` runs on the Workers Free plan at
+    `https://javelin-node.dhruv-sharma10102005.workers.dev` with `NODE_ADMIN_TOKEN` as a secret;
+    conformance (2 passed), `repo create --provider cloudflare`, and the acceptance `target_*`
+    tests (5 verified, 7 not verified, 0 failed) against it; the U12 spike on a deployed object
+    (14 of 14); every unverified Free-plan row settled by docs or `bun run probe`
+    (`tools/node-cloudflare/README.md`).
+  - [ ] Move the World-log commit path, objects, Layers and review into the Cloudflare node
+    (today it serves provision, permissions and state only).
+  - [ ] Run the Rust node core on Cloudflare via wasm: split `javelin-core` and a store trait out
+    of the root crate (sketch in `tools/node-cloudflare/README.md`).
   - [x] U13 S1 follow-up: a `Provisioning` retry with another `--provider` or `--node-url` is refused as `operation_id_reused`; the reserved record stores both (`javelin-control` `NodeTarget`).
   - [x] U10 restricted agent traces (`javelin-node` trace store: D25 visibility, Maintain-only
     restriction, wire fetch guard, `missing_agent_trace` node tests).
