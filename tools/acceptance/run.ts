@@ -9,8 +9,7 @@
 //      starts the Cloudflare Worker under `wrangler dev` (workerd) with fresh state; set
 //      `JAVELIN_ACCEPTANCE_NODE_URL` and `JAVELIN_ACCEPTANCE_NODE_ADMIN_TOKEN` (and optionally
 //      `JAVELIN_ACCEPTANCE_TARGET`) to run against another node, such as a deployed Worker.
-//   4. Product gaps: the ignored `gap_*` tests, reported NOT VERIFIED while they still fail.
-//   5. Proves the stand-in's marker is absent, prints one table, and exits non-zero if any
+//   4. Proves the stand-in's marker is absent, prints one table, and exits non-zero if any
 //      expected assertion FAILED or is missing.
 //
 // It kills only the processes it started and removes only its own scratch directory.
@@ -43,7 +42,8 @@ const expected: Record<string, string[]> = {
     "gate4.exact-revision-authorization", "gate4.immutable-prior-revisions",
     "gate4.lost-reply-one-outcome", "gate4.fork-data-without-credentials",
     "gate4.restricted-traces", "gate4.distinct-outage-outcomes",
-    "outage.local-layer-work", "outage.node-down-queue", "outage.control-plane-refusals", "outage.stack-node-down",
+    "outage.local-layer-work", "outage.node-down-queue", "outage.control-plane-refusals",
+    "outage.control-plane-fork", "outage.stack-node-down",
     "outage.review-node-down", "outage.coordinator-transactions",
   ],
   "self-hosted-cli": ["cli.repo-create", "cli.attach", "cli.attach-node-down"],
@@ -248,24 +248,6 @@ try {
       "needs a deployed Free-plan Worker (wrangler deploy, NODE_ADMIN_TOKEN secret); out of scope: no account, login or token. Rerun with JAVELIN_ACCEPTANCE_NODE_URL set to it");
   }
 
-  // --- 4. Product gaps: designed outcomes the product does not give yet. -----------------------
-  // Only the documented wrong code counts as the gap; any other failure, or no test run, FAILED.
-  for (const [id, test, today, what] of [
-    ["gap.repo-create-control-plane-unavailable", "gap_repo_create_without_a_control_plane", "storage_error",
-      "repo create with the control plane unreachable should be control_plane_unavailable; it is storage_error"],
-    ["gap.attach-node-5xx", "gap_attach_to_a_failing_node", "node_error",
-      "a node answering HTTP 5xx should be node_unavailable; attach reports node_error"],
-  ]) {
-    const out = await run(["cargo", "test", "--locked", "--test", "hosted_acceptance", test, "--", "--ignored"],
-      { JAVELIN_ACCEPTANCE_CLI: javelin });
-    const ran = /running 1 test/.test(out.stdout);
-    const gap = ran && out.stdout.includes(`left: "${today}"`);
-    record("gaps", id, !ran ? "FAILED" : out.code === 0 ? "VERIFIED" : gap ? "NOT VERIFIED" : "FAILED",
-      !ran ? `${test} did not run (exit ${out.code}):\n${out.stderr.slice(-2000)}`
-        : out.code === 0 ? `fixed: ${test} passes now; remove its #[ignore]`
-        : gap ? `product gap recorded in TASKS.md (U14): ${what}`
-        : `${test} failed for another reason:\n${out.stdout.slice(-2000)}`);
-  }
 } finally {
   for (const child of children) {
     child.kill();
@@ -273,7 +255,7 @@ try {
   }
 }
 
-// --- 5. The stand-in never fired during product workflows. -----------------------------------
+// --- 4. The stand-in never fired during product workflows. -----------------------------------
 const fires = await exists(marker);
 record("git", "git.marker-absent", fires ? "FAILED" : "VERIFIED", fires
   ? "the git stand-in was invoked during a product workflow"
