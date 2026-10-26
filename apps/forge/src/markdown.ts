@@ -6,21 +6,24 @@ import { escapeHtml } from "./highlight";
 const SAFE = /^(https?:|mailto:|#)/i;
 
 /**
- * The repository path a relative link names from directory `dir`, decoded once, or null for
- * an absolute, unsafe or fragment-only link. `..` never climbs above the root.
+ * The repository path a relative link names from directory `dir`, or null for an absolute,
+ * unsafe or fragment-only link. `dir` is a repository path, already decoded, and is used as
+ * it is; only the link's own segments are percent-decoded, once. `..` never climbs above
+ * the root.
  */
 export function resolveRelative(href: string, dir = ""): string | null {
   if (SAFE.test(href) || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return null;
   const [path] = href.split(/[?#]/);
-  const parts = (path.startsWith("/") ? [] : dir.split("/").filter(Boolean)).concat(path.split("/"));
-  const out: string[] = [];
-  for (const raw of parts) {
-    let part = raw;
+  const decode = (raw: string) => {
     try {
-      part = decodeURIComponent(raw);
+      return decodeURIComponent(raw);
     } catch {
-      // keep a segment with a malformed escape as written
+      return raw; // a malformed escape stays as written
     }
+  };
+  const base = path.startsWith("/") ? [] : dir.split("/").filter(Boolean);
+  const out: string[] = [];
+  for (const part of [...base, ...path.split("/").map(decode)]) {
     if (part === "..") out.pop();
     else if (part && part !== ".") out.push(part);
   }
