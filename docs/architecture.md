@@ -131,6 +131,8 @@ Stack (`src/stack.rs`, `crates/javelin-stack/src/lib.rs`):
 - Binding blobs are recorded and verified by `record_in` and `verify_binding`.
 - `stack_layer` loads blobs with `read_blob_bounded`, bounded by `Resource::BlobBytes.limit()`.
 - Outcomes: `StackOutcome::Updated` or `StackOutcome::Conflicts`. Errors: `StackError::Storage` or `StackError::Merge`.
+- Server-side Stack (U6): the node serves `LayerStack` (`crates/javelin-node/src/stack.rs`) with the same `stack_layer`, so the same inputs give the same changes bytes locally and on the node (`crates/javelin-node/tests/stack.rs`, pinned). `target_head` must be the current head, or an earlier one whose recorded operation replays; any other head is `Stale` and writes nothing. Conflicts reply `Refused{conflict}` with no paths on the wire; a merge over a `Resource` limit, or a blob over the merge's blob bound, replies `Refused{merge_limit}`. Neither writes anything or reserves the operation ID. A `Get` of only checkpoints returns the node's stored checkpoint bytes, which hash to the head ID.
+- Refresh from a node's head: `javelin_stack::remote::refresh` reads `LayerHead`, fetches and verifies the head checkpoint, and compares its changes with the local head's. Equal is current. Otherwise the node must be ahead (`seq` past the local revision) on the same base tree, or it is `layer_diverged`. Missing blobs are fetched, then `Repository::import_stacked_head` stores the changes as a standalone checkpoint and stacks it onto the local head in one transaction, so the new head is a Stack result and capture treats an unrefreshed directory as behind. CLI `layer refresh ID` runs it against `attach.json`'s node, then `refresh_workspace` if the Layer has a directory.
 
 Merge engine (`crates/javelin-merge`):
 
@@ -284,6 +286,7 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 - A crash between a capture's head commit and its sync write can make the next refresh report a false `refresh_conflict`. Nothing is lost; resolve it by capturing and refreshing again.
 - Capture and first-time base materialization read full snapshots (`manifest_at`, `checkpoint_manifest`) by walking a tree: O(snapshot), independent of history length. They already walk the whole directory, so this is not their dominant cost. Commands no longer re-validate full state.
 - Directory fsync is a no-op off Unix. `fullfsync` has effect only on Apple platforms.
+- `layer refresh` decides that the node is ahead from `seq` alone. Revisions and `seq` move together while every capture is appended and each node Stack is refreshed before the next; several node Stacks between refreshes leave the local revision behind `seq`, and a local capture that never reached the node can then be superseded by the node's head (it stays in the Layer's history).
 - Merge refuses inputs that exceed the `Resource` limits. Only line-level diff3 is implemented, so binary and structural changes surface as conflicts.
 - Protocol frames, objects and item counts are capped by the `limits` constants; snapshots are not. Only protocol version 2 exists. `Get` serves any stored object by id; authorization is outside the crate.
 - Fetch returns files and stores chunks in a caller-supplied store; attaching a local repository to fetched versions is roadmap item 7.

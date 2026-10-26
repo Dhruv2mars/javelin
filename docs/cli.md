@@ -47,6 +47,7 @@ javelin layer diff ID [--revision N]
 javelin layer radar ID
 javelin layer clone ID --checkpoint HASH
 javelin layer stack ID --revision N --source HASH --operation ID
+javelin layer refresh ID
 javelin layer discard ID --revision N --operation ID
 
 javelin workspace create ID [--world N]
@@ -372,6 +373,14 @@ Stack changes only native state, so after `layer stack` the target's directory
 lacks the stacked work. Capture never reverts it: `checkpoint` refuses with
 `invalid_input` and other commands skip the capture with `capture.behind: true`.
 Run `javelin workspace refresh ID` to bring the directory to the stacked head.
+
+A Stack on the attached node moves the node's head only. `javelin layer refresh ID`
+reads that head and, when the local Layer is behind it, makes it the local head as a
+Stack result, then refreshes the Layer's directory if it has one. The directory is not
+captured first, so uncaptured edits are kept. JSON reports `status` (`current` or
+`imported`), the node's `seq` and `head`, the local `head`, and the `workspace` refresh
+report. A local Layer that holds captures the node lacks is refused with
+`layer_diverged`, and a repository with no `attach.json` with `invalid_input`.
 
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within

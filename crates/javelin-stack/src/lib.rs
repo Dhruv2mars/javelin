@@ -1,4 +1,5 @@
 //! Bounded durable Stack from an immutable source checkpoint to an exact target.
+//! [`remote`] runs a Stack on a node and refreshes a local Layer from a node's head.
 use javelin::{
     CheckpointId, Choice, FileEntry, LayerHead, LayerUpdate, Manifest, ObjectId, OperationId,
     RepoPath, Repository, SparseChanges,
@@ -6,6 +7,8 @@ use javelin::{
 use javelin_merge::{Conflict, MergeError, Merged, Resource};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+
+pub mod remote;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StackOutcome {

@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 javelin = { path = "../.." }
 javelin-merge = { path = "../javelin-merge" }
+javelin-protocol = { path = "../javelin-protocol" }
 serde_json = "1.0.154"
 
 [dev-dependencies]
