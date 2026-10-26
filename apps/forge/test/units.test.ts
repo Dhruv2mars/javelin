@@ -1,6 +1,7 @@
 // Pure units: the diff's bounds and final newlines, routes, README links, bounded replies.
 import { expect, test } from "bun:test";
 import { readBounded } from "../../../packages/protocol/src";
+import { contents } from "../src/data";
 import { MAX_EDITS, diffLines } from "../src/diff";
 import { relativeTargets, renderMarkdown, resolveRelative } from "../src/markdown";
 import { findTarget, parseRoute } from "../src/routes";
@@ -47,6 +48,22 @@ test("adding or removing the final newline is a change", () => {
   expect(diffLines("a\nb", "a\nb")).toEqual([]);
 });
 
+test("a NUL past the binary scan is content, not a final-newline marker", () => {
+  // Past the first 8,000 bytes a NUL does not make a file binary, so it reaches the diff.
+  const prefix = `${"x".repeat(8001)}\n`;
+  const before = `${prefix}a`;
+  const after = `${prefix}a\0\n`;
+  const entry = { kind: "regular" as const, content: "0".repeat(64), executable: false };
+  expect(contents(entry, new TextEncoder().encode(after)).kind).toBe("text");
+  const hunks = diffLines(before, after)!;
+  expect(hunks).toHaveLength(1);
+  expect(hunks[0].lines.map((l) => [l.kind, l.text, l.eof ?? false])).toEqual([
+    ["ctx", "x".repeat(8001), false],
+    ["del", "a", true],
+    ["add", "a\0", false],
+  ]);
+});
+
 test("malformed percent escapes are a missing page", () => {
   expect(parseRoute("/owner/repo/file/1/%ZZ")).toEqual({ page: "missing", path: "/owner/repo/file/1/%ZZ" });
   expect(parseRoute("/owner/repo/file/1/a%20b.md")).toMatchObject({ page: "file", path: "a b.md" });
@@ -71,6 +88,10 @@ test("storage that throws never stops the page, and a chosen node stays in memor
 test("README links decode once and name their targets", () => {
   expect(resolveRelative("my%20file.md", "docs")).toBe("docs/my file.md");
   expect(resolveRelative("../src/", "docs")).toBe("src");
+  // The current directory is a repository path already; only the link is decoded.
+  expect(resolveRelative("guide.md", "my%20docs")).toBe("my%20docs/guide.md");
+  expect(resolveRelative("a%20b.md", "my%20docs")).toBe("my%20docs/a b.md");
+  expect(relativeTargets("[g](guide.md)", "my%20docs")).toEqual(["my%20docs/guide.md"]);
   expect(resolveRelative("https://example.com")).toBeNull();
   expect(resolveRelative("javascript:alert(1)")).toBeNull();
   const source = "[a](my%20file.md) and [b](src/) and ![c](img.png) and [d](https://x.test)";
