@@ -499,8 +499,16 @@ fn stage(
     let fetched = {
         let mut blobs = RepoBlobs(&mut repo);
         let version = Some(VersionNumber::new(head.number)?);
-        fetch(Down(link), Up(link), &trees, &mut blobs, version, None)
-            .map_err(|e| CliError::Remote(remote(link, e)))?
+        fetch(
+            Down(link),
+            Up(link),
+            &trees,
+            &mut blobs,
+            None,
+            version,
+            None,
+        )
+        .map_err(|e| CliError::Remote(remote(link, e)))?
     };
     let fetched_head = RemoteHead {
         number: fetched.number.get(),

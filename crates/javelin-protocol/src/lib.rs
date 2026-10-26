@@ -9,7 +9,7 @@ pub mod receiver;
 pub mod sender;
 
 pub use codec::{Kind, Message, Outcome};
-pub use fetch::{Fetched, fetch};
+pub use fetch::{Anchor, Fetched, fetch};
 pub use receiver::{WorldLog, handle_request, serve};
 pub use sender::push;
 

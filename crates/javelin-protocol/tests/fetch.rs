@@ -42,7 +42,7 @@ fn run(
         let _ = serve(&mut repo, &mut server_in, &mut server_out);
         repo
     });
-    let result = fetch(client_in, client_out, trees, blobs, version, prefix);
+    let result = fetch(client_in, client_out, trees, blobs, None, version, prefix);
     (result, server.join().unwrap())
 }
 
@@ -189,6 +189,7 @@ fn against(reply: impl Fn(&Message) -> Message + Send + 'static) -> Result<Fetch
         client_out,
         &MemoryStore::default(),
         &mut BTreeMap::new(),
+        None,
         Some(v(1)),
         None,
     )
@@ -342,7 +343,7 @@ fn run_lying(
             }
         }
     });
-    fetch(client_in, client_out, trees, blobs, None, None)
+    fetch(client_in, client_out, trees, blobs, None, None, None)
 }
 
 #[test]
