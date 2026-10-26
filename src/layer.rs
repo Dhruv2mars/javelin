@@ -287,21 +287,21 @@ impl Repository {
         Ok(history)
     }
 
-    /// Whether `operation` has a recorded capture, Stack or discard attempt on `layer`. Reads
-    /// only, so a caller can tell a retry, which replays its recorded outcome, from a new write.
-    pub fn has_layer_attempt(&self, operation: &OperationId, layer: &LayerId) -> Result<bool> {
+    /// The recorded capture, Stack or discard attempt `operation` made on `layer`: `None`
+    /// when there is none, else whether it was accepted. Reads only, so a caller can tell a
+    /// retry, which replays its recorded outcome, from a new write.
+    pub fn layer_attempt(&self, operation: &OperationId, layer: &LayerId) -> Result<Option<bool>> {
         let tx = self.conn.unchecked_transaction()?;
         validate_format(&tx)?;
-        let found = tx
+        let accepted = tx
             .query_row(
-                "SELECT 1 FROM layer_attempts WHERE id=?1 AND layer=?2",
+                "SELECT accepted FROM layer_attempts WHERE id=?1 AND layer=?2",
                 params![operation.as_str(), layer.as_str()],
-                |_| Ok(()),
+                |r| r.get::<_, bool>(0),
             )
-            .optional()?
-            .is_some();
+            .optional()?;
         tx.commit()?;
-        Ok(found)
+        Ok(accepted)
     }
 
     /// Future capture supplies a complete delta relative to the Layer's frozen World.

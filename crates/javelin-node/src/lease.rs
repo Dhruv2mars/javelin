@@ -8,6 +8,14 @@
 //! appends stay recoverable with `javelin layer clone`. A retry of an operation the node
 //! already recorded on the Layer replays its outcome whoever holds the lease now.
 //!
+//! The lease lives in `node.db` and the Layer's checkpoints in the repository's database,
+//! so one transaction cannot hold both. Ownership is therefore written first: before a
+//! Layer's first write, the writer and its operation are recorded as a claim. Once that
+//! operation's attempt is recorded as accepted, the claim becomes the lease; if it was not,
+//! the claim is void. Every lease read settles a claim first, so a crash between the first
+//! append and its lease leaves the Layer to the principal of its first checkpoint operation,
+//! and no one else can take it.
+//!
 //! `LayerTake` moves the lease to the caller's device. Only the owner may take it; another
 //! principal is `forbidden`. Each take is recorded under its operation ID, so a retry
 //! replays its outcome and never moves the lease twice. A Layer-limited token (D26) reaches
@@ -17,8 +25,8 @@ use javelin::{Error, LayerId, LayerState, OperationId};
 use javelin_identity::Grant;
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{LayerOutcome, code, decode, encode},
-    receiver::refusal,
+    codec::{LayerOutcome, LeaseHolder, code, decode, encode},
+    receiver::{WorldLog, refusal},
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -28,11 +36,18 @@ use crate::{
     review::is_review_layer,
 };
 
-/// Each Layer's lease, and each decided `LayerTake` with its outcome.
+/// Each Layer's lease, the claim a Layer's first write makes before it runs, and each
+/// decided `LayerTake` with its outcome.
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS layer_leases (
     layer TEXT PRIMARY KEY,
     principal TEXT NOT NULL,
     device TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lease_claims (
+    layer TEXT PRIMARY KEY,
+    principal TEXT NOT NULL,
+    device TEXT NOT NULL,
+    operation TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS lease_takes (
     operation TEXT PRIMARY KEY,
@@ -64,12 +79,10 @@ impl Writer {
     }
 }
 
-/// The lease on `layer`, if any.
-pub(crate) fn holder(
-    records: &Connection,
-    layer: &LayerId,
-) -> Result<Option<Writer>, ProtocolError> {
-    records
+/// The lease on `layer`, if any, after settling a claim its first write left.
+pub(crate) fn holder(log: &FileWorldLog, layer: &LayerId) -> Result<Option<Writer>, ProtocolError> {
+    settle(log, layer)?;
+    log.records()
         .query_row(
             "SELECT principal, device FROM layer_leases WHERE layer = ?1",
             [layer.as_str()],
@@ -84,10 +97,56 @@ pub(crate) fn holder(
         .map_err(storage)
 }
 
-/// A write to `layer` by `writer`, through its lease. `write` performs it. A free lease
-/// is taken once the write is accepted. When another device holds the lease, the write
-/// runs only to replay an operation already recorded on the Layer; otherwise the reply is
-/// the node's head as stale, and nothing is written.
+/// Resolves a claim on `layer`: the lease when its operation's attempt was accepted, and
+/// nothing otherwise. The node serves one request at a time, so a claim seen here is never
+/// one whose write is still running.
+fn settle(log: &FileWorldLog, layer: &LayerId) -> Result<(), ProtocolError> {
+    let claim: Option<String> = log
+        .records()
+        .query_row(
+            "SELECT operation FROM lease_claims WHERE layer = ?1",
+            [layer.as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage)?;
+    let Some(operation) = claim else {
+        return Ok(());
+    };
+    let operation = OperationId::parse(&operation)
+        .map_err(|_| storage_detail("a lease claim names an invalid operation"))?;
+    let accepted = log.repo().layer_attempt(&operation, layer)? == Some(true);
+    resolve_claim(log.records(), layer, accepted)
+}
+
+/// Turns `layer`'s claim into its lease when `accepted`, and drops it either way.
+fn resolve_claim(
+    records: &Connection,
+    layer: &LayerId,
+    accepted: bool,
+) -> Result<(), ProtocolError> {
+    let tx = records.unchecked_transaction().map_err(storage)?;
+    if accepted {
+        tx.execute(
+            "INSERT OR IGNORE INTO layer_leases (layer, principal, device)
+             SELECT layer, principal, device FROM lease_claims WHERE layer = ?1",
+            [layer.as_str()],
+        )
+        .map_err(storage)?;
+    }
+    tx.execute(
+        "DELETE FROM lease_claims WHERE layer = ?1",
+        [layer.as_str()],
+    )
+    .map_err(storage)?;
+    tx.commit().map_err(storage)
+}
+
+/// A write to `layer` by `writer`, through its lease. `write` performs it. A free lease is
+/// claimed for the writer before the write runs, and becomes its lease once the write is
+/// accepted. When another device holds the lease, the write runs only to replay an
+/// operation already recorded on the Layer; otherwise the reply is the node's head as
+/// stale, and nothing is written.
 pub(crate) fn write(
     log: &mut FileWorldLog,
     writer: &Writer,
@@ -95,33 +154,58 @@ pub(crate) fn write(
     layer: &LayerId,
     write: impl FnOnce(&mut FileWorldLog) -> Result<LayerOutcome, ProtocolError>,
 ) -> Result<LayerOutcome, ProtocolError> {
-    match holder(log.records(), layer)? {
+    match holder(log, layer)? {
         Some(holder) if holder == *writer => write(log),
         Some(_) => {
             let state = match log.repo().layer_state(layer) {
                 Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
                 state => state?,
             };
-            if log.repo().has_layer_attempt(operation, layer)? {
+            if log.repo().layer_attempt(operation, layer)?.is_some() {
                 write(log)
             } else {
                 Ok(stale_or_refused(state))
             }
         }
         None => {
+            log.records()
+                .execute(
+                    "INSERT INTO lease_claims (layer, principal, device, operation)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        layer.as_str(),
+                        writer.principal,
+                        writer.device,
+                        operation.as_str()
+                    ],
+                )
+                .map_err(storage)?;
+            // A failed write leaves the claim for the next lease read to settle.
             let outcome = write(log)?;
-            if matches!(outcome, LayerOutcome::Accepted { .. }) {
-                log.records()
-                    .execute(
-                        "INSERT OR IGNORE INTO layer_leases (layer, principal, device)
-                         VALUES (?1, ?2, ?3)",
-                        params![layer.as_str(), writer.principal, writer.device],
-                    )
-                    .map_err(storage)?;
-            }
+            let accepted = matches!(outcome, LayerOutcome::Accepted { .. });
+            resolve_claim(log.records(), layer, accepted)?;
             Ok(outcome)
         }
     }
+}
+
+/// `LayerHead`, with whether `grant`'s device holds the Layer's writer lease.
+pub(crate) fn layer_head(
+    log: &mut FileWorldLog,
+    grant: Option<&Grant>,
+    layer: &LayerId,
+) -> Result<Message, ProtocolError> {
+    let mut reply = log.layer_head(layer)?;
+    let held = holder(log, layer)?;
+    if let Message::LayerState { lease, .. } = &mut reply {
+        let caller = grant.and_then(|grant| Writer::of(grant).ok());
+        *lease = match held {
+            None => LeaseHolder::Free,
+            Some(holder) if Some(&holder) == caller.as_ref() => LeaseHolder::Caller,
+            Some(_) => LeaseHolder::Other,
+        };
+    }
+    Ok(reply)
 }
 
 /// One `LayerTake`: moves `layer`'s lease to `writer`'s device and replies with the node's
@@ -172,7 +256,7 @@ pub(crate) fn take(
         Ok(state) => return Ok(stale_or_refused(state)),
         Err(error) => return Err(error.into()),
     };
-    if let Some(holder) = holder(log.records(), layer)?
+    if let Some(holder) = holder(log, layer)?
         && holder.principal != writer.principal
     {
         return Err(ProtocolError::new(

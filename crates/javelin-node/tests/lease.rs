@@ -3,23 +3,30 @@
 //! (`docs/direction.md`, Layers follow their owner; `docs/online-design.md` D21).
 
 use std::{
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpStream},
+    path::Path,
+    process::{Child, Command, Stdio},
     thread,
 };
 
 use javelin::{FileEntry, LayerId, ObjectId, OperationId, RepoPath, SparseChanges, VersionNumber};
 use javelin_collaboration::{PrincipalId, Role};
-use javelin_node::{FileWorldLog, bind_loopback, serve};
+use javelin_identity::test_keys;
+use javelin_node::{
+    FileWorldLog,
+    auth::{self, Gate},
+    bind_loopback, serve,
+};
 use javelin_protocol::{
     Message,
-    codec::{Kind, LayerOutcome, code, decode, encode},
+    codec::{Kind, LayerOutcome, LeaseHolder, code, decode, encode},
 };
 use tempfile::TempDir;
 
 #[path = "wire_support/mod.rs"]
 mod wire_support;
-use wire_support::{OWNER, device_token, gate};
+use wire_support::{OWNER, device_token};
 
 const REPO: &str = "repo-1";
 const LAPTOP: &str = "dev-laptop";
@@ -58,9 +65,17 @@ struct Node {
     edits: Vec<(ObjectId, Vec<u8>)>,
 }
 
-fn start() -> (TempDir, Node) {
-    let dir = TempDir::new().unwrap();
-    let mut log = FileWorldLog::open(dir.path()).unwrap();
+/// Seeds the node directory `dir`: its stored keys and permissions, the two Layers and the
+/// edits' blobs. Returns the log and the node without an address.
+fn seed(dir: &Path) -> (FileWorldLog, Node) {
+    let mut permissions =
+        wire_support::permissions(REPO, javelin_collaboration::Visibility::Public);
+    permissions
+        .roles
+        .insert(PrincipalId::parse("stranger").unwrap(), Role::Maintain);
+    auth::write_permissions(dir, &permissions).unwrap();
+    auth::write_keys(dir, &test_keys::keys()).unwrap();
+    let mut log = FileWorldLog::open(dir).unwrap();
     let base = VersionNumber::new(0).unwrap();
     let first = log
         .create_layer(&layer("work"), base)
@@ -75,33 +90,56 @@ fn start() -> (TempDir, Node) {
     let edits = (1..=3)
         .map(|n| changes(&mut log, "notes.txt", format!("edit {n}").as_bytes()))
         .collect();
-    let mut gate = gate(REPO);
-    let mut permissions =
-        wire_support::permissions(REPO, javelin_collaboration::Visibility::Public);
-    permissions.epoch = 2;
-    permissions
-        .roles
-        .insert(PrincipalId::parse("stranger").unwrap(), Role::Maintain);
-    gate.apply(permissions).unwrap();
+    let node = Node {
+        addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+        first,
+        other,
+        edits,
+    };
+    (log, node)
+}
+
+/// A seeded node, served in process until the test process exits.
+fn start() -> (TempDir, Node) {
+    let dir = TempDir::new().unwrap();
+    let (log, mut node) = seed(dir.path());
+    let gate = Gate::load(dir.path(), REPO).unwrap();
     let listener = bind_loopback("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
+    node.addr = listener.local_addr().unwrap();
     thread::spawn(move || {
         let mut log = log;
         let _ = serve(&listener, REPO, &mut log, &gate, None);
     });
-    (
-        dir,
-        Node {
-            addr,
-            first,
-            other,
-            edits,
-        },
-    )
+    (dir, node)
+}
+
+/// The `javelin-node` binary serving `dir`, with `failpoint` set when given. Returns the
+/// process and its address.
+fn spawn(dir: &Path, failpoint: Option<&str>) -> (Child, SocketAddr) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_javelin-node"));
+    command
+        .args(["serve", dir.to_str().unwrap(), REPO, "127.0.0.1:0"])
+        .stderr(Stdio::piped())
+        .env_remove("JAVELIN_FAILPOINT");
+    if let Some(failpoint) = failpoint {
+        command.env("JAVELIN_FAILPOINT", failpoint);
+    }
+    let mut child = command.spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stderr.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let addr = line.trim().rsplit(' ').next().unwrap().parse().unwrap();
+    (child, addr)
 }
 
 /// One message with `token`, and the decoded reply.
 fn send(addr: SocketAddr, token: &str, message: &Message) -> Message {
+    try_send(addr, token, message).expect("the node did not reply")
+}
+
+/// One message with `token`, and the decoded reply, or `None` when the node closed first.
+fn try_send(addr: SocketAddr, token: &str, message: &Message) -> Option<Message> {
     let body = encode(message).unwrap();
     let mut stream = TcpStream::connect(addr).unwrap();
     write!(
@@ -109,12 +147,12 @@ fn send(addr: SocketAddr, token: &str, message: &Message) -> Message {
         "POST /v2/r/{REPO} HTTP/1.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n",
         body.len()
     )
-    .unwrap();
-    stream.write_all(&body).unwrap();
+    .ok()?;
+    stream.write_all(&body).ok()?;
     let mut reply = Vec::new();
-    stream.read_to_end(&mut reply).unwrap();
-    let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-    decode(&reply[split + 4..]).unwrap()
+    stream.read_to_end(&mut reply).ok()?;
+    let split = reply.windows(4).position(|w| w == b"\r\n\r\n")?;
+    decode(&reply[split + 4..]).ok()
 }
 
 fn device(dev: &str) -> String {
@@ -326,4 +364,122 @@ fn a_stack_from_a_device_without_the_lease_is_stale() {
         Message::LayerOutcome(LayerOutcome::Stale { head })
     );
     assert_eq!(node.head(), (1, head));
+}
+
+#[test]
+fn a_crash_between_the_first_append_and_its_lease_keeps_the_layer_with_its_owner() {
+    let dir = TempDir::new().unwrap();
+    let (log, mut node) = seed(dir.path());
+    drop(log);
+    let laptop = device(LAPTOP);
+
+    // The node stops right after the first append commits, before its lease is written.
+    let (mut child, addr) = spawn(dir.path(), Some("layer_capture_after_commit"));
+    node.addr = addr;
+    let (id, bytes) = node.edits[0].clone();
+    assert_eq!(
+        send(
+            addr,
+            &laptop,
+            &Message::Objects(vec![(Kind::Checkpoint, id, bytes)])
+        ),
+        Message::Stored { count: 1 }
+    );
+    let append = Message::LayerAppend {
+        operation: op("append-1"),
+        layer: layer("work"),
+        parent: Some(node.first),
+        checkpoint: id,
+    };
+    assert_eq!(
+        try_send(addr, &laptop, &append),
+        None,
+        "no reply before the crash"
+    );
+    assert_eq!(child.wait().unwrap().code(), Some(86));
+
+    // After the restart the Layer is the first append's principal's: another principal
+    // cannot take it, and neither can it write, while the owner's other device can take it.
+    let (mut child, addr) = spawn(dir.path(), None);
+    node.addr = addr;
+    let stranger = device_token("stranger", REPO, "dev-stranger", None);
+    assert_eq!(
+        error_code(node.take(&stranger, "take-1", "work")),
+        code::FORBIDDEN
+    );
+    let (seq, head) = node.head();
+    assert_eq!(seq, 1, "the append that committed before the crash is kept");
+    assert_eq!(
+        node.append(&stranger, "append-2", head, 1),
+        LayerOutcome::Stale { head }
+    );
+    // The laptop holds the lease the claim became: its retry replays, its next write lands.
+    assert_eq!(
+        accepted(&node.append(&laptop, "append-1", node.first, 0)),
+        (1, head)
+    );
+    assert!(matches!(
+        node.take(&device(DESKTOP), "take-2", "work"),
+        Message::LayerOutcome(LayerOutcome::Accepted { seq: 1, .. })
+    ));
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn a_crash_before_the_first_append_commits_leaves_no_owner() {
+    let dir = TempDir::new().unwrap();
+    let (log, mut node) = seed(dir.path());
+    drop(log);
+    let laptop = device(LAPTOP);
+    let (mut child, addr) = spawn(dir.path(), Some("layer_capture_before_commit"));
+    node.addr = addr;
+    let (id, bytes) = node.edits[0].clone();
+    send(
+        addr,
+        &laptop,
+        &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]),
+    );
+    let append = Message::LayerAppend {
+        operation: op("append-1"),
+        layer: layer("work"),
+        parent: Some(node.first),
+        checkpoint: id,
+    };
+    assert_eq!(try_send(addr, &laptop, &append), None);
+    assert_eq!(child.wait().unwrap().code(), Some(86));
+
+    // Nothing was written, so the claim is void: the Layer is still free, and the
+    // retry's write takes it.
+    let (mut child, addr) = spawn(dir.path(), None);
+    node.addr = addr;
+    assert_eq!(node.head().0, 0);
+    let (seq, head) = accepted(&node.append(&laptop, "append-1", node.first, 0));
+    assert_eq!(seq, 1);
+    assert_eq!(
+        node.append(&device(DESKTOP), "append-2", head, 1),
+        LayerOutcome::Stale { head }
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn layer_head_tells_the_caller_whether_its_device_holds_the_lease() {
+    let (_dir, node) = start();
+    let laptop = device(LAPTOP);
+    let lease = |token: &str| match send(
+        node.addr,
+        token,
+        &Message::LayerHead {
+            layer: layer("work"),
+        },
+    ) {
+        Message::LayerState { lease, .. } => lease,
+        other => panic!("not a Layer state: {other:?}"),
+    };
+    assert_eq!(lease(&laptop), LeaseHolder::Free);
+    accepted(&node.append(&laptop, "append-1", node.first, 0));
+    assert_eq!(lease(&laptop), LeaseHolder::Caller);
+    assert_eq!(lease(&device(DESKTOP)), LeaseHolder::Other);
 }
