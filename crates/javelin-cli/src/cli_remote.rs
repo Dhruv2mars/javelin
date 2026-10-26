@@ -1,6 +1,8 @@
 //! `javelin attach`: fetches a hosted repository's head into the local store over the
-//! node's HTTP transport, one protocol frame per request, then records the attachment.
-//! `javelin_protocol::fetch` runs unchanged on top of `Link`. See `docs/online-design.md`
+//! node's HTTP transport, one protocol frame per request, then records the attachment. The
+//! transport is HTTPS to any host, and plain HTTP only to this machine (`Endpoint`), so a
+//! token never crosses a network in clear. `javelin_protocol::fetch` runs unchanged on top
+//! of `Link`. See `docs/online-design.md`
 //! section 4.1 (U4). `javelin layer refresh` reads a Layer's head from the attached node
 //! over the same transport (section 4.3, U6).
 //!
@@ -14,7 +16,6 @@ use std::{
     cell::RefCell,
     ffi::OsString,
     io::{self, Cursor, Read, Write},
-    net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -25,6 +26,7 @@ use javelin::{
     outbox::{Entry, Fault, Outbox, Transport},
     tree::MemoryStore,
 };
+use javelin_control::Endpoint;
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{PublishOutcome, VERSION, code, decode, encode, read_frame, write_frame},
@@ -41,8 +43,8 @@ const PROVIDER: &str = "self-hosted";
 /// Lock file inside a staging directory, held by the attach that owns it.
 const STAGING_LOCK: &str = "attach.lock";
 const TIMEOUT: Duration = Duration::from_secs(30);
-/// One framed message plus the HTTP head in front of it.
-const MAX_REPLY: u64 = javelin_protocol::limits::MAX_FRAME as u64 + 16 * 1024;
+/// One framed message.
+const MAX_REPLY: u64 = javelin_protocol::limits::MAX_FRAME as u64;
 
 /// A failure with a stable code, reported as the error code in output.
 #[derive(Clone, Debug)]
@@ -70,17 +72,17 @@ impl From<ProtocolError> for RemoteError {
 }
 
 struct Target {
-    /// `http://HOST:PORT`, as stored in `attach.json`.
+    /// `https://HOST[:PORT]` (plain `http` only for this machine), as stored in `attach.json`.
     node: String,
-    /// `HOST:PORT`, for connecting.
-    authority: String,
     repository: String,
+    agent: ureq::Agent,
 }
 
 fn parse_target(text: &str) -> Result<Target> {
-    let usage = "attach takes an http:// node URL ending in /REPOSITORY";
-    let rest = text
-        .strip_prefix("http://")
+    let usage =
+        "expected a node URL https://HOST[:PORT]/REPOSITORY (plain http only for localhost)";
+    let (scheme, rest) = text
+        .split_once("://")
         .ok_or_else(|| Error::InvalidInput(usage.into()))?;
     let (authority, repository) = rest
         .split_once('/')
@@ -89,13 +91,15 @@ fn parse_target(text: &str) -> Result<Target> {
         && repository
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
-    if authority.is_empty() || !valid_name {
+    if !valid_name {
         return Err(Error::InvalidInput(usage.into()));
     }
+    let endpoint = Endpoint::parse(&format!("{scheme}://{authority}"))
+        .map_err(|detail| Error::InvalidInput(format!("node URL: {detail}")))?;
     Ok(Target {
-        node: format!("http://{authority}"),
-        authority: authority.into(),
+        node: endpoint.origin().into(),
         repository: repository.into(),
+        agent: endpoint.agent(TIMEOUT),
     })
 }
 
@@ -194,66 +198,61 @@ fn post(
     token: Option<&str>,
     retry_reset: bool,
 ) -> std::result::Result<Vec<u8>, RemoteError> {
-    let reply = match exchange(target, body, token) {
-        Err(error) if retry_reset && is_reset(&error) => exchange(target, body, token),
+    let mut reply = match exchange(target, body, token) {
+        Err(ureq::Error::Io(error)) if retry_reset && is_reset(&error) => {
+            exchange(target, body, token)
+        }
         done => done,
     }
     .map_err(|e| RemoteError::new(code::NODE_UNAVAILABLE, e.to_string()))?;
-    if reply.len() as u64 > MAX_REPLY {
-        return Err(RemoteError::new(
-            "limit_exceeded",
-            "the node's reply is larger than one frame",
-        ));
-    }
-    let split = reply
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| RemoteError::new(code::NODE_UNAVAILABLE, "malformed HTTP reply"))?;
-    let status = std::str::from_utf8(&reply[..split])
-        .ok()
-        .and_then(|head| head.split(' ').nth(1)?.parse::<u16>().ok());
+    let status = reply.status().as_u16();
+    // Bounded, so a node cannot make the client buffer without limit.
+    let bytes = match reply
+        .body_mut()
+        .with_config()
+        .limit(MAX_REPLY)
+        .read_to_vec()
+    {
+        Ok(bytes) => bytes,
+        Err(ureq::Error::BodyExceedsLimit(_)) => {
+            return Err(RemoteError::new(
+                "limit_exceeded",
+                "the node's reply is larger than one frame",
+            ));
+        }
+        Err(error) => return Err(RemoteError::new(code::NODE_UNAVAILABLE, error.to_string())),
+    };
     match status {
-        Some(200) => Ok(reply[split + 4..].to_vec()),
-        Some(404) => Err(RemoteError::new(
+        200 => Ok(bytes),
+        404 => Err(RemoteError::new(
             "unknown_repository",
             format!("{} has no repository {}", target.node, target.repository),
         )),
         // The node failed or is overloaded; it did not decide (section 4.4).
-        Some(status @ 500..=599) => Err(RemoteError::new(
+        500..=599 => Err(RemoteError::new(
             code::NODE_UNAVAILABLE,
             format!("the node answered HTTP {status}"),
         )),
         other => Err(RemoteError::new(
             "node_error",
-            format!("the node answered HTTP {other:?}"),
+            format!("the node answered HTTP {other}"),
         )),
     }
 }
 
-fn exchange(target: &Target, body: &[u8], token: Option<&str>) -> io::Result<Vec<u8>> {
-    let address = target
-        .authority
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address for the node"))?;
-    let mut stream = TcpStream::connect_timeout(&address, TIMEOUT)?;
-    stream.set_read_timeout(Some(TIMEOUT))?;
-    stream.set_write_timeout(Some(TIMEOUT))?;
-    let authorization = token
-        .map(|token| format!("Authorization: Bearer {token}\r\n"))
-        .unwrap_or_default();
-    let head = format!(
-        "POST /v2/r/{} HTTP/1.1\r\nHost: {}\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n",
-        target.repository,
-        target.authority,
-        body.len()
-    );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(body)?;
-    // Bounded in total, so a node cannot make the client buffer without limit.
-    let mut reply = Vec::new();
-    stream.take(MAX_REPLY + 1).read_to_end(&mut reply)?;
-    Ok(reply)
+fn exchange(
+    target: &Target,
+    body: &[u8],
+    token: Option<&str>,
+) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    let mut request = target
+        .agent
+        .post(format!("{}/v2/r/{}", target.node, target.repository))
+        .header("content-type", "application/octet-stream");
+    if let Some(token) = token {
+        request = request.header("authorization", &format!("Bearer {token}"));
+    }
+    request.send(body)
 }
 
 /// The node's refusal of the caller's identity, if the reply is one. A missing, expired or
@@ -385,9 +384,10 @@ impl Blobs for RepoBlobs<'_> {
     }
 }
 
-/// `javelin attach http://HOST:PORT/REPOSITORY [project-directory]`
+/// `javelin attach https://HOST[:PORT]/REPOSITORY [project-directory]`
 pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
-    let usage = "expected: javelin attach http://HOST:PORT/REPOSITORY [project-directory] [--json]";
+    let usage =
+        "expected: javelin attach https://HOST[:PORT]/REPOSITORY [project-directory] [--json]";
     let mut args = args.into_iter();
     let url = args
         .next()
@@ -821,16 +821,17 @@ pub fn layer_refresh(args: Vec<OsString>) -> std::result::Result<Output, CliErro
 }
 
 /// Delivers outbox records to a node, one request each, with the repository's credential.
-/// A write never goes out without a token: an expired token that cannot be renewed stalls the
-/// record with `control_plane_unavailable`. A node that refuses the token gets one fresh token
-/// and the same request again; the operation ID makes the repeat safe.
+/// A write never goes out without a token: no sign-in stalls the record with `unauthorized`,
+/// and an expired token that cannot be renewed with `control_plane_unavailable`. A node that
+/// refuses the token gets one fresh token and the same request again; the operation ID makes
+/// the repeat safe. A node `Error` reply stalls the record with the node's code.
 pub struct NodeTransport {
     target: Target,
     credential: Credential,
 }
 
 impl NodeTransport {
-    /// A transport to `repository` on the node at `http://HOST:PORT`.
+    /// A transport to `repository` on the node at `https://HOST[:PORT]` (plain http only for localhost).
     pub fn new(node: &str, repository: &str) -> Result<Self> {
         Ok(Self {
             target: parse_target(&format!("{node}/{repository}"))?,
@@ -853,19 +854,35 @@ impl NodeTransport {
 impl Transport for NodeTransport {
     fn deliver(&mut self, entry: &Entry) -> std::result::Result<Vec<u8>, Fault> {
         let now = now();
-        let token = self.credential.bearer(now)?;
-        let reply = self.send(&entry.payload, token.as_deref())?;
-        if refused_caller(&reply).is_none() {
-            return Ok(reply);
+        // A write is never sent anonymously: the node would refuse it after reading it.
+        let token = self.credential.bearer(now)?.ok_or_else(|| {
+            Fault::Unauthorized("not signed in; run `javelin login`, or set JAVELIN_TOKEN".into())
+        })?;
+        let mut reply = self.send(&entry.payload, Some(&token))?;
+        if refused_caller(&reply).is_some() {
+            let token = self.credential.renew(now)?;
+            reply = self.send(&entry.payload, Some(&token))?;
+            if let Some(detail) = refused_caller(&reply) {
+                return Err(Fault::Unauthorized(format!(
+                    "the node refused a fresh token: {detail}"
+                )));
+            }
         }
-        let token = self.credential.renew(now)?;
-        let reply = self.send(&entry.payload, Some(&token))?;
-        match refused_caller(&reply) {
-            Some(detail) => Err(Fault::Unauthorized(format!(
-                "the node refused a fresh token: {detail}"
-            ))),
-            None => Ok(reply),
-        }
+        recorded(reply)
+    }
+}
+
+/// Only an outcome the node recorded acknowledges a record. An `Error` reply, such as a
+/// storage failure or `busy`, recorded nothing, so the record stays queued under its
+/// operation ID; so does a reply that does not decode.
+fn recorded(reply: Vec<u8>) -> std::result::Result<Vec<u8>, Fault> {
+    match decode(&reply) {
+        Ok(Message::Error { code, detail }) => Err(Fault::Refused { code, detail }),
+        Ok(_) => Ok(reply),
+        Err(error) => Err(Fault::NodeUnavailable(format!(
+            "the node's reply does not decode: {}",
+            error.detail
+        ))),
     }
 }
 
@@ -974,7 +991,7 @@ fn summary(outcome: &[u8]) -> Value {
     }
 }
 
-/// One request to `repository` on the node at `http://HOST:PORT`, with the repository's
+/// One request to `repository` on the node at `https://HOST[:PORT]` (plain http only for localhost), with the repository's
 /// credential, and its reply. A node `Error` reply becomes the error.
 pub fn call_node(
     node: &str,

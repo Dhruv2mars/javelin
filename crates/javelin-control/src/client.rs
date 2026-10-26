@@ -1,20 +1,17 @@
 //! The control plane as a client sees it. [`Control`] is what the CLI needs: device sign-in,
 //! token refresh, repository tokens and repository create. [`ControlPlane`] serves it in
-//! process; [`RemoteControl`] calls the control plane's HTTP API (`browser.rs`, `/api/`).
+//! process; [`RemoteControl`] calls the control plane's HTTP API (`browser.rs`, `/api/`) over
+//! HTTPS, or plain HTTP on this machine only.
 //! A control plane that does not answer, or answers 5xx without a refusal of its own, is
 //! `control_plane_unavailable` (`docs/online-design.md` sections 4.4 and 5).
 
-use std::{
-    io::{Read, Write},
-    net::{TcpStream, ToSocketAddrs},
-    time::Duration,
-};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::{
-    AccessToken, ControlError, ControlPlane, CreateRequest, Created, DeviceStart, Poll, Publish,
-    Session,
+    AccessToken, ControlError, ControlPlane, CreateRequest, Created, DeviceStart, Endpoint, Poll,
+    Publish, Session,
 };
 
 /// How long one call may take to connect, and then to answer.
@@ -87,44 +84,43 @@ impl Control for ControlPlane {
     }
 }
 
-/// A control plane reached over HTTP at `http://HOST:PORT`.
+/// A control plane reached over HTTPS, or plain HTTP on this machine (`transport.rs`).
 pub struct RemoteControl {
-    /// `HOST:PORT`, for connecting and for the `Host` header.
-    authority: String,
+    endpoint: Endpoint,
+    agent: ureq::Agent,
 }
 
 impl RemoteControl {
-    /// A client for the control plane at `url`, `http://HOST:PORT` with an optional trailing
-    /// slash. Nothing is sent until the first call.
+    /// A client for the control plane at `url`, `https://HOST[:PORT]` (plain `http` only for
+    /// localhost), with an optional trailing slash. Nothing is sent until the first call.
     pub fn new(url: &str) -> Result<Self, ControlError> {
-        let authority = url
-            .strip_prefix("http://")
-            .map(|rest| rest.trim_end_matches('/'))
-            .filter(|rest| !rest.is_empty() && !rest.contains('/'))
-            .ok_or_else(|| {
-                ControlError::InvalidInput(format!(
-                    "the control plane URL is http://HOST:PORT, got {url}"
-                ))
-            })?;
-        Ok(Self {
-            authority: authority.into(),
-        })
+        let endpoint = Endpoint::parse(url)
+            .map_err(|detail| ControlError::InvalidInput(format!("control plane URL: {detail}")))?;
+        let agent = endpoint.agent(TIMEOUT);
+        Ok(Self { endpoint, agent })
     }
 
     /// One call: a JSON body, an optional bearer, and the JSON reply.
     fn call(&self, path: &str, bearer: Option<&str>, body: &Value) -> Result<Value, ControlError> {
-        let reply = self.exchange(path, bearer, body).map_err(|error| {
-            ControlError::Unavailable(format!("{} did not answer: {error}", self.authority))
-        })?;
-        let split = reply
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .ok_or_else(|| unavailable(&self.authority, "the reply has no HTTP head"))?;
-        let status = std::str::from_utf8(&reply[..split])
-            .ok()
-            .and_then(|head| head.split(' ').nth(1)?.parse::<u16>().ok())
-            .ok_or_else(|| unavailable(&self.authority, "the reply has no status"))?;
-        let value: Option<Value> = serde_json::from_slice(&reply[split + 4..]).ok();
+        let origin = self.endpoint.origin();
+        let mut request = self
+            .agent
+            .post(format!("{origin}{path}"))
+            .header("content-type", "application/json");
+        if let Some(bearer) = bearer {
+            request = request.header("authorization", &format!("Bearer {bearer}"));
+        }
+        let mut reply = request
+            .send(body.to_string())
+            .map_err(|error| unavailable(origin, &format!("did not answer: {error}")))?;
+        let status = reply.status().as_u16();
+        let bytes = reply
+            .body_mut()
+            .with_config()
+            .limit(MAX_REPLY)
+            .read_to_vec()
+            .map_err(|error| unavailable(origin, &format!("reply unreadable: {error}")))?;
+        let value: Option<Value> = serde_json::from_slice(&bytes).ok();
         match (status, value) {
             (200, Some(value)) => Ok(value),
             // A refusal of the control plane's own carries its code.
@@ -133,7 +129,7 @@ impl RemoteControl {
                 detail: value["message"].as_str().unwrap_or_default().into(),
             }),
             (500.., _) => Err(unavailable(
-                &self.authority,
+                origin,
                 &format!("the control plane answered HTTP {status}"),
             )),
             _ => Err(ControlError::Remote {
@@ -141,30 +137,6 @@ impl RemoteControl {
                 detail: format!("the control plane answered HTTP {status} without a refusal"),
             }),
         }
-    }
-
-    fn exchange(&self, path: &str, bearer: Option<&str>, body: &Value) -> std::io::Result<Vec<u8>> {
-        let address = self.authority.to_socket_addrs()?.next().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "no address for the host")
-        })?;
-        let mut stream = TcpStream::connect_timeout(&address, TIMEOUT)?;
-        stream.set_read_timeout(Some(TIMEOUT))?;
-        stream.set_write_timeout(Some(TIMEOUT))?;
-        let body = body.to_string();
-        let mut head = format!(
-            "POST {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
-            self.authority,
-            body.len()
-        );
-        if let Some(bearer) = bearer {
-            head.push_str(&format!("Authorization: Bearer {bearer}\r\n"));
-        }
-        head.push_str("\r\n");
-        stream.write_all(head.as_bytes())?;
-        stream.write_all(body.as_bytes())?;
-        let mut reply = Vec::new();
-        stream.take(MAX_REPLY).read_to_end(&mut reply)?;
-        Ok(reply)
     }
 }
 

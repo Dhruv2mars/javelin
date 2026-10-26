@@ -23,7 +23,7 @@ use serde_json::json;
 
 use crate::cli::Output;
 
-const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin URL]\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
+const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin https://HOST]   (non-loopback IP only behind TLS)\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
 
 pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args = args
@@ -61,8 +61,23 @@ fn control_init() -> Result<Output, ControlError> {
 }
 
 /// Serves the approval page and the HTTP API on `addr` until the process is stopped. The
-/// passkey origin defaults to `http://localhost:PORT`.
+/// passkey origin defaults to `http://localhost:PORT`. The server speaks plain HTTP, so it
+/// binds a non-loopback address only behind a TLS-terminating proxy, named by an https
+/// `--origin`; otherwise tokens would cross the network in clear.
 fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlError> {
+    let parsed: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|_| ControlError::InvalidInput(format!("expected IP:PORT, got {addr}")))?;
+    let behind_tls = origin.is_some_and(|origin| {
+        origin
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+    });
+    if !parsed.ip().is_loopback() && !behind_tls {
+        return Err(ControlError::InvalidInput(format!(
+            "{addr} is not a loopback address, and this server speaks plain HTTP: bind 127.0.0.1, or put it behind a TLS-terminating proxy and pass that proxy's address as --origin https://HOST"
+        )));
+    }
     let plane = ControlPlane::open(&control_dir()?)?;
     let listener = std::net::TcpListener::bind(addr)
         .map_err(|error| ControlError::InvalidInput(format!("cannot listen on {addr}: {error}")))?;
@@ -114,6 +129,8 @@ fn login() -> Result<Output, ControlError> {
     };
     let path = credentials_path()?;
     credentials.save(&path)?;
+    // Tokens cached for the previous sign-in must not be sent for this one.
+    crate::cli_auth::clear_cache().map_err(|error| ControlError::Storage(error.to_string()))?;
     let text = format!(
         "Signed in as {} on device {}. Credentials saved to {}.",
         session.principal,

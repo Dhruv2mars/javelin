@@ -17,6 +17,7 @@ mod passkey;
 mod repo;
 mod secret;
 mod state;
+mod transport;
 
 pub use browser::{answer, serve};
 pub use client::{Control, RemoteControl};
@@ -28,3 +29,4 @@ pub use fork::{ForkRequest, ForkedRepository};
 pub use node::LocalNode;
 pub use passkey::{BrowserSession, RelyingParty};
 pub use repo::{CreateRequest, Created, Publish};
+pub use transport::{Endpoint, is_loopback_host};

@@ -248,10 +248,11 @@ fn read_request(stream: &mut TcpStream) -> Vec<u8> {
         stream.read_exact(&mut byte).unwrap();
         head.push(byte[0]);
     }
-    let text = String::from_utf8(head).unwrap();
+    // Header names are case-insensitive.
+    let text = String::from_utf8(head).unwrap().to_ascii_lowercase();
     let length: usize = text
         .lines()
-        .find_map(|line| line.strip_prefix("Content-Length: "))
+        .find_map(|line| line.strip_prefix("content-length:"))
         .unwrap()
         .trim()
         .parse()

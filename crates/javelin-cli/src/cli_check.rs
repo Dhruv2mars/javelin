@@ -1,6 +1,6 @@
 //! `javelin check report`: posts one completed check result to a node (`docs/ci-execution.md`
 //! section 4; unit U17). The reporter's token is read from `JAVELIN_TOKEN`, so it stays out of
-//! argv. With `--node http://HOST:PORT` the report goes over the wire to the serving node,
+//! argv. With `--node https://HOST[:PORT]` the report goes over the wire to the serving node,
 //! which checks the token at its gate. Without it, the command opens the node the control
 //! plane provisions under `<control dir>/nodes/<repository>` in process, trusting the control
 //! plane's keys; a serving node holds that directory, which makes this `busy`.
