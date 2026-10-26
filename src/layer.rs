@@ -287,6 +287,23 @@ impl Repository {
         Ok(history)
     }
 
+    /// Whether `operation` has a recorded capture, Stack or discard attempt on `layer`. Reads
+    /// only, so a caller can tell a retry, which replays its recorded outcome, from a new write.
+    pub fn has_layer_attempt(&self, operation: &OperationId, layer: &LayerId) -> Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let found = tx
+            .query_row(
+                "SELECT 1 FROM layer_attempts WHERE id=?1 AND layer=?2",
+                params![operation.as_str(), layer.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        tx.commit()?;
+        Ok(found)
+    }
+
     /// Future capture supplies a complete delta relative to the Layer's frozen World.
     /// On uncertain storage errors, retry the same operation, expected head and changes.
     pub fn capture_layer(

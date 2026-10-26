@@ -29,9 +29,10 @@ use javelin_protocol::{
     codec::{code, decode, encode},
     handle_request,
     limits::MAX_FRAME,
+    receiver::WorldLog,
 };
 
-use crate::{FileWorldLog, auth::Gate, checks, review};
+use crate::{FileWorldLog, auth::Gate, checks, lease, review};
 
 /// Longest request line or header line, in bytes.
 const MAX_LINE: usize = 8 << 10;
@@ -276,7 +277,7 @@ fn serve_one(
     now: u64,
     message: Message,
 ) -> Result<Message, ProtocolError> {
-    match &message {
+    let grant = match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
         | Message::Approve { .. }
@@ -287,24 +288,47 @@ fn serve_one(
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
         // Version negotiation reveals nothing about the repository.
-        Message::Hello { .. } => {}
-        other => {
-            gate.check(token, now, need(other))?;
-        }
-    }
+        Message::Hello { .. } => None,
+        other => Some(gate.check(token, now, need(other))?),
+    };
     log.traces().refuse_wire_fetch(&message)?;
+    // Writes to a Layer go through its writer lease, which names the grant's device.
+    let writer = || {
+        grant
+            .as_ref()
+            .ok_or_else(|| ProtocolError::new(code::UNAUTHORIZED, "a token is required"))
+            .and_then(lease::Writer::of)
+    };
     match message {
+        Message::LayerAppend {
+            operation,
+            layer,
+            parent,
+            checkpoint,
+        } => Ok(Message::LayerOutcome(lease::write(
+            log,
+            &writer()?,
+            &operation,
+            &layer,
+            |log| log.append_checkpoint(&operation, &layer, parent, checkpoint),
+        )?)),
         Message::LayerStack {
             operation,
             target,
             target_head,
             source,
-        } => Ok(Message::LayerOutcome(crate::stack::stack(
-            log.parts().0,
+        } => Ok(Message::LayerOutcome(lease::write(
+            log,
+            &writer()?,
             &operation,
             &target,
-            target_head,
-            source,
+            |log| crate::stack::stack(log.parts().0, &operation, &target, target_head, source),
+        )?)),
+        Message::LayerTake { operation, layer } => Ok(Message::LayerOutcome(lease::take(
+            log,
+            &writer()?,
+            &operation,
+            &layer,
         )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
             crate::stack::get_checkpoints(log.repo(), items)
@@ -321,6 +345,7 @@ fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
         Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
+        Message::LayerTake { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
         Message::Publish { .. } => (Scope::Publish, None),
         Message::Want(_) | Message::Objects(_) => (Scope::LayerWrite, None),

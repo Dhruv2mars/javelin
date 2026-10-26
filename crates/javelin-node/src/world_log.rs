@@ -70,6 +70,7 @@ impl FileWorldLog {
         )?;
         records.execute_batch(crate::fork::SCHEMA)?;
         records.execute_batch(crate::layer::SCHEMA)?;
+        records.execute_batch(crate::lease::SCHEMA)?;
         records.execute_batch(crate::checks::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
