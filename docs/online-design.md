@@ -112,6 +112,7 @@ Additions, all in `codec.rs`:
 | 0x37 | `LayerStack` | `{ operation, target: LayerId, target_head: CheckpointId, source: CheckpointId }` | `LayerOutcome` |
 | 0x38 | `PublishLayer` | `{ operation, layer, expected: CheckpointId, base: VersionNumber, attribution }` | `PublishOutcome` 0x39 |
 | 0x3a | `PublishRequest` | `{ operation, request, revision: u32, base: VersionNumber }` | `PublishOutcome` |
+| 0x3b | `LayerTake` | `{ operation, layer }` | `LayerOutcome`: `Accepted { seq, checkpoint: head }` (section 4.2, D21) |
 | 0x50 | `OpenRequest` | `{ operation, request, layer, checkpoint, base }` | `ReviewOutcome` 0x51 |
 | 0x52 | `Revise` | `{ operation, request, expected_revision: u32, checkpoint, base }` | `ReviewOutcome` |
 | 0x53 | `Approve` | `{ operation, request, revision: u32 }` | `ReviewOutcome` |
@@ -212,8 +213,30 @@ budget (default 2 s, to measure). If the budget or the node fails, the record st
 outbox and the command returns `queued`. Visibility is delayed until a later command or
 `javelin sync` reaches the node (T2, D16).
 
-**Two writers.** A Layer has one owning machine (D21). A stale parent from a second writer is
-reported as `layer_stale`; no write is forced.
+**Two writers: the writer lease (D21, built).** A Layer follows its owner, and one device
+writes at a time. `crates/javelin-node/src/lease.rs` keeps a lease per Layer in `node.db`
+(`layer_leases`: owner principal from the token's `sub`, writing device from its `dev`).
+- The first accepted `LayerAppend` or `LayerStack` takes a free lease, so the first writer
+  owns the Layer.
+- A write from any other device, or another principal, is answered `Stale { head }`
+  (`layer_stale`) with the node's head and writes nothing; no new code was needed, since the
+  client's recovery is the same as for a stale parent. A retry of an operation the node
+  already recorded on the Layer (`Repository::has_layer_attempt`) still replays its outcome.
+- `LayerTake` (0x3b) moves the lease to the caller's device and replies `Accepted` with the
+  node's head. Only the owner may take it (`forbidden` otherwise), and a Layer-limited token
+  reaches only its own Layer (D26). Each take is recorded under its operation ID with the
+  caller (`lease_takes`), so a retry replays and never moves the lease twice; the same ID
+  from another device is `operation_id_reused`.
+- `javelin layer take ID [--operation OP]` sends `LayerTake`, then creates the Layer locally
+  over the node's base if needed, moves it to the node's head as `layer refresh` does, and
+  opens (or refreshes) its clone-backed directory.
+- The old device's queued appends replay into `layer_stale`. The outbox acknowledges them
+  with that outcome, so they stay in the journal; `outbox replay` exits 1 with
+  `code: layer_stale` and a `stale` list (Layer, operation, node head, local head), and
+  `outbox status` lists them too. `javelin layer clone NEW --checkpoint LOCAL_HEAD` keeps the
+  work as a new Layer. Nothing is lost and no write is forced.
+- Tests: `crates/javelin-node/tests/lease.rs` (wire, signed tokens) and
+  `crates/javelin-cli/tests/layer_lease.rs` (end to end with the binary).
 
 **First slice (U5).** Sequential `LayerAppend` over loopback, inline upload, no outbox replay
 yet.
@@ -720,7 +743,8 @@ does not change contract text.
   writer lease on the node; `javelin layer take` moves it to another device of the same owner;
   unuploaded checkpoints on the old device are refused with `layer_stale` and recoverable with
   `javelin layer clone`. Rationale: the node already holds the Layer, so tying it to one machine
-  buys no safety.
+  buys no safety. Built: section 4.2, "Two writers: the writer lease"; `LayerTake` 0x3b in
+  section 3.
 - **D22. Protocol versioning.** Decided 2026-10-20: extend v2 additively until the first deployed
   node, then bump. Rationale: PR #52 treats version 1 as non-authoritative, so nothing deployed
   needs migrating.
