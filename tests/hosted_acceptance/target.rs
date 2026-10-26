@@ -176,14 +176,19 @@ fn target_repository_flows_and_retries() {
             "the Worker has no repository wire for Layer writes or Publish yet, so the queued \
              node-down and control-plane-down outcomes cannot be driven through it",
         ),
-        (
-            "outage.coordinator-transactions",
-            "workerd and miniflare are not accepted for coordinator transactions \
-             (docs/online-design.md section 6); only a deployed Durable Object proves them",
-        ),
     ] {
         target.not_verified(id, reason);
     }
+    target.not_verified(
+        "outage.coordinator-transactions",
+        if target.loopback().is_some() {
+            "workerd and miniflare are not accepted for coordinator transactions \
+             (docs/online-design.md section 6); only a deployed Durable Object proves them"
+        } else {
+            "the Worker has no World-log commit path yet; the commit transaction is proven on a \
+             deployed Durable Object by tools/spike-do (SPIKE_URL), outside this suite"
+        },
+    );
 }
 
 #[test]
