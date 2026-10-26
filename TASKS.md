@@ -3,6 +3,33 @@
 This file is the central hub's master checklist. A checked item requires evidence.
 Implementation threads own one PR each and keep their own checklist in their worktree.
 
+## Direction of 2026-10-26
+
+`docs/direction.md` records the user's answers: two products (CLI and the javelin.codes
+forge), no managed hosting, superposition visibility, Layers that follow their owner, and
+CI left open. Work from it, in roughly this order:
+
+- [x] Clean up Git: merge #92 and #93, close #2, archive the Plan A branches as
+  `archive/*` tags, delete every merged branch.
+- [x] Record the direction and amend the contract, the online design, the Git 3.0
+  direction, README and AGENTS.md.
+- [ ] Token transport: bearer tokens on the wire, outbox refresh through the control
+  plane, network control-plane client, `node_unavailable` for 5xx.
+- [ ] History verification proportional to new versions (trust anchor).
+- [ ] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
+- [ ] First real deploy of the Cloudflare node on the owner's account, free tier only;
+  settle every unverified free-tier limit.
+- [ ] Superposition storage format: salted commitments for hidden tree entries, identical
+  IDs for every reader. Must land before any real repository is stored.
+- [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
+  and forge.
+- [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
+- [ ] Layer writer lease and `javelin layer take` (replaces D21).
+- [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
+- [ ] Forge connects a provider account through OAuth and provisions the node there.
+- [ ] Forge on javelin.codes once the domain is bought.
+- [ ] CI design (waiting on the user).
+
 ## Working rules
 
 Working rules live in `AGENTS.md` (`CLAUDE.md` imports it). They supersede the older
@@ -299,7 +326,8 @@ dependency order. Each is done when its PR is merged with the checks it names.
   - [ ] Follow-up: a cross-platform `layer publish` CLI for clone-backed Layers
     (Publish is library-only off Linux, so CLI blame needs it end to end).
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
-  queue and replay, and the quorum-replicated World log.
+  queue and replay, and the World log (one ordering point per repository since
+  `docs/direction.md`, 2026-10-26).
   Note 2026-10-20: decisions D1, D2, D5 and D23 are recorded in `docs/online-design.md`
   section 7; Free-plan limits stay unverified until U13.
 - [ ] Later, not GA: optional `javelin mount` (FUSE, lazy fetch) for cloud agent

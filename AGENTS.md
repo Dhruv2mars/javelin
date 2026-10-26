@@ -1,9 +1,12 @@
 # Javelin
 
-Javelin replaces Git and GitHub for the agentic era. GA means developers use it instead of
-Git and GitHub for their daily work. Core model: an immutable World of versions, isolated
+Javelin is third-generation version control for agentic development: the `javelin` CLI
+replaces Git, and the javelin.codes forge replaces GitHub. Repositories live on nodes that run
+on infrastructure the owner connects; Javelin runs no managed hosting. GA means developers use
+it instead of Git and GitHub for their daily work. Core model: an immutable World of versions, isolated
 Layers that agents edit as plain cloned directories, and an atomic Publish onto the World.
-Start with `docs/architecture.md`; read `docs/build-contract.md` before changing product behavior.
+Start with `docs/direction.md` and `docs/architecture.md`; read `docs/build-contract.md` before
+changing product behavior.
 
 ## Repo map
 

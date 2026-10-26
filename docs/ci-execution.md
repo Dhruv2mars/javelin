@@ -1,6 +1,8 @@
 # CI execution design (U15)
 
-Status: proposed design, not accepted. Written 2026-10-20 on `docs/ci-execution`, stacked on
+Status: paused 2026-10-26. CI is open again (`docs/direction.md`, CI); nothing here is a
+commitment, including the GitHub Actions dialect (CI1). U17 and U18 stay as built. Earlier
+status: proposed design, not accepted. Written 2026-10-20 on `docs/ci-execution`, stacked on
 `docs/online-design` (PR #58). Docs only. Nothing here is implemented or run.
 It resolves the TASKS.md item "Resolve CI execution design and verify the accepted workflow
 syntax" only as a design. The syntax part is not verified (see §1).
