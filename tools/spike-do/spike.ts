@@ -321,14 +321,16 @@ async function lostReplyDeployed() {
     JSON.stringify(retry),
   );
 
-  // The caller gives up while the request is in flight; it may or may not have committed.
+  // The caller gives up while the request is in flight. The object may still commit it, even
+  // after the read below, so the retry may replay or commit; the stored state below decides
+  // exactly-once. A record seen before the retry must be replayed.
   const abandoned = commitFor(repo, "abandoned-op", "b", { n: 1 });
   await post(`/r/${repo}/commit`, abandoned, 5).catch(() => undefined);
   const before = await get(`/r/${repo}/publication?operation=abandoned-op`);
   const again = await post(`/r/${repo}/commit`, abandoned);
   check(
-    "deployed: retry after an abandoned request commits exactly once",
-    again.outcome === "published" && again.n === 2 && again.replayed === before.found,
+    "deployed: retry after an abandoned request publishes version 2",
+    again.outcome === "published" && again.n === 2 && (!before.found || again.replayed === true),
     `committed before the retry: ${before.found}; ${JSON.stringify(again)}`,
   );
 
