@@ -20,7 +20,7 @@ CI left open. Work from it, in roughly this order:
 - [ ] First real deploy of the Cloudflare node on the owner's account, free tier only;
   settle every unverified free-tier limit.
 - [x] Superposition storage format: salted commitments for hidden tree entries, identical
-  IDs for every reader. Must land before any real repository is stored. Format 9,
+  IDs for every reader. Must land before any real repository is stored. Format 10,
   `.javelinpolicy`, `Open`/`Opened`; tests in `tests/superposition.rs`,
   `crates/javelin-protocol/tests/superposition.rs`, `crates/javelin-node/tests/fork_hidden.rs`.
   - [ ] Wire the caller's role into the node's reads and `check_writer` into its writes once
