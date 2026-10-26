@@ -108,7 +108,7 @@ Additions, all in `codec.rs`:
 | --- | --- | --- | --- |
 | 0x03 | `Permissions` | none | `Applied` 0x06: `{ epoch, caller_role, visibility }` |
 | 0x34 | `LayerAppend` | `{ operation, layer, parent: Option<CheckpointId>, checkpoint: ObjectId }` | `LayerOutcome` |
-| 0x35 | `LayerHead` | `{ layer }` | `LayerState` 0x36: `{ layer, base: VersionNumber, seq, head, state }` |
+| 0x35 | `LayerHead` | `{ layer }` | `LayerState` 0x36: `{ layer, base: VersionNumber, seq, head, state, lease: Free \| Caller \| Other }` |
 | 0x37 | `LayerStack` | `{ operation, target: LayerId, target_head: CheckpointId, source: CheckpointId }` | `LayerOutcome` |
 | 0x38 | `PublishLayer` | `{ operation, layer, expected: CheckpointId, base: VersionNumber, attribution }` | `PublishOutcome` 0x39 |
 | 0x3a | `PublishRequest` | `{ operation, request, revision: u32, base: VersionNumber }` | `PublishOutcome` |
@@ -217,19 +217,31 @@ outbox and the command returns `queued`. Visibility is delayed until a later com
 writes at a time. `crates/javelin-node/src/lease.rs` keeps a lease per Layer in `node.db`
 (`layer_leases`: owner principal from the token's `sub`, writing device from its `dev`).
 - The first accepted `LayerAppend` or `LayerStack` takes a free lease, so the first writer
-  owns the Layer.
+  owns the Layer. The lease (`node.db`) and the checkpoints (the repository's database)
+  cannot share a transaction, so ownership is written first: a claim (`lease_claims`) names
+  the writer and its operation before the write runs, and becomes the lease once that
+  operation's attempt is recorded as accepted (`Repository::layer_attempt`). Every lease read
+  settles a claim, so after a crash between the first append and its lease only the
+  principal of the Layer's first checkpoint operation owns it.
+- `LayerState` carries `lease`: whether the caller's device holds the lease (`Caller`),
+  another does (`Other`), or no one (`Free`). Device IDs are never sent.
 - A write from any other device, or another principal, is answered `Stale { head }`
   (`layer_stale`) with the node's head and writes nothing; no new code was needed, since the
   client's recovery is the same as for a stale parent. A retry of an operation the node
-  already recorded on the Layer (`Repository::has_layer_attempt`) still replays its outcome.
+  already recorded on the Layer still replays its outcome.
 - `LayerTake` (0x3b) moves the lease to the caller's device and replies `Accepted` with the
   node's head. Only the owner may take it (`forbidden` otherwise), and a Layer-limited token
   reaches only its own Layer (D26). Each take is recorded under its operation ID with the
   caller (`lease_takes`), so a retry replays and never moves the lease twice; the same ID
   from another device is `operation_id_reused`.
-- `javelin layer take ID [--operation OP]` sends `LayerTake`, then creates the Layer locally
-  over the node's base if needed, moves it to the node's head as `layer refresh` does, and
-  opens (or refreshes) its clone-backed directory.
+- `javelin layer take ID [--operation OP]` first checks that the Layer can be brought here:
+  the Layer's base World is matched to a local World by its tree, since remote and local
+  numbers differ (a newer one is fetched and verified from the attached head, as attach
+  does; an older one this repository lacks is refused), and an existing local Layer is
+  refreshed. Only then does it send `LayerTake`, create the Layer locally if needed, move it
+  to the node's head as `layer refresh` does, and open (or refresh) its clone-backed
+  directory. A replayed take reports the recorded take and, read from `LayerState.lease`,
+  whether this device still holds the lease.
 - The old device's queued appends replay into `layer_stale`. The outbox acknowledges them
   with that outcome, so they stay in the journal; `outbox replay` exits 1 with
   `code: layer_stale` and a `stale` list (Layer, operation, node head, local head), and

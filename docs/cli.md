@@ -387,7 +387,12 @@ device to write to it holds it, and writes from any other device are answered `l
 without changing anything. `javelin layer take ID [--operation OP]` moves the lease to this
 device, then brings the Layer here: it is created over the node's base if this repository
 lacks it, moved to the node's head as `layer refresh` does, and its directory is opened, or
-refreshed when it exists. Only the Layer's owner can take the lease (`forbidden` otherwise),
+refreshed when it exists. The base is found by its tree, not its number, since this
+repository numbers its Worlds from its attach; a newer base is fetched first, and an older one
+this repository lacks is refused with `invalid_input`. Those checks, and the refresh of an
+existing local Layer, run before the lease moves. A retried `--operation OP` replays the
+recorded take; JSON `holds_lease` and `lease` (`this_device`, `another_device`) say who holds
+it now, and the text says plainly when another device does. Only the Layer's owner can take the lease (`forbidden` otherwise),
 and a token limited to another Layer cannot. Without `--operation` a fresh ID is used, which
 is safe: taking a lease this device holds changes nothing. JSON reports the node's `seq` and
 `head`, whether the Layer was `created`, the refresh `status`, and the directory `root`.

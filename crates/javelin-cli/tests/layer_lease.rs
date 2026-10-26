@@ -7,21 +7,25 @@
 
 use std::{
     fs,
+    io::{Read, Write},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::mpsc,
     thread,
 };
 
 use javelin::{
-    CheckpointId, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId, OperationId,
-    RepoPath, Repository, SparseChanges, VersionNumber,
+    AdvanceOutcome, CheckpointId, FileEntry, LayerHead, LayerId, LayerState, LayerUpdate, Manifest,
+    ObjectId, OperationId, RepoPath, Repository, SparseChanges, VersionNumber,
     outbox::{Kind, Outbox},
 };
 use javelin_collaboration::{PrincipalId, Role, Visibility};
 use javelin_node::{FileWorldLog, bind_loopback, serve};
 use javelin_protocol::{
     Message,
-    codec::{Kind as ObjectKind, LayerOutcome, decode, encode},
+    codec::{Kind as ObjectKind, LayerOutcome, LeaseHolder, decode, encode},
+    receiver::WorldLog,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -313,4 +317,212 @@ fn another_principal_cannot_take_the_lease() {
     let (code, value) = agent.json(&["layer", "take", "work", "--repo", laptop.repo()]);
     assert_eq!(code, Some(1), "{value}");
     assert_eq!(value["error"]["code"], "forbidden");
+}
+
+type Job = Box<dyn FnOnce(&mut FileWorldLog) + Send>;
+
+/// A node served in process that can change between requests: `change` runs a job on its
+/// log between two connections, the way a Publish on the node would move its World.
+struct Live {
+    url: String,
+    addr: SocketAddr,
+    jobs: mpsc::Sender<Job>,
+    done: mpsc::Receiver<()>,
+}
+
+impl Live {
+    fn start(dir: &Path, seed: impl FnOnce(&mut FileWorldLog)) -> Self {
+        let mut log = FileWorldLog::open(dir).unwrap();
+        seed(&mut log);
+        let listener = bind_loopback("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (jobs, queue) = mpsc::channel::<Job>();
+        let (finished, done) = mpsc::channel();
+        thread::spawn(move || {
+            let gate = wire_support::gate(REPO);
+            loop {
+                let _ = serve(&listener, REPO, &mut log, &gate, Some(1));
+                while let Ok(job) = queue.try_recv() {
+                    job(&mut log);
+                    finished.send(()).unwrap();
+                }
+            }
+        });
+        Self {
+            url: format!("http://{addr}"),
+            addr,
+            jobs,
+            done,
+        }
+    }
+
+    /// Runs `job` on the node's log. A bare connection wakes the serving loop.
+    fn change(&self, job: impl FnOnce(&mut FileWorldLog) + Send + 'static) {
+        self.jobs.send(Box::new(job)).unwrap();
+        drop(TcpStream::connect(self.addr).unwrap());
+        self.done.recv().unwrap();
+    }
+
+    /// Who holds `name`'s writer lease, as the caller of `token` sees it.
+    fn lease(&self, token: &str, name: &str) -> LeaseHolder {
+        let body = encode(&Message::LayerHead { layer: layer(name) }).unwrap();
+        let mut stream = TcpStream::connect(self.addr).unwrap();
+        write!(
+            stream,
+            "POST /v2/r/{REPO} HTTP/1.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        stream.write_all(&body).unwrap();
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).unwrap();
+        let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        match decode(&reply[split + 4..]).unwrap() {
+            Message::LayerState { lease, .. } => lease,
+            other => panic!("not a Layer state: {other:?}"),
+        }
+    }
+}
+
+/// Advances the node's World to a tree holding only `world.txt` = `bytes`.
+fn advance(log: &mut FileWorldLog, operation: &str, bytes: &[u8]) -> VersionNumber {
+    let repo = log.repository();
+    let content = repo.put_blob(bytes).unwrap();
+    let tree = repo
+        .put_snapshot(
+            &Manifest::new([(
+                RepoPath::parse("world.txt").unwrap(),
+                FileEntry::Regular {
+                    content,
+                    executable: false,
+                },
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let head = repo.head().unwrap().number;
+    match repo.advance_to_tree(&op(operation), head, tree).unwrap() {
+        AdvanceOutcome::Accepted { version } => version.number,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn take_finds_the_base_world_by_tree_and_refuses_before_moving_the_lease() {
+    let root = TempDir::new().unwrap();
+    // Remote Worlds 1 and 2; attach makes remote World 2 local World 1.
+    let node = Live::start(&root.path().join("node"), |log| {
+        let one = advance(log, "world-1", b"one\n");
+        let two = advance(log, "world-2", b"two\n");
+        log.create_layer(&layer("ancient"), one).unwrap();
+        log.create_layer(&layer("work"), two).unwrap();
+        let content = log.repository().put_blob(b"notes\n").unwrap();
+        let changes = SparseChanges::new([(
+            RepoPath::parse("notes.txt").unwrap(),
+            Some(FileEntry::Regular {
+                content,
+                executable: false,
+            }),
+        )])
+        .unwrap();
+        log.append(&op("write-1"), &layer("work"), &changes)
+            .unwrap();
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    let laptop = Device::attach(root.path(), "laptop", &node.url, wire_support::OWNER);
+
+    // `work`'s base is remote World 2, which this repository holds as World 1.
+    let (code, taken) = desktop.json(&["layer", "take", "work", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{taken}");
+    assert_eq!(taken["holds_lease"], true);
+    let workspace = PathBuf::from(taken["root"].as_str().unwrap());
+    assert_eq!(fs::read(workspace.join("world.txt")).unwrap(), b"two\n");
+    assert_eq!(fs::read(workspace.join("notes.txt")).unwrap(), b"notes\n");
+    let local = Repository::open(&desktop.project).unwrap();
+    let LayerState::Active { head } = local.layer_state(&layer("work")).unwrap() else {
+        panic!("the taken Layer is not active");
+    };
+    let base = local
+        .read_checkpoint(head.checkpoint())
+        .unwrap()
+        .base()
+        .version();
+    assert_eq!(base.get(), 1, "remote World 2 is local World 1");
+    drop(local);
+
+    // `ancient`'s base, remote World 1, predates the attachment and is not held here: the
+    // take is refused before the lease moves, and no local Layer is made.
+    let (code, refused) = desktop.json(&["layer", "take", "ancient", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(2), "{refused}");
+    assert_eq!(refused["error"]["code"], "invalid_input");
+    assert_eq!(node.lease(&desktop.token, "ancient"), LeaseHolder::Free);
+    assert!(
+        Repository::open(&desktop.project)
+            .unwrap()
+            .layer_state(&layer("ancient"))
+            .is_err()
+    );
+
+    // A base newer than the attachment is fetched, as attach does, and becomes local World 2.
+    node.change(|log| {
+        let three = advance(log, "world-3", b"three\n");
+        log.create_layer(&layer("newer"), three).unwrap();
+    });
+    let (code, newer) = desktop.json(&["layer", "take", "newer", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{newer}");
+    let workspace = PathBuf::from(newer["root"].as_str().unwrap());
+    assert_eq!(fs::read(workspace.join("world.txt")).unwrap(), b"three\n");
+    let local = Repository::open(&desktop.project).unwrap();
+    assert_eq!(local.head().unwrap().number.get(), 2);
+    assert_eq!(local.attachment().unwrap().unwrap().head.number, 3);
+    drop(local);
+
+    // A replayed take reports what it recorded, and says the lease has moved on since.
+    let (code, mine) = laptop.json(&[
+        "layer",
+        "take",
+        "work",
+        "--operation",
+        "take-laptop",
+        "--repo",
+        laptop.repo(),
+    ]);
+    assert_eq!(code, Some(0), "{mine}");
+    assert_eq!(mine["lease"], "this_device");
+    let (code, _) = desktop.json(&["layer", "take", "work", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0));
+    let replay = laptop.run(&[
+        "layer",
+        "take",
+        "work",
+        "--operation",
+        "take-laptop",
+        "--repo",
+        laptop.repo(),
+    ]);
+    let replayed: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay.status.code(), Some(0), "{replayed}");
+    assert_eq!(replayed["holds_lease"], false);
+    assert_eq!(replayed["lease"], "another_device");
+    assert_eq!(replayed["node"], mine["node"], "the recorded take");
+    let text = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .env("JAVELIN_HOME", &laptop.home)
+        .env("JAVELIN_TOKEN", &laptop.token)
+        .args([
+            "layer",
+            "take",
+            "work",
+            "--operation",
+            "take-laptop",
+            "--repo",
+            laptop.repo(),
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.contains("Take take-laptop is recorded"), "{text}");
+    assert!(
+        text.contains("Another device holds the lease now"),
+        "{text}"
+    );
 }

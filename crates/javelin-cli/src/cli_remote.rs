@@ -21,16 +21,19 @@ use std::{
 };
 
 use javelin::{
-    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository, Result,
-    VersionNumber,
+    AdvanceOutcome, Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead,
+    Repository, Result, VersionNumber,
     outbox::{Entry, Fault, Outbox, Transport},
     tree::MemoryStore,
 };
 use javelin_control::Endpoint;
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{LayerOutcome, PublishOutcome, VERSION, code, decode, encode, read_frame, write_frame},
-    fetch::{Blobs, fetch},
+    codec::{
+        LayerOutcome, LeaseHolder, PublishOutcome, VERSION, code, decode, encode, read_frame,
+        write_frame,
+    },
+    fetch::{Anchor, Blobs, fetch},
     sender,
 };
 use javelin_stack::remote::{self as stack_remote, Refresh};
@@ -896,6 +899,22 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         "{}/{}",
         attached.node, attached.repository
     ))?);
+    let read = |e| CliError::Remote(remote(&link, e));
+    // Everything that can refuse the Layer here runs before the lease moves: the base World
+    // is found by identity (fetched when it is newer than this repository's), and a local
+    // Layer is refreshed, which refuses one holding captures the node lacks.
+    let base = match repo.layer_state(&layer) {
+        Ok(_) => None,
+        Err(Error::InvalidInput(_)) => {
+            let node = sender::layer_head(&mut Session(&link), &layer).map_err(read)?;
+            Some(local_world(&link, &mut repo, &attached, node.base)?)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut refresh = match base {
+        None => Some(stack_remote::refresh(&mut Session(&link), &mut repo, &layer).map_err(read)?),
+        Some(_) => None,
+    };
     let (seq, node_head) = match call(
         &link,
         &Message::LayerTake {
@@ -914,19 +933,24 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         }
         _ => return Err(CliError::Remote(unexpected())),
     };
-    let created = match repo.layer_state(&layer) {
-        Ok(_) => false,
-        Err(Error::InvalidInput(_)) => {
-            let node = sender::layer_head(&mut Session(&link), &layer)
-                .map_err(|e| CliError::Remote(remote(&link, e)))?;
-            let base = repo.layer_base(node.base)?;
-            repo.create_layer(&layer, &base)?;
-            true
-        }
-        Err(error) => return Err(error.into()),
+    let created = base.is_some();
+    if let Some(base) = base {
+        let base = repo.layer_base(base)?;
+        repo.create_layer(&layer, &base)?;
+    }
+    // The node's head may have moved between the refresh and the take.
+    let current = |refresh: &Refresh| match refresh {
+        Refresh::Current { head, .. } | Refresh::Imported { head, .. } => *head == node_head,
     };
-    let refresh = stack_remote::refresh(&mut Session(&link), &mut repo, &layer)
-        .map_err(|e| CliError::Remote(remote(&link, e)))?;
+    if !refresh.as_ref().is_some_and(current) {
+        refresh =
+            Some(stack_remote::refresh(&mut Session(&link), &mut repo, &layer).map_err(read)?);
+    }
+    let refresh = refresh.expect("refreshed above");
+    // A replayed take reports what it recorded; the lease may have moved on since.
+    let lease = sender::layer_head(&mut Session(&link), &layer)
+        .map_err(read)?
+        .lease;
     let head = match repo.layer_state(&layer)? {
         LayerState::Active { head } => head,
         _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
@@ -941,10 +965,22 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         (Some(repo.open_workspace(&layer)?), None)
     };
     let root = repo.workspace_root(&layer)?;
+    let holds = lease == LeaseHolder::Caller;
     let mut text = format!(
-        "This device now holds Layer {}'s writer lease, at the node's head {node_head} (seq {seq})",
+        "Take {} is recorded: Layer {}'s writer lease moved to this device at the node's head \
+         {node_head} (seq {seq})",
+        operation.as_str(),
         layer.as_str()
     );
+    if holds {
+        text.push_str("\nThis device holds the lease.");
+    } else {
+        text.push_str(&format!(
+            "\nAnother device holds the lease now: this device's writes to Layer {0} are \
+             layer_stale. Run `javelin layer take {0}` to move it here again.",
+            layer.as_str()
+        ));
+    }
     if let Some(report) = &refreshed {
         text.push_str(&format!(
             "\nWorkspace {}: {} paths applied, {} local edits kept",
@@ -961,6 +997,12 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         "layer": layer,
         "operation": operation,
         "node": {"seq": seq, "head": node_head},
+        "holds_lease": holds,
+        "lease": match lease {
+            LeaseHolder::Caller => "this_device",
+            LeaseHolder::Other => "another_device",
+            LeaseHolder::Free => "free",
+        },
         "created": created,
         "status": match refresh {
             Refresh::Current { .. } => "current",
@@ -972,6 +1014,77 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         "refresh": refreshed,
     });
     Ok((value, text, 0))
+}
+
+/// The local World holding remote World `base`'s tree. Remote and local numbers differ, so
+/// the World is matched by its tree. One this repository lacks is fetched as attach does,
+/// verified from the attached head, and the local World advances to it; a remote World
+/// older than the attached one cannot be fetched that way and is refused.
+fn local_world(
+    link: &RefCell<Link>,
+    repo: &mut Repository,
+    attached: &Attachment,
+    base: VersionNumber,
+) -> std::result::Result<VersionNumber, CliError> {
+    let tree = match call(
+        link,
+        &Message::Resolve {
+            version: Some(base),
+        },
+    )
+    .map_err(CliError::Remote)?
+    {
+        Message::Resolved { number, tree, .. } if number == base => tree,
+        _ => return Err(CliError::Remote(unexpected())),
+    };
+    if let Some(local) = repo.history()?.into_iter().rev().find(|v| v.tree == tree) {
+        return Ok(local.number);
+    }
+    if base.get() < attached.head.number {
+        return Err(Error::InvalidInput(format!(
+            "the Layer's base, remote World {base}, is older than the attached World {} \
+             and this repository does not hold it",
+            attached.head.number
+        ))
+        .into());
+    }
+    let anchor = Anchor {
+        number: VersionNumber::new(attached.head.number)?,
+        id: attached.head.id,
+        tree: attached.head.tree,
+    };
+    let trees = MemoryStore::default();
+    let fetched = {
+        let mut blobs = RepoBlobs(repo);
+        fetch(
+            Down(link),
+            Up(link),
+            &trees,
+            &mut blobs,
+            Some(&anchor),
+            Some(base),
+            None,
+        )
+        .map_err(|e| CliError::Remote(remote(link, e)))?
+    };
+    repo.import_tree(&trees, fetched.tree)?;
+    let local = repo.head()?;
+    let operation = OperationId::parse(&format!("sync-{}", fetched.id))?;
+    let version = match repo.advance_to_tree(&operation, local.number, fetched.tree)? {
+        AdvanceOutcome::Accepted { version } => version,
+        AdvanceOutcome::Stale { .. } => {
+            return Err(Error::InvalidInput("the local World moved; retry".into()).into());
+        }
+    };
+    repo.write_attachment(&Attachment {
+        head: RemoteHead {
+            number: fetched.number.get(),
+            id: fetched.id,
+            tree: fetched.tree,
+        },
+        ..attached.clone()
+    })?;
+    Ok(version.number)
 }
 
 /// An operation ID no earlier command used, for a step that is safe to repeat under a new one.
