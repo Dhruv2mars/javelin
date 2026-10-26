@@ -14,10 +14,15 @@ const NAME = /^[A-Za-z0-9._-]{1,100}$/;
 const NUMBER = /^(0|[1-9]\d{0,15})$/;
 
 export function parseRoute(pathname: string, search = ""): Route {
-  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const missing: Route = { page: "missing", path: pathname };
+  let parts: string[];
+  try {
+    parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return missing;
+  }
   if (parts.length === 0) return { page: "index" };
   const [owner, repo, view, at, ...rest] = parts;
-  const missing: Route = { page: "missing", path: pathname };
   if (!owner || !repo || !NAME.test(owner) || !NAME.test(repo)) return missing;
   const path = rest.join("/");
   if (view === undefined) return { page: "tree", owner, repo, version: null, path: "" };
@@ -67,7 +72,14 @@ export function validTarget(t: Partial<Target> | null | undefined): t is Target 
   );
 }
 
-/** The node for `owner/repo`: query parameters first, then the config, then remembered ones. */
+/** Targets chosen by query parameters in this page's lifetime, kept even when storage fails. */
+const selected = new Map<string, Target>();
+
+/**
+ * The node for `owner/repo`: query parameters first, then the config, then a target chosen
+ * earlier. A choice is remembered in memory and, when the browser allows it, in `remembered`;
+ * storage that throws (disabled, full, sandboxed) never stops the page.
+ */
 export function findTarget(
   key: string,
   search: string,
@@ -77,15 +89,21 @@ export function findTarget(
   const q = new URLSearchParams(search);
   const fromQuery = { node: q.get("node") ?? undefined, repository: q.get("repository") ?? undefined };
   if (validTarget(fromQuery)) {
-    remembered?.setItem(`forge:${key}`, JSON.stringify(fromQuery));
+    selected.set(key, fromQuery);
+    try {
+      remembered?.setItem(`forge:${key}`, JSON.stringify(fromQuery));
+    } catch {
+      // kept in memory only
+    }
     return fromQuery;
   }
   if (config.repositories[key]) return config.repositories[key];
+  if (selected.has(key)) return selected.get(key)!;
   try {
     const saved = JSON.parse(remembered?.getItem(`forge:${key}`) ?? "null");
     if (validTarget(saved)) return saved;
   } catch {
-    // ignore a corrupt remembered value
+    // unreadable storage or a corrupt value
   }
   return null;
 }
