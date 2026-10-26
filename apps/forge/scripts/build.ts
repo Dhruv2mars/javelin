@@ -1,0 +1,28 @@
+// Builds the forge to static assets in `dist/`: index.html, app.js and styles.css. Any
+// static host, or a Cloudflare Worker with an SPA fallback to index.html, can serve them.
+import { cp, mkdir, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+export const dist = resolve(import.meta.dir, "../dist");
+const src = resolve(import.meta.dir, "../src");
+
+export async function build(): Promise<void> {
+  await rm(dist, { recursive: true, force: true });
+  await mkdir(dist, { recursive: true });
+  const result = await Bun.build({
+    entrypoints: [join(src, "app.ts")],
+    outdir: dist,
+    target: "browser",
+    minify: true,
+    sourcemap: "linked",
+    naming: "[name].[ext]",
+  });
+  if (!result.success) throw new AggregateError(result.logs, "forge build failed");
+  await cp(join(src, "index.html"), join(dist, "index.html"));
+  await cp(join(src, "styles.css"), join(dist, "styles.css"));
+}
+
+if (import.meta.main) {
+  await build();
+  console.log(`built ${dist}`);
+}
