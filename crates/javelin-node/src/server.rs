@@ -218,7 +218,9 @@ fn read_request(
     Ok(Reply::Message { body, cors })
 }
 
-/// One message through the trace guard, then the protocol handler.
+/// One message through the trace guard, then the protocol handler. The wire carries no
+/// caller identity yet, so every request reads as an outsider: hidden entries reach it as
+/// commitments only.
 fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, ProtocolError> {
     log.traces().refuse_wire_fetch(&message)?;
     match message {
@@ -235,7 +237,7 @@ fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, Protoc
             source,
         )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
-            crate::stack::get_checkpoints(log.repo(), items)
+            crate::stack::get_checkpoints(log.repo(), items, &javelin::Reader::outsider())
         }
         message => handle_request(log, message),
     }
