@@ -228,6 +228,7 @@ fn ancestry_graph_and_operation_corruption_fail_existing_integrity_boundaries() 
                         .as_ref()
                         .unwrap()
                         .content()
+                        .unwrap()
                 } else {
                     source.checkpoint().object()
                 };

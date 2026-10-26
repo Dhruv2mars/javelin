@@ -112,7 +112,7 @@ impl Fixture {
 
     fn bytes(&self, manifest: &Manifest, p: &str) -> Vec<u8> {
         let entry = &manifest.entries()[&path(p)];
-        self.repo.read_blob(entry.content()).unwrap()
+        self.repo.read_blob(entry.content().unwrap()).unwrap()
     }
 
     fn entry_of(&self, manifest: &Manifest, p: &str) -> Option<FileEntry> {
@@ -440,14 +440,18 @@ fn executable_bit_merges_independently_of_content() {
     assert_eq!(
         fx.entry_of(&result, "mode-only"),
         Some(FileEntry::Regular {
-            content: fx.entry_of(&theirs, "mode-only").unwrap().content(),
+            content: fx
+                .entry_of(&theirs, "mode-only")
+                .unwrap()
+                .content()
+                .unwrap(),
             executable: true
         })
     );
     assert_eq!(
         fx.entry_of(&result, "drop"),
         Some(FileEntry::Regular {
-            content: fx.entry_of(&theirs, "drop").unwrap().content(),
+            content: fx.entry_of(&theirs, "drop").unwrap().content().unwrap(),
             executable: false
         })
     );
@@ -468,7 +472,7 @@ fn executable_bit_merges_independently_of_content() {
         assert_eq!(
             outcome.merged[&path(p)],
             Merged::Retained(FileEntry::Regular {
-                content: fx.entry_of(&ours, p).unwrap().content(),
+                content: fx.entry_of(&ours, p).unwrap().content().unwrap(),
                 executable: true
             }),
             "{p}"
@@ -614,6 +618,6 @@ fn loader_errors_propagate_unchanged() {
     let result = merge(&fx.base, &ours, &theirs, Err::<Vec<u8>, _>);
     assert_eq!(
         result.unwrap_err(),
-        MergeError::Load(fx.entry_of(&fx.base, "f").unwrap().content())
+        MergeError::Load(fx.entry_of(&fx.base, "f").unwrap().content().unwrap())
     );
 }

@@ -477,7 +477,10 @@ impl Repository {
         let mut dirs = HashSet::new();
         let mut written = 0;
         for (path, entry) in &changes {
-            let Some(entry) = entry else { continue };
+            // A hidden entry this store cannot open is left out of the directory.
+            let Some(entry) = entry.filter(|e| !e.is_hidden()) else {
+                continue;
+            };
             representable(path)?;
             for (index, _) in path.as_str().match_indices('/') {
                 let dir = &path.as_str()[..index];
@@ -549,6 +552,7 @@ impl Repository {
                 })?;
                 Ok(0)
             }
+            FileEntry::Hidden { .. } => Ok(0),
         }
     }
 }
@@ -575,8 +579,12 @@ impl Before for Nothing {
 struct At<'a>(Index<'a>, VersionNumber);
 
 impl Before for At<'_> {
+    /// A hidden entry is not on disk.
     fn file(&self, path: &RepoPath) -> Result<bool> {
-        Ok(self.0.entry_at(path, self.1)?.is_some())
+        Ok(self
+            .0
+            .entry_at(path, self.1)?
+            .is_some_and(|e| !e.is_hidden()))
     }
     fn dir(&self, dir: &str) -> Result<bool> {
         self.0.is_dir(&RepoPath(dir.into()), self.1)

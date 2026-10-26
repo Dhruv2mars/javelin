@@ -4,7 +4,8 @@
 //! `stale_permissions` for an out-of-date push. The wire does not carry tokens yet, so
 //! the caller passes the token in.
 
-use javelin_collaboration::{AppliedPermissions, RepositoryId};
+use javelin::Reader;
+use javelin_collaboration::{AppliedPermissions, RepositoryId, Role};
 use javelin_identity::{Access, Grant, KeySet, Need, Refusal, Revocation};
 use javelin_protocol::ProtocolError;
 
@@ -48,6 +49,21 @@ impl Gate {
     ) -> Result<Grant, ProtocolError> {
         self.access.authorize(token, now, need).map_err(refused)
     }
+}
+
+/// The audiences a caller reads, from its role in the repository: no role is an outsider,
+/// Read and Review are members, Maintain is a maintainer. Named groups are not applied yet.
+pub fn reader_for(role: Option<Role>) -> Reader {
+    match role {
+        None => Reader::outsider(),
+        Some(Role::Maintain) => Reader::maintainer(),
+        Some(Role::Read | Role::Review) => Reader::member([]),
+    }
+}
+
+/// The audiences of an authorized request. An anonymous grant is an outsider.
+pub fn grant_reader(grant: &Grant) -> Reader {
+    reader_for(grant.principal.as_ref().map(|_| grant.role))
 }
 
 fn refused(refusal: Refusal) -> ProtocolError {

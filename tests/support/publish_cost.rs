@@ -49,6 +49,7 @@ fn publish_after(prior: u64) -> Cost {
             &OperationId::parse(&operation).unwrap(),
             &changes,
             tree,
+            tree,
         )
         .unwrap();
     }

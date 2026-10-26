@@ -450,18 +450,22 @@ fn stale_only_candidate_graph_corruption_is_rejected_by_every_history_validator(
             repo.compare_and_advance(&op("stale"), version(0), stale)
                 .unwrap();
             let db = raw(&root);
-            db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER objects_no_UPDATE; DROP TRIGGER objects_no_DELETE;").unwrap();
-            let damaged = if damage_tree {
-                tree_of(&repo, stale)
+            db.execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER objects_no_UPDATE; DROP TRIGGER objects_no_DELETE; DROP TRIGGER view_chunks_no_UPDATE; DROP TRIGGER view_chunks_no_DELETE;").unwrap();
+            // A snapshot candidate is plain, so its tree is a view, never served.
+            let (damaged, table) = if damage_tree {
+                (tree_of(&repo, stale), "view_chunks")
             } else {
-                blob
+                (blob, "objects")
             };
             if delete {
-                db.execute("DELETE FROM objects WHERE id=?1", [damaged.to_string()])
-                    .unwrap();
+                db.execute(
+                    &format!("DELETE FROM {table} WHERE id=?1"),
+                    [damaged.to_string()],
+                )
+                .unwrap();
             } else {
                 db.execute(
-                    "UPDATE objects SET bytes=x'00' WHERE id=?1",
+                    &format!("UPDATE {table} SET bytes=x'00' WHERE id=?1"),
                     [damaged.to_string()],
                 )
                 .unwrap();

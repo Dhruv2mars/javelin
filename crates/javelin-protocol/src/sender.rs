@@ -99,9 +99,10 @@ pub(crate) fn references(chunk: &Chunk) -> Vec<(Kind, ObjectId)> {
     chunk
         .children()
         .map(|id| (Kind::Tree, id))
-        .chain(chunk.entries().map(|(_, node)| match node {
-            Node::File(entry) => (Kind::Blob, entry.content()),
-            Node::Dir(id) => (Kind::Tree, id),
+        .chain(chunk.entries().filter_map(|(_, node)| match node {
+            // A hidden entry names no object.
+            Node::File(entry) => entry.content().map(|id| (Kind::Blob, id)),
+            Node::Dir(id) => Some((Kind::Tree, id)),
         }))
         .collect()
 }
@@ -204,7 +205,7 @@ pub fn upload_blobs(
         .entries()
         .values()
         .flatten()
-        .map(|entry| (Kind::Blob, entry.content()))
+        .filter_map(|entry| entry.content().map(|id| (Kind::Blob, id)))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();

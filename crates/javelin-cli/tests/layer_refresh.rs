@@ -241,7 +241,7 @@ fn refresh_brings_the_layer_and_its_workspace_to_a_node_stack() {
     let head = active(&local, "target");
     assert_eq!(head.revision(), 3);
     let manifest = local.checkpoint_manifest(head.checkpoint()).unwrap();
-    let notes = manifest.entries()[&path("notes.txt")].content();
+    let notes = manifest.entries()[&path("notes.txt")].content().unwrap();
     assert_eq!(local.read_blob(notes).unwrap(), MERGED);
     assert!(manifest.entries().contains_key(&path("new.txt")));
     assert!(manifest.entries().contains_key(&path("draft.txt")));

@@ -2,12 +2,20 @@
 //! accepted only when their computed ID equals the claimed ID. A tree chunk is
 //! stored only after everything it names, so having a tree means having all of it.
 //! World references are written only by `advance_to_tree`, which verifies the
-//! changed part of the candidate tree. Fetch reads any stored object by ID.
+//! changed part of the candidate tree.
+//!
+//! Reads run as a `Reader`, whose audiences decide what it receives. Version IDs,
+//! committed trees and changesets are the same for everyone; a hidden entry in them is
+//! a commitment. An object inside hidden entries is served only to their audiences, and
+//! `Want` and `Get` answer as if it were absent for anyone else, so a guessed ID is never
+//! confirmed. `Open` returns only the openings the reader may read.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
-use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, Repository, VersionNumber};
+use javelin::{
+    LayerId, ObjectId, OperationId, PublishAttribution, Reader, Repository, VersionNumber,
+};
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
@@ -62,12 +70,21 @@ pub trait WorldLog {
     fn layer_head(&mut self, layer: &LayerId) -> Result<Message, ProtocolError>;
 }
 
-/// Serves one message: a hosted write goes to the log, anything else to the repository.
-/// The legacy `Publish` is not served here: it would skip the log's operation records,
-/// so one operation ID could mean two different things.
+/// Serves one message for an outsider: a caller with no role reads public content only.
 pub fn handle_request<L: WorldLog>(
     log: &mut L,
     message: Message,
+) -> Result<Message, ProtocolError> {
+    handle_request_as(log, message, &Reader::outsider())
+}
+
+/// Serves one message for `reader`: a hosted write goes to the log, anything else to
+/// the repository. The legacy `Publish` is not served here: it would skip the log's
+/// operation records, so one operation ID could mean two different things.
+pub fn handle_request_as<L: WorldLog>(
+    log: &mut L,
+    message: Message,
+    reader: &Reader,
 ) -> Result<Message, ProtocolError> {
     match message {
         Message::Publish { .. } => Err(unexpected()),
@@ -120,22 +137,29 @@ pub fn handle_request<L: WorldLog>(
                 count: objects.len() as u32,
             })
         }
-        other => handle(log.repository(), other),
+        other => handle(log.repository(), other, reader),
     }
 }
 
-/// Serves one session. Any refusal is reported to the peer and ends the session.
-pub fn serve(
+/// Serves one session to an outsider. Any refusal is reported to the peer and ends the
+/// session.
+pub fn serve(repo: &mut Repository, r: impl Read, w: impl Write) -> Result<(), ProtocolError> {
+    serve_as(repo, r, w, &Reader::outsider())
+}
+
+/// Serves one session to `reader`.
+pub fn serve_as(
     repo: &mut Repository,
     mut r: impl Read,
     mut w: impl Write,
+    reader: &Reader,
 ) -> Result<(), ProtocolError> {
     let mut negotiated = false;
     loop {
         let result = match read_frame(&mut r) {
             Ok(None) => return Ok(()),
             Ok(Some(message)) if !negotiated => negotiate(message).inspect(|_| negotiated = true),
-            Ok(Some(message)) => handle(repo, message),
+            Ok(Some(message)) => handle(repo, message, reader),
             Err(e) => Err(e),
         };
         match result {
@@ -168,7 +192,11 @@ fn negotiate(message: Message) -> Result<Message, ProtocolError> {
     }
 }
 
-fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolError> {
+fn handle(
+    repo: &mut Repository,
+    message: Message,
+    reader: &Reader,
+) -> Result<Message, ProtocolError> {
     match message {
         Message::Want(items) => {
             // Streamed probes still hash stored bytes, so repeats amplify work.
@@ -180,7 +208,8 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                     Kind::Tree => repo.has_tree(id),
                     Kind::Checkpoint => return Err(checkpoint_unserved()),
                 }?;
-                if !found {
+                // Hidden from this caller: reported missing, as if never stored.
+                if !found || !repo.readable(id, reader)? {
                     missing.push((kind, id));
                 }
             }
@@ -229,6 +258,15 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
                 bytes: bytes[start..end].to_vec(),
             })
         }
+        Message::Open(commitments) => {
+            let openings = repo.openings(&commitments, reader)?;
+            Ok(Message::Opened(
+                openings
+                    .into_iter()
+                    .map(|(commitment, opening, _)| (commitment, opening))
+                    .collect(),
+            ))
+        }
         Message::Resolve { version } => {
             let world = match version {
                 Some(number) => repo.version(number)?,
@@ -250,6 +288,10 @@ fn handle(repo: &mut Repository, message: Message) -> Result<Message, ProtocolEr
             let mut objects = Vec::new();
             let mut size = 5;
             for (kind, id) in items.into_iter().take(MAX_OBJECTS) {
+                if !repo.readable(id, reader)? {
+                    // The same refusal as an object that was never stored.
+                    return Err(javelin::Error::MissingObject(id).into());
+                }
                 let bytes = match kind {
                     Kind::Blob => repo.read_blob_bounded(id, MAX_BLOB)?,
                     Kind::Tree => repo.tree_bytes_bounded(id, MAX_TREE)?,

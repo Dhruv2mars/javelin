@@ -710,9 +710,11 @@ fn encode(entries: &HashMap<String, Cached>) -> Vec<u8> {
                 executable: true, ..
             } => 1,
             FileEntry::Symlink { .. } => 2,
+            // Never scanned from disk; an unknown kind makes the cache rebuild.
+            FileEntry::Hidden { .. } => 3,
         };
         out.extend_from_slice(&[kind, c.trusted as u8]);
-        out.extend_from_slice(c.entry.content().as_bytes());
+        out.extend_from_slice(&c.entry.content().map_or([0; 32], |id| *id.as_bytes()));
     }
     let sum = Sha256::digest(&out);
     out.extend_from_slice(&sum);
@@ -770,19 +772,21 @@ fn decode(bytes: &[u8]) -> Option<HashMap<String, Cached>> {
 }
 
 /// The complete delta from `base` to `after`, with per-entry deletions.
+/// A hidden entry the store cannot open is not in the directory, and is never a change:
+/// an unseen path is neither written nor deleted.
 pub fn changes_from(
     base: &Manifest,
     after: &BTreeMap<RepoPath, FileEntry>,
 ) -> Result<SparseChanges> {
     let changed = after
         .iter()
-        .filter(|(path, entry)| base.entries().get(*path) != Some(*entry))
+        .filter(|(path, entry)| !entry.is_hidden() && base.entries().get(*path) != Some(*entry))
         .map(|(path, entry)| (path.clone(), Some(entry.clone())));
     let deleted = base
         .entries()
-        .keys()
-        .filter(|path| !after.contains_key(*path))
-        .map(|path| (path.clone(), None));
+        .iter()
+        .filter(|(path, entry)| !entry.is_hidden() && !after.contains_key(*path))
+        .map(|(path, _)| (path.clone(), None));
     SparseChanges::new(changed.chain(deleted))
 }
 
@@ -996,7 +1000,9 @@ mod tests {
     }
 
     fn captured(scan: &Scan, path: &str) -> ObjectId {
-        scan.entries[&RepoPath::parse(path).unwrap()].content()
+        scan.entries[&RepoPath::parse(path).unwrap()]
+            .content()
+            .unwrap()
     }
 
     #[test]

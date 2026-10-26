@@ -9,7 +9,7 @@
 //! lists its child chunks by their last name. A boundary follows an item when a
 //! hash of its level and name falls below a threshold that rises with the chunk's
 //! size (mean `TARGET` bytes), or when the chunk reaches `FORCE` bytes. Boundaries
-//! depend only on names, so:
+//! depend only on names and hidden items' audiences, so:
 //!
 //! - the same entries give the same chunks whatever the edit order (history
 //!   independence), so a root hash identifies a snapshot;
@@ -19,10 +19,12 @@
 //! A small directory is a single chunk. Chunks are `ObjectKind::Tree` objects.
 //! Encoding: `level u8`, then for each item `tag u8`, `name length u16` (big
 //! endian), the name and a 32-byte ID, with names strictly ascending. Leaf tags are
-//! 1 regular file, 2 executable file, 3 symlink and 4 directory (the ID is the
-//! child directory's root chunk). Items above the leaves have tag 0 and name their
-//! child chunk's last name. The empty World is the empty leaf chunk `[0]`; no other
-//! chunk is empty.
+//! 1 regular file, 2 executable file, 3 symlink, 4 directory (the ID is the
+//! child directory's root chunk) and 5 hidden. A hidden item's ID is its salted
+//! commitment (`crate::Opening`), followed by its audience as `length u8` and the
+//! audience text; it is a leaf whether it hides a file or a directory. Items above
+//! the leaves have tag 0 and name their child chunk's last name. The empty World is
+//! the empty leaf chunk `[0]`; no other chunk is empty.
 
 use std::{
     cell::{Cell, RefCell},
@@ -33,7 +35,7 @@ use std::{
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Error, FileEntry, ObjectId, RepoPath, Result, SparseChanges,
+    Audience, Error, FileEntry, ObjectId, RepoPath, Result, SparseChanges,
     domain::{MAX_DEPTH, MAX_PATH, ObjectKind, valid_name},
 };
 
@@ -46,14 +48,16 @@ pub const FORCE: usize = 64 * 1024;
 pub const MAX_LEVEL: u8 = 32;
 /// Bytes of an item besides its name: tag, name length and ID.
 const ITEM: usize = 35;
-/// Upper bound on one encoded chunk, enforced by the decoder.
-pub const MAX_CHUNK: usize = 1 + FORCE + ITEM + MAX_PATH;
+/// Upper bound on one encoded chunk, enforced by the decoder: one item, with the
+/// longest name and audience, may follow `FORCE` bytes.
+pub const MAX_CHUNK: usize = 1 + FORCE + ITEM + MAX_PATH + 1 + Audience::MAX;
 
 const CHILD: u8 = 0;
 const REGULAR: u8 = 1;
 const EXECUTABLE: u8 = 2;
 const SYMLINK: u8 = 3;
 const DIR: u8 = 4;
+const HIDDEN: u8 = 5;
 
 /// What a directory entry names: a file, or a subdirectory by its root chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,36 +86,51 @@ struct Item {
     name: String,
     tag: u8,
     id: ObjectId,
+    /// Set for hidden items only.
+    audience: Option<Audience>,
 }
 
 impl Item {
     fn new(name: &str, node: &Node) -> Self {
-        let (tag, id) = match node {
+        let (tag, id, audience) = match node {
             Node::File(FileEntry::Regular {
                 content,
                 executable,
-            }) => (if *executable { EXECUTABLE } else { REGULAR }, *content),
-            Node::File(FileEntry::Symlink { target }) => (SYMLINK, *target),
-            Node::Dir(id) => (DIR, *id),
+            }) => (
+                if *executable { EXECUTABLE } else { REGULAR },
+                *content,
+                None,
+            ),
+            Node::File(FileEntry::Symlink { target }) => (SYMLINK, *target, None),
+            Node::File(FileEntry::Hidden {
+                commitment,
+                audience,
+            }) => (HIDDEN, *commitment, Some(audience.clone())),
+            Node::Dir(id) => (DIR, *id, None),
         };
         Self {
             name: name.into(),
             tag,
             id,
+            audience,
         }
     }
     fn node(&self) -> Node {
-        match self.tag {
-            REGULAR | EXECUTABLE => Node::File(FileEntry::Regular {
+        match (self.tag, &self.audience) {
+            (REGULAR | EXECUTABLE, _) => Node::File(FileEntry::Regular {
                 content: self.id,
                 executable: self.tag == EXECUTABLE,
             }),
-            SYMLINK => Node::File(FileEntry::Symlink { target: self.id }),
+            (SYMLINK, _) => Node::File(FileEntry::Symlink { target: self.id }),
+            (HIDDEN, Some(audience)) => Node::File(FileEntry::Hidden {
+                commitment: self.id,
+                audience: audience.clone(),
+            }),
             _ => Node::Dir(self.id),
         }
     }
     fn len(&self) -> usize {
-        ITEM + self.name.len()
+        ITEM + self.name.len() + self.audience.as_ref().map_or(0, |a| 1 + a.as_str().len())
     }
 }
 
@@ -135,6 +154,11 @@ impl Chunk {
             out.extend_from_slice(&(item.name.len() as u16).to_be_bytes());
             out.extend_from_slice(item.name.as_bytes());
             out.extend_from_slice(item.id.as_bytes());
+            if let Some(audience) = &item.audience {
+                let audience = audience.as_str();
+                out.push(audience.len() as u8);
+                out.extend_from_slice(audience.as_bytes());
+            }
         }
         out
     }
@@ -164,15 +188,35 @@ impl Chunk {
             if items.last().is_some_and(|last| last.name.as_str() >= name) {
                 return Err(bad("names are not strictly ascending"));
             }
-            if (level == 0) == (*tag == CHILD) || *tag > DIR {
+            if (level == 0) == (*tag == CHILD) || *tag > HIDDEN {
                 return Err(bad("tag invalid for level"));
             }
+            let id = ObjectId::from_bytes(tail[len..len + 32].try_into().unwrap());
+            rest = &tail[len + 32..];
+            let audience = if *tag == HIDDEN {
+                let (&size, tail) = rest.split_first().ok_or_else(|| bad("truncated item"))?;
+                let size = size as usize;
+                if tail.len() < size {
+                    return Err(bad("truncated item"));
+                }
+                let text =
+                    std::str::from_utf8(&tail[..size]).map_err(|_| bad("audience is not UTF-8"))?;
+                match Audience::parse(text) {
+                    Ok(Audience::Public) | Err(_) => return Err(bad("invalid audience")),
+                    Ok(audience) => {
+                        rest = &tail[size..];
+                        Some(audience)
+                    }
+                }
+            } else {
+                None
+            };
             items.push(Item {
                 name: name.into(),
                 tag: *tag,
-                id: ObjectId::from_bytes(tail[len..len + 32].try_into().unwrap()),
+                id,
+                audience,
             });
-            rest = &tail[len + 32..];
         }
         if !rest.is_empty() {
             return Err(bad("trailing bytes"));
@@ -338,6 +382,11 @@ impl<S: Store> Trees<S> {
 
     fn get(&self, id: ObjectId) -> Result<Arc<Chunk>> {
         self.chunk(id, true)
+    }
+
+    /// One chunk, verified against `id` and decoded, without caching it.
+    pub(crate) fn load(&self, id: ObjectId) -> Result<Arc<Chunk>> {
+        self.chunk(id, false)
     }
 
     /// The child chunk of an internal item, checked against its parent.
@@ -578,6 +627,7 @@ impl<S: Store> Trees<S> {
             name,
             tag: CHILD,
             id: self.put(chunk)?,
+            audience: None,
         })
     }
 
@@ -904,7 +954,7 @@ const SPREAD: u64 = (TARGET * TARGET) as u64 * 7 / 11;
 /// SPREAD`, decided by a hash of its level and name, where `size` is the chunk's
 /// bytes including the item. The rising hazard keeps chunk sizes close
 /// to `TARGET`, so an edit rarely lands in an outsized chunk. Item lengths depend
-/// only on names, so boundaries do too.
+/// only on names and hidden items' audiences, so boundaries do too.
 fn boundary(level: u8, name: &str, len: usize, size: usize) -> bool {
     let hash = Sha256::new()
         .chain_update(b"javelin-tree-v1\0")
