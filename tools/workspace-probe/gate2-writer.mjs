@@ -1,15 +1,17 @@
-// Rewrites two self-verifying files for a fixed time: one in place, one by atomic rename.
+// Rewrites two self-verifying files until told to stop: one in place, one by atomic rename.
 // Each version is `gen N` plus filler, followed by `\nsum <sha256 of everything before>`.
+// Prints `ready` once both files hold a complete version, and stops when the stop file
+// exists, or after the safety limit so an orphaned writer exits on its own.
 import * as fs from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
-const [dir, ms] = process.argv.slice(2);
-const until = Date.now() + Number(ms);
+const [dir, stop, limitMs] = process.argv.slice(2);
+const until = Date.now() + Number(limitMs);
 const version = n => { const body = `gen ${n}\n${randomBytes(48 << 10).toString('hex')}`; return `${body}\nsum ${createHash('sha256').update(body).digest('hex')}\n`; };
 let n = 0, retries = 0;
 const pause = new Int32Array(new SharedArrayBuffer(4));
-while (Date.now() < until) {
+while (!fs.existsSync(stop) && Date.now() < until) {
   n++;
   const fd = fs.openSync(join(dir, 'inplace.txt'), fs.existsSync(join(dir, 'inplace.txt')) ? 'r+' : 'w');
   fs.writeSync(fd, version(n), 0); fs.closeSync(fd);
@@ -19,7 +21,8 @@ while (Date.now() < until) {
     try { fs.renameSync(join(dir, 'atomic.txt.tmp'), join(dir, 'atomic.txt')); break; }
     catch (e) { if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code) || tries > 200) throw e; retries++; Atomics.wait(pause, 0, 0, 5); }
   }
+  if (n === 1) fs.writeSync(1, 'ready\n');
   // Save repeatedly, like an editor, with short quiet gaps for a capture to read through.
   Atomics.wait(pause, 0, 0, 30);
 }
-console.log(`${n} generations, ${retries} rename retries`);
+console.log(`${n} generations, ${retries} rename retries${fs.existsSync(stop) ? '' : ', stopped by the safety limit'}`);
