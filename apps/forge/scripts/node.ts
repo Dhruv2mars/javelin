@@ -53,7 +53,7 @@ cargo run -- build notes/ --out site/
 - \`build\` renders every note once.
 - \`watch\` rebuilds a note when it changes.
 
-See [the usage guide](docs/usage.md) and [the entry point](src/main.rs).
+See [the usage guide](docs/usage.md), [the sources](src/) and [the entry point](src/main.rs).
 `,
   cargo: `[package]
 name = "lantern"
