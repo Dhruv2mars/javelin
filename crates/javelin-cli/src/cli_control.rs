@@ -1,6 +1,9 @@
 //! `javelin login`, `javelin control` and `javelin repo create`: the first slice of the
-//! control plane's commands. State lives under `JAVELIN_CONTROL_DIR` (default
-//! `$JAVELIN_HOME/control`), and this device's sign-in under `$JAVELIN_HOME/credentials`.
+//! control plane's commands. With `JAVELIN_CONTROL_URL` set, `login`, `control approve` and
+//! `repo create` call the control plane's HTTP API there, which `javelin control serve`
+//! provides; otherwise they open its state in process under `JAVELIN_CONTROL_DIR` (default
+//! `$JAVELIN_HOME/control`). A control plane that cannot be reached either way is
+//! `control_plane_unavailable`. This device's sign-in lives in `$JAVELIN_HOME/credentials`.
 //! `JAVELIN_HOME` defaults to `~/.javelin`. See `docs/online-design.md` section 4.7 (D5).
 
 use std::{
@@ -12,14 +15,15 @@ use std::{
 };
 
 use javelin_control::{
-    ControlError, ControlPlane, CreateRequest, Credentials, NodeTarget, Poll, Publish,
+    Control, ControlError, ControlPlane, CreateRequest, Credentials, NodeTarget, Poll, Publish,
+    RelyingParty, RemoteControl,
 };
 use javelin_node_worker::CloudflareNode;
 use serde_json::json;
 
 use crate::cli::Output;
 
-const USAGE: &str = "usage:\n  javelin control init\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
+const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin URL]\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
 
 pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args = args
@@ -34,6 +38,8 @@ pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     match args.as_slice() {
         ["login"] => login(),
         ["control", "init"] => control_init(),
+        ["control", "serve", addr] => control_serve(addr, None),
+        ["control", "serve", addr, "--origin", origin] => control_serve(addr, Some(origin)),
         ["control", "approve", code] => control_approve(code),
         ["repo", "create", slug, flags @ ..] => repo_create(slug, flags),
         _ => Err(ControlError::InvalidInput(USAGE.into())),
@@ -54,9 +60,32 @@ fn control_init() -> Result<Output, ControlError> {
     ))
 }
 
+/// Serves the approval page and the HTTP API on `addr` until the process is stopped. The
+/// passkey origin defaults to `http://localhost:PORT`.
+fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlError> {
+    let plane = ControlPlane::open(&control_dir()?)?;
+    let listener = std::net::TcpListener::bind(addr)
+        .map_err(|error| ControlError::InvalidInput(format!("cannot listen on {addr}: {error}")))?;
+    let local = listener
+        .local_addr()
+        .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
+    let origin = match origin {
+        Some(origin) => origin.to_owned(),
+        None => format!("http://localhost:{}", local.port()),
+    };
+    let rp = RelyingParty::new(&origin)?;
+    eprintln!("javelin control plane serving on {local} (passkey origin {origin})");
+    javelin_control::serve(&plane, &rp, &listener)
+        .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
+    Ok((
+        json!({"ok": true, "command": "control serve"}),
+        String::new(),
+        0,
+    ))
+}
+
 fn control_approve(code: &str) -> Result<Output, ControlError> {
-    let plane = open()?;
-    plane.device_approve(&admin_token()?, code, now()?)?;
+    control()?.device_approve_as(&admin_token()?, code, now()?)?;
     let text = format!("Approved {code}. The waiting `javelin login` will finish.");
     Ok((
         json!({"ok": true, "command": "control approve", "user_code": code}),
@@ -66,7 +95,7 @@ fn control_approve(code: &str) -> Result<Output, ControlError> {
 }
 
 fn login() -> Result<Output, ControlError> {
-    let plane = open()?;
+    let plane = control()?;
     let start = plane.device_start(now()?)?;
     eprintln!(
         "To sign in, approve this code with the admin token:\n  JAVELIN_ADMIN_TOKEN=... javelin control approve {}\nCode expires in 15 minutes. Waiting for approval...",
@@ -155,7 +184,13 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             "repo create needs --operation ID; reuse it when retrying".into(),
         )
     })?;
-    let plane = if cloudflare {
+    let remote = env::var("JAVELIN_CONTROL_URL").is_ok();
+    if remote && (cloudflare || node_url.is_some()) {
+        return Err(ControlError::InvalidInput(
+            "the control plane at JAVELIN_CONTROL_URL chooses the provider; drop --provider and --node-url".into(),
+        ));
+    }
+    let plane: Box<dyn Control> = if cloudflare {
         let url = node_url.ok_or_else(|| {
             ControlError::InvalidInput("--provider cloudflare needs --node-url URL".into())
         })?;
@@ -163,18 +198,18 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
         })?;
         let node = CloudflareNode::new(&url, &token)?;
-        ControlPlane::with_node(
+        Box::new(ControlPlane::with_node(
             &control_dir()?,
             Box::new(node),
             NodeTarget::cloudflare(&url),
-        )?
+        )?)
     } else {
         if node_url.is_some() {
             return Err(ControlError::InvalidInput(
                 "--node-url needs --provider cloudflare".into(),
             ));
         }
-        open()?
+        control()?
     };
     let now = now()?;
     let bearer = match env::var("JAVELIN_ADMIN_TOKEN") {
@@ -226,8 +261,13 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
     ))
 }
 
-fn open() -> Result<ControlPlane, ControlError> {
-    ControlPlane::open(&control_dir()?)
+/// The control plane: over HTTP at `JAVELIN_CONTROL_URL`, else in process at the control
+/// directory.
+pub(crate) fn control() -> Result<Box<dyn Control>, ControlError> {
+    match env::var("JAVELIN_CONTROL_URL") {
+        Ok(url) => Ok(Box::new(RemoteControl::new(&url)?)),
+        Err(_) => Ok(Box::new(ControlPlane::open(&control_dir()?)?)),
+    }
 }
 
 fn admin_token() -> Result<String, ControlError> {
@@ -245,7 +285,7 @@ fn now() -> Result<u64, ControlError> {
         .map_err(|_| ControlError::Storage("system clock is before 1970".into()))
 }
 
-fn javelin_home() -> Result<PathBuf, ControlError> {
+pub(crate) fn javelin_home() -> Result<PathBuf, ControlError> {
     if let Some(dir) = env::var_os("JAVELIN_HOME") {
         return Ok(dir.into());
     }
@@ -262,6 +302,6 @@ fn control_dir() -> Result<PathBuf, ControlError> {
     }
 }
 
-fn credentials_path() -> Result<PathBuf, ControlError> {
+pub(crate) fn credentials_path() -> Result<PathBuf, ControlError> {
     Ok(javelin_home()?.join("credentials"))
 }

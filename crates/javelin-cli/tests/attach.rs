@@ -21,6 +21,9 @@ use javelin_protocol::{
 use serde_json::Value;
 use tempfile::TempDir;
 
+#[path = "../../javelin-node/tests/wire_support/mod.rs"]
+mod wire_support;
+
 /// Enough files that the tree spans several chunks at more than one level.
 const LARGE: usize = 2_000;
 const SMALL: usize = 10;
@@ -64,7 +67,14 @@ fn start_node(dir: &Path, files: usize) -> String {
     let dir = dir.to_path_buf();
     thread::spawn(move || {
         let mut log = FileWorldLog::open(&dir).unwrap();
-        serve(&listener, "demo", &mut log, None).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            None,
+        )
+        .unwrap();
     });
     format!("http://{addr}/demo")
 }
@@ -78,8 +88,14 @@ fn closed_url() -> String {
 }
 
 fn javelin(cwd: &Path, args: &[&str]) -> Output {
+    // No sign-in and no token: the public node is read anonymously.
     Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(cwd)
+        .env(
+            "JAVELIN_HOME",
+            std::env::temp_dir().join("javelin-test-signed-out"),
+        )
+        .env_remove("JAVELIN_TOKEN")
         .args(args)
         .output()
         .unwrap()
@@ -215,6 +231,8 @@ fn attach_runs_without_git() {
     let output = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(root.path())
         .env("PATH", path)
+        .env("JAVELIN_HOME", root.path().join("home"))
+        .env_remove("JAVELIN_TOKEN")
         .args(["attach", &url, "project", "--json"])
         .output()
         .unwrap();

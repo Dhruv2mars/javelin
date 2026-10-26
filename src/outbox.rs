@@ -79,13 +79,18 @@ pub struct Entry {
     pub outcome: Option<Vec<u8>>,
 }
 
-/// Why the node did not decide a record. The record stays queued in both cases.
+/// Why the node did not decide a record. The record stays queued in every case: nothing is
+/// dropped while it waits for the node or for a credential.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Fault {
     /// The node is unreachable, failed, or could not decide (`node_unavailable`).
     NodeUnavailable(String),
-    /// The credential has expired and cannot be refreshed (`control_plane_unavailable`).
+    /// The credential has expired and the control plane that refreshes it cannot be reached
+    /// (`control_plane_unavailable`).
     ControlPlaneUnavailable(String),
+    /// The node refused the credential, and no fresh one could be had: the device must sign
+    /// in again (`unauthorized`).
+    Unauthorized(String),
 }
 
 impl Fault {
@@ -93,6 +98,16 @@ impl Fault {
         match self {
             Self::NodeUnavailable(_) => "node_unavailable",
             Self::ControlPlaneUnavailable(_) => "control_plane_unavailable",
+            Self::Unauthorized(_) => "unauthorized",
+        }
+    }
+
+    /// What went wrong, without the code.
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::NodeUnavailable(detail)
+            | Self::ControlPlaneUnavailable(detail)
+            | Self::Unauthorized(detail) => detail,
         }
     }
 }

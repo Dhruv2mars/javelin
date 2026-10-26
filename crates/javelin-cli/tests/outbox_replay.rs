@@ -28,6 +28,9 @@ use javelin_protocol::{
 };
 use tempfile::TempDir;
 
+#[path = "../../javelin-node/tests/wire_support/mod.rs"]
+mod wire_support;
+
 const REPO: &str = "demo";
 
 fn op(s: &str) -> OperationId {
@@ -69,7 +72,7 @@ fn start_node(dir: &Path, layers: &[(&str, &str)]) -> (SocketAddr, Vec<ObjectId>
     thread::spawn(move || {
         let mut log = log;
         // Serves until the test process exits.
-        serve(&listener, REPO, &mut log, None).unwrap();
+        serve(&listener, REPO, &mut log, &wire_support::gate(REPO), None).unwrap();
     });
     (addr, heads)
 }
@@ -263,7 +266,8 @@ impl Transport for Loopback {
             .set_read_timeout(Some(Duration::from_secs(10)))
             .map_err(unreachable)?;
         let head = format!(
-            "POST /v2/r/{REPO} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
+            "POST /v2/r/{REPO} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\n\r\n",
+            wire_support::token(REPO),
             entry.payload.len()
         );
         stream
