@@ -1,0 +1,8 @@
+{
+  "name": "javelin-acceptance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run run.ts"
+  }
+}
