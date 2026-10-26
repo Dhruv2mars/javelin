@@ -1,7 +1,16 @@
 // Page data loading against a real `javelin-node serve` on loopback, seeded with the
 // `javelin` CLI. No part of the node is mocked.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { Kind, NodeClient, ProtocolError, objectId, versionId } from "../../../packages/protocol/src";
+import {
+  Kind,
+  type Message,
+  NodeClient,
+  ProtocolError,
+  decode,
+  encode,
+  objectId,
+  versionId,
+} from "../../../packages/protocol/src";
 import { loadDirectory, loadFile, loadHistory, loadVersion } from "../src/data";
 import { DEMO, type RunningNode, binaries, freePort, scratch, seedDemo, startNode } from "../scripts/node";
 
@@ -50,6 +59,8 @@ test("repository home lists the head's files and renders its README", async () =
   ]);
   expect(home.readme?.name).toBe("README.md");
   expect(home.readme?.text).toContain("[the guide](docs/guide.md)");
+  // README links route by the kind of entry they name.
+  expect(home.readme?.links).toEqual({ "docs/guide.md": "file", src: "dir", "src/main.rs": "file" });
   expect(home.publication).toEqual({ layer: "icon", attribution: { kind: "human" } });
 });
 
@@ -140,6 +151,27 @@ test("objects that do not match their IDs are refused", async () => {
   };
   const tampered = new NodeClient(node.url, node.repository, tampering);
   expect(await refusal(loadFile(tampered, 4, "README.md"))).toBe("id_mismatch");
+});
+
+test("code pages refuse a tree substituted under a real version ID", async () => {
+  const real = await client.resolve(4);
+  const other = await client.resolve(1);
+  // The real node's replies, with World 4's root swapped for World 1's real root.
+  const substituting = async (url: string, init: RequestInit) => {
+    const request = decode(new Uint8Array(init.body as Uint8Array<ArrayBuffer>));
+    const response = await fetch(url, init);
+    if (request.type !== "resolve") return response;
+    const reply = decode(new Uint8Array(await response.arrayBuffer())) as Message;
+    if (reply.type === "resolved" && reply.number === 4) reply.tree = other.tree;
+    return new Response(encode(reply));
+  };
+  const lying = new NodeClient(node.url, node.repository, substituting);
+  expect((await lying.resolve()).id).toBe(real.id);
+  expect(await refusal(loadDirectory(lying))).toBe("chain_mismatch");
+  expect(await refusal(loadDirectory(lying, 4, "docs"))).toBe("chain_mismatch");
+  expect(await refusal(loadFile(lying, 4, "docs/usage.md"))).toBe("chain_mismatch");
+  // Other versions are untouched and still load.
+  expect((await loadFile(lying, 1, "docs/usage.md")).contents.kind).toBe("text");
 });
 
 test("browsers can read the node, and only read", async () => {
