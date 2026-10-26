@@ -128,7 +128,13 @@ pub fn fetch(
     version: Option<VersionNumber>,
     prefix: Option<&RepoPath>,
 ) -> Result<Fetched, ProtocolError> {
-    fetch_inner(r, w, trees, blobs, anchor, version, prefix, false)
+    let request = Request {
+        anchor,
+        version,
+        prefix,
+        open: false,
+    };
+    fetch_inner(r, w, trees, blobs, request)
 }
 
 /// Like `fetch`, and opens every hidden entry the node will open for this caller.
@@ -141,7 +147,21 @@ pub fn fetch_opened(
     version: Option<VersionNumber>,
     prefix: Option<&RepoPath>,
 ) -> Result<Fetched, ProtocolError> {
-    fetch_inner(r, w, trees, blobs, anchor, version, prefix, true)
+    let request = Request {
+        anchor,
+        version,
+        prefix,
+        open: true,
+    };
+    fetch_inner(r, w, trees, blobs, request)
+}
+
+/// What one fetch reads, and whether it opens hidden entries.
+struct Request<'a> {
+    anchor: Option<&'a Anchor>,
+    version: Option<VersionNumber>,
+    prefix: Option<&'a RepoPath>,
+    open: bool,
 }
 
 fn fetch_inner(
@@ -149,11 +169,14 @@ fn fetch_inner(
     mut w: impl Write,
     trees: &impl Store,
     blobs: &mut impl Blobs,
-    anchor: Option<&Anchor>,
-    version: Option<VersionNumber>,
-    prefix: Option<&RepoPath>,
-    open: bool,
+    request: Request<'_>,
 ) -> Result<Fetched, ProtocolError> {
+    let Request {
+        anchor,
+        version,
+        prefix,
+        open,
+    } = request;
     let mut call = |message: Message| exchange(&mut r, &mut w, &message);
     match call(Message::Hello {
         min: VERSION,

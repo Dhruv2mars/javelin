@@ -572,7 +572,7 @@ fn older_formats_are_refused() {
     let (dir, repo) = repo();
     drop(repo);
     let db = rusqlite::Connection::open(dir.path().join(".javelin/repository.sqlite3")).unwrap();
-    db.pragma_update(None, "user_version", 8).unwrap();
+    db.pragma_update(None, "user_version", 9).unwrap();
     drop(db);
     let error = Repository::open(dir.path()).err().unwrap();
     assert_eq!(error.code(), "unsupported_format");

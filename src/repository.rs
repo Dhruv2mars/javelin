@@ -12,7 +12,7 @@ use crate::{
     tree::{self, Node, Trees},
 };
 
-const FORMAT: i64 = 9;
+const FORMAT: i64 = 10;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 // A World version's primary record is its changeset: one `changes` row per changed
@@ -89,7 +89,7 @@ BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 -- this index SQLite scans every attempt inside the Publish write transaction.
 CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=9;
+PRAGMA user_version=10;
 ";
 
 /// One World version. `tree` is the root of its derived snapshot tree; `id` is its

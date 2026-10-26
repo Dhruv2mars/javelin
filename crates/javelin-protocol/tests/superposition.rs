@@ -77,9 +77,9 @@ fn fetch_as(
     let trees = MemoryStore::default();
     let mut blobs = BTreeMap::new();
     let fetched = if open {
-        fetch_opened(client_in, client_out, &trees, &mut blobs, None, None)
+        fetch_opened(client_in, client_out, &trees, &mut blobs, None, None, None)
     } else {
-        fetch(client_in, client_out, &trees, &mut blobs, None, None)
+        fetch(client_in, client_out, &trees, &mut blobs, None, None, None)
     }
     .unwrap();
     (fetched, blobs, server.join().unwrap())
