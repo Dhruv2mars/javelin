@@ -500,10 +500,94 @@ fn a_node_refuses_writers_outside_an_audience() {
             assert_eq!(error.code(), "hidden_path");
         }
     }
-    let reveals = |p: &str, reader: &Reader| node.conceals(&write(p), one.number, reader).unwrap();
-    assert!(reveals(".env", &Reader::member([])));
-    assert!(!reveals("src/x", &Reader::outsider()));
-    assert!(!reveals(".env", &Reader::maintainer()));
+    let visible = |p: &str, reader: &Reader| {
+        node.visible(write(p).entries().keys(), one.number, reader)
+            .unwrap()
+    };
+    assert!(!visible(".env", &Reader::member([])));
+    assert!(visible("src/x", &Reader::outsider()));
+    assert!(visible(".env", &Reader::maintainer()));
+}
+
+/// Copies version `n` of `node` into `local` as its next World: the committed tree, the
+/// public blobs, and the given openings first, as a fetch with access would.
+fn advance_copy(node: &Repository, local: &mut Repository, n: u64, openings: &[ObjectId]) {
+    fn copy(from: &Repository, to: &mut Repository, root: ObjectId) {
+        if to.has_tree(root).unwrap() {
+            return;
+        }
+        let bytes = from.tree_bytes_bounded(root, MAX_CHUNK).unwrap();
+        let chunk = Chunk::decode(&bytes).unwrap();
+        for child in chunk.children() {
+            copy(from, to, child);
+        }
+        for (_, node) in chunk.entries() {
+            match node {
+                Node::Dir(dir) => copy(from, to, dir),
+                Node::File(entry) => {
+                    if let Some(blob) = entry.content() {
+                        to.put_blob(&from.read_blob(blob).unwrap()).unwrap();
+                    }
+                }
+            }
+        }
+        to.put_tree(&bytes).unwrap();
+    }
+    let version = node.version(v(n)).unwrap();
+    copy(node, local, version.tree);
+    for (_, opening, audience) in node.openings(openings, &Reader::maintainer()).unwrap() {
+        local
+            .put_blob(&node.read_blob(opening.content).unwrap())
+            .unwrap();
+        local.put_opening(&opening, &audience).unwrap();
+    }
+    let head = local.head().unwrap().number;
+    local
+        .advance_to_tree(&op(&format!("copy-{n}")), head, version.tree)
+        .unwrap();
+}
+
+#[test]
+fn an_opening_received_later_never_invalidates_history() {
+    let (_dir, mut node, one) = fixture();
+    let (_odir, mut local) = outsider_copy(&node, &one);
+    let env = hidden(&node.committed_at(v(1)).unwrap(), ".env").0;
+
+    // The exact sequence: a committed version stored without an opening, then its content
+    // and opening stored afterwards.
+    let [(_, opening, audience)] = node
+        .openings(&[env], &Reader::maintainer())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    local.put_blob(TOKEN).unwrap();
+    local.put_opening(&opening, &audience).unwrap();
+    local.check().unwrap();
+    local.history().unwrap();
+    // The saved view stays as it was stored.
+    assert!(local.manifest_at(v(1)).unwrap().entries()[&path(".env")].is_hidden());
+
+    // A later version that leaves the entry unchanged keeps it closed too.
+    publish(
+        &mut node,
+        "public",
+        &[("src/main.rs", Some(b"fn main() { }\n"))],
+    );
+    advance_copy(&node, &mut local, 2, &[]);
+    assert!(local.manifest_at(v(2)).unwrap().entries()[&path(".env")].is_hidden());
+    local.check().unwrap();
+
+    // A version that changes it, received with its opening, opens it.
+    publish(&mut node, "env", &[(".env", Some(b"TOKEN=2\n"))]);
+    let changed = hidden(&node.committed_at(v(3)).unwrap(), ".env").0;
+    advance_copy(&node, &mut local, 3, &[changed]);
+    assert_eq!(
+        local.manifest_at(v(3)).unwrap().entries()[&path(".env")],
+        node.manifest_at(v(3)).unwrap().entries()[&path(".env")]
+    );
+    assert_eq!(local.head().unwrap().id, node.head().unwrap().id);
+    local.check().unwrap();
+    local.history().unwrap();
 }
 
 #[test]

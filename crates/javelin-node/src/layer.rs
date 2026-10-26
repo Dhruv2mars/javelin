@@ -19,6 +19,21 @@ pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS changes (
     bytes BLOB NOT NULL
 );";
 
+/// Whether every path a staged changes object names is visible to `reader` under every
+/// policy the World has had. A staged object has no base yet, so all of them apply.
+pub(crate) fn changes_visible(
+    repo: &Repository,
+    records: &Connection,
+    id: ObjectId,
+    reader: &javelin::Reader,
+) -> Result<bool, ProtocolError> {
+    let Some(changes) = load_changes(records, id)? else {
+        return Ok(true);
+    };
+    let from = javelin::VersionNumber::new(0)?;
+    Ok(repo.visible(changes.entries().keys(), from, reader)?)
+}
+
 pub(crate) fn has_changes(records: &Connection, id: ObjectId) -> Result<bool, ProtocolError> {
     records
         .query_row(

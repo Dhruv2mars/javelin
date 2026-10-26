@@ -446,7 +446,7 @@ fn compose_in(
         let mut sealer = Sealer {
             committed: &committed,
             view: &index.trees,
-            openings: &Seals(conn),
+            openings: &Seals::all(conn),
             policy: &policy,
             created: Vec::new(),
         };
@@ -690,6 +690,7 @@ fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationRece
                 || version.id != version_id(Some(against.id), version.tree, &changes)
                 || open_in(
                     conn,
+                    version.number,
                     against.tree,
                     parent_view,
                     version.tree,

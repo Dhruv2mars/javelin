@@ -105,8 +105,9 @@ pub(crate) fn stack(
 /// A `Get` of checkpoints: each one's stored bytes, which hash to its ID. A client reads
 /// a Layer head this way to refresh from it. As for other kinds, the reply is the longest
 /// prefix of the request that fits one frame.
-/// Checkpoints are plain, so one that changes a path hidden from `reader` under the head's
-/// policy is refused, as if it were not stored.
+/// Checkpoints are plain: they name paths and content IDs. One that changes a path hidden
+/// from `reader` under any policy from its base through the head is refused exactly as a
+/// checkpoint that was never stored (`Repository::checkpoint_visible`).
 pub(crate) fn get_checkpoints(
     repo: &Repository,
     items: Vec<(Kind, ObjectId)>,
@@ -121,12 +122,10 @@ pub(crate) fn get_checkpoints(
     let mut objects = Vec::new();
     let mut size = 5;
     for (kind, id) in items.into_iter().take(MAX_OBJECTS) {
-        let bytes = repo.checkpoint_object(CheckpointId::parse(&id.to_string())?)?;
-        if !reader.reads_all() {
-            let changes = Repository::foreign_checkpoint_changes(&bytes)?;
-            if repo.conceals(&changes, repo.head()?.number, reader)? {
-                return Err(javelin::Error::MissingObject(id).into());
-            }
+        let checkpoint = CheckpointId::parse(&id.to_string())?;
+        let bytes = repo.checkpoint_object(checkpoint)?;
+        if !repo.checkpoint_visible(checkpoint, reader)? {
+            return Err(javelin::Error::MissingObject(id).into());
         }
         if bytes.len() > MAX_CHECKPOINT {
             return Err(ProtocolError::new(

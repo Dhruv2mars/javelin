@@ -312,6 +312,14 @@ impl WorldLog for FileWorldLog {
         crate::layer::has_changes(&self.records, id)
     }
 
+    fn changes_visible(
+        &mut self,
+        id: ObjectId,
+        reader: &javelin::Reader,
+    ) -> std::result::Result<bool, ProtocolError> {
+        crate::layer::changes_visible(&self.repo, &self.records, id, reader)
+    }
+
     fn store_changes(
         &mut self,
         id: ObjectId,

@@ -52,6 +52,15 @@ pub trait WorldLog {
     /// Whether the changes object `id` is stored. Only checkpoint objects are staged.
     fn has_changes(&mut self, id: ObjectId) -> Result<bool, ProtocolError>;
 
+    /// Whether the staged changes object `id` names only paths visible to `reader`. A
+    /// changes object is plain, so a probe for one that names a hidden path is answered
+    /// as for an object that was never stored. Stores without hidden entries keep the
+    /// default.
+    fn changes_visible(&mut self, id: ObjectId, reader: &Reader) -> Result<bool, ProtocolError> {
+        let _ = (id, reader);
+        Ok(true)
+    }
+
     /// Stores a changes object whose ID the caller has verified. Bytes that are not a
     /// canonical changeset are refused as `malformed`.
     fn store_changes(&mut self, id: ObjectId, bytes: &[u8]) -> Result<(), ProtocolError>;
@@ -94,13 +103,23 @@ pub fn handle_request_as<L: WorldLog>(
             expected,
             base,
             attribution,
-        } => Ok(Message::PublishOutcome(log.publish_layer(
-            &operation,
-            &layer,
-            expected,
-            base,
-            &attribution,
-        )?)),
+        } => {
+            let outcome = log.publish_layer(&operation, &layer, expected, base, &attribution)?;
+            Ok(Message::PublishOutcome(match outcome {
+                // A conflict with a change the caller cannot see is reported without its
+                // path.
+                PublishOutcome::Conflict { paths } if !reader.reads_all() => {
+                    let mut visible = Vec::new();
+                    for path in paths {
+                        if log.repository().visible([&path], base, reader)? {
+                            visible.push(path);
+                        }
+                    }
+                    PublishOutcome::Conflict { paths: visible }
+                }
+                outcome => outcome,
+            }))
+        }
         Message::LayerAppend {
             operation,
             layer,
@@ -116,7 +135,7 @@ pub fn handle_request_as<L: WorldLog>(
             unique(&items)?;
             let mut missing = Vec::new();
             for (kind, id) in items {
-                if !log.has_changes(id)? {
+                if !log.has_changes(id)? || !log.changes_visible(id, reader)? {
                     missing.push((kind, id));
                 }
             }

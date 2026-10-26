@@ -57,13 +57,20 @@ CREATE TABLE changes (
 -- Everything below holds what a hidden entry hides, so it stays outside the committed
 -- trees and changesets and is served only to the entry's audience.
 -- The openings this store holds: commitment = SHA-256(seal tag, salt, content, kind).
+-- `since` is the first version whose view may use the opening: the version it was
+-- stored for, or the next one when it arrived after its version. A view opens exactly
+-- the openings held when it was stored, so a later opening never changes old history.
 CREATE TABLE seals (
     commitment TEXT PRIMARY KEY CHECK(length(commitment)=64),
     salt BLOB NOT NULL CHECK(length(salt)=32),
     kind INTEGER NOT NULL CHECK(kind IN (1,2,3,4)),
     content TEXT NOT NULL REFERENCES objects(id),
-    audience TEXT NOT NULL
+    audience TEXT NOT NULL,
+    since INTEGER NOT NULL CHECK(since>=1)
 ) STRICT, WITHOUT ROWID;
+-- The versions that change the policy, so the policies that governed a span of
+-- versions are found without scanning history.
+CREATE INDEX policy_changes ON changes(version) WHERE path='.javelinpolicy';
 -- Each version's view: its committed tree with every hidden entry this store can open
 -- replaced by what it hides. Equal to versions.tree when nothing is hidden.
 CREATE TABLE views (
@@ -400,7 +407,7 @@ impl Repository {
     ) -> Result<Vec<(ObjectId, Opening, Audience)>> {
         let tx = self.conn.unchecked_transaction()?;
         validate_format(&tx)?;
-        let seals = Seals(&tx);
+        let seals = Seals::all(&tx);
         let mut out = Vec::new();
         for commitment in commitments {
             if let Some((opening, audience)) = seals.opening(*commitment)?
@@ -449,21 +456,67 @@ impl Repository {
         Ok(false)
     }
 
-    /// Whether `changes` name a path that is hidden from `reader` at version `at`: at
-    /// or below a hidden entry whose audience excludes the reader. O(change x depth).
-    pub fn conceals(
+    /// Whether every path in `paths` is visible to `reader` under every policy that
+    /// governed a version from `from` through the head: not at or below a hidden entry
+    /// whose audience excludes the reader. Policies change only at versions that write
+    /// `.javelinpolicy`, found through an index, so work is O(paths x depth x policies).
+    pub fn visible<'a>(
         &self,
-        changes: &SparseChanges,
-        at: VersionNumber,
+        paths: impl IntoIterator<Item = &'a RepoPath>,
+        from: VersionNumber,
         reader: &Reader,
     ) -> Result<bool> {
-        let policy = self.policy(at)?;
-        Ok(changes.entries().keys().any(|path| {
-            policy
-                .hidden_along(path.as_str())
-                .iter()
-                .any(|(_, audience)| !reader.can_read(audience))
+        if reader.reads_all() {
+            return Ok(true);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let head = head_in(&tx)?.number;
+        let mut versions = vec![from.min(head)];
+        versions.extend(
+            tx.prepare_cached(
+                "SELECT version FROM changes WHERE path='.javelinpolicy' AND version>?1 \
+                 AND version<=?2 ORDER BY version",
+            )?
+            .query_map(params![from.sql(), head.sql()], |r| r.get::<_, i64>(0))?
+            .map(|v| VersionNumber::decode(v?))
+            .collect::<Result<Vec<_>>>()?,
+        );
+        let trees = Trees::new(Sql::read(&tx));
+        let policies = versions
+            .into_iter()
+            .map(|version| policy_in(&tx, &trees, tree_in(&tx, version)?))
+            .collect::<Result<Vec<_>>>()?;
+        tx.commit()?;
+        Ok(paths.into_iter().all(|path| {
+            policies.iter().all(|policy| {
+                policy
+                    .hidden_along(path.as_str())
+                    .iter()
+                    .all(|(_, audience)| reader.can_read(audience))
+            })
         }))
+    }
+
+    /// Whether checkpoint `id`'s bytes may go to `reader`. A checkpoint is plain: it names
+    /// paths and content IDs. It is served only when every path it changes is visible under
+    /// every policy from its base through the head, which covers the version that published
+    /// it and any version its content reached through Stack.
+    pub fn checkpoint_visible(&self, id: crate::CheckpointId, reader: &Reader) -> Result<bool> {
+        if reader.reads_all() {
+            return Ok(true);
+        }
+        let checkpoint = {
+            let tx = self.conn.unchecked_transaction()?;
+            let checkpoint = crate::layer::checkpoint_in(&tx, id.object())?;
+            tx.commit()?;
+            checkpoint
+        };
+        self.visible(
+            checkpoint.changes().entries().keys(),
+            checkpoint.base().version(),
+            reader,
+        )
     }
 
     /// Refuses a Layer change that `writer` may not make: one at or below a path hidden
@@ -1115,15 +1168,36 @@ pub(crate) fn view_in(conn: &Connection, version: VersionNumber) -> Result<Objec
     decode_id(&root)
 }
 
-/// The openings stored in `seals`.
-pub(crate) struct Seals<'a>(pub(crate) &'a Connection);
+/// The openings stored in `seals`: all of them, or only those a view of one version used.
+pub(crate) struct Seals<'a> {
+    conn: &'a Connection,
+    upto: i64,
+}
+
+impl<'a> Seals<'a> {
+    pub(crate) fn all(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            upto: i64::MAX,
+        }
+    }
+    /// The openings held when `version`'s view was stored.
+    pub(crate) fn for_version(conn: &'a Connection, version: VersionNumber) -> Self {
+        Self {
+            conn,
+            upto: version.sql(),
+        }
+    }
+}
 
 impl Openings for Seals<'_> {
     fn opening(&self, commitment: ObjectId) -> Result<Option<(Opening, Audience)>> {
         let row = self
-            .0
-            .prepare_cached("SELECT salt,kind,content,audience FROM seals WHERE commitment=?1")?
-            .query_row([commitment.to_string()], |r| {
+            .conn
+            .prepare_cached(
+                "SELECT salt,kind,content,audience FROM seals WHERE commitment=?1 AND since<=?2",
+            )?
+            .query_row(params![commitment.to_string(), self.upto], |r| {
                 Ok((
                     r.get::<_, Vec<u8>>(0)?,
                     r.get::<_, i64>(1)?,
@@ -1165,8 +1239,10 @@ pub(crate) fn insert_opening_in(
             read_object(conn, opening.content, ObjectKind::Tree)?;
         }
     }
+    // Openings stored now are first used by the next version's view.
+    let since = next_number(head_in(conn)?.number)?;
     conn.prepare_cached(
-        "INSERT INTO seals(commitment,salt,kind,content,audience) VALUES(?1,?2,?3,?4,?5) \
+        "INSERT INTO seals(commitment,salt,kind,content,audience,since) VALUES(?1,?2,?3,?4,?5,?6) \
          ON CONFLICT(commitment) DO NOTHING",
     )?
     .execute(params![
@@ -1174,9 +1250,15 @@ pub(crate) fn insert_opening_in(
         opening.salt.as_slice(),
         opening.kind as i64,
         opening.content.to_string(),
-        audience.to_string()
+        audience.to_string(),
+        since.sql()
     ])?;
-    if Seals(conn).opening(commitment)?.as_ref().map(|(_, a)| a) != Some(audience) {
+    if Seals::all(conn)
+        .opening(commitment)?
+        .as_ref()
+        .map(|(_, a)| a)
+        != Some(audience)
+    {
         return Err(Error::CorruptRepository(format!(
             "opening of {commitment} is stored with another audience"
         )));
@@ -1260,7 +1342,7 @@ fn check_access_in(conn: &Connection, history: &[WorldVersion]) -> Result<()> {
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     for commitment in seals {
-        let (opening, audience) = Seals(conn)
+        let (opening, audience) = Seals::all(conn)
             .opening(decode_id(&commitment)?)?
             .ok_or_else(|| Error::CorruptRepository("opening vanished".into()))?;
         let audience = audience.to_string();
@@ -1573,7 +1655,7 @@ fn derive_in(
             let mut sealer = Sealer {
                 committed: &committed,
                 view: &view,
-                openings: &Seals(tx),
+                openings: &Seals::all(tx),
                 policy: &policy,
                 created: Vec::new(),
             };
@@ -1598,7 +1680,8 @@ fn derive_in(
             if committed.apply(from, &changes)? != *root {
                 return Err(Error::InvalidInput("tree is not in canonical form".into()));
             }
-            let view = open_in(tx, from, from_view, *root, &changes, false)?;
+            let version = next_number(base)?;
+            let view = open_in(tx, version, from, from_view, *root, &changes, false)?;
             Ok((*root, changes, view))
         }
     }
@@ -1610,6 +1693,7 @@ fn derive_in(
 /// With `verify`, nothing is written: every derived view chunk must already be stored.
 pub(crate) fn open_in(
     tx: &Connection,
+    version: VersionNumber,
     from: ObjectId,
     from_view: ObjectId,
     root: ObjectId,
@@ -1629,7 +1713,7 @@ pub(crate) fn open_in(
     let opener = Opener {
         committed: &committed,
         view: &view,
-        openings: &Seals(tx),
+        openings: &Seals::for_version(tx, version),
         policy: &policy,
     };
     if changes.entries().contains_key(crate::audience::POLICY_PATH) {
@@ -1756,7 +1840,7 @@ pub(crate) fn history_in(conn: &Connection) -> Result<Vec<WorldVersion>> {
         // The view must be the committed tree opened with this store's openings, and
         // every entry must agree with the version's policy.
         let from = history.last().map_or(tree::empty(), |parent| parent.tree);
-        view = match open_in(conn, from, view, root, &changes, true) {
+        view = match open_in(conn, version.number, from, view, root, &changes, true) {
             Ok(view) => view,
             Err(Error::InvalidInput(why)) => return Err(Error::CorruptRepository(why)),
             Err(e) => return Err(e),
