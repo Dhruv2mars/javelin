@@ -1,6 +1,9 @@
-//! The browser approval page and the JSON calls it makes (U8b). `answer` handles one HTTP/1.1
-//! request on a connection; `serve` loops over a listener. The page is `approval.html`, and
-//! its passkey script converts the server's base64url options to the browser's byte arrays.
+//! The browser approval page and the JSON calls it makes (U8b), and the control plane's JSON
+//! API under `/api/` that `RemoteControl` calls: device sign-in, token refresh, repository
+//! tokens and repository create. `answer` handles one HTTP/1.1 request on a connection;
+//! `serve` loops over a listener. The page is `approval.html`, and its passkey script converts
+//! the server's base64url options to the browser's byte arrays. The API takes its credential
+//! from the `Authorization` header only, never the browser's cookie.
 
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -12,7 +15,9 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
-use crate::{ControlError, ControlPlane, RelyingParty, passkey::BROWSER_TTL};
+use crate::{
+    ControlError, ControlPlane, CreateRequest, Poll, Publish, RelyingParty, passkey::BROWSER_TTL,
+};
 
 const PAGE: &str = include_str!("approval.html");
 /// The cookie that carries a browser sign-in.
@@ -148,6 +153,11 @@ fn route(plane: &ControlPlane, rp: &RelyingParty, request: &Request, now: u64) -
         ("POST", "/passkey/signin/start") => signin_start(plane, rp, now),
         ("POST", "/passkey/signin/finish") => signin_finish(plane, rp, request, now),
         ("POST", "/device/approve") => approve(plane, request, now),
+        ("POST", "/api/device/start") => api_device_start(plane, now),
+        ("POST", "/api/device/poll") => api_device_poll(plane, request, now),
+        ("POST", "/api/token/refresh") => api_refresh(plane, request, now),
+        ("POST", "/api/token/repository") => api_repository_token(plane, request, now),
+        ("POST", "/api/repo/create") => api_create(plane, request, now),
         _ => return Reply::error(404, "not_found", "there is no such page or call"),
     };
     outcome.unwrap_or_else(Reply::from_error)
@@ -235,6 +245,129 @@ fn approve(plane: &ControlPlane, request: &Request, now: u64) -> Result<Reply, C
     ))
 }
 
+#[derive(Deserialize)]
+struct PollBody {
+    device_code: String,
+}
+
+#[derive(Deserialize)]
+struct RefreshBody {
+    refresh_token: String,
+}
+
+#[derive(Deserialize)]
+struct RepositoryBody {
+    repository: String,
+}
+
+#[derive(Deserialize)]
+struct CreateBody {
+    owner: String,
+    name: String,
+    public: bool,
+    publish: String,
+    operation: String,
+}
+
+fn api_device_start(plane: &ControlPlane, now: u64) -> Result<Reply, ControlError> {
+    let start = plane.device_start(now)?;
+    Ok(Reply::json(
+        200,
+        json!({
+            "device_code": start.device_code,
+            "user_code": start.user_code,
+            "expires_at": start.expires_at,
+            "interval": start.interval,
+        }),
+    ))
+}
+
+fn api_device_poll(
+    plane: &ControlPlane,
+    request: &Request,
+    now: u64,
+) -> Result<Reply, ControlError> {
+    let body: PollBody = parse(request)?;
+    Ok(Reply::json(
+        200,
+        match plane.device_poll(&body.device_code, now)? {
+            Poll::Pending => json!({"status": "pending"}),
+            Poll::Approved(session) => json!({
+                "status": "approved",
+                "principal": session.principal,
+                "device": session.device,
+                "access_token": session.access_token,
+                "refresh_token": session.refresh_token,
+                "expires_in": session.expires_in,
+            }),
+        },
+    ))
+}
+
+fn api_refresh(plane: &ControlPlane, request: &Request, now: u64) -> Result<Reply, ControlError> {
+    let body: RefreshBody = parse(request)?;
+    let token = plane.refresh(&body.refresh_token, now)?;
+    Ok(Reply::json(
+        200,
+        json!({"access_token": token.access_token, "expires_in": token.expires_in}),
+    ))
+}
+
+fn api_repository_token(
+    plane: &ControlPlane,
+    request: &Request,
+    now: u64,
+) -> Result<Reply, ControlError> {
+    let bearer = api_bearer(request)?;
+    let body: RepositoryBody = parse(request)?;
+    let token = plane.repository_token(&bearer, &body.repository, now)?;
+    Ok(Reply::json(
+        200,
+        json!({"access_token": token.access_token, "expires_in": token.expires_in}),
+    ))
+}
+
+fn api_create(plane: &ControlPlane, request: &Request, now: u64) -> Result<Reply, ControlError> {
+    let bearer = api_bearer(request)?;
+    let body: CreateBody = parse(request)?;
+    let publish = Publish::parse(&body.publish)
+        .ok_or_else(|| ControlError::InvalidInput("publish is direct or requests".into()))?;
+    let created = plane.create_repository(
+        &bearer,
+        &CreateRequest {
+            owner: body.owner,
+            name: body.name,
+            public: body.public,
+            publish,
+            operation: body.operation,
+        },
+        now,
+    )?;
+    Ok(Reply::json(
+        200,
+        json!({
+            "repository": created.repository,
+            "owner": created.owner,
+            "name": created.name,
+            "public": created.public,
+            "publish": created.publish.as_str(),
+            "epoch": created.epoch,
+            "created": created.created,
+        }),
+    ))
+}
+
+/// The API's credential: the `Authorization: Bearer` token only. A cookie would let another
+/// site's page call the API as the signed-in browser.
+fn api_bearer(request: &Request) -> Result<String, ControlError> {
+    header(&request.headers, "authorization")
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| token.trim().to_string())
+        .ok_or(ControlError::Unauthorized(
+            "send a token as Authorization: Bearer",
+        ))
+}
+
 /// The caller's credential: an `Authorization: Bearer` token, or the browser sign-in cookie.
 fn bearer(request: &Request) -> Option<String> {
     if let Some(token) =
@@ -283,8 +416,9 @@ fn status_of(error: &ControlError) -> u16 {
         ControlError::NotFound(_) => 404,
         ControlError::Expired(_) => 410,
         ControlError::Node(_) => 503,
-        ControlError::Refused(_) => 502,
+        ControlError::Refused(_) | ControlError::Remote { .. } => 502,
         ControlError::Storage(_) => 500,
+        ControlError::Unavailable(_) => 503,
     }
 }
 

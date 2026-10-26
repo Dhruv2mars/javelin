@@ -50,6 +50,11 @@ pub trait NodeLink {
     fn provision(&self, repository: &RepositoryId) -> Result<(), ControlError>;
     /// Pushes applied permissions. The node accepts the applied epoch again only if it is identical.
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError>;
+    /// Installs the public keys the node verifies tokens with. A node that holds its keys some
+    /// other way, such as a Worker's configuration, ignores this.
+    fn trust(&self, _repository: &RepositoryId, _keys: &KeySet) -> Result<(), ControlError> {
+        Ok(())
+    }
     /// The repository's current World version. A fork refuses a fork point past it.
     fn head(&self, _repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
         Err(ControlError::Node(

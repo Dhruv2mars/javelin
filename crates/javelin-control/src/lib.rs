@@ -1,10 +1,12 @@
-//! The in-process control plane, minimum slice: admin-token bootstrap, the device-code
-//! API, idempotent repository create, and the applied-permission push to the node. State
+//! The control plane, minimum slice: admin-token bootstrap, the device-code API, idempotent
+//! repository create, and the applied-permission and key push to the node. It runs in process
+//! or behind its HTTP API, which `RemoteControl` calls. State
 //! lives in one directory that every process using it shares; each call holds an exclusive
 //! lock on that directory. Passkeys sign the browser approval page in (U8b), which `browser`
 //! serves. See `docs/online-design.md` sections 4.7, 4.10 and 8 (U8, U8b).
 
 mod browser;
+mod client;
 mod control;
 mod credentials;
 mod device;
@@ -17,6 +19,7 @@ mod secret;
 mod state;
 
 pub use browser::{answer, serve};
+pub use client::{Control, RemoteControl};
 pub use control::{ADMIN_PRINCIPAL, ControlPlane, ForkPlan, NodeLink, NodeTarget};
 pub use credentials::Credentials;
 pub use device::{AccessToken, DeviceStart, Poll, Session};

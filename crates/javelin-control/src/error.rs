@@ -25,6 +25,14 @@ pub enum ControlError {
     /// The node refused a permissions push.
     Refused(ProtocolError),
     Storage(String),
+    /// The control plane could not be reached: its state directory cannot be opened, or its
+    /// HTTP API did not answer (`control_plane_unavailable`).
+    Unavailable(String),
+    /// A refusal the control plane sent over HTTP, with its code.
+    Remote {
+        code: String,
+        detail: String,
+    },
 }
 
 impl ControlError {
@@ -42,6 +50,8 @@ impl ControlError {
             Self::Node(_) => code::NODE_UNAVAILABLE,
             Self::Refused(error) => &error.code,
             Self::Storage(_) => "storage_error",
+            Self::Unavailable(_) => code::CONTROL_PLANE_UNAVAILABLE,
+            Self::Remote { code, .. } => code,
         }
     }
 }
@@ -68,6 +78,8 @@ impl fmt::Display for ControlError {
             Self::Node(detail) => write!(f, "node unavailable: {detail}"),
             Self::Refused(error) => write!(f, "node refused: {}: {}", error.code, error.detail),
             Self::Storage(detail) => write!(f, "control state: {detail}"),
+            Self::Unavailable(detail) => write!(f, "control plane unavailable: {detail}"),
+            Self::Remote { detail, .. } => f.write_str(detail),
         }
     }
 }
