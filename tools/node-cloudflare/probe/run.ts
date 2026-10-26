@@ -3,7 +3,8 @@
 //   2. CPU: burns in the Worker, then in its Durable Object, and records each status;
 //   3. storage: fills one object with zero BLOBs until SQLITE_FULL or PROBE_FILL_BYTES
 //      (default 1.1 GB, under the Free plan's 5 GB account total), then deletes it all;
-//   4. deletes the probe Worker and its Durable Object namespace, always.
+//   4. deletes the probe Worker and its Durable Object namespace, always. A failed delete exits
+//      non-zero, so a probe left on the account is never reported as success.
 // It uses a few dozen requests and leaves nothing behind. Results go to probe/evidence/.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,7 +26,7 @@ async function sh(args: string[], stdin?: string): Promise<string> {
 let base = "";
 async function call(path: string): Promise<{ status: number; body: string }> {
   const response = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
-  return { status: response.status, body: (await response.text()).slice(0, 200) };
+  return { status: response.status, body: await response.text() };
 }
 
 try {
@@ -50,9 +51,14 @@ try {
 
   const fill: unknown[] = [];
   for (let i = 0; i < 100; i++) {
-    const reply = JSON.parse((await call("/object/store/fill?rows=50&bytes=1000000")).body);
+    const { status, body } = await call("/object/store/fill?rows=50&bytes=1000000");
+    const reply = JSON.parse(body);
     fill.push(reply);
-    console.log(`fill ${JSON.stringify(reply)}`);
+    console.log(`fill ${status} ${JSON.stringify(reply)}`);
+    if (status !== 200 || (reply.error && !reply.full)) {
+      results.fill = fill;
+      throw new Error(`fill failed without SQLITE_FULL (HTTP ${status}): ${reply.error ?? body}`);
+    }
     if (reply.full || reply.bytes >= fillLimit) break;
   }
   results.fill = fill;
@@ -63,6 +69,8 @@ try {
     console.log("probe Worker deleted");
   } catch (error) {
     console.error(`DELETE THE PROBE BY HAND: ${error}`);
+    results.deleteFailed = String(error);
+    process.exitCode = 1;
   }
   mkdirSync(join(here, "probe/evidence"), { recursive: true });
   writeFileSync(join(here, "probe/evidence/results.json"), JSON.stringify(results, null, 2));
