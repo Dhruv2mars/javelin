@@ -107,6 +107,9 @@ fn parse_target(text: &str) -> Result<Target> {
 struct Link {
     target: Target,
     credential: Credential,
+    /// Whether a request may go out without a token. Reads may, so a public repository stays
+    /// readable signed out; a write never does.
+    anonymous: bool,
     /// Why no token could be had, when requests went out anonymously instead.
     credential_fault: Option<Fault>,
     /// The frame the protocol is writing. It is sent when its reply is first read.
@@ -117,11 +120,22 @@ struct Link {
 }
 
 impl Link {
+    /// A session for reads, which go out anonymously when no token can be had.
     fn new(target: Target) -> RefCell<Self> {
+        Self::with(target, true)
+    }
+
+    /// A session for writes, which are refused before sending when no token can be had.
+    fn writing(target: Target) -> RefCell<Self> {
+        Self::with(target, false)
+    }
+
+    fn with(target: Target, anonymous: bool) -> RefCell<Self> {
         let credential = Credential::for_repository(&target.repository);
         RefCell::new(Self {
             target,
             credential,
+            anonymous,
             credential_fault: None,
             outbound: Vec::new(),
             inbox: Cursor::new(Vec::new()),
@@ -168,6 +182,13 @@ impl Link {
     fn round_trip(&mut self, body: &[u8]) -> std::result::Result<Vec<u8>, RemoteError> {
         let now = now();
         let token = match self.credential.bearer(now) {
+            Ok(None) if !self.anonymous => {
+                return Err(RemoteError::new(
+                    code::UNAUTHORIZED,
+                    "not signed in; run `javelin login`, or set JAVELIN_TOKEN",
+                ));
+            }
+            Err(fault) if !self.anonymous => return Err(fault_error(&fault)),
             Ok(token) => token,
             Err(fault) => {
                 self.credential_fault = Some(fault);
@@ -999,8 +1020,9 @@ fn summary(outcome: &[u8]) -> Value {
     }
 }
 
-/// One request to `repository` on the node at `https://HOST[:PORT]` (plain http only for localhost), with the repository's
-/// credential, and its reply. A node `Error` reply becomes the error.
+/// One write to `repository` on the node at `https://HOST[:PORT]` (plain http only for
+/// localhost), with the repository's credential, and its reply. Without a token nothing is
+/// sent and the error is `unauthorized`. A node `Error` reply becomes the error.
 pub fn call_node(
     node: &str,
     repository: &str,
@@ -1008,7 +1030,7 @@ pub fn call_node(
 ) -> std::result::Result<Message, RemoteError> {
     let target = parse_target(&format!("{}/{repository}", node.trim_end_matches('/')))
         .map_err(|error| RemoteError::new(error.code(), error.to_string()))?;
-    call(&Link::new(target), message)
+    call(&Link::writing(target), message)
 }
 
 #[cfg(test)]

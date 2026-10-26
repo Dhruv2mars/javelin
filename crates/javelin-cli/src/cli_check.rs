@@ -75,7 +75,7 @@ fn render(
 }
 
 /// The serving node's answer over the wire. The credential is `JAVELIN_TOKEN`, else this
-/// device's sign-in for the repository.
+/// device's sign-in for the repository; without either, nothing is sent (`unauthorized`).
 fn post_wire(node: &str, request: &Request) -> std::result::Result<CheckOutcome, (String, String)> {
     match crate::cli_remote::call_node(
         node,

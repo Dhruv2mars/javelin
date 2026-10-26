@@ -764,3 +764,43 @@ fn credentials_go_only_over_https_off_this_machine() {
     assert_eq!(error_code(&serve), "invalid_input");
     assert!(String::from_utf8_lossy(&serve.stderr).contains("TLS-terminating proxy"));
 }
+
+#[test]
+fn a_signed_out_check_report_sends_nothing() {
+    let temp = TempDir::new().unwrap();
+    let reply = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::new(Mutex::new(0));
+    let node = scripted_node(reply, seen.clone());
+    let output = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .args([
+            "--json",
+            "check",
+            "report",
+            "--node",
+            &node,
+            "--repository",
+            "repo-1",
+            "--operation",
+            "report-1",
+            "--tree",
+            &empty_tree(),
+            "--name",
+            "ci/unit",
+            "--conclusion",
+            "success",
+            "--completed",
+            "1700000000",
+        ])
+        .env("JAVELIN_HOME", temp.path().join("home"))
+        .env_remove("JAVELIN_TOKEN")
+        .env_remove("JAVELIN_CONTROL_URL")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(stdout(&output)["code"], "unauthorized");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        0,
+        "a report never goes out without a token"
+    );
+}
