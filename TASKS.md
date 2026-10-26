@@ -91,9 +91,12 @@ workflow may invoke or interpret Git.
 - [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, per-file clone
   (XFS, ReFS) and a reported copy fallback, with deferred discard. See
   "Clone-backed Layers" under Current work.
-- [ ] Make per-call state validation incremental. `manifest_in` hashes every blob on
+- [x] Make per-call state validation incremental. `manifest_in` hashes every blob on
   each validated call, about 5 s at 100k files and 661 MB, and that dominates
-  `workspace create`. The clone itself takes about 1.2 s.
+  `workspace create`. The clone itself takes about 1.2 s. Done: commands validate only
+  what they touch (docs/architecture.md, Validation scope); `workspace create` was the
+  last command reaching full validation (`history()` for the head number) and now reads
+  the head row.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
   - [x] Daemonless capture of plain Layer directories (`src/capture.rs`): stat cache,
@@ -114,9 +117,10 @@ workflow may invoke or interpret Git.
     choices, so a local file blocking a head write resolves through either side, a tracked
     alias resolves through both spellings, and an explicit overwrite replaces an ignored file.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
-  - [ ] Make repository validation incremental: every call re-reads and re-hashes
+  - [x] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
-    seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
+    seconds, not the scan (see docs/workspace-approach.md, "Capture latency"). Done: full
+    validation runs only in `check`, `history` and `init` on an existing store.
 - [x] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
   The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PRs #46 and #57)
   passes 34/34 with the real binary on APFS, btrfs, XFS, ext4 (copy fallback), NTFS and ReFS
@@ -386,4 +390,6 @@ Wave 3, after wave 2:
 - [x] Review #48 (radar) and #52 (protocol v2 trees) on main: Opus 5.5 fallback review, after Sol (Codex, Codex-swayu) was unavailable. No radar defects.
 - [x] #52 tree work bound: a few KB of shared-subtree chunks can name 2^k files. Accepted by decision; documented in docs/architecture.md Known limits.
 - [x] Follow-up: fetch verifies the server's tree root against the version ID chain, and caps named paths for an untrusted server.
-  - [ ] Trust anchor: let the caller store a verified version and verify only later versions incrementally.
+  - [x] Trust anchor: let the caller store a verified version and verify only later versions incrementally.
+    `fetch` takes an `Anchor`; cost is flat in history length (`tests/anchor.rs`). No
+    Merkle mountain range: reasoning in docs/architecture.md, Fetch.
