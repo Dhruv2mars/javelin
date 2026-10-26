@@ -77,7 +77,7 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
             if action == "create" {
                 let version = match world {
                     Some(version) => version,
-                    None => repo.history()?.last().expect("World 0 exists").number,
+                    None => repo.head()?.number,
                 };
                 let base = repo.layer_base(version)?;
                 repo.create_layer(&layer, &base)?;
