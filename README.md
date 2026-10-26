@@ -1,16 +1,17 @@
 # Javelin
 
-Javelin is agent-native version control built around immutable accepted World versions
-and isolated Layers. Its runtime is independent of Git.
+Javelin is third-generation version control, built from scratch for agentic development.
+The `javelin` CLI replaces Git, and the javelin.codes forge replaces GitHub. Each repository
+lives on a node that runs on infrastructure its owner connects; Javelin runs no managed
+hosting. The core is immutable World versions, isolated Layers and an atomic Publish, and
+nothing in it invokes Git. Read [the direction](docs/direction.md) first.
 
-Start with the [developer quickstart](docs/quickstart.md) to build from source,
-try repository metadata commands, and follow the prerequisite-gated Linux workflow.
-Metadata works on macOS, Linux, and Windows; writable native workspaces are Linux-only
-today, with explicit checkpoints. Clone-backed Layers for all three platforms are
-next ([workspace approach](docs/workspace-approach.md)).
+Start with the [developer quickstart](docs/quickstart.md) to build from source.
+Clone-backed Layers pass the filesystem checks on APFS, btrfs, XFS and ReFS, and the copy
+fallback passes on ext4 and NTFS ([workspace approach](docs/workspace-approach.md)).
 
-The local VCS and hosting service are under active development; no GA release or
-complete hosting workflow is available. See the [architecture](docs/architecture.md),
+The CLI, the node and the forge are under active development. There is no GA release and
+no complete hosted workflow yet. See the [architecture](docs/architecture.md),
 [CLI and setup reference](docs/cli.md), [build contract](docs/build-contract.md), and
 [build checklist](TASKS.md).
 

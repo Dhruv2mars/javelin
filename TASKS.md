@@ -3,6 +3,33 @@
 This file is the central hub's master checklist. A checked item requires evidence.
 Implementation threads own one PR each and keep their own checklist in their worktree.
 
+## Direction of 2026-10-26
+
+`docs/direction.md` records the user's answers: two products (CLI and the javelin.codes
+forge), no managed hosting, superposition visibility, Layers that follow their owner, and
+CI left open. Work from it, in roughly this order:
+
+- [x] Clean up Git: merge #92 and #93, close #2, archive the Plan A branches as
+  `archive/*` tags, delete every merged branch.
+- [x] Record the direction and amend the contract, the online design, the Git 3.0
+  direction, README and AGENTS.md.
+- [ ] Token transport: bearer tokens on the wire, outbox refresh through the control
+  plane, network control-plane client, `node_unavailable` for 5xx.
+- [ ] History verification proportional to new versions (trust anchor).
+- [ ] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
+- [ ] First real deploy of the Cloudflare node on the owner's account, free tier only;
+  settle every unverified free-tier limit.
+- [ ] Superposition storage format: salted commitments for hidden tree entries, identical
+  IDs for every reader. Must land before any real repository is stored.
+- [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
+  and forge.
+- [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
+- [ ] Layer writer lease and `javelin layer take` (replaces D21).
+- [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
+- [ ] Forge connects a provider account through OAuth and provisions the node there.
+- [ ] Forge on javelin.codes once the domain is bought.
+- [ ] CI design (waiting on the user).
+
 ## Working rules
 
 Working rules live in `AGENTS.md` (`CLAUDE.md` imports it). They supersede the older
@@ -91,9 +118,12 @@ workflow may invoke or interpret Git.
 - [ ] Implement clone-backed Layers: APFS directory clone, btrfs snapshot, per-file clone
   (XFS, ReFS) and a reported copy fallback, with deferred discard. See
   "Clone-backed Layers" under Current work.
-- [ ] Make per-call state validation incremental. `manifest_in` hashes every blob on
+- [x] Make per-call state validation incremental. `manifest_in` hashes every blob on
   each validated call, about 5 s at 100k files and 661 MB, and that dominates
-  `workspace create`. The clone itself takes about 1.2 s.
+  `workspace create`. The clone itself takes about 1.2 s. Done: commands validate only
+  what they touch (docs/architecture.md, Validation scope); `workspace create` was the
+  last command reaching full validation (`history()` for the head number) and now reads
+  the head row.
 - [ ] Capture automatically at every Javelin command and supplied agent lifecycle
   event, with generated operation IDs and the stat-cache racy-entry rule.
   - [x] Daemonless capture of plain Layer directories (`src/capture.rs`): stat cache,
@@ -114,9 +144,10 @@ workflow may invoke or interpret Git.
     choices, so a local file blocking a head write resolves through either side, a tracked
     alias resolves through both spellings, and an explicit overwrite replaces an ignored file.
   - [x] Apply root `.javelinignore` rules (PR #36's `IgnoreRules`) to untracked paths.
-  - [ ] Make repository validation incremental: every call re-reads and re-hashes
+  - [x] Make repository validation incremental: every call re-reads and re-hashes
     every blob of every World and checkpoint, so a 100k-file checkpoint commit costs
-    seconds, not the scan (see docs/workspace-approach.md, "Capture latency").
+    seconds, not the scan (see docs/workspace-approach.md, "Capture latency"). Done: full
+    validation runs only in `check`, `history` and `init` on an existing store.
 - [x] Prove ordinary filesystem behavior for clone-backed Layers (gate 2).
   The proof (`tools/workspace-probe/gate2.mjs`, `.github/workflows/gate2.yml`, PRs #46 and #57)
   passes 34/34 with the real binary on APFS, btrfs, XFS, ext4 (copy fallback), NTFS and ReFS
@@ -298,7 +329,8 @@ dependency order. Each is done when its PR is merged with the checks it names.
   - [ ] Follow-up: a cross-platform `layer publish` CLI for clone-backed Layers
     (Publish is library-only off Linux, so CLI blame needs it end to end).
 - [ ] Online pieces: attach, streaming checkpoints, server-side compose, outage
-  queue and replay, and the quorum-replicated World log.
+  queue and replay, and the World log (one ordering point per repository since
+  `docs/direction.md`, 2026-10-26).
   Note 2026-10-20: decisions D1, D2, D5 and D23 are recorded in `docs/online-design.md`
   section 7; Free-plan limits stay unverified until U13.
 - [ ] Later, not GA: optional `javelin mount` (FUSE, lazy fetch) for cloud agent
@@ -382,6 +414,14 @@ Wave 3, after wave 2:
     - [ ] `cargo deny` checks only the root package (not `--workspace`), so the member crates'
       licenses are unchecked: BSD-3-Clause (`ed25519-dalek`), ISC (`ring`, `rustls-webpki`) and
       MPL-2.0 (`crypto-glue`, via `webauthn-rs`) are linked into `javelin-control` today.
+  - [x] Forge first read-only pages (`apps/forge/`): repo home with README, file view (text
+    highlighted, binary notice), history with attribution and changed-path counts, version
+    diff against its parent. The browser reads the node directly over protocol v2 through one
+    shared TypeScript codec (`packages/protocol/`); new read message `Attribution` 0x44; CORS on
+    the self-hosted node for read messages only, writes from a browser origin refused. `bun test`
+    runs against a real seeded `javelin-node serve`; CI job `Forge / self-hosted node`.
+    - [ ] Control-plane lookup of `owner/repo` → node (today `?node=&repository=` or
+      `forge.config.json`), and the Worker that serves `dist/`.
 - [x] Release packaging and clean-machine installs on three OSes (#62).
 - [ ] Docs.
 - [ ] Sample application built with external agents and Javelin only; GA acceptance.
@@ -391,4 +431,6 @@ Wave 3, after wave 2:
 - [x] Review #48 (radar) and #52 (protocol v2 trees) on main: Opus 5.5 fallback review, after Sol (Codex, Codex-swayu) was unavailable. No radar defects.
 - [x] #52 tree work bound: a few KB of shared-subtree chunks can name 2^k files. Accepted by decision; documented in docs/architecture.md Known limits.
 - [x] Follow-up: fetch verifies the server's tree root against the version ID chain, and caps named paths for an untrusted server.
-  - [ ] Trust anchor: let the caller store a verified version and verify only later versions incrementally.
+  - [x] Trust anchor: let the caller store a verified version and verify only later versions incrementally.
+    `fetch` takes an `Anchor`; cost is flat in history length (`tests/anchor.rs`). No
+    Merkle mountain range: reasoning in docs/architecture.md, Fetch.

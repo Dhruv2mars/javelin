@@ -168,6 +168,112 @@ fn transport_faults_have_http_statuses() {
     server.join().unwrap();
 }
 
+/// The status line and headers of one exchange, and its body.
+fn exchange_head(addr: SocketAddr, request: impl AsRef<[u8]>, body: &[u8]) -> (String, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    stream.write_all(request.as_ref()).unwrap();
+    stream.write_all(body).unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    let split = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    (
+        String::from_utf8(reply[..split].to_vec()).unwrap(),
+        reply[split + 4..].to_vec(),
+    )
+}
+
+#[test]
+fn browsers_may_read_but_never_write() {
+    let dir = TempDir::new().unwrap();
+    let (log, expected) = seeded(&dir);
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let mut log = log;
+        serve(&listener, "demo", &mut log, &wire_support::gate("demo"), Some(7)).unwrap();
+    });
+    let send = |origin: bool, token: bool, body: &[u8]| {
+        let origin = if origin {
+            "Origin: http://forge.test\r\n"
+        } else {
+            ""
+        };
+        let authorization = if token {
+            format!("Authorization: Bearer {}\r\n", wire_support::token("demo"))
+        } else {
+            String::new()
+        };
+        exchange_head(
+            addr,
+            format!(
+                "POST /v2/r/demo HTTP/1.1\r\n{origin}{authorization}Content-Length: {}\r\n\r\n",
+                body.len()
+            ),
+            body,
+        )
+    };
+    // A browser reads anonymously, as the public repository allows.
+    let post = |origin: bool, body: &[u8]| send(origin, !origin, body);
+
+    let (head, _) = exchange_head(
+        addr,
+        "OPTIONS /v2/r/demo HTTP/1.1\r\nOrigin: http://forge.test\r\nAccess-Control-Request-Method: POST\r\n\r\n",
+        &[],
+    );
+    assert!(head.starts_with("HTTP/1.1 204"), "{head}");
+    assert!(head.contains("Access-Control-Allow-Origin: *"));
+    assert!(head.contains("Access-Control-Allow-Methods: POST"));
+    assert!(head.contains("Access-Control-Allow-Headers: content-type"));
+
+    // A write from a browser origin is refused before it is served, even with a valid token.
+    let (head, reply) = post(true, &publish_request(expected));
+    assert!(!head.contains("Access-Control-Allow-Origin"), "{head}");
+    assert!(matches!(
+        decode(&reply).unwrap(),
+        Message::Error { code, .. } if code == "forbidden"
+    ));
+    let (_, reply) = send(true, true, &publish_request(expected));
+    assert!(matches!(
+        decode(&reply).unwrap(),
+        Message::Error { code, .. } if code == "forbidden"
+    ));
+    let resolve = encode(&Message::Resolve { version: None }).unwrap();
+    let (head, reply) = post(true, &resolve);
+    assert!(head.contains("Access-Control-Allow-Origin: *"), "{head}");
+    assert!(matches!(
+        decode(&reply).unwrap(),
+        Message::Resolved { number, .. } if number == v(0)
+    ));
+
+    // The same write without an origin, with the owner's token, is served, and a browser can
+    // read who made it.
+    let (head, reply) = post(false, &publish_request(expected));
+    assert!(!head.contains("Access-Control-Allow-Origin"), "{head}");
+    assert!(matches!(
+        decode(&reply).unwrap(),
+        Message::PublishOutcome(PublishOutcome::Published { number, .. }) if number == v(1)
+    ));
+    let attribution = encode(&Message::Attribution { version: v(1) }).unwrap();
+    let (head, reply) = post(true, &attribution);
+    assert!(head.contains("Access-Control-Allow-Origin: *"), "{head}");
+    assert_eq!(
+        decode(&reply).unwrap(),
+        Message::Attributed {
+            number: v(1),
+            publication: Some((layer("work"), PublishAttribution::Human)),
+        }
+    );
+    let genesis = encode(&Message::Attribution { version: v(0) }).unwrap();
+    assert_eq!(
+        decode(&post(true, &genesis).1).unwrap(),
+        Message::Attributed {
+            number: v(0),
+            publication: None,
+        }
+    );
+    server.join().unwrap();
+}
+
 #[test]
 fn non_loopback_addresses_are_refused() {
     assert!(bind_loopback("0.0.0.0:0").is_err());

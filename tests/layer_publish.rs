@@ -1021,3 +1021,54 @@ fn failed_receipt_paths_and_observed_publication_are_bound_to_original_records()
         // A fresh Publish does not read an unrelated failed receipt.
     }
 }
+
+#[test]
+fn version_publication_names_the_layer_and_attribution_by_one_indexed_read() {
+    let root = TempDir::new().unwrap();
+    let mut repo = Repository::init(root.path()).unwrap();
+    let a = regular(&mut repo, b"a");
+    let human = capture(&mut repo, "human", 0, &delta([("a", Some(a))]));
+    published(&publish(&mut repo, "publish-human", &human));
+    let b = regular(&mut repo, b"b");
+    let agent = capture(&mut repo, "agent", 1, &delta([("b", Some(b))]));
+    let attribution = PublishAttribution::Agent {
+        context: None,
+        allow_missing_trace: true,
+    };
+    repo.publish_layer(&op("publish-agent"), &agent, &attribution, |_, _| Ok(()))
+        .unwrap();
+    let c = regular(&mut repo, b"c");
+    advance(&mut repo, "direct", [("c", c)]);
+
+    let layer = |s: &str| LayerId::parse(s).unwrap();
+    assert_eq!(repo.version_publication(v(0)).unwrap(), None);
+    assert_eq!(
+        repo.version_publication(v(1)).unwrap(),
+        Some((layer("human"), PublishAttribution::Human))
+    );
+    assert_eq!(
+        repo.version_publication(v(2)).unwrap(),
+        Some((layer("agent"), attribution))
+    );
+    assert_eq!(repo.version_publication(v(3)).unwrap(), None);
+    assert!(matches!(
+        repo.version_publication(v(4)),
+        Err(Error::MissingVersion(n)) if n == v(4)
+    ));
+
+    let plan: Vec<String> = raw(&root)
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT layer,attribution,context,allow_missing_trace \
+             FROM publications WHERE result=?1 AND outcome=1",
+        )
+        .unwrap()
+        .query_map([2], |r| r.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("publications_by_result")),
+        "{plan:?}"
+    );
+}

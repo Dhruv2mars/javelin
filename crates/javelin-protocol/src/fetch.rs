@@ -1,5 +1,5 @@
 //! Reference fetch: resolves a version, verifies its tree root against the version ID
-//! chain from World 0, then reads the tree from the root down, one level per round
+//! chain (from the caller's trust anchor, or from World 0 without one), then reads the tree from the root down, one level per round
 //! trip, and the blobs last. With a path prefix it reads only the chunks on the way to
 //! the prefix and the subtree below it. Objects already held locally are not requested,
 //! every received object is checked against its ID before it is used, and the walk
@@ -41,6 +41,18 @@ impl Blobs for BTreeMap<ObjectId, Vec<u8>> {
     }
 }
 
+/// A version the caller verified earlier and kept: its number, chain ID and root. A
+/// fetch given an anchor verifies only the versions between the anchor and its target,
+/// so its cost follows that distance, not the length of the history. A server whose
+/// chain does not pass through the anchor is refused. Every fetched version is
+/// verified, so [`Fetched::anchor`] is a valid anchor for the next fetch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Anchor {
+    pub number: VersionNumber,
+    pub id: ObjectId,
+    pub tree: ObjectId,
+}
+
 /// The fetched version and the files at or below the prefix.
 #[derive(Debug)]
 pub struct Fetched {
@@ -51,6 +63,17 @@ pub struct Fetched {
     /// Objects transferred, not counting those already held.
     pub trees_received: usize,
     pub blobs_received: usize,
+}
+
+impl Fetched {
+    /// The fetched version, verified, to keep as the anchor for later fetches.
+    pub fn anchor(&self) -> Anchor {
+        Anchor {
+            number: self.number,
+            id: self.id,
+            tree: self.tree,
+        }
+    }
 }
 
 /// What a pending chunk contributes: everything below it, or only the entries on
@@ -73,12 +96,14 @@ struct Link {
 type Pending = (ObjectId, Want, Option<Link>);
 
 /// Fetches `version` (the head when None), or only `prefix` within it. Tree chunks
-/// go to `trees`, which also serves chunks held from earlier fetches.
+/// go to `trees`, which also serves chunks held from earlier fetches. The root is
+/// verified against `anchor`, or against the chain from World 0 when it is None.
 pub fn fetch(
     mut r: impl Read,
     mut w: impl Write,
     trees: &impl Store,
     blobs: &mut impl Blobs,
+    anchor: Option<&Anchor>,
     version: Option<VersionNumber>,
     prefix: Option<&RepoPath>,
 ) -> Result<Fetched, ProtocolError> {
@@ -96,7 +121,7 @@ pub fn fetch(
         }
         _ => return Err(unexpected()),
     };
-    verify_chain(&mut call, number, id, root)?;
+    verify_chain(&mut call, anchor, version.is_none(), number, id, root)?;
     let start = match prefix {
         None => Want::All { dir: String::new() },
         Some(prefix) => Want::Path {
@@ -167,87 +192,162 @@ pub fn fetch(
     Ok(fetched)
 }
 
-/// Checks that `tree` is the root that version `number` commits to. The version ID
-/// hashes its parent's ID, its root and its changeset, and World 0 has a fixed ID, so
-/// walking the chain from World 0 proves each root. Each changeset streams in parts
-/// and is hashed as it arrives, never held whole. Nothing is stored before this passes.
+/// Checks that `tree` is the root that version `number` commits to, relative to
+/// `anchor`. A version ID hashes its parent's ID, its root and its changeset, so one
+/// trusted ID proves every version linked to it:
+///
+/// - after the anchor, each version from `anchor + 1` to `number` must hash onto the
+///   one below it, starting from the anchor's ID;
+/// - at the anchor, the server must name exactly the anchor's ID and root;
+/// - before the anchor (an explicit older version only), the walk runs down from the
+///   anchor: each version's parent ID is trusted once the version hashes to its
+///   trusted ID, and one more link checks the target's own root. A head behind the
+///   anchor is a rollback and is refused.
+///
+/// Without an anchor the walk starts at World 0's fixed ID. Work is one link per
+/// version between the anchor and the target. Each changeset streams in parts and is
+/// hashed as it arrives, never held whole. Nothing is stored before this passes.
 fn verify_chain(
     call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
+    anchor: Option<&Anchor>,
+    head: bool,
     number: VersionNumber,
     id: ObjectId,
     tree: ObjectId,
 ) -> Result<(), ProtocolError> {
-    let mismatch = |version: VersionNumber| {
-        ProtocolError::new(
-            CHAIN_MISMATCH,
-            format!("version {version} does not commit to the tree its server named"),
-        )
+    let anchor = match anchor {
+        Some(anchor) => *anchor,
+        None => Anchor {
+            number: VersionNumber::new(0)?,
+            id: genesis_version_id(),
+            tree: empty(),
+        },
     };
-    if number.get() == 0 {
-        return if id == genesis_version_id() && tree == empty() {
+    if number == anchor.number {
+        return if (id, tree) == (anchor.id, anchor.tree) {
             Ok(())
         } else {
             Err(mismatch(number))
         };
     }
-    let mut parent = genesis_version_id();
-    for n in 1..=number.get() {
+    if number > anchor.number {
+        let mut parent = anchor.id;
+        for n in anchor.number.get() + 1..=number.get() {
+            let version = VersionNumber::new(n)?;
+            let (claimed, root) = if version == number {
+                (id, tree)
+            } else {
+                resolve(call, version)?
+            };
+            if link(call, version, parent, root)? != claimed {
+                return Err(mismatch(version));
+            }
+            parent = claimed;
+        }
+        return Ok(());
+    }
+    if head {
+        return Err(ProtocolError::new(
+            CHAIN_MISMATCH,
+            format!(
+                "the server's head, World {number}, is behind the anchor at World {}",
+                anchor.number
+            ),
+        ));
+    }
+    // `trusted` is the verified ID of the version being linked and `root` its claimed root.
+    let (mut trusted, mut root) = (anchor.id, anchor.tree);
+    for n in (number.get()..=anchor.number.get()).rev() {
         let version = VersionNumber::new(n)?;
-        let (claimed, root) = if version == number {
+        let Some(below) = n.checked_sub(1) else {
+            // World 0 has no parent: its ID and root are fixed.
+            return if (trusted, root) == (genesis_version_id(), empty()) {
+                Ok(())
+            } else {
+                Err(mismatch(version))
+            };
+        };
+        let below = VersionNumber::new(below)?;
+        let (parent, parent_root) = if below == number {
             (id, tree)
         } else {
-            match call(Message::Resolve {
-                version: Some(version),
-            })? {
-                Message::Resolved {
-                    number: got,
-                    id,
-                    tree,
-                } if got == version => (id, tree),
-                _ => return Err(unexpected()),
-            }
+            resolve(call, below)?
         };
-        let mut hash = VersionHasher::new(Some(parent), root);
-        let mut offset = 0u64;
-        let mut total = None;
-        loop {
-            let Message::ChangesetPart {
-                total: whole,
-                bytes,
-            } = call(Message::Changeset { version, offset })?
-            else {
-                return Err(unexpected());
-            };
-            if whole > MAX_CHANGESET as u64 {
-                return Err(ProtocolError::new(
-                    "limit_exceeded",
-                    format!("changeset of version {version} exceeds {MAX_CHANGESET} bytes"),
-                ));
-            }
-            if *total.get_or_insert(whole) != whole || offset + bytes.len() as u64 > whole {
-                return Err(ProtocolError::new(
-                    "malformed",
-                    format!("changeset part of version {version} disagrees with its length"),
-                ));
-            }
-            if bytes.is_empty() && offset < whole {
-                return Err(ProtocolError::new(
-                    "malformed",
-                    format!("empty changeset part of version {version}"),
-                ));
-            }
-            hash.update(&bytes);
-            offset += bytes.len() as u64;
-            if offset == whole {
-                break;
-            }
-        }
-        if hash.finish() != claimed {
+        if link(call, version, parent, root)? != trusted {
             return Err(mismatch(version));
         }
-        parent = claimed;
+        (trusted, root) = (parent, parent_root);
     }
     Ok(())
+}
+
+fn mismatch(version: VersionNumber) -> ProtocolError {
+    ProtocolError::new(
+        CHAIN_MISMATCH,
+        format!("version {version} does not commit to the chain and tree its server named"),
+    )
+}
+
+/// The ID and root the server claims for `version`.
+fn resolve(
+    call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
+    version: VersionNumber,
+) -> Result<(ObjectId, ObjectId), ProtocolError> {
+    match call(Message::Resolve {
+        version: Some(version),
+    })? {
+        Message::Resolved {
+            number: got,
+            id,
+            tree,
+        } if got == version => Ok((id, tree)),
+        _ => Err(unexpected()),
+    }
+}
+
+/// The ID that `version` has over `parent` and `root`, hashing its changeset as the
+/// parts arrive.
+fn link(
+    call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
+    version: VersionNumber,
+    parent: ObjectId,
+    root: ObjectId,
+) -> Result<ObjectId, ProtocolError> {
+    let mut hash = VersionHasher::new(Some(parent), root);
+    let mut offset = 0u64;
+    let mut total = None;
+    loop {
+        let Message::ChangesetPart {
+            total: whole,
+            bytes,
+        } = call(Message::Changeset { version, offset })?
+        else {
+            return Err(unexpected());
+        };
+        if whole > MAX_CHANGESET as u64 {
+            return Err(ProtocolError::new(
+                "limit_exceeded",
+                format!("changeset of version {version} exceeds {MAX_CHANGESET} bytes"),
+            ));
+        }
+        if *total.get_or_insert(whole) != whole || offset + bytes.len() as u64 > whole {
+            return Err(ProtocolError::new(
+                "malformed",
+                format!("changeset part of version {version} disagrees with its length"),
+            ));
+        }
+        if bytes.is_empty() && offset < whole {
+            return Err(ProtocolError::new(
+                "malformed",
+                format!("empty changeset part of version {version}"),
+            ));
+        }
+        hash.update(&bytes);
+        offset += bytes.len() as u64;
+        if offset == whole {
+            return Ok(hash.finish());
+        }
+    }
 }
 
 /// Follows one chunk's references according to `want`. Returns how many named paths

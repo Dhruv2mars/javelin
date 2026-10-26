@@ -1,7 +1,8 @@
 # Online design: roadmap item 7 and the hosting phase
 
-Status: decisions recorded 2026-10-20 (section 7). Not accepted, not implemented. Written on
-`docs/online-design`; decisions on `docs/online-decisions`.
+Status: decisions recorded 2026-10-20 (section 7). Amended 2026-10-26 by `docs/direction.md`:
+Javelin runs no managed hosting, the control plane is the javelin.codes forge, Layers follow
+their owner (D21), and traces use path audiences (D25).
 Nothing here is implemented or run. Claims about current code cite `docs/architecture.md`
 or PR #52 (protocol v2 on trees, open, unmerged). Claims about the provider are marked
 where they rest on search results rather than provider documentation.
@@ -70,13 +71,12 @@ These are not settled by the contract or G§. The design picks a reading and fla
   It owns objects, the World log, Layer state, Publish Requests, revisions, approvals,
   checks, traces, applied permissions and operation IDs. Its core is a Rust crate,
   `javelin-node`, behind storage traits. Self-hosting runs the `javelin-node` binary on
-  file-backed stores (U2). The first managed provider is Cloudflare: a Worker, and one
-  SQLite-backed Durable Object per repository (U12, U13; D1).
-- **Control plane** (central, not self-hosted, `C§Hosting ownership`). It owns identity, orgs,
-  memberships, discovery, provisioning, and the signing keys for tokens. It is a separate
-  service in front of the node, not a node component on managed hosting. Self-hosting runs the
-  same control-plane code inside the node (D1). That contradicts `C§Hosting ownership`'s "not
-  self-hosted"; the hub must amend it.
+  file-backed stores (U2). The first provider adapter is Cloudflare, in the owner's own
+  account: a Worker, and one SQLite-backed Durable Object per repository (U12, U13; D1).
+- **Control plane** (the javelin.codes forge, central, not self-hosted, `C§Hosting ownership`).
+  It owns identity, orgs, memberships, discovery, provisioning into the owner's infrastructure,
+  and the signing keys for tokens. It is never part of a node, including a self-hosted one
+  (amended 2026-10-26).
 - **Client** (`javelin` CLI). Captures locally, keeps a bounded object cache and a rolling base
   (`G§4`), queues remote work in an outbox (section 4.4), and talks to the node directly
   after authentication.
@@ -85,7 +85,7 @@ These are not settled by the contract or G§. The design picks a reading and fla
   replaces the `u32` length prefix. Each message is `POST /v2/r/{repo}` with a bearer token;
   the response is one message. Notifications stay optional and are deferred (D27).
 - **One ordering point per repository.** Each repository has one coordinator (D2): a process
-  lock on the node when self-hosted, or the repository's Durable Object when managed. Every
+  lock on the node when self-hosted, or the repository's Durable Object on Cloudflare. Every
   ordered sequence is a chain of immutable rows, each written in one transaction with a
   unique-key precondition: the World log, each Layer's checkpoint chain, and each Publish
   Request's revision list. Only World advancement is repository-wide (`C§Protocol and first
@@ -117,6 +117,7 @@ Additions, all in `codec.rs`:
 | 0x53 | `Approve` | `{ operation, request, revision: u32 }` | `ReviewOutcome` |
 | 0x54 | `Comment` | `{ operation, request, revision: Option<u32>, body }` | `ReviewOutcome` |
 | 0x55 | `ReadRequest` | `{ request }` | `RequestState` 0x56 |
+| 0x44 | `Attribution` | `{ version }` | `Attributed` 0x45: `{ number, publication: Option<(layer, attribution)> }` |
 
 Outcome shapes:
 
@@ -129,6 +130,14 @@ Outcome shapes:
 - `attribution` in `PublishLayer`: `Human`, or `Agent { context: Option<ObjectId>,
   allow_missing_trace: bool }`. A missing trace without the override refuses with
   `missing_agent_trace` (`A§Publish`).
+
+`Attribution` serves the forge's history: the Layer and declared attribution of the Publish
+that made a version, absent for World 0 and for versions advanced without a Layer.
+
+Browsers read the node directly (`C§Hosting ownership`). The self-hosted node answers a CORS
+preflight and allows any origin on the read messages (`Resolve`, `Get`, `Changeset`,
+`Attribution`). Any other message that carries an `Origin` header is refused with `forbidden`
+before it is served.
 
 Unchanged: `Want`/`Missing` for push, `Get`/`Objects` for fetch, `Resolve`/`Resolved` for the
 version head. Tree-level `Publish` (0x30) is refused with `forbidden` unless the token carries
@@ -300,16 +309,16 @@ harness in the in-process node (drop reply after commit, refuse connection, dela
 
 **Requirement.** Append-only changeset log, one head, compare-and-swap advancement
 (`G§3(b)`). Acknowledgement only after the write is durable (`C§Protocol and first
-provider`: successful Publishes survive restart). On managed hosting, durability comes from the
+provider`: successful Publishes survive restart). On Cloudflare, durability comes from the
 storage layer (D2).
 
 **Coordinator (D2).** One per repository. Self-hosted: the `javelin-node` process holds a lock
-on the repository's data directory; a second process refuses to start. Managed: the
+on the repository's data directory; a second process refuses to start. Cloudflare: the
 repository's Durable Object (one per repository, D1). Every World, Layer and review write for
 the repository goes through it, and it serializes them.
 
-**Data.** Tables in the coordinator's store (file-backed when self-hosted, DO SQLite when
-managed):
+**Data.** Tables in the coordinator's store (file-backed when self-hosted, DO SQLite on
+Cloudflare):
 - `world(n PRIMARY KEY, parent, changeset, root_tree, id, operation, attribution)`: one row per
   version. `n` is the ordering point. The version `id` is the hash chain of `A§Storage`, with
   the root tree hash in it (D3).
@@ -337,21 +346,21 @@ The head is the largest `n`, read inside the transaction. There is no head hint.
 5. Reply `Published`.
 
 A transaction either commits or leaves nothing, so there is no pending state. The reply is sent
-after commit. On managed hosting the storage layer confirms the write before the reply leaves
+after commit. On Cloudflare the storage layer confirms the write before the reply leaves
 (section 9).
 
 **Replay.** Read `ops(operation)`. Found with `n`: return the recorded outcome. Not found: run
 the commit path. Digest mismatch: `operation_id_reused`.
 
 **Why this shape.** One coordinator serializes writes, so a unique key is the whole ordering
-mechanism; no compare-and-swap protocol is needed. Replication is the provider's job on managed
-hosting. The 2024 Cloudflare post says a write is confirmed once three of five follower replicas
+mechanism; no compare-and-swap protocol is needed. Replication is the provider's job on
+Cloudflare. The 2024 Cloudflare post says a write is confirmed once three of five follower replicas
 respond (section 9). U12 re-checks this against current docs and records the citation.
 Self-hosted, the node is one machine: durability is local fsync, with no replica. The contract's
-"no single node failure stops Publish" therefore holds only for managed hosting, and the hub's
-amendment must say so (T1).
+"no single node failure stops Publish" therefore holds only on Cloudflare, and the contract says
+so since 2026-10-26 (T1).
 
-**Limits (managed).** A row is at most 2 MB, so objects are segmented (above). A SQL statement is
+**Limits (Cloudflare).** A row is at most 2 MB, so objects are segmented (above). A SQL statement is
 at most 100 KB and binds at most 100 parameters, so large writes are batched. At the storage cap,
 writes fail with `SQLITE_FULL`; the node refuses the whole commit with `storage_full`, and
 nothing is written. Read-only requests still succeed.
@@ -561,10 +570,11 @@ trace restrictions yet (traces come in U10).
 
 ### 4.10 First hosting provider and creation flow
 
-**Provider** (`C§Protocol and first provider`; D1). Two paths. Self-hosted: the `javelin-node`
-binary with file-backed stores, runnable free anywhere; the reference implementation and test
-target. Managed (first): Cloudflare Workers Free, with one SQLite-backed Durable Object per
-repository as both coordinator and object store (rows of at most 2 MB, section 4.5). No R2. The
+**Provider** (`C§Protocol and first provider`; D1). Both paths run on the owner's
+infrastructure. Self-hosted: the `javelin-node` binary with file-backed stores, runnable free
+anywhere; the reference implementation and test target. Cloudflare: the owner's account on
+Workers Free, with one SQLite-backed Durable Object per repository as coordinator and object
+store (rows of at most 2 MB, section 4.5), and R2 allowed for large objects inside the free tier. The
 Worker runs the Rust core compiled to wasm via workers-rs (D23). If that spike fails, a thin
 TypeScript Worker (bun-managed) speaks the same protocol and is tested against the Rust node.
 U13's first step verifies the Free-plan limits (section 9); until then they are unverified.
@@ -581,7 +591,7 @@ javelin repo create <owner>/<name> --visibility public|private \
    a device session).
 2. The control plane validates the name and creates the record `state = Provisioning` with an
    operation ID.
-3. It provisions the node: the repository's Durable Object (managed) or data directory
+3. It provisions the node: the repository's Durable Object (Cloudflare) or data directory
    (self-host), and the Worker route.
 4. It writes applied permissions at epoch 1 (creator = Maintain) and version 0 (empty World).
 5. It marks `Ready` and returns the repository URL. Ordinary responses echo no secret; the
@@ -638,19 +648,17 @@ Decided 2026-10-20 by the hub, from the user's delegation. Each entry has the de
 one-line rationale. Where a decision needs the contract changed, the entry says so; this design
 does not change contract text.
 
-- **D1. First provider and control plane.** Decided 2026-10-20: the self-hosted `javelin-node`
-  binary with file-backed stores (U2) is the reference implementation and test target, runnable
-  free anywhere. The first managed provider is Cloudflare Workers Free with one SQLite-backed
-  Durable Object per repository; objects are DO SQLite rows of at most 2 MB, with no R2 (R2 needs
-  a payment method, per the user; not checked here). U13 verifies the Free-plan limits first, and
-  they stay unverified until then. The control plane's location is a derived default, not a user
-  decision: embedded in the node when self-hosted, on Workers when managed. Contract tension:
-  `C§Hosting ownership` says the control plane is not self-hosted, so the hub must amend that
-  clause before self-host embeds it. Rationale: only starts that need no paid tier, no card and no
-  extra signup.
+- **D1. First provider and control plane.** Decided 2026-10-20, amended 2026-10-26
+  (`docs/direction.md`). Javelin runs no managed hosting. The owner connects a provider account
+  or runs `javelin-node`. The self-hosted `javelin-node` binary with file-backed stores (U2) is
+  the reference implementation and test target. Cloudflare is the first provider adapter: one
+  SQLite-backed Durable Object per repository in the owner's account, with R2 allowed for large
+  objects inside the free tier, under the node's budget. The control plane is the javelin.codes
+  forge, run by Javelin, never embedded in a node. Rationale: the node's needs come first
+  (`docs/direction.md`, What a node needs), and a normal repository must fit a free tier.
 - **D2. World log quorum (T1).** Decided 2026-10-20: one coordinator per repository, the node's
-  process lock when self-hosted or the repository's Durable Object when managed, with durability
-  from the storage layer. Cloudflare's 2024 post says a write is confirmed once three of five
+  process lock when self-hosted or the repository's Durable Object on Cloudflare, with durability
+  from the storage layer. The contract amendment landed 2026-10-26. Cloudflare's 2024 post says a write is confirmed once three of five
   follower replicas respond (verified; U12 re-checks it against current docs). Own quorum (option
   C) is a later option. Rationale: one coordinator makes ordering a single transaction, and the
   provider supplies replication. The contract's quorum wording needs the hub's amendment, since
@@ -704,12 +712,16 @@ does not change contract text.
   create needs it; sparse attach needs its own design.
 - **D20. Offline Layer create.** Decided 2026-10-20: allowed from the last-known base; Publish
   composes later. Rationale: `C§Version control` says Layer work continues during an outage.
-- **D21. Second writer on a Layer.** Decided 2026-10-20: refuse; one owning machine per Layer.
-  Rationale: no forced writes.
+- **D21. Second writer on a Layer.** Decided 2026-10-20, replaced 2026-10-26
+  (`docs/direction.md`, Layers follow their owner): one writing device at a time through a
+  writer lease on the node; `javelin layer take` moves it to another device of the same owner;
+  unuploaded checkpoints on the old device are refused with `layer_stale` and recoverable with
+  `javelin layer clone`. Rationale: the node already holds the Layer, so tying it to one machine
+  buys no safety.
 - **D22. Protocol versioning.** Decided 2026-10-20: extend v2 additively until the first deployed
   node, then bump. Rationale: PR #52 treats version 1 as non-authoritative, so nothing deployed
   needs migrating.
-- **D23. Node runtime.** Decided 2026-10-20: the self-hosted node is native Rust. Managed: U13 tries
+- **D23. Node runtime.** Decided 2026-10-20: the self-hosted node is native Rust. Cloudflare: U13 tries
   the Rust core compiled to wasm in a Worker (workers-rs). If that spike fails, use a thin
   TypeScript Worker (bun-managed) that speaks the same protocol and is tested against the Rust
   node. Rationale: one core for both paths, with a fallback if wasm does not build.
@@ -717,7 +729,8 @@ does not change contract text.
   Publish, OpenRequest, Revise, Approve and Comment need identity. Rationale: public reads need no
   account.
 - **D25. Trace visibility.** Decided 2026-10-20: a trace inherits repository visibility; a
-  `restricted` trace is readable by Maintain only. Rationale: the narrowest rule that protects
+  `restricted` trace is readable by Maintain only. Generalized 2026-10-26: traces use the same
+  audiences as paths (`docs/direction.md`, Superposition). Rationale: the narrowest rule that protects
   restricted traces.
 - **D26. Agent identities.** Decided 2026-10-20: none in this phase; agents use the owning device's
   token, narrowed by the `layer` claim. Rationale: no new identity model before the first provider
@@ -747,7 +760,7 @@ merged first, or a verified unmerged base with the dependent PR naming it (`C§W
 | U10 | `feat: restricted agent traces` (trace store, visibility, `missing_agent_trace` at node) | `crates/javelin-node/src/trace.rs` | U2, U7; D25 |
 | U11 | `feat: forks with inherited history` (log copy, object copy, provenance, trace omission) | `crates/javelin-node/src/fork.rs`, `crates/javelin-control/` (fork op) | U2, U7, U10; D13, D14 |
 | U12 | `feat: World log in one Durable Object per repository` (`WorldLog` on DO SQLite transactions; spike on a real DO in the PR: 50 concurrent publishers, kill inside a commit, replication citation re-checked against current docs) | `crates/javelin-node/src/log_do.rs`, `tools/spike-do/` (bun-managed) | U2; D1, D2 |
-| U13 | `feat: Cloudflare managed node: Free-plan check, Worker, Durable Object, repo create` (step 1: verify Free-plan limits from Cloudflare docs and record citations, else mark unverified; step 2: Rust core to wasm via workers-rs, or the fallback thin TypeScript Worker, bun-managed, tested against the Rust node; step 3: `repo create` end to end) | `crates/javelin-node-worker/` (workers-rs entry), `tools/node-cloudflare/` (fallback only, bun-managed) | U8, U12; D1, D23 |
+| U13 | `feat: Cloudflare node: Free-plan check, Worker, Durable Object, repo create` (step 1: verify Free-plan limits from Cloudflare docs and record citations, else mark unverified; step 2: Rust core to wasm via workers-rs, or the fallback thin TypeScript Worker, bun-managed, tested against the Rust node; step 3: `repo create` end to end) | `crates/javelin-node-worker/` (workers-rs entry), `tools/node-cloudflare/` (fallback only, bun-managed) | U8, U12; D1, D23 |
 | U14 | `test: hosted acceptance suite` (contract gate 4 assertions, outage matrix, git stand-in with positive control) | new `tools/acceptance/`, `tests/hosted_*.rs` | U3, U5, U9, U11, U13 |
 | U15 | `docs: CI execution design` (docs only; check ingestion and runner options) | new `docs/ci-execution.md` | D4 (can start now; no code) |
 | U16 | `test: hosting measurements` (gate 6 fixtures, limits, cost) | `tools/` | U14; measurements committed before the run (`C§Verification gates` 6) |

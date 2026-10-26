@@ -16,7 +16,7 @@ Concurrency, crash recovery, retries and corruption guarantees, and the tests th
 
 ## Storage
 
-- The repository is `.javelin/repository.sqlite3`. Format is `8`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
+- The repository is `.javelin/repository.sqlite3`. Format is `9`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
 - Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, index `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten. The derived radar index `layer_paths` (`src/radar.rs`) is the one mutable table.
 
 World versions (changesets, not snapshots):
@@ -51,7 +51,7 @@ Integrity and bounded reads:
 Validation scope:
 
 - Commands validate only what they read or write: the head row, the Layer rows and checkpoints they touch (without walking Stack ancestry), the Layer's successful publication receipt, and new objects. Their cost does not grow with repository size or history length.
-- Full-graph validation runs in `check()`, `history()`, `init()` on an existing store, `read_checkpoint` (with its Stack ancestry), and `layer_history` (that Layer's events and attempts). It verifies the hash chain, that every changeset is canonical against its parent tree, that every stored root equals the root recomputed from the parent root plus the changeset (each derived chunk must be stored with the same bytes), that accepted candidates equal derived roots, and all Layer, Stack and publication bindings. Work is O(total change x depth); no full snapshot is held. `check()` also decodes every stored tree chunk.
+- Full-graph validation runs in `check()`, `history()` (the `check` and `history` commands), `init()` on an existing store, `read_checkpoint` (with its Stack ancestry), and `layer_history` (that Layer's events and attempts). It verifies the hash chain, that every changeset is canonical against its parent tree, that every stored root equals the root recomputed from the parent root plus the changeset (each derived chunk must be stored with the same bytes), that accepted candidates equal derived roots, and all Layer, Stack and publication bindings. Work is O(total change x depth); no full snapshot is held. `check()` also decodes every stored tree chunk.
 
 Code: src/domain.rs, src/repository.rs, src/lib.rs
 
@@ -214,7 +214,14 @@ Sender (`src/sender.rs`, `push()`):
 
 Fetch (`src/fetch.rs`, `fetch()`):
 
-- Resolves the version, then verifies its root against the version ID chain before reading anything else. The chain starts at World 0's fixed ID (`genesis_version_id`). For each version from 1 to the target, the client fetches its changeset in parts and hashes `VersionHasher::new(parent, root)` over them as they arrive, never holding a whole changeset; the result must equal the claimed ID. A mismatch is refused with `chain_mismatch` (`CHAIN_MISMATCH`), and nothing is stored first. A changeset larger than `MAX_CHANGESET` is refused with `limit_exceeded`.
+- Resolves the version, then verifies its root against the version ID chain before reading anything else. A version ID hashes its parent's ID, its root and its changeset, so one trusted ID proves every version linked to it. Each link fetches one version's changeset in parts and hashes `VersionHasher::new(parent, root)` over them as they arrive, never holding a whole changeset. A mismatch is refused with `chain_mismatch` (`CHAIN_MISMATCH`), and nothing is stored first. A changeset larger than `MAX_CHANGESET` is refused with `limit_exceeded`.
+- Trust anchor: `fetch` takes an optional `Anchor { number, id, tree }`, a version the caller verified earlier. `Fetched::anchor()` returns the fetched version as the anchor for the next fetch. Without one, the anchor is World 0's fixed ID (`genesis_version_id`) and empty root. Relative to the anchor:
+  - a later target links each version from `anchor + 1` up, starting from the anchor's ID, so a server whose chain does not pass through the anchor fails at the first new version;
+  - the anchor itself must be resolved to exactly the anchor's ID and root;
+  - an explicit older target is verified down from the anchor: each version's claimed parent ID is trusted once the version hashes to its trusted ID, and one more link checks the target's own root (World 0 is compared with its fixed ID and root);
+  - a head behind the anchor is a rollback and is refused with `chain_mismatch`.
+  Work is one link (a `Resolve` and the changeset parts) per version between the anchor and the target, independent of the history before the anchor: a fetch one version past the anchor makes 5 requests at 10, 1,000 and 10,000 versions, against 23, 2,003 and 20,003 from World 0 (`crates/javelin-protocol/tests/anchor.rs`). `attach.json`'s `head` is the verified anchor an attached store would pass to a later fetch; nothing fetches after attach yet.
+- No accumulator over version IDs (such as a Merkle mountain range). It would let a client holding a trusted head prove an old version or a far newer head in O(log N) hashes instead of one link per version. It does not help a client with no anchor: whoever serves the head can also fabricate a whole chain from World 0, so inclusion in that chain proves nothing new. Shared history is already proved in O(1): equal IDs at a version number mean equal history up to it. Its root would have to be committed in the version ID (a format change), and catching up a replica needs every new changeset anyway, which the chain walk already hashes. Revisit if clients need old versions or long catch-ups without the changesets.
 - Then reads the tree from the root down, one level per round trip, and the blobs last. Chunks already in the caller's `tree::Store` and blobs the caller has are not requested. Every object is checked against its id.
 - Every named path, file or directory the walk follows, and every chunk reference, counts once against `MAX_FETCH_PATHS`. Exceeding it is refused with `limit_exceeded`, so a lying server cannot make the walk expand a shared subtree without bound.
 - With a path prefix it follows only the chunks on the way to the prefix, using each internal chunk's last names (`Chunk::child_for`), then everything below it. The result lists the files at or below the prefix.
@@ -239,7 +246,7 @@ CLI binary (`src/main.rs`):
 - `javelin-protocol push <project> <tree> <operation> <expected>` runs the sender.
 - Results go to stderr as `accepted ...`, `stale ...`, or `error <code> <detail>`.
 
-Code: crates/javelin-protocol/src/lib.rs, src/codec.rs, src/receiver.rs, src/sender.rs, src/fetch.rs, src/main.rs
+Code: crates/javelin-protocol/src/lib.rs, src/codec.rs, src/receiver.rs, src/sender.rs, src/fetch.rs, src/main.rs, tests/anchor.rs
 
 ## Review and permission model crate (`crates/javelin-collaboration`)
 
@@ -292,7 +299,7 @@ Snapshots no longer depend on history: format 6 scanned every change row up to t
 - Fetch returns files and stores chunks in a caller-supplied store; attaching a local repository to fetched versions is roadmap item 7.
 - Publish does not enforce review state yet; the collaboration crate is not wired in.
 - Tree work follows named paths, not tree bytes. A subtree can be named under several parents, so a few KB of canonical chunks can name 2^k files. `advance_to_tree` expands every named path with no cap, because snapshots are uncapped by design. Work and memory for a received tree are proportional to the paths it names. Accepted for Publish: the reference receiver accepts Objects and Publish from any caller, with no authentication in this crate, so the bound is safe only when callers authenticate and authorize outside it. `fetch` is bounded for an untrusted server: it refuses past `MAX_FETCH_PATHS` named paths and checks the root against the version ID chain. Its costs:
-  - The chain walk starts at World 0 and costs two round trips per version (`Resolve`, then `Changeset` parts), so fetching version N costs O(N) round trips and transfers every changeset. A trust anchor stored by the caller would allow verifying only the new versions; that is not built yet.
+  - The chain walk costs two round trips per version between the anchor and the target (`Resolve`, then `Changeset` parts), and transfers each of those changesets. A fresh client, such as `attach`, has no anchor, so its first fetch of version N walks from World 0: O(N) round trips.
   - The server re-encodes the canonical changeset for each part, so a changeset larger than one part costs O(parts × size).
   - Protocol version stays 2 with the new tags 0x42 and 0x43, so a new client against an old server fails at the first `Changeset` request, not at negotiation.
   - Snapshots above `MAX_FETCH_PATHS` (about one million paths) cannot be fetched until the bound is raised against a measured memory budget.

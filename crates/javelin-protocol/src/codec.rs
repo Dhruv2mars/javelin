@@ -49,6 +49,8 @@ const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
 const CHANGESET: u8 = 0x42;
 const CHANGESET_PART: u8 = 0x43;
+const ATTRIBUTION: u8 = 0x44;
+const ATTRIBUTED: u8 = 0x45;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -257,6 +259,17 @@ pub enum Message {
     ChangesetPart {
         total: u64,
         bytes: Vec<u8>,
+    },
+    /// Fetch: who published `version`. Reply: `Attributed`.
+    Attribution {
+        version: VersionNumber,
+    },
+    /// The Layer and declared attribution of the Publish that made `number`, or None
+    /// for World 0 and versions advanced without a Layer. Encoded as a flag, the Layer
+    /// (empty when absent), then the attribution only when present.
+    Attributed {
+        number: VersionNumber,
+        publication: Option<(LayerId, PublishAttribution)>,
     },
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
@@ -517,6 +530,25 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             put_u32(&mut out, bytes.len());
             out.extend_from_slice(bytes);
         }
+        Message::Attribution { version } => {
+            out.push(ATTRIBUTION);
+            out.extend_from_slice(&version.get().to_be_bytes());
+        }
+        Message::Attributed {
+            number,
+            publication,
+        } => {
+            out.push(ATTRIBUTED);
+            out.extend_from_slice(&number.get().to_be_bytes());
+            out.push(u8::from(publication.is_some()));
+            match publication {
+                Some((layer, attribution)) => {
+                    put_short(&mut out, layer.as_str());
+                    put_attribution(&mut out, attribution);
+                }
+                None => put_short(&mut out, ""),
+            }
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -697,6 +729,15 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
                 return Err(limit("changeset part exceeds limit"));
             }
             13 + bytes.len()
+        }
+        Message::Attribution { .. } => 9,
+        Message::Attributed { publication, .. } => {
+            // Tag, number and flag, then the Layer and the attribution.
+            10 + match publication {
+                Some((layer, PublishAttribution::Human)) => short(layer.as_str())? + 1,
+                Some((layer, PublishAttribution::Agent { .. })) => short(layer.as_str())? + 35,
+                None => 1,
+            }
         }
         Message::OpenRequest {
             operation,
@@ -912,6 +953,21 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             Message::ChangesetPart {
                 total,
                 bytes: r.take(len)?.to_vec(),
+            }
+        }
+        ATTRIBUTION => Message::Attribution {
+            version: r.version()?,
+        },
+        ATTRIBUTED => {
+            let number = r.version()?;
+            let publication = match r.flag()? {
+                true => Some((r.layer()?, r.attribution()?)),
+                false if r.short_str()?.is_empty() => None,
+                false => return Err(malformed("absent publication must be empty")),
+            };
+            Message::Attributed {
+                number,
+                publication,
             }
         }
         RESOLVED => Message::Resolved {

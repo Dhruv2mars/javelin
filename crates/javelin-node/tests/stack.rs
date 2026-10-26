@@ -131,15 +131,12 @@ fn serve_node(dir: &Path) -> Served {
 }
 
 impl Served {
-    /// Stops the node and returns its log. One last connection wakes the accept loop. The
-    /// loop may see the flag and drop its listener before accepting it, which resets the wake
-    /// connection, so its outcome is ignored rather than unwrapped.
+    /// Stops the node and returns its log. One last connection wakes the accept loop. It
+    /// is a bare connect whose errors are ignored: the node may reset it, which on Linux
+    /// fails any read or write the waker attempts.
     fn finish(self) -> FileWorldLog {
         self.stop.store(true, Ordering::SeqCst);
-        if let Ok(mut wake) = TcpStream::connect(self.addr) {
-            let _ = wake.write_all(b"GET /v2/r/demo HTTP/1.1\r\n\r\n");
-            let _ = wake.read_to_end(&mut Vec::new());
-        }
+        let _ = TcpStream::connect(self.addr);
         self.thread.join().unwrap()
     }
 }
