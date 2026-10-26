@@ -190,7 +190,14 @@ fn browsers_may_read_but_never_write() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, &wire_support::gate("demo"), Some(7)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(7),
+        )
+        .unwrap();
     });
     let send = |origin: bool, token: bool, body: &[u8]| {
         let origin = if origin {
