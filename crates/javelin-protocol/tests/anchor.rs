@@ -64,6 +64,8 @@ fn anchor_of(repo: &Repository, n: u64) -> Anchor {
 
 /// What a fetch asked for: each request, in order.
 type Log = Arc<Mutex<Vec<Message>>>;
+/// Rewrites a reply, given the request it answers.
+type Lie = Box<dyn Fn(&Message, Message) -> Message + Send>;
 
 /// Serves `repo` through a proxy that logs each request and rewrites each reply with
 /// `lie`. The server behind the proxy is honest.
@@ -187,7 +189,7 @@ fn refuses_a_server_that_lies_about_a_version_after_the_anchor() {
         }
         (_, reply) => reply,
     };
-    let lies: Vec<Box<dyn Fn(&Message, Message) -> Message + Send>> = vec![
+    let lies: Vec<Lie> = vec![
         Box::new(flip),
         Box::new(root_lie(None, older)),
         Box::new(root_lie(Some(v(3)), older)),
