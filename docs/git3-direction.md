@@ -3,7 +3,9 @@
 Status: accepted by the user on 2026-10-18. This amends `build-contract.md`
 (product boundaries, hosting ownership, contributions) and `workspace-approach.md`
 (always-online stance, VFS wording, immutable per-version bases). Where those
-documents conflict with this one, this one wins.
+documents conflict with this one, this one wins. `direction.md` (2026-10-26) amends
+this document: the World log is one ordering point with the provider's durability,
+not a quorum, and hosting runs only on the owner's infrastructure.
 
 ## Vision
 
@@ -179,8 +181,8 @@ Recorded so they are not reopened without new evidence.
   protocol, with no separate code path.
 - **SQLite rebuildability.** Layer state is primary in SQLite today. Record which
   tables cannot yet be rebuilt.
-- **Quorum on the first provider.** Can Cloudflare's coordinator storage serve as
-  the quorum-replicated World log? UNCONFIRMED; not researched yet.
+- **Quorum on the first provider.** Answered 2026-10-26 in `direction.md`: one
+  ordering point per repository, durable as the provider's storage. No quorum.
 - **Cache tiers.** Scion runs three tiers that answer identical RPCs. A shared
   cache tier for hosting is an option to decide with measurements; it is not a
   client daemon.

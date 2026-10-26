@@ -6,11 +6,13 @@ product behavior must be reconciled with this contract through the hub.
 
 ## Product boundaries
 
-Javelin replaces Git and GitHub for agent-scale work. Javelin CLI is an
+Javelin is third-generation version control, built from scratch for agentic
+development. The `javelin` CLI replaces Git, and the javelin.codes forge replaces
+GitHub (`direction.md`, 2026-10-26). Javelin CLI is an
 online-first client: it attaches to a hosted repository, captures changes in local
 Layers, uploads blobs and checkpoints as they are captured, and materializes
-Layers. Javelin hosting composes, publishes, checks conflicts and computes derived
-data. Rule: assume online for speed, never for correctness. Layer work, capture
+Layers. The repository's node composes, publishes, checks conflicts and computes
+derived data. Rule: assume online for speed, never for correctness. Layer work, capture
 and checkpoints continue during an outage, and queued uploads and Publishes replay
 idempotently afterwards. `git3-direction.md` records this decision. On 2026-10-18
 it superseded the earlier boundary "Javelin CLI is a native local VCS".
@@ -20,7 +22,7 @@ tools. Javelin accepts traces and lifecycle events supplied by those tools.
 
 Runtime, storage, tests, and user workflows never invoke or interpret Git.
 Git is permitted for developing Javelin itself. Git import, export, compatibility,
-and migration bridges are not requirements for this build.
+and migration bridges are out of scope, and nothing in the design is shaped by them.
 
 Earlier implementations and binaries are not authoritative. The current scaffold
 is the starting point. Reuse earlier work only after verifying it against this contract.
@@ -38,6 +40,9 @@ is the starting point. Reuse earlier work only after verifying it against this c
   when a child needs isolation.
   Human-only work also happens in a Layer. Human edits in an existing Layer belong
   to that Layer's work.
+- A Layer belongs to its owner, not to a machine. One device writes to it at a time,
+  and the owner can move that writer lease to another device without losing or
+  forcing any checkpoint (`direction.md`).
 - A Layer clone starts a separate isolated Layer from an immutable snapshot.
 - Stable Layer changes are checkpointed automatically and remain recoverable.
   Checkpoints upload as they are captured; there is no push.
@@ -88,17 +93,21 @@ design that meets the contract.
 
 ## Hosting ownership
 
-Each hosted repository has one logical node on one user-chosen infrastructure
-provider. A logical node may share physical infrastructure with other repositories.
+Javelin runs no managed hosting. Each hosted repository has one logical node on
+infrastructure its owner brings: a connected provider account, Cloudflare first, or a
+`javelin-node` the owner runs. A logical node may share physical infrastructure with
+other repositories. A normal repository fits the provider's free tier, and the node
+refuses a write that would cross the owner's budget instead of causing a charge.
 
 The repository node owns immutable objects, World history and publication authority,
 Publish Requests, revisions, reviews, comments, approvals, checks, policy, applied
 permissions, operation IDs, and repository activity.
 
-The central control plane owns identity, organizations, memberships, repository
-discovery and addressing, provisioning, billing connections, and derived caches.
-The central control plane is not self-hosted. Repository creation presents name,
-visibility, Publish setting, provider, and create.
+The forge, javelin.codes, is the central control plane. It owns identity,
+organizations, memberships, repository discovery and addressing, provisioning into the
+owner's infrastructure, and derived caches, and it is the user-facing site. Javelin runs
+it, and nobody self-hosts it. Repository creation presents name, visibility, Publish
+setting, where the node runs, and create.
 
 After authentication, CLI and browser clients communicate directly with the node.
 Routine repository operations do not require a live control-plane lookup.
@@ -108,11 +117,11 @@ that repository's remote operations while local Layer work, capture and
 checkpoints continue; checkpoint uploads and Publishes queue and replay
 idempotently when the node returns.
 
-One repository initially uses one provider. Its World authority is a
-quorum-replicated log, so no single node failure stops Publish. Mirroring across
-providers and cross-provider failover remain outside the current design. On
-2026-10-18 `git3-direction.md` superseded the earlier exclusion of quorum
-replication.
+One repository uses one provider. Its World authority is one ordering point whose
+acknowledged writes are as durable as the provider's storage: replicated on
+Cloudflare, one disk on a self-hosted node. Mirroring across providers and
+cross-provider failover remain outside the current design. On 2026-10-26
+`direction.md` replaced the earlier "quorum-replicated log" wording.
 
 ## Contributions and reviews
 
@@ -129,11 +138,21 @@ replication.
 - Maintainers review and Publish when authorized. They prepare separate work
   rather than silently rewriting another author's proposal.
 
+## Visibility
+
+A repository has one World and one history, read through audiences
+(`direction.md`, Superposition). Path audiences keep chosen paths from readers outside
+them. A disclosure delay shows public readers the World as it was a fixed time ago, and
+an embargo holds them below a chosen version until it is released. Every reader sees the
+same version IDs and tree roots; hidden content is committed with a salted commitment and
+served only to its audience. Disclosure never rewrites history. A writer outside an
+audience cannot change its paths, and a changeset never treats an unseen path as deleted.
+
 An attached client retains the same hosted repository and World authority. A fork
 creates a new hosted identity and independent future publications. It inherits
 history through the selected World version, including permitted code and context,
 and retains that data independently of the source. Credentials, memberships, and
-policies do not transfer. Restricted traces cannot gain broader access.
+policies do not transfer. Restricted traces and hidden paths cannot gain broader access.
 
 ## Protocol and first provider
 
@@ -144,18 +163,19 @@ authentication direction. Transfers follow derived directory trees from the root
 trees first, then the blobs a client wants, with no packfiles (`git3-direction.md`).
 Schemas and algorithms remain implementation work.
 
-Cloudflare is the provisional first provider: Worker endpoint, R2 immutable objects,
-a small World publication coordinator, independently partitionable review state,
-and optional notifications. This does not prescribe one Durable Object per request
-or per Publish Request. Only final World advancement needs repository-wide total
-ordering. Revisions, approvals, and permission changes need their own correct ordering.
+Cloudflare is the first provider: a Worker endpoint and one SQLite-backed Durable
+Object per repository as its ordering point, with R2 allowed for large objects inside
+the free tier. This does not prescribe one Durable Object per request or per Publish
+Request. Only final World advancement needs repository-wide total ordering. Revisions,
+approvals, and permission changes need their own correct ordering. The node core is one
+Rust implementation, and each provider is an adapter.
 
 Objects must be readable and verified before committing references. Separate object
 and metadata stores do not imply one shared transaction. Successful acknowledged
 Publishes must survive restart and retry.
 
-CI workflow syntax compatibility is accepted. CI execution remains to be designed
-and verified. The broad forge wishlist is later scope, not a reason to delay proving
+CI is not designed yet. External runners may post check results, and no check gates
+Publish by default. Workflow syntax compatibility is not a commitment. The broad forge wishlist is later scope, not a reason to delay proving
 the local and hosted development workflows.
 
 ## Verification gates
@@ -180,8 +200,9 @@ the local and hosted development workflows.
    forks, permissions, retries, and outages. A rerunnable acceptance script must
    assert exact revision authorization, immutable prior revisions, one durable
    outcome after a lost reply, inherited fork data without inherited credentials,
-   no access to restricted traces, and the distinct control-plane/provider outage
-   outcomes in this contract.
+   no access to restricted traces, hidden paths, or versions above the public
+   frontier from outside their audience, identical version IDs for every reader,
+   and the distinct control-plane/provider outage outcomes in this contract.
 5. Initial GA requires macOS, Linux, and Windows support. Verify installation,
    upgrade, recovery, and complete workflows on each. Record supported architectures
    in the release manifest. A platform that has not passed remains a GA blocker.
@@ -213,8 +234,8 @@ verified unmerged dependencies so progress does not require premature merging.
 Dependent PRs must name their base and cannot claim independent acceptance.
 
 Workers report evidence and a VERIFIED, NOT VERIFIED, or INCONCLUSIVE result.
-The hub inspects the actual artifact before checking an item. No PR is merged
-without explicit user instruction.
+The hub inspects the actual artifact before checking an item. The hub may merge a PR
+once all its checks pass.
 
 The user's 2026-10-16 workflow update supersedes earlier draft-first and repeated
 review requirements. Each owner implements its task, runs relevant checks, opens
@@ -226,6 +247,10 @@ Maintain T3 thread ownership and settle completed threads. Product correctness a
 release verification still require actual working behavior.
 
 ## Decision sources
+
+- Direction, accepted by the user on 2026-10-26 in the hub thread: `direction.md`.
+  It records the two products, the forge and node split with no managed hosting,
+  superposition visibility, Layers that follow their owner, and the open CI design.
 
 - Git 3.0 direction, accepted by the user on 2026-10-18 in the research thread:
   `git3-direction.md`. It records the online-first model, the Bonsai data model,
