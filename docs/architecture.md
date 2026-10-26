@@ -16,7 +16,7 @@ Concurrency, crash recovery, retries and corruption guarantees, and the tests th
 
 ## Storage
 
-- The repository is `.javelin/repository.sqlite3`. Format is `8`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
+- The repository is `.javelin/repository.sqlite3`. Format is `9`; the SQLite application id is `0x4a41564c`. Earlier formats are refused with `unsupported_format`; there is no migration.
 - Schema (`SCHEMA` in `src/repository.rs`): tables `objects`, `attempts`, `versions`, `changes`, index `attempts_result`, and trigger `versions_order`. Immutable-row triggers stop stored rows from being rewritten. The derived radar index `layer_paths` (`src/radar.rs`) is the one mutable table.
 
 World versions (changesets, not snapshots):

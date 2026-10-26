@@ -45,6 +45,8 @@ CREATE TABLE publications (
 CREATE UNIQUE INDEX publications_one_success_per_layer
     ON publications(layer) WHERE outcome=1;
 CREATE INDEX publications_layer ON publications(layer);
+-- The Publish that made a World version, for `version_publication`: one indexed read.
+CREATE UNIQUE INDEX publications_by_result ON publications(result) WHERE outcome=1;
 ";
 
 /// Caller-declared attribution, not authenticated identity. Context is one opaque Blob.
