@@ -766,18 +766,21 @@ Read 2026-10-20 (WebFetch unless noted):
   100 KB; 100 bound parameters; CPU 30 s default, `limits.cpu_ms` up to 300,000 ms; soft limit
   1,000 requests/s per object; writes fail with `SQLITE_FULL` at the cap, reads still succeed.
   Account storage on Free is 5 GB (table). Per-object storage is 10 GB in the table but 1 GB on
-  Free in the FAQ. UNRESOLVED; U13 checks.
+  Free in the FAQ. Settled by measurement 2026-10-26: one object on Free passed 1.1 GB with no
+  `SQLITE_FULL` (`tools/node-cloudflare/README.md`).
 - Cloudflare Workers limits, https://developers.cloudflare.com/workers/platform/limits/. Free:
   100,000 requests/day; 10 ms CPU per HTTP request; 128 MB memory; 50 subrequests per invocation;
   64 MiB Worker size. The page does not say whether Durable Object requests or CPU count against
-  these. UNRESOLVED.
+  these. Settled 2026-10-26 (`tools/node-cloudflare/README.md`): separate request quotas, and
+  object CPU is not held to the Worker's 10 ms.
 - Cloudflare Durable Objects pricing, https://developers.cloudflare.com/durable-objects/platform/pricing/.
   SQLite storage is included on Free for SQLite-backed objects; 5 GB total on Free. No statement
   about a payment method.
 - Cloudflare blog, "SQLite in Durable Objects" (2024), https://blog.cloudflare.com/sqlite-in-durable-objects.
   Writes go to five follower replicas in different data centers; a write is confirmed once at
   least three of five respond; the output gate holds responses until confirmation. The post does
-  not use the word "quorum" and is dated. U12 re-checks against current docs.
+  not use the word "quorum" and is dated. Re-fetched 2026-10-26, unchanged; current docs state
+  no replica count, only the output gate (`tools/node-cloudflare/README.md`).
 - Cloudflare changelog, Durable Objects on the Workers Free plan (2025-04-07),
   https://developers.cloudflare.com/changelog/post/2025-04-07-durable-objects-free-tier/ (fetched
   2026-10-20): "Durable Objects can now be used with zero commitment on the Workers Free plan";
@@ -786,13 +789,15 @@ Read 2026-10-20 (WebFetch unless noted):
   excerpt) does not state Free availability.
 
 Not verified (marked unverified until checked):
-- A Free plan without a payment method. No official Cloudflare text was found (search,
-  2026-10-20); third-party pages say no card is needed; the official plans text lists a $5/month
-  minimum for Paid. U13 checks at signup.
+- A Free plan without a payment method. The Workers pricing page says Free is the default plan;
+  no page requires a card (2026-10-26). Not tested: the account used has a card on file.
 - Whether R2 needs a payment method. From the user's account; not checked. R2 is not used.
-- Whether Durable Object CPU counts against the Free 10 ms CPU per request.
-- Whether the 100,000 requests/day is shared by Workers and Durable Object requests.
-- The Rust core compiled to wasm via workers-rs (D23). U13 spike.
+- The Rust core compiled to wasm via workers-rs (D23). The root crate still fails the wasm build
+  (2026-10-26); the split it needs is sketched in `tools/node-cloudflare/README.md`.
+
+Settled 2026-10-26 by measurement on a deployed Free-plan Worker (`tools/node-cloudflare`,
+`bun run probe`): Durable Object CPU is not held to the Worker's 10 ms, and Durable Object
+requests have their own 100,000/day quota, separate from the Worker's.
 - Cloudflare compute for CI (D4). Control-plane location (D1, derived default).
 
 Dropped: the R2 conditional-write search results and the Miniflare issue #774 from the first
