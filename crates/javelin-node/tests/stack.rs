@@ -27,6 +27,9 @@ use javelin_stack::{
 };
 use tempfile::TempDir;
 
+#[path = "wire_support/mod.rs"]
+mod wire_support;
+
 const NAME: &str = "demo";
 const BASE: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
 const OURS: &[u8] = b"ONE\ntwo\nthree\nfour\nfive\n";
@@ -116,10 +119,11 @@ fn serve_node(dir: &Path) -> Served {
     let addr = listener.local_addr().unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
+    let gate = wire_support::gate(NAME);
     let thread = thread::spawn(move || {
         let mut log = log;
         while !flag.load(Ordering::SeqCst) {
-            serve(&listener, NAME, &mut log, Some(1)).unwrap();
+            serve(&listener, NAME, &mut log, &gate, Some(1)).unwrap();
         }
         log
     });
@@ -138,7 +142,9 @@ impl Served {
 /// One request on its own connection. Returns the body.
 fn exchange(addr: SocketAddr, request: impl AsRef<[u8]>, body: &[u8]) -> Vec<u8> {
     let mut stream = TcpStream::connect(addr).unwrap();
-    stream.write_all(request.as_ref()).unwrap();
+    stream
+        .write_all(&wire_support::authorized(NAME, request.as_ref()))
+        .unwrap();
     stream.write_all(body).unwrap();
     stream.shutdown(Shutdown::Write).unwrap();
     let mut reply = Vec::new();

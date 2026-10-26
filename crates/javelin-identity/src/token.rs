@@ -108,6 +108,37 @@ impl KeySet {
     fn get(&self, kid: &str) -> Option<&VerifyingKey> {
         self.keys.get(kid)
     }
+
+    /// The trusted keys as JSON, `{"kid": "<base64url public key>"}`, for a node to store.
+    pub fn to_json(&self) -> Vec<u8> {
+        let keys: BTreeMap<&str, String> = self
+            .keys
+            .iter()
+            .map(|(kid, key)| {
+                (
+                    kid.as_str(),
+                    Base64UrlUnpadded::encode_string(key.as_bytes()),
+                )
+            })
+            .collect();
+        serde_json::to_vec_pretty(&keys).expect("a map of strings serializes")
+    }
+
+    /// Reads keys written by [`KeySet::to_json`]. Any malformed entry refuses the whole set.
+    pub fn from_json(bytes: &[u8]) -> Result<Self, TokenError> {
+        let keys: BTreeMap<String, String> = serde_json::from_slice(bytes)
+            .map_err(|_| TokenError::Malformed("key set is not a JSON object of strings"))?;
+        let mut set = Self::new();
+        for (kid, key) in keys {
+            let key = Base64UrlUnpadded::decode_vec(&key)
+                .ok()
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .and_then(|bytes| VerifyingKey::from_bytes(&bytes).ok())
+                .ok_or(TokenError::Malformed("key set holds an invalid public key"))?;
+            set.trust(&kid, key)?;
+        }
+        Ok(set)
+    }
 }
 
 /// Signs tokens with one key. Held by the control plane, never by a node.

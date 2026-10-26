@@ -18,6 +18,9 @@ use javelin_protocol::{
 };
 use tempfile::TempDir;
 
+#[path = "wire_support/mod.rs"]
+mod wire_support;
+
 fn op(s: &str) -> OperationId {
     OperationId::parse(s).unwrap()
 }
@@ -58,10 +61,13 @@ fn publish_request(expected: ObjectId) -> Vec<u8> {
     .unwrap()
 }
 
-/// One request on its own connection. Returns the status and the body.
+/// One request on its own connection, with the owner's token. Returns the status and the
+/// body.
 fn exchange(addr: SocketAddr, request: impl AsRef<[u8]>, body: &[u8]) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect(addr).unwrap();
-    stream.write_all(request.as_ref()).unwrap();
+    stream
+        .write_all(&wire_support::authorized("demo", request.as_ref()))
+        .unwrap();
     stream.write_all(body).unwrap();
     let mut reply = Vec::new();
     stream.read_to_end(&mut reply).unwrap();
@@ -79,7 +85,14 @@ fn publish_layer_over_loopback_replays_the_recorded_outcome() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(2),
+        )
+        .unwrap();
     });
 
     let body = publish_request(expected);
@@ -109,7 +122,14 @@ fn transport_faults_have_http_statuses() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(5)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(5),
+        )
+        .unwrap();
     });
 
     assert_eq!(
@@ -163,7 +183,14 @@ fn a_stalled_client_does_not_block_the_next_one() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(2),
+        )
+        .unwrap();
     });
 
     // Sends one byte and then nothing, so the node waits on it until the deadline.
@@ -196,7 +223,14 @@ fn the_header_limit_is_exact_and_needs_a_blank_line() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(2),
+        )
+        .unwrap();
     });
 
     let body = publish_request(expected);
@@ -209,15 +243,15 @@ fn the_header_limit_is_exact_and_needs_a_blank_line() {
             body.len()
         )
     };
-    // 64 header lines in all, Content-Length included, is the most accepted.
-    let (status, reply) = exchange(addr, request(63), &body);
+    // 64 header lines in all, Content-Length and Authorization included, is the most accepted.
+    let (status, reply) = exchange(addr, request(62), &body);
     assert_eq!(status, 200);
     assert!(matches!(
         decode(&reply).unwrap(),
         Message::PublishOutcome(_)
     ));
     // One more line is a framing error.
-    assert_eq!(exchange(addr, request(64), &body).0, 400);
+    assert_eq!(exchange(addr, request(63), &body).0, 400);
     server.join().unwrap();
 }
 
@@ -230,7 +264,14 @@ fn a_slow_reader_cannot_hold_the_next_client_past_the_reply_deadline() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(2),
+        )
+        .unwrap();
     });
 
     let get = encode(&Message::Get(vec![(Kind::Blob, id)])).unwrap();
@@ -284,7 +325,14 @@ fn malformed_lines_get_a_bad_request() {
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let mut log = log;
-        serve(&listener, "demo", &mut log, Some(2)).unwrap();
+        serve(
+            &listener,
+            "demo",
+            &mut log,
+            &wire_support::gate("demo"),
+            Some(2),
+        )
+        .unwrap();
     });
 
     let overlong = format!(

@@ -1219,6 +1219,7 @@ dependencies = [
  "javelin",
  "javelin-collaboration",
  "javelin-control",
+ "javelin-identity",
  "javelin-node",
  "javelin-node-worker",
  "javelin-protocol",
@@ -1286,6 +1287,7 @@ dependencies = [
  "javelin-protocol",
  "javelin-stack",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
 ]

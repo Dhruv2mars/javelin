@@ -6,7 +6,10 @@
 //! A request that is not received within its deadline is dropped without a reply, and a
 //! reply that cannot be sent within its deadline is abandoned.
 //!
-//! The server has no authentication yet, so it binds loopback addresses only.
+//! Every message passes the node's gate (`auth.rs`) with the request's
+//! `Authorization: Bearer` token, or as an anonymous caller without one, so an anonymous
+//! caller can only read a public repository. Refusals are `Error` replies with status 200.
+//! The transport has no TLS, so the server binds loopback addresses only.
 
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -15,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use javelin_identity::{Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{decode, encode},
@@ -22,7 +26,7 @@ use javelin_protocol::{
     limits::MAX_FRAME,
 };
 
-use crate::FileWorldLog;
+use crate::{FileWorldLog, auth::Gate, checks, review};
 
 /// Longest request line or header line, in bytes.
 const MAX_LINE: usize = 8 << 10;
@@ -42,7 +46,7 @@ pub fn bind_loopback(addr: &str) -> io::Result<TcpListener> {
     if !is_loopback(parsed.ip()) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "the node refuses non-loopback addresses until authentication exists",
+            "the node refuses non-loopback addresses until its transport has TLS",
         ));
     }
     TcpListener::bind(parsed)
@@ -53,7 +57,7 @@ fn is_loopback(ip: IpAddr) -> bool {
 }
 
 /// Serves `name` from `log`, one connection at a time, which makes every request
-/// ordered at the single coordinator. Stops after `connections` connections, or runs
+/// ordered at the single coordinator. `gate` decides every message. Stops after `connections` connections, or runs
 /// until the listener fails when that is `None`. Each connection is bounded by
 /// `REQUEST_DEADLINE` and `RESPONSE_DEADLINE`, so a stalled peer delays the next one by
 /// at most that long. A connection that fails mid-request is dropped; the peer's retry
@@ -62,11 +66,12 @@ pub fn serve(
     listener: &TcpListener,
     name: &str,
     log: &mut FileWorldLog,
+    gate: &Gate,
     connections: Option<usize>,
 ) -> io::Result<()> {
     let mut served = 0;
     for stream in listener.incoming() {
-        let _ = handle_connection(stream?, name, log);
+        let _ = handle_connection(stream?, name, log, gate);
         served += 1;
         if connections == Some(served) {
             break;
@@ -88,13 +93,18 @@ impl From<io::Error> for Fault {
     }
 }
 
-fn handle_connection(stream: TcpStream, name: &str, log: &mut FileWorldLog) -> io::Result<()> {
+fn handle_connection(
+    stream: TcpStream,
+    name: &str,
+    log: &mut FileWorldLog,
+    gate: &Gate,
+) -> io::Result<()> {
     // Nonblocking, so every read and write returns to `Deadline`, which checks the clock.
     // Socket timeouts are not used: they do not bound a call that keeps making progress.
     stream.set_nonblocking(true)?;
     let replies = stream.try_clone()?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
-    match read_request(&mut reader, name, log) {
+    match read_request(&mut reader, name, log, gate) {
         Ok(body) => respond(&mut Deadline::new(replies, RESPONSE_DEADLINE), 200, &body),
         Err(Fault::Status(status)) => {
             let mut writer = Deadline::new(replies, RESPONSE_DEADLINE);
@@ -113,11 +123,13 @@ fn read_request(
     reader: &mut impl BufRead,
     name: &str,
     log: &mut FileWorldLog,
+    gate: &Gate,
 ) -> Result<Vec<u8>, Fault> {
     let request = read_line(reader)?;
     let mut parts = request.split(' ');
     let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut length = None;
+    let mut token = None;
     let mut headers = 0;
     loop {
         let line = read_line(reader)?;
@@ -137,6 +149,19 @@ fn read_request(
         if key.eq_ignore_ascii_case("content-length") {
             length = value.trim().parse::<usize>().ok();
         }
+        if key.eq_ignore_ascii_case("authorization") {
+            // Only the Bearer scheme carries a token. Two credentials are a framing error.
+            let value = value.trim();
+            let bearer = value
+                .split_once(' ')
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                .map(|(_, token)| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+                .ok_or(Fault::Status(400))?;
+            if token.replace(bearer).is_some() {
+                return Err(Fault::Status(400));
+            }
+        }
     }
     if method != "POST" {
         return Err(Fault::Status(405));
@@ -152,7 +177,12 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    let reply = match decode(&body).and_then(|message| serve_one(log, message)) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let reply = match decode(&body)
+        .and_then(|message| serve_one(log, gate, token.as_deref(), now, message))
+    {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
@@ -163,8 +193,32 @@ fn read_request(
     })
 }
 
-/// One message through the trace guard, then the protocol handler.
-fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, ProtocolError> {
+/// One message through the gate and the trace guard, then its handler. The review
+/// partition and check reports authorize inside their handlers, because what they need
+/// depends on stored state, such as the Layer a request belongs to.
+fn serve_one(
+    log: &mut FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: Message,
+) -> Result<Message, ProtocolError> {
+    match &message {
+        Message::OpenRequest { .. }
+        | Message::Revise { .. }
+        | Message::Approve { .. }
+        | Message::Comment { .. }
+        | Message::PublishRequest { .. }
+        | Message::ReadRequest { .. } => return review::handle(log, gate, token, now, &message),
+        Message::CheckReport(report) => {
+            return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
+        }
+        // Version negotiation reveals nothing about the repository.
+        Message::Hello { .. } => {}
+        other => {
+            gate.check(token, now, need(other))?;
+        }
+    }
     log.traces().refuse_wire_fetch(&message)?;
     match message {
         Message::LayerStack {
@@ -183,6 +237,25 @@ fn serve_one(log: &mut FileWorldLog, message: Message) -> Result<Message, Protoc
             crate::stack::get_checkpoints(log.repo(), items)
         }
         message => handle_request(log, message),
+    }
+}
+
+/// What one message needs from the caller's token. Writes name the Layer they act on, so a
+/// Layer-limited token reaches only its Layer. Everything else, replies sent as requests
+/// included, needs `read`.
+fn need(message: &Message) -> Need<'_> {
+    let (scope, layer) = match message {
+        Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
+        Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
+        Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
+        Message::Publish { .. } => (Scope::Publish, None),
+        Message::Objects(_) => (Scope::LayerWrite, None),
+        Message::LayerHead { layer } => (Scope::Read, Some(layer)),
+        _ => (Scope::Read, None),
+    };
+    Need {
+        scope,
+        layer: layer.map(|layer| layer.as_str()),
     }
 }
 
