@@ -50,7 +50,14 @@ export class Probe implements DurableObject {
           }
           return Response.json({ full: false, inserted, bytes: this.sql.databaseSize });
         } catch (error) {
-          return Response.json({ full: true, inserted, error: String(error), bytes: this.sql.databaseSize });
+          // Only SQLITE_FULL is the storage limit. Any other failure is not a measurement, and
+          // is reported as an error so the runner stops and fails.
+          const message = String(error);
+          const full = message.includes("SQLITE_FULL");
+          return Response.json(
+            { full, inserted, error: message, bytes: this.sql.databaseSize },
+            { status: full ? 200 : 500 },
+          );
         }
       }
       case "/clear":
