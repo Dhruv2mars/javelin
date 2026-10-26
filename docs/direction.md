@@ -113,6 +113,11 @@ These change the storage format, so they are fixed before any real repository is
   `H(salt, content id)`, and the audience, instead of the plain content id. Only the
   audience receives the salt and the content id. A reader without access can still verify
   the tree root and the version chain, but cannot confirm a guess of the hidden content.
+- Changesets use the same form. A changed hidden path appears in the changeset with its
+  commitment and audience, never its plain content id, and the version ID chain hashes
+  that committed form. Changes inside a hidden directory appear as one entry for that
+  directory, so file names inside it stay hidden too. A reader can then verify every
+  version it can see without learning anything that would confirm a guess.
 - Tree roots and version IDs are the same for every reader. Disclosing a path serves its
   salt and content. It never changes an ID.
 - The policy lives in the World as a file that every reader can see, so it is versioned
