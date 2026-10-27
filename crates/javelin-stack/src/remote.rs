@@ -5,7 +5,9 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
-use javelin::{LayerId, LayerState, LayerUpdate, ObjectId, OperationId, Repository, SparseChanges};
+use javelin::{
+    FileEntry, LayerId, LayerState, LayerUpdate, ObjectId, OperationId, Repository, SparseChanges,
+};
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{Kind, LayerOutcome, LayerStatus, code, read_frame, write_frame},
@@ -187,7 +189,7 @@ fn fetch_blobs(
         .entries()
         .values()
         .flatten()
-        .map(|entry| entry.content())
+        .filter_map(FileEntry::content)
         .collect::<BTreeSet<_>>()
     {
         if !repo.has_blob(id)? {

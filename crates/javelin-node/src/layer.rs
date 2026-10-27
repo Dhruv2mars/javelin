@@ -19,6 +19,32 @@ pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS changes (
     bytes BLOB NOT NULL
 );";
 
+/// Whether every path a staged changes object names is visible to `reader` under every
+/// policy the World has had. A staged object has no base yet, so all of them apply.
+pub(crate) fn changes_visible(
+    repo: &Repository,
+    records: &Connection,
+    id: ObjectId,
+    reader: &javelin::Reader,
+) -> Result<bool, ProtocolError> {
+    let Some(changes) = load_changes(records, id)? else {
+        return Ok(true);
+    };
+    let from = javelin::VersionNumber::new(0)?;
+    Ok(repo.visible(changes.entries().keys(), from, reader)?)
+}
+
+/// Whether `reader` may know of staged changes `id`: they name only paths visible to it, or
+/// it uploaded them.
+pub(crate) fn accessible_changes(
+    repo: &Repository,
+    records: &Connection,
+    id: ObjectId,
+    reader: &javelin::Reader,
+) -> Result<bool, ProtocolError> {
+    Ok(changes_visible(repo, records, id, reader)? || repo.uploaded(id, reader)?)
+}
+
 pub(crate) fn has_changes(records: &Connection, id: ObjectId) -> Result<bool, ProtocolError> {
     records
         .query_row(
@@ -58,13 +84,18 @@ pub(crate) fn append(
     layer: &LayerId,
     parent: Option<ObjectId>,
     changes: ObjectId,
+    writer: Option<&javelin::Reader>,
 ) -> Result<LayerOutcome, ProtocolError> {
-    let changes = load_changes(records, changes)?.ok_or_else(|| {
-        ProtocolError::new(
-            "missing_object",
-            format!("changes {changes} are not uploaded"),
-        )
-    })?;
+    let id = changes;
+    let not_uploaded =
+        || ProtocolError::new("missing_object", format!("changes {id} are not uploaded"));
+    let changes = load_changes(records, changes)?.ok_or_else(not_uploaded)?;
+    // Changes the writer may not read are absent to it.
+    if let Some(writer) = writer
+        && !accessible_changes(repo, records, id, writer)?
+    {
+        return Err(not_uploaded());
+    }
     let state = match repo.layer_state(layer) {
         Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
         state => state?,
@@ -78,7 +109,14 @@ pub(crate) fn append(
         LayerState::Active { head } if Some(head.checkpoint().object()) == parent => Some(head),
         _ => None,
     }) {
-        update = Some(repo.capture_layer(operation, &head, &changes));
+        // An append replaces the Layer's whole delta. A head the writer may not read is not
+        // a parent it can name: the append is stale, as for any head it does not hold.
+        if let Some(writer) = writer
+            && !matches!(repo.checkpoint_visible(head.checkpoint(), writer), Ok(true))
+        {
+            continue;
+        }
+        update = Some(repo.capture_layer_as(operation, &head, &changes, writer));
         if !matches!(update, Some(Err(Error::OperationIdReused(_)))) {
             break;
         }
@@ -167,7 +205,7 @@ pub(crate) fn stale_or_refused(state: LayerState) -> LayerOutcome {
     }
 }
 
-fn load_changes(
+pub(crate) fn load_changes(
     records: &Connection,
     id: ObjectId,
 ) -> Result<Option<SparseChanges>, ProtocolError> {

@@ -3,7 +3,7 @@
 use std::io::Cursor;
 
 use javelin::{FileEntry, Manifest, ObjectId, RepoPath, Repository, tree::Chunk};
-use javelin_protocol::{Kind, Message, ProtocolError, codec, limits::MAX_TREE, serve};
+use javelin_protocol::{Kind, Message, ProtocolError, codec, limits::MAX_TREE, serve_as};
 use tempfile::TempDir;
 
 pub fn repo() -> (TempDir, Repository) {
@@ -92,7 +92,13 @@ pub fn hello() -> Vec<u8> {
 /// Runs one receiver session over raw bytes and decodes every reply frame.
 pub fn session(repo: &mut Repository, input: &[u8]) -> (Result<(), ProtocolError>, Vec<Message>) {
     let mut output = Vec::new();
-    let result = serve(repo, Cursor::new(input), &mut output);
+    // The tests act as the store's owner, which reads everything it holds.
+    let result = serve_as(
+        repo,
+        Cursor::new(input),
+        &mut output,
+        &javelin::Reader::maintainer(),
+    );
     let mut replies = Vec::new();
     let mut cursor = Cursor::new(output);
     while let Some(reply) = codec::read_frame(&mut cursor).unwrap() {

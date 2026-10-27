@@ -74,7 +74,12 @@ fn content(repo: &Repository, layer: &LayerId) -> Vec<(String, Vec<u8>)> {
         .unwrap()
         .entries()
         .iter()
-        .map(|(p, e)| (p.as_str().to_owned(), repo.read_blob(e.content()).unwrap()))
+        .map(|(p, e)| {
+            (
+                p.as_str().to_owned(),
+                repo.read_blob(e.content().unwrap()).unwrap(),
+            )
+        })
         .collect()
 }
 

@@ -189,6 +189,35 @@ fn a_trace_that_is_not_stored_cannot_be_restricted() {
 fn the_wire_never_serves_a_restricted_trace() {
     let dir = TempDir::new().unwrap();
     let (mut log, inherited) = node(&dir);
+    // An inherited trace is published as a Publish's agent context, which makes it readable
+    // wherever the repository is.
+    let layer = layer("agent");
+    log.create_layer(&layer, v(0)).unwrap();
+    let content = log.repository().put_blob(b"agent work").unwrap();
+    let changes = javelin::SparseChanges::new([(
+        javelin::RepoPath::parse("agent.txt").unwrap(),
+        Some(javelin::FileEntry::Regular {
+            content,
+            executable: false,
+        }),
+    )])
+    .unwrap();
+    let head = log
+        .append(&op("agent-write"), &layer, &changes)
+        .unwrap()
+        .checkpoint()
+        .object();
+    log.publish_layer(
+        &op("agent-publish"),
+        &layer,
+        head,
+        v(0),
+        &PublishAttribution::Agent {
+            context: Some(inherited),
+            allow_missing_trace: false,
+        },
+    )
+    .unwrap();
     let restricted = log.repository().put_blob(b"private reasoning").unwrap();
     let public = gate(Visibility::Public);
     let alice = token("alice", &[Scope::Publish]);

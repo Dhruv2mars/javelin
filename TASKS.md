@@ -19,8 +19,15 @@ CI left open. Work from it, in roughly this order:
 - [x] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
 - [x] First real deploy of the Cloudflare node on the owner's account, free tier only;
   settle every unverified free-tier limit.
-- [ ] Superposition storage format: salted commitments for hidden tree entries, identical
-  IDs for every reader. Must land before any real repository is stored.
+- [x] Superposition storage format: salted commitments for hidden tree entries, identical
+  IDs for every reader. Must land before any real repository is stored. Format 10,
+  `.javelinpolicy`, `Open`/`Opened`; tests in `tests/superposition.rs`,
+  `crates/javelin-protocol/tests/superposition.rs`, `crates/javelin-node/tests/fork_hidden.rs`.
+  - [x] Wire the caller's role into the node's reads and `check_writer` into its writes
+    (`crates/javelin-node/tests/wire_hidden.rs`).
+  - [x] Authorize Layer object reads, so an unpublished hidden edit cannot be confirmed by ID
+    (uploads are recorded per principal; `wire_hidden.rs`).
+  - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
   and forge.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.

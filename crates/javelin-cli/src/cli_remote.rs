@@ -33,7 +33,7 @@ use javelin_protocol::{
         LayerOutcome, LeaseHolder, PublishOutcome, VERSION, code, decode, encode, read_frame,
         write_frame,
     },
-    fetch::{Anchor, Blobs, fetch},
+    fetch::{Anchor, Blobs, fetch_opened},
     sender,
 };
 use javelin_stack::remote::{self as stack_remote, Refresh};
@@ -583,12 +583,14 @@ fn stage(
     repo.check_attach()?;
 
     // Pinned to the number resolved above: World versions are immutable, so the fetch
-    // reads exactly the head this attach reports.
+    // reads exactly the head this attach reports. Hidden entries the node opens for this
+    // caller's token arrive with their content; the rest stay commitments and are left out
+    // of the base.
     let trees = MemoryStore::default();
     let fetched = {
         let mut blobs = RepoBlobs(&mut repo);
         let version = Some(VersionNumber::new(head.number)?);
-        fetch(
+        fetch_opened(
             Down(link),
             Up(link),
             &trees,
@@ -604,6 +606,14 @@ fn stage(
         id: fetched.id,
         tree: fetched.tree,
     };
+    // Each opening's content is stored before the opening, and every opening before the
+    // World that uses it, so the attached view opens them.
+    for (opening, audience) in fetched.openings.values() {
+        if opening.file().is_none() {
+            repo.import_tree(&trees, opening.content)?;
+        }
+        repo.put_opening(opening, audience)?;
+    }
     repo.import_tree(&trees, fetched.tree)?;
     repo.attach_head(&fetched_head)?;
     Ok((repo, fetched_head))
@@ -1078,8 +1088,9 @@ pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
 
 /// The local World holding remote World `base`'s tree. Remote and local numbers differ, so
 /// the World is matched by its tree. One this repository lacks is fetched as attach does,
-/// verified from the attached head, and the local World advances to it; a remote World
-/// older than the attached one cannot be fetched that way and is refused. The node is the
+/// with the hidden entries the node opens for this caller, verified from the attached head,
+/// and the local World advances to it; a remote World older than the attached one cannot be
+/// fetched that way and is refused. The node is the
 /// World's authority, so the advance never overwrites local divergence: a local head that
 /// is not the attachment's own World, such as a local Publish, is refused with
 /// `local_world_diverged` before anything is fetched.
@@ -1138,7 +1149,7 @@ fn local_world(
     let trees = MemoryStore::default();
     let fetched = {
         let mut blobs = RepoBlobs(repo);
-        fetch(
+        fetch_opened(
             Down(link),
             Up(link),
             &trees,
@@ -1149,6 +1160,14 @@ fn local_world(
         )
         .map_err(|e| CliError::Remote(remote(link, e)))?
     };
+    // As in attach: the openings the node gave this caller go in before the World that uses
+    // them, and hidden entries it did not open stay commitments.
+    for (opening, audience) in fetched.openings.values() {
+        if opening.file().is_none() {
+            repo.import_tree(&trees, opening.content)?;
+        }
+        repo.put_opening(opening, audience)?;
+    }
     repo.import_tree(&trees, fetched.tree)?;
     let local = repo.head()?;
     let target = RemoteHead {

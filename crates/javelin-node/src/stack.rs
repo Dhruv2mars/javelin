@@ -33,6 +33,7 @@ pub(crate) fn stack(
     target: &LayerId,
     target_head: ObjectId,
     source: ObjectId,
+    reader: &javelin::Reader,
 ) -> Result<LayerOutcome, ProtocolError> {
     if is_review_layer(target) {
         return Ok(refused(refusal::LAYER_RESERVED));
@@ -54,7 +55,12 @@ pub(crate) fn stack(
         LayerState::Active { head } if head.checkpoint().object() == target_head => Some(head),
         _ => None,
     }) {
-        let attempt = if current.as_ref() == Some(&head) {
+        // A source the caller may not read is absent to it: the same refusal as a
+        // checkpoint that was never stored.
+        let hidden = !matches!(repo.checkpoint_visible(source, reader), Ok(true));
+        let attempt = if hidden {
+            Err(StackError::Storage(Error::MissingObject(source.object())))
+        } else if current.as_ref() == Some(&head) {
             javelin_stack::stack_layer(repo, operation, &head, source).map(Some)
         } else {
             repo.stack_operation(operation, &head, source)
@@ -105,9 +111,13 @@ pub(crate) fn stack(
 /// A `Get` of checkpoints: each one's stored bytes, which hash to its ID. A client reads
 /// a Layer head this way to refresh from it. As for other kinds, the reply is the longest
 /// prefix of the request that fits one frame.
+/// Checkpoints are plain: they name paths and content IDs. One that changes a path hidden
+/// from `reader` under any policy from its base through the head is refused exactly as a
+/// checkpoint that was never stored (`Repository::checkpoint_visible`).
 pub(crate) fn get_checkpoints(
     repo: &Repository,
     items: Vec<(Kind, ObjectId)>,
+    reader: &javelin::Reader,
 ) -> Result<Message, ProtocolError> {
     if items.iter().collect::<BTreeSet<_>>().len() != items.len() {
         return Err(ProtocolError::new(
@@ -118,7 +128,13 @@ pub(crate) fn get_checkpoints(
     let mut objects = Vec::new();
     let mut size = 5;
     for (kind, id) in items.into_iter().take(MAX_OBJECTS) {
-        let bytes = repo.checkpoint_object(CheckpointId::parse(&id.to_string())?)?;
+        let checkpoint = CheckpointId::parse(&id.to_string())?;
+        // Visibility first, and any failure to read it as a checkpoint (absent, another
+        // kind) answered as absent, so nothing about an unreadable object shows.
+        if !matches!(repo.checkpoint_visible(checkpoint, reader), Ok(true)) {
+            return Err(javelin::Error::MissingObject(id).into());
+        }
+        let bytes = repo.checkpoint_object(checkpoint)?;
         if bytes.len() > MAX_CHECKPOINT {
             return Err(ProtocolError::new(
                 code::LIMIT_EXCEEDED,

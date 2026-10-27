@@ -214,6 +214,7 @@ pub(crate) fn layer_head(
 pub(crate) fn take(
     log: &mut FileWorldLog,
     writer: &Writer,
+    reader: &javelin::Reader,
     operation: &OperationId,
     layer: &LayerId,
 ) -> Result<LayerOutcome, ProtocolError> {
@@ -262,6 +263,16 @@ pub(crate) fn take(
         return Err(ProtocolError::new(
             code::FORBIDDEN,
             "only the Layer's owner can take its writer lease",
+        ));
+    }
+    // A device writes only what it can read, and taking a Layer brings its head there.
+    if !matches!(
+        log.repo().checkpoint_visible(head.checkpoint(), reader),
+        Ok(true)
+    ) {
+        return Err(ProtocolError::new(
+            code::FORBIDDEN,
+            "the Layer's head holds paths outside the caller's audiences",
         ));
     }
     let outcome = LayerOutcome::Accepted {
