@@ -42,7 +42,7 @@ CI left open. Work from it, in roughly this order:
   - [ ] `--embargo` on the hosted Publish commands once trail 3's CLI Publish lands; until
     then `javelin embargo --operation ID` precedes the Publish.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
-- [ ] Layer writer lease and `javelin layer take` (replaces D21).
+- [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.

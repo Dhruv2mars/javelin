@@ -12,7 +12,9 @@ use javelin::{
 
 use crate::{
     Kind, Message, Outcome, ProtocolError,
-    codec::{LayerOutcome, LayerStatus, OBJECT_OVERHEAD, VERSION, read_frame, write_frame},
+    codec::{
+        LayerOutcome, LayerStatus, LeaseHolder, OBJECT_OVERHEAD, VERSION, read_frame, write_frame,
+    },
     limits::*,
 };
 
@@ -274,6 +276,8 @@ pub struct NodeLayer {
     pub seq: u64,
     pub head: ObjectId,
     pub status: LayerStatus,
+    /// Whether the caller's device holds the Layer's writer lease.
+    pub lease: LeaseHolder,
 }
 
 pub fn layer_head(
@@ -292,11 +296,13 @@ pub fn layer_head(
             seq,
             head,
             state,
+            lease,
         } if reported == *layer => Ok(NodeLayer {
             base,
             seq,
             head,
             status: state,
+            lease,
         }),
         _ => Err(unexpected()),
     }

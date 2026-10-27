@@ -2,7 +2,8 @@
 //! the World log, Layer heads and objects in a file-backed store, and serves protocol
 //! version 2 over loopback HTTP. It hosts idempotent `PublishLayer`, and the Layer
 //! partition's `LayerAppend` and `LayerHead` with their changes uploads (`layer.rs`), and
-//! `LayerStack` with the checkpoint reads a refresh needs (`stack.rs`).
+//! `LayerStack` with the checkpoint reads a refresh needs (`stack.rs`). Layer writes go
+//! through each Layer's writer lease, which `LayerTake` moves (`lease.rs`).
 //! See `docs/online-design.md` sections 4.2, 4.3, 4.5, 4.6 and 8 (U2, U5, U6).
 
 pub mod auth;
@@ -10,6 +11,7 @@ pub mod checks;
 pub mod disclosure;
 pub mod fork;
 mod layer;
+mod lease;
 mod log_do;
 pub mod review;
 mod server;

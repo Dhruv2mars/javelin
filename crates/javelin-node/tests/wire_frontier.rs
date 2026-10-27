@@ -303,6 +303,10 @@ fn battery(probe: &Probe) -> Vec<Message> {
             parent: Some(probe.checkpoint),
             checkpoint: probe.checkpoint,
         },
+        Message::LayerTake {
+            operation: op("take-probe"),
+            layer: layer("fix"),
+        },
         Message::OpenRequest {
             operation: op("open-probe"),
             request: RequestId::parse("request-fix").unwrap(),
