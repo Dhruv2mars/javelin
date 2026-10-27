@@ -699,3 +699,140 @@ fn revisions_chain_through_queued_ones_and_sync_reports_a_refused_record() {
     ));
     assert_eq!(shown["revision"], 4, "{shown}");
 }
+
+#[test]
+fn sync_and_request_show_follow_the_callers_audiences() {
+    const SECRET: &[u8] = b"k1\n";
+    let team = Team::start(0);
+    let maintainer = team.attach("maintainer", Some(&team.mona));
+    let member = team.attach("member", Some(&team.rita));
+    let author = team.attach("author", None);
+    let mona = |args: &[&str]| team.as_token(&team.mona, args);
+    let rita = |args: &[&str]| team.as_token(&team.rita, args);
+
+    // A maintainer publishes a policy that hides `secret.txt` from everyone else.
+    ok(mona(&[
+        "workspace",
+        "create",
+        "policy",
+        "--repo",
+        s(&maintainer),
+    ]));
+    let work = maintainer.join(".javelin/layers/policy");
+    fs::write(work.join(".javelinpolicy"), "secret.txt maintainers\n").unwrap();
+    fs::write(work.join("secret.txt"), SECRET).unwrap();
+    fs::write(work.join("readme"), "public\n").unwrap();
+    ok(mona(&[
+        "request",
+        "open",
+        "pr-secret",
+        "--layer",
+        "policy",
+        "--operation",
+        "open-secret",
+        "--repo",
+        s(&maintainer),
+    ]));
+    ok(mona(&[
+        "request",
+        "publish",
+        "pr-secret",
+        "--revision",
+        "1",
+        "--operation",
+        "publish-secret",
+        "--repo",
+        s(&maintainer),
+    ]));
+
+    // The member's sync keeps the commitment and never receives the content.
+    let synced = ok(rita(&["sync", "--repo", s(&member)]));
+    assert_eq!(synced["head"]["number"], 1);
+    let secret = javelin::RepoPath::parse("secret.txt").unwrap();
+    let blob = javelin::ObjectId::for_blob(SECRET);
+    let repo = Repository::open(&member).unwrap();
+    let manifest = repo.manifest_at(repo.head().unwrap().number).unwrap();
+    assert!(manifest.entries()[&secret].is_hidden());
+    assert!(!repo.has_blob(blob).unwrap());
+
+    // The signed-in maintainer's sync opens it, as attach would.
+    ok(team.author(&["sync", "--repo", s(&author)]));
+    let repo = Repository::open(&author).unwrap();
+    let manifest = repo.manifest_at(repo.head().unwrap().number).unwrap();
+    assert_eq!(manifest.entries()[&secret].content(), Some(blob));
+    assert!(repo.has_blob(blob).unwrap());
+
+    // The revision's checkpoint names `secret.txt`, so the member sees neither its ID nor
+    // its paths; the maintainer sees both. No snapshot tree goes to anyone.
+    let hidden = ok(rita(&[
+        "request",
+        "show",
+        "pr-secret",
+        "--repo",
+        s(&member),
+    ]));
+    assert_eq!(hidden["revisions"][0]["checkpoint"], Value::Null);
+    assert_eq!(hidden["changes"]["paths"], Value::Null);
+    assert!(hidden["revisions"][0].get("tree").is_none());
+    let shown = ok(mona(&[
+        "request",
+        "show",
+        "pr-secret",
+        "--repo",
+        s(&maintainer),
+    ]));
+    assert!(shown["revisions"][0]["checkpoint"].is_string());
+    let paths: Vec<&str> = shown["changes"]["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [".javelinpolicy", "readme", "secret.txt"]);
+}
+
+#[test]
+fn a_sync_stopped_before_attach_json_is_finished_by_the_next_sync() {
+    let team = Team::start(0);
+    let author = team.attach("author", None);
+    let behind = team.attach("behind", Some(&team.mona));
+    ok(team.author(&["workspace", "create", "work", "--repo", s(&author)]));
+    fs::write(author.join(".javelin/layers/work/a.txt"), "a\n").unwrap();
+    for args in [
+        ["open", "pr-1", "--layer", "work", "--operation", "open-1"],
+        [
+            "publish",
+            "pr-1",
+            "--revision",
+            "1",
+            "--operation",
+            "publish-1",
+        ],
+    ] {
+        let mut args = ["request"].into_iter().chain(args).collect::<Vec<_>>();
+        args.extend(["--repo", s(&author)]);
+        ok(team.author(&args));
+    }
+
+    let stopped = std::process::Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .env(
+            "JAVELIN_HOME",
+            team.deployment.temp.path().join("home-stopped"),
+        )
+        .env("JAVELIN_TOKEN", &team.mona)
+        .env("JAVELIN_FAILPOINT", "sync_after_advance")
+        .args(["--json", "sync", "--repo", s(&behind)])
+        .output()
+        .unwrap();
+    assert_eq!(stopped.status.code(), Some(86), "{}", describe(&stopped));
+    let head = Repository::open(&behind).unwrap().head().unwrap();
+    assert_eq!(head.number.get(), 1, "the World advanced");
+    assert_eq!(attachment(&behind)["head"]["number"], 0);
+
+    // The node confirms the head the advance names, so the retry records it and moves on.
+    let synced = ok(team.as_token(&team.mona, &["sync", "--repo", s(&behind)]));
+    assert_eq!(synced["from"]["number"], 1);
+    assert_eq!(synced["advanced"], false);
+    assert_eq!(attachment(&behind)["head"]["number"], 1);
+    assert_eq!(Repository::open(&behind).unwrap().head().unwrap(), head);
+}

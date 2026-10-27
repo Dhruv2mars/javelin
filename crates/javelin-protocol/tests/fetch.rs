@@ -96,8 +96,8 @@ fn fetches_a_full_snapshot_root_down_and_reuses_held_chunks() {
     assert_eq!(&fetched.files, one.entries());
     for entry in one.entries().values() {
         assert_eq!(
-            blobs[&entry.content()],
-            repo.read_blob(entry.content()).unwrap()
+            blobs[&entry.content().unwrap()],
+            repo.read_blob(entry.content().unwrap()).unwrap()
         );
     }
     let first = (fetched.trees_received, fetched.blobs_received);

@@ -4,13 +4,19 @@
 //! the prefix and the subtree below it. Objects already held locally are not requested,
 //! every received object is checked against its ID before it is used, and the walk
 //! refuses to name more than `MAX_FETCH_PATHS` paths.
+//!
+//! A hidden entry arrives as its commitment and audience. `fetch` reports it in
+//! `Fetched::hidden` and reads nothing behind it, so the files a caller materializes
+//! leave it out. `fetch_opened` also asks the node to `Open` hidden entries: each opening
+//! the node returns is checked against its commitment, and its content is then fetched
+//! and checked by ID like any other object, a hidden directory as its own tree.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Write};
 
 use javelin::{
-    FileEntry, MAX_DEPTH, MAX_PATH, ObjectId, RepoPath, VersionHasher, VersionNumber,
-    genesis_version_id,
+    Audience, FileEntry, MAX_DEPTH, MAX_PATH, ObjectId, Opening, RepoPath, VersionHasher,
+    VersionNumber, genesis_version_id,
     tree::{Chunk, Node, Store, empty},
 };
 
@@ -60,6 +66,11 @@ pub struct Fetched {
     pub id: ObjectId,
     pub tree: ObjectId,
     pub files: BTreeMap<RepoPath, FileEntry>,
+    /// Hidden entries at or below the prefix that were not opened: commitment and audience.
+    pub hidden: BTreeMap<RepoPath, (ObjectId, Audience)>,
+    /// Openings received, by commitment, each checked against it. The caller stores them
+    /// with `Repository::put_opening` after storing the content they name.
+    pub openings: BTreeMap<ObjectId, (Opening, Audience)>,
     /// Objects transferred, not counting those already held.
     pub trees_received: usize,
     pub blobs_received: usize,
@@ -95,18 +106,77 @@ struct Link {
 /// A chunk to read, with its want and the parent's claim (none for a directory root).
 type Pending = (ObjectId, Want, Option<Link>);
 
+/// A hidden entry met by the walk: its path, commitment and audience, and the rest of
+/// the prefix below it when the prefix goes through it.
+struct Sealed {
+    path: String,
+    commitment: ObjectId,
+    audience: Audience,
+    rest: Option<Vec<String>>,
+}
+
 /// Fetches `version` (the head when None), or only `prefix` within it. Tree chunks
 /// go to `trees`, which also serves chunks held from earlier fetches. The root is
 /// verified against `anchor`, or against the chain from World 0 when it is None.
+/// Hidden entries stay commitments.
 pub fn fetch(
-    mut r: impl Read,
-    mut w: impl Write,
+    r: impl Read,
+    w: impl Write,
     trees: &impl Store,
     blobs: &mut impl Blobs,
     anchor: Option<&Anchor>,
     version: Option<VersionNumber>,
     prefix: Option<&RepoPath>,
 ) -> Result<Fetched, ProtocolError> {
+    let request = Request {
+        anchor,
+        version,
+        prefix,
+        open: false,
+    };
+    fetch_inner(r, w, trees, blobs, request)
+}
+
+/// Like `fetch`, and opens every hidden entry the node will open for this caller.
+pub fn fetch_opened(
+    r: impl Read,
+    w: impl Write,
+    trees: &impl Store,
+    blobs: &mut impl Blobs,
+    anchor: Option<&Anchor>,
+    version: Option<VersionNumber>,
+    prefix: Option<&RepoPath>,
+) -> Result<Fetched, ProtocolError> {
+    let request = Request {
+        anchor,
+        version,
+        prefix,
+        open: true,
+    };
+    fetch_inner(r, w, trees, blobs, request)
+}
+
+/// What one fetch reads, and whether it opens hidden entries.
+struct Request<'a> {
+    anchor: Option<&'a Anchor>,
+    version: Option<VersionNumber>,
+    prefix: Option<&'a RepoPath>,
+    open: bool,
+}
+
+fn fetch_inner(
+    mut r: impl Read,
+    mut w: impl Write,
+    trees: &impl Store,
+    blobs: &mut impl Blobs,
+    request: Request<'_>,
+) -> Result<Fetched, ProtocolError> {
+    let Request {
+        anchor,
+        version,
+        prefix,
+        open,
+    } = request;
     let mut call = |message: Message| exchange(&mut r, &mut w, &message);
     match call(Message::Hello {
         min: VERSION,
@@ -134,6 +204,8 @@ pub fn fetch(
         id,
         tree: root,
         files: BTreeMap::new(),
+        hidden: BTreeMap::new(),
+        openings: BTreeMap::new(),
         trees_received: 0,
         blobs_received: 0,
     };
@@ -157,6 +229,7 @@ pub fn fetch(
             Ok(trees.save(id, &bytes)?)
         })?;
         let mut next = Vec::new();
+        let mut sealed = Vec::new();
         for (id, want, link) in pending {
             let chunk = Chunk::decode(&trees.load(id)?)?;
             if let Some(Link { level, last }) = &link
@@ -173,12 +246,51 @@ pub fn fetch(
                 &mut next,
                 &mut fetched.files,
                 &mut wanted_blobs,
+                &mut sealed,
             )?;
             if named > MAX_FETCH_PATHS {
                 return Err(ProtocolError::new(
                     "limit_exceeded",
                     format!("fetch names more than {MAX_FETCH_PATHS} paths"),
                 ));
+            }
+        }
+        let opened = if open && !sealed.is_empty() {
+            open_all(&mut call, &sealed)?
+        } else {
+            BTreeMap::new()
+        };
+        for entry in sealed {
+            let Some(opening) = opened.get(&entry.commitment) else {
+                if entry.rest.as_ref().is_none_or(Vec::is_empty) {
+                    fetched.hidden.insert(
+                        RepoPath::parse(&entry.path)?,
+                        (entry.commitment, entry.audience),
+                    );
+                }
+                continue;
+            };
+            fetched
+                .openings
+                .insert(entry.commitment, (opening.clone(), entry.audience));
+            match (opening.file(), entry.rest) {
+                (Some(file), None) => {
+                    wanted_blobs.push(opening.content);
+                    fetched.files.insert(RepoPath::parse(&entry.path)?, file);
+                }
+                (Some(file), Some(rest)) if rest.is_empty() => {
+                    wanted_blobs.push(opening.content);
+                    fetched.files.insert(RepoPath::parse(&entry.path)?, file);
+                }
+                (Some(_), Some(_)) => {}
+                (None, rest) => {
+                    let dir = entry.path + "/";
+                    let want = match rest {
+                        Some(rest) if !rest.is_empty() => Want::Path { dir, rest },
+                        _ => Want::All { dir },
+                    };
+                    next.push((opening.content, want, None));
+                }
             }
         }
         pending = next;
@@ -350,14 +462,44 @@ fn link(
     }
 }
 
+/// Asks the node for the openings of `sealed`, `MAX_WANT` at a time. The decoder has
+/// checked each against its commitment; one the caller did not ask for is refused.
+fn open_all(
+    call: &mut impl FnMut(Message) -> Result<Message, ProtocolError>,
+    sealed: &[Sealed],
+) -> Result<BTreeMap<ObjectId, Opening>, ProtocolError> {
+    let wanted: Vec<ObjectId> = {
+        let mut seen = HashSet::new();
+        sealed
+            .iter()
+            .map(|s| s.commitment)
+            .filter(|c| seen.insert(*c))
+            .collect()
+    };
+    let mut out = BTreeMap::new();
+    for batch in wanted.chunks(MAX_WANT) {
+        let Message::Opened(openings) = call(Message::Open(batch.to_vec()))? else {
+            return Err(unexpected());
+        };
+        for (commitment, opening) in openings {
+            if !batch.contains(&commitment) || out.insert(commitment, opening).is_some() {
+                return Err(unexpected());
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Follows one chunk's references according to `want`. Returns how many named paths
 /// or chunk references it followed, which the caller bounds by `MAX_FETCH_PATHS`.
+/// Hidden entries go to `sealed`.
 fn walk(
     chunk: &Chunk,
     want: Want,
     next: &mut Vec<Pending>,
     files: &mut BTreeMap<RepoPath, FileEntry>,
     blobs: &mut Vec<ObjectId>,
+    sealed: &mut Vec<Sealed>,
 ) -> Result<usize, ProtocolError> {
     if chunk.level() > 0 {
         let level = chunk.level() - 1;
@@ -391,8 +533,20 @@ fn walk(
             ));
         }
         match (node, below) {
+            (
+                Node::File(FileEntry::Hidden {
+                    commitment,
+                    audience,
+                }),
+                below,
+            ) => sealed.push(Sealed {
+                path,
+                commitment,
+                audience,
+                rest: below.map(<[String]>::to_vec),
+            }),
             (Node::File(entry), None | Some([])) => {
-                blobs.push(entry.content());
+                blobs.extend(entry.content());
                 files.insert(RepoPath::parse(&path)?, entry);
             }
             (Node::File(_), Some(_)) => {}

@@ -393,6 +393,34 @@ captured first, so uncaptured edits are kept. JSON reports `status` (`current` o
 report. A local Layer that holds captures the node lacks is refused with
 `layer_diverged`, and a repository with no `attach.json` with `invalid_input`.
 
+A Layer follows its owner across devices. The node keeps a writer lease per Layer: the first
+device to write to it holds it, and writes from any other device are answered `layer_stale`
+without changing anything. `javelin layer take ID [--operation OP]` moves the lease to this
+device, then brings the Layer here: it is created over the node's base if this repository
+lacks it, moved to the node's head as `layer refresh` does, and its directory is opened, or
+refreshed when it exists. The base is found by its tree, not its number, since this
+repository numbers its Worlds from its attach; a newer base is fetched first, and an older one
+this repository lacks is refused with `invalid_input`. The node is the World's authority, so
+the fetch never overwrites local divergence: when this repository's World head is not the
+attached head (for example after a local `workspace publish`), the take is refused with
+`local_world_diverged`, naming both heads; take the Layer from a fresh `javelin attach`
+directory. A take that stopped after the World followed the node but before
+`attach.json` recorded it is finished by the next take or sync: a head made by
+`sync-<number>-<id>` that the node confirms (same chain ID and tree) is written to
+`attach.json` first. The fetch, the divergence check and that recovery are `javelin sync`'s
+own (see Sync below). Those checks, and the refresh of an
+existing local Layer, run before the lease moves. A retried `--operation OP` replays the
+recorded take; JSON `holds_lease` and `lease` (`this_device`, `another_device`) say who holds
+it now, and the text says plainly when another device does. Only the Layer's owner can take the lease (`forbidden` otherwise),
+and a token limited to another Layer cannot. Without `--operation` a fresh ID is used, which
+is safe: taking a lease this device holds changes nothing. JSON reports the node's `seq` and
+`head`, whether the Layer was `created`, the refresh `status`, and the directory `root`.
+
+The old device's queued appends then replay into `layer_stale`. They stay in the outbox with
+that outcome: `outbox replay` exits 1 with `code: layer_stale` and lists them under `stale`
+(Layer, operation, the node's head, and the local head), and `outbox status` lists them too.
+Keep their work with `javelin layer clone NEW --checkpoint LOCAL_HEAD`.
+
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
 2 seconds of the scan. When the directory differs from the latest checkpoint, the
@@ -449,10 +477,12 @@ plane) or `JAVELIN_TOKEN`. Reads of a public repository need neither.
 2. It fetches the versions after the attached head, verified from that head's ID (the trust
    anchor), so the work follows the number of new versions, not the length of history. A
    node whose chain does not pass through the attached head is refused with
-   `chain_mismatch`, and nothing is written.
+   `chain_mismatch`, and nothing is written. Hidden entries arrive as attach brings them:
+   the ones the node opens for this token with their content, the rest as commitments left
+   out of the rolling base.
 3. It stores the tree chunks and blobs it lacks, advances the local World and the rolling
-   base, and rewrites `attach.json` last. A sync interrupted after the advance is completed
-   by the next command that reads the attachment.
+   base, and rewrites `attach.json` last. A sync interrupted after the advance is finished
+   by the next sync or `layer take`, once the node confirms the head the advance names.
 
 Layers are not touched: they keep their bases, and Publish composes them onto the node's
 head. JSON reports `from` and `head` (remote heads), `advanced`, `local_head`, `base` and
@@ -460,9 +490,10 @@ head. JSON reports `from` and `head` (remote heads), `advanced`, `local_head`, `
 returns exit 1 with its `code`, after the fetch. A node that cannot be reached is
 `node_unavailable`, and nothing changes.
 
-Sync never replaces local history. If the local World moved away from the attachment,
-because `workspace publish` ran in this attached repository, sync refuses with
-`local_world_diverged` and exit 1. The message names the published Layer's last checkpoint:
+Sync never replaces local history. The local head must be a World that attach or sync took
+from the node, holding the attached tree, with no Publish receipt. If the local World moved
+away from the attachment, because `workspace publish` ran in this attached repository, sync
+refuses with `local_world_diverged` and exit 1, before the outbox replays. The message names the published Layer's last checkpoint:
 `javelin layer clone NEW --checkpoint HASH` makes a Layer from it, and `javelin request open`
 proposes that Layer to the node. To follow the node again, attach a fresh directory.
 
@@ -486,8 +517,10 @@ to exactly one revision; a new revision needs new approvals.
   cannot approve their own request (`self_approval`), and approvers need the Review or
   Maintain role.
 - `request show ID [--revision N]` prints the request, every revision with its base,
-  checkpoint, tree and approvals, the approvals Publish needs, the comments, and the paths
-  revision N (default: the current one) changes. JSON has the same fields.
+  checkpoint and approvals, the approvals Publish needs, the comments, and the paths
+  revision N (default: the current one) changes. JSON has the same fields. A revision whose
+  checkpoint changes a path this token may not read shows `checkpoint: null` and no paths,
+  as the node treats that checkpoint: never stored.
 - `request list` prints every request on the node with its Layer, author, state and current
   revision.
 - `request publish ID --revision N --operation OP` publishes exactly revision N's

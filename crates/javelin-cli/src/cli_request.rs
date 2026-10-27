@@ -29,7 +29,8 @@ use javelin::{
 use javelin_protocol::{
     Kind, Message,
     codec::{
-        PublishOutcome, RequestId, RequestStatus, ReviewDetail, ReviewOutcome, code, decode, encode,
+        PublishOutcome, RequestId, RequestStatus, ReviewDetail, ReviewOutcome, RevisionDetail,
+        code, decode, encode,
     },
 };
 use serde_json::{Value, json};
@@ -609,8 +610,19 @@ fn show(args: Vec<OsString>) -> Outcome {
         None => detail.revisions.last(),
     };
     let changes = match shown {
-        Some(revision) => {
-            let bytes = node_checkpoint(&link, revision.checkpoint)?;
+        // A checkpoint this token may not read lists no paths.
+        Some(
+            revision @ RevisionDetail {
+                checkpoint: None, ..
+            },
+        ) => json!({"revision": revision.index, "paths": null}),
+        Some(
+            revision @ RevisionDetail {
+                checkpoint: Some(checkpoint),
+                ..
+            },
+        ) => {
+            let bytes = node_checkpoint(&link, *checkpoint)?;
             let changes = Repository::foreign_checkpoint_changes(&bytes)?;
             let paths: Vec<Value> = changes
                 .entries()
@@ -630,7 +642,6 @@ fn show(args: Vec<OsString>) -> Outcome {
                 "index": r.index,
                 "base": r.base,
                 "checkpoint": r.checkpoint,
-                "tree": r.tree,
                 "approvals": r.approvals,
             })
         })
@@ -667,9 +678,13 @@ fn show(args: Vec<OsString>) -> Outcome {
             [] => "no approvals".to_string(),
             names => format!("approved by {}", names.join(", ")),
         };
+        let checkpoint = r.checkpoint.map_or_else(
+            || "a checkpoint this token may not read".to_string(),
+            |id| format!("checkpoint {id}"),
+        );
         lines.push(format!(
-            "  revision {} over remote World {}: checkpoint {}, {approvals}",
-            r.index, r.base, r.checkpoint
+            "  revision {} over remote World {}: {checkpoint}, {approvals}",
+            r.index, r.base
         ));
     }
     if let Some(paths) = changes["paths"].as_array() {

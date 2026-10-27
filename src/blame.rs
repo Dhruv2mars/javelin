@@ -16,7 +16,7 @@ use crate::{
     domain::ObjectKind,
     layer::{CheckpointReader, attribution_in},
     repository::{
-        decode_entry, decode_id, head_in, insert_object, read_object, validate_format, version_in,
+        decode_change, decode_id, head_in, insert_object, read_object, validate_format, version_in,
     },
 };
 
@@ -165,18 +165,21 @@ impl Repository {
         };
         let row = tx
             .prepare_cached(
-                "SELECT version,kind,content FROM changes WHERE path=?1 AND version<=?2 \
-                 ORDER BY version DESC LIMIT 1",
+                "SELECT version,kind,content,commitment,audience FROM changes \
+                 WHERE path=?1 AND version<=?2 ORDER BY version DESC LIMIT 1",
             )?
             .query_row(params![path.as_str(), at.sql()], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?),
+                ))
             })
             .optional()?;
         let blame = row
-            .map(|(version, kind, content)| {
+            .map(|(version, columns)| {
                 Ok::<_, Error>(PathBlame {
                     path: path.clone(),
-                    entry: decode_entry(kind, content)?,
+                    entry: decode_change(columns)?,
                     origin: origin_in(&tx, path, VersionNumber::decode(version)?)?,
                 })
             })
@@ -202,19 +205,19 @@ impl Repository {
         };
         let rows = tx
             .prepare_cached(
-                "SELECT version,kind,content FROM changes WHERE path=?1 AND version<=?2 \
-                 ORDER BY version",
+                "SELECT version,kind,content,commitment,audience FROM changes \
+                 WHERE path=?1 AND version<=?2 ORDER BY version",
             )?
             .query_map(params![path.as_str(), at.sql()], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?),
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut history = Vec::with_capacity(rows.len());
-        for (version, kind, content) in rows {
-            history.push((
-                VersionNumber::decode(version)?,
-                decode_entry(kind, content)?,
-            ));
+        for (version, columns) in rows {
+            history.push((VersionNumber::decode(version)?, decode_change(columns)?));
         }
         let Some((_, Some(_))) = history.last() else {
             return Ok(None);
@@ -227,7 +230,12 @@ impl Repository {
         // the previous version's bytes rather than copied.
         let (mut previous, mut owners) = (Vec::new(), Vec::<usize>::new());
         for (index, (_, entry)) in history.iter().enumerate().skip(start) {
-            let content = entry.as_ref().expect("live after last deletion").content();
+            // Line history is kept only for plain entries; a hidden one has no blob here.
+            let content = entry
+                .as_ref()
+                .expect("live after last deletion")
+                .content()
+                .ok_or_else(|| Error::HiddenPath(path.clone()))?;
             let bytes = read_object(&tx, content, ObjectKind::Blob)?;
             let old: Vec<&[u8]> = split(&previous).collect();
             let next: Vec<&[u8]> = split(&bytes).collect();
@@ -357,7 +365,7 @@ pub(crate) fn check_blame(checkpoints: &mut CheckpointReader<'_>) -> Result<()> 
             .prepare_cached("SELECT path,checkpoint,provenance FROM blame WHERE version=?1")?
             .query_map([version], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
             .collect::<std::result::Result<_, _>>()?;
-        let changes = crate::repository::changeset_in(conn, VersionNumber::decode(version)?)?;
+        let changes = crate::repository::plain_changes_in(conn, VersionNumber::decode(version)?)?;
         expected_rows += changes.entries().len();
         for path in changes.entries().keys() {
             let (_, checkpoint, provenance) = derived

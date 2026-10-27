@@ -6,9 +6,9 @@ use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, Vers
 use javelin_protocol::{
     Kind, Message,
     codec::{
-        CommentDetail, LayerOutcome, LayerStatus, MAX_REQUESTS, PublishOutcome, RequestId,
-        RequestStatus, RequestSummary, ReviewDetail, ReviewOutcome, RevisionDetail, Role,
-        Visibility, code, decode, encode, read_frame, write_frame,
+        CommentDetail, LayerOutcome, LayerStatus, LeaseHolder, MAX_REQUESTS, PublishOutcome,
+        RequestId, RequestStatus, RequestSummary, ReviewDetail, ReviewOutcome, RevisionDetail,
+        Role, Visibility, code, decode, encode, read_frame, write_frame,
     },
     limits::{MAX_CHECKPOINT, MAX_COMMENT, MAX_FRAME, MAX_WANT},
 };
@@ -111,6 +111,7 @@ fn every_hosting_message_round_trips() {
             seq: 4,
             head: id(3),
             state: LayerStatus::Active,
+            lease: LeaseHolder::Caller,
         },
         Message::LayerState {
             layer: layer(),
@@ -118,6 +119,7 @@ fn every_hosting_message_round_trips() {
             seq: 9,
             head: id(4),
             state: LayerStatus::Published,
+            lease: LeaseHolder::Other,
         },
         Message::LayerState {
             layer: layer(),
@@ -125,12 +127,17 @@ fn every_hosting_message_round_trips() {
             seq: 0,
             head: id(0),
             state: LayerStatus::Discarded,
+            lease: LeaseHolder::Free,
         },
         Message::LayerStack {
             operation: op("stack-1"),
             target: layer(),
             target_head: id(1),
             source: id(2),
+        },
+        Message::LayerTake {
+            operation: op("take-1"),
+            layer: layer(),
         },
         Message::PublishLayer {
             operation: op("publish-1"),
@@ -277,15 +284,13 @@ fn layer_create_and_request_reads_round_trip() {
             RevisionDetail {
                 index: 1,
                 base: version(3),
-                checkpoint: id(1),
-                tree: id(2),
+                checkpoint: Some(id(1)),
                 approvals: vec!["rita".into()],
             },
             RevisionDetail {
                 index: 2,
                 base: version(3),
-                checkpoint: id(3),
-                tree: id(4),
+                checkpoint: None,
                 approvals: vec![],
             },
         ],
@@ -383,6 +388,7 @@ fn truncated_bodies_are_malformed() {
             seq: 4,
             head: id(3),
             state: LayerStatus::Active,
+            lease: LeaseHolder::Caller,
         },
         Message::PublishLayer {
             operation: op("publish-1"),
@@ -472,9 +478,14 @@ fn invalid_enum_codes_are_malformed() {
         seq: 1,
         head: id(1),
         state: LayerStatus::Active,
+        lease: LeaseHolder::Free,
     })
     .unwrap();
     *state.last_mut().unwrap() = 3;
+    assert_eq!(refused(&state), code::MALFORMED, "lease holder");
+    *state.last_mut().unwrap() = 0;
+    let status = state.len() - 2;
+    state[status] = 3;
     assert_eq!(refused(&state), code::MALFORMED, "layer state");
 
     let mut request_state = encode(&Message::RequestState {
@@ -659,9 +670,10 @@ fn hosting_bodies_encode_at_their_documented_sizes() {
         seq: 1,
         head: id(1),
         state: LayerStatus::Published,
+        lease: LeaseHolder::Caller,
     })
     .unwrap();
-    assert_eq!(state.len(), 1 + 1 + 7 + 8 + 8 + 32 + 1);
+    assert_eq!(state.len(), 1 + 1 + 7 + 8 + 8 + 32 + 1 + 1);
     assert_eq!(state[0], LAYER_STATE);
 }
 

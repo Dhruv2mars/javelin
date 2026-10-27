@@ -95,7 +95,9 @@ fn clean_within_file_and_disjoint_changes_enter_one_checkpoint_and_replay_after_
     assert_eq!(head.revision(), target.revision() + 1);
     assert_eq!(
         repo.read_blob(
-            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")].content()
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")]
+                .content()
+                .unwrap()
         )
         .unwrap(),
         b"FIRST\nanchor\nLAST\n"

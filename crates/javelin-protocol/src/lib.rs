@@ -9,8 +9,8 @@ pub mod receiver;
 pub mod sender;
 
 pub use codec::{Kind, Message, Outcome};
-pub use fetch::{Anchor, Fetched, fetch};
-pub use receiver::{WorldLog, handle_request, serve};
+pub use fetch::{Anchor, Fetched, fetch, fetch_opened};
+pub use receiver::{WorldLog, handle_request, handle_request_as, serve, serve_as};
 pub use sender::push;
 
 /// Fixed version 2 limits. The codec enforces them before allocating protocol

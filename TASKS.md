@@ -19,12 +19,19 @@ CI left open. Work from it, in roughly this order:
 - [x] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
 - [x] First real deploy of the Cloudflare node on the owner's account, free tier only;
   settle every unverified free-tier limit.
-- [ ] Superposition storage format: salted commitments for hidden tree entries, identical
-  IDs for every reader. Must land before any real repository is stored.
+- [x] Superposition storage format: salted commitments for hidden tree entries, identical
+  IDs for every reader. Must land before any real repository is stored. Format 10,
+  `.javelinpolicy`, `Open`/`Opened`; tests in `tests/superposition.rs`,
+  `crates/javelin-protocol/tests/superposition.rs`, `crates/javelin-node/tests/fork_hidden.rs`.
+  - [x] Wire the caller's role into the node's reads and `check_writer` into its writes
+    (`crates/javelin-node/tests/wire_hidden.rs`).
+  - [x] Authorize Layer object reads, so an unpublished hidden edit cannot be confirmed by ID
+    (uploads are recorded per principal; `wire_hidden.rs`).
+  - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
   and forge.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
-- [ ] Layer writer lease and `javelin layer take` (replaces D21).
+- [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
   list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,
   open, approve and comment refuse). New wire messages `LayerCreate`, `ListRequests` and
@@ -33,6 +40,14 @@ CI left open. Work from it, in roughly this order:
 - [x] `javelin sync`: replays the outbox, fetches from the attached head as trust anchor,
   advances the local World and rolling base, rewrites `attach.json`; refuses
   `local_world_diverged` and a chain that misses the anchor (`chain_mismatch`).
+- [x] Requests and sync under #99's audiences, and #101's guard shared: `javelin sync` and
+  `layer take` follow the node through one path (`cli_sync::follow`: `fetch_opened` from the
+  attached head, openings stored as attach stores them, `follows_attachment` widened to any
+  attach or sync World with the attached tree and no Publish receipt, node-confirmed
+  recovery of an interrupted sync). `ReviewDetail` drops the plain snapshot tree and sends a
+  revision's checkpoint only when the caller may read it. Evidence: `requests_sync.rs`
+  `sync_and_request_show_follow_the_callers_audiences`,
+  `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
 - [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
   and `revise` upload a Layer to the node.
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
@@ -53,21 +68,22 @@ CI left open. Work from it, in roughly this order:
 
 GitHub suspended the Dhruv2mars account on 2026-10-27. The repository moved to Entire
 with every branch intact; trails replace PRs, Sol is the only reviewer, and checks run
-locally on macOS only.
+locally on macOS. Since 2026-10-27 Buildkite runs fmt, clippy and tests on Linux for
+every push (`.buildkite/pipeline.yml`).
 
 - [x] Point `AGENTS.md` and the contract at trails and local checks.
-- [ ] Land the open work as trails, in order: #99 superposition, #101 Layer lease, CLI
+- [ ] Land the open work as trails, in order: #99 superposition (merged, trail 7), #101 Layer lease, CLI
   requests and sync (after #101), #103 forge on Vercel, Gate 2 create probe.
 - [ ] Forge deploys to Vercel from the CLI, since Vercel's Git integration cannot follow
   Entire. Install instructions stop pointing at GitHub releases.
 - [ ] Release binaries: GitHub releases are gone. Decide where `javelin` binaries are
   published.
-- [ ] Linux and Windows have no runner. The Windows `database is locked` flake under
+- [ ] Windows has no runner, and Gate 2 and the workspace probes are not in Buildkite yet. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
 - [ ] Delete the temporary `diag/windows-layer-busy` branch from origin.
-- [ ] `.github/workflows/` no longer runs. Keep it as the record of the old CI until a
-  runner replaces it.
+- [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
+  drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
 
 ## Working rules
 

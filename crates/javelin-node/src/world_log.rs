@@ -70,6 +70,7 @@ impl FileWorldLog {
         )?;
         records.execute_batch(crate::fork::SCHEMA)?;
         records.execute_batch(crate::layer::SCHEMA)?;
+        records.execute_batch(crate::lease::SCHEMA)?;
         records.execute_batch(crate::checks::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
@@ -312,6 +313,14 @@ impl WorldLog for FileWorldLog {
         crate::layer::has_changes(&self.records, id)
     }
 
+    fn changes_visible(
+        &mut self,
+        id: ObjectId,
+        reader: &javelin::Reader,
+    ) -> std::result::Result<bool, ProtocolError> {
+        crate::layer::changes_visible(&self.repo, &self.records, id, reader)
+    }
+
     fn store_changes(
         &mut self,
         id: ObjectId,
@@ -326,6 +335,7 @@ impl WorldLog for FileWorldLog {
         layer: &LayerId,
         parent: Option<ObjectId>,
         changes: ObjectId,
+        writer: &javelin::Reader,
     ) -> std::result::Result<LayerOutcome, ProtocolError> {
         if is_review_layer(layer) {
             return Ok(LayerOutcome::Refused {
@@ -339,6 +349,7 @@ impl WorldLog for FileWorldLog {
             layer,
             parent,
             changes,
+            Some(writer),
         )
     }
 

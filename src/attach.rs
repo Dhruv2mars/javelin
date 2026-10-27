@@ -20,7 +20,8 @@ use crate::{
 
 const ATTACHMENT: &str = "attach.json";
 const ATTACH_PREFIX: &str = "attach-";
-const SYNC_PREFIX: &str = "sync-";
+/// The operation prefix of a World advance that follows the node to a newer head.
+pub const SYNC_PREFIX: &str = "sync-";
 
 /// A head a node reported: its World number, chain ID and root tree. The number is the
 /// remote World's, which the local store does not share after attach (see `attach_head`).
@@ -58,22 +59,6 @@ fn remote_of(operation: &OperationId, tree: ObjectId) -> Option<RemoteHead> {
         id: ObjectId::parse(id).ok()?,
         tree,
     })
-}
-
-/// Where the local World stands against its attachment.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AttachedWorld {
-    /// The local head, `local`, holds the attached head. An interrupted sync is finished
-    /// first.
-    Current {
-        attachment: Attachment,
-        local: WorldVersion,
-    },
-    /// The local World moved away from the attachment, by a Publish here. Sync refuses it.
-    Diverged {
-        attachment: Attachment,
-        local: WorldVersion,
-    },
 }
 
 impl Repository {
@@ -121,6 +106,56 @@ impl Repository {
         }
         self.put_tree(&bytes)?;
         Ok(())
+    }
+
+    /// The operation that advances this store to `head`, a newer head of its attachment:
+    /// `sync-<remote number>-<chain ID>`, so an advance whose `attach.json` was never
+    /// written can be checked against the node ([`Repository::interrupted_sync`]).
+    pub fn sync_operation(head: &RemoteHead) -> Result<OperationId> {
+        remote_operation(SYNC_PREFIX, head)
+    }
+
+    /// The remote head an attach or sync recorded for local World `version`: its operation
+    /// names one and it has no publication receipt, since Publish always records one.
+    fn recorded_remote(&self, version: &WorldVersion) -> Result<Option<RemoteHead>> {
+        let Some(operation) = &version.operation else {
+            return Ok(None);
+        };
+        let Some(remote) = remote_of(operation, version.tree) else {
+            return Ok(None);
+        };
+        Ok(self.publication(operation)?.is_none().then_some(remote))
+    }
+
+    /// The remote head a sync advanced the local head to, when that is what made the local
+    /// head: a `sync-` World with no publication receipt. The tree is the local head's.
+    /// `None` for any other head. The caller checks the head against the node before
+    /// recording it in `attach.json`.
+    pub fn interrupted_sync(&self) -> Result<Option<RemoteHead>> {
+        let local = self.head()?;
+        let synced = local
+            .operation
+            .as_ref()
+            .is_some_and(|op| op.as_str().starts_with(SYNC_PREFIX));
+        if !synced {
+            return Ok(None);
+        }
+        self.recorded_remote(&local)
+    }
+
+    /// Whether the local head is still a World this store took from the node for
+    /// `attachment`'s head: the same tree, made by an attach or sync (World 0 when the
+    /// head's tree is empty). Anything else, such as a local Publish, is local divergence
+    /// that following the node would overwrite.
+    pub fn follows_attachment(&self, attachment: &Attachment) -> Result<bool> {
+        let local = self.head()?;
+        if local.tree != attachment.head.tree {
+            return Ok(false);
+        }
+        if local.number.get() == 0 && local.operation.is_none() {
+            return Ok(true);
+        }
+        Ok(self.recorded_remote(&local)?.is_some())
     }
 
     /// Whether an attach was interrupted before `attach.json` was written. Attach advances
@@ -188,10 +223,7 @@ impl Repository {
             return Ok(None);
         };
         let version = self.version(local)?;
-        if let Some(operation) = &version.operation
-            && let Some(remote) = remote_of(operation, version.tree)
-            && self.publication(operation)?.is_none()
-        {
+        if let Some(remote) = self.recorded_remote(&version)? {
             return Ok(Some(remote));
         }
         if local.get() == 0 {
@@ -207,33 +239,7 @@ impl Repository {
         Ok(None)
     }
 
-    /// Checks the local head against the attachment. A sync that advanced the World and was
-    /// interrupted before `attach.json` names a newer remote head than the attachment; that
-    /// head was verified before the advance, so the attachment is completed to it here.
-    /// Any other local head that does not hold the attached tree was published here.
-    pub fn attached_world(&self) -> Result<Option<AttachedWorld>> {
-        let Some(attachment) = self.attachment()? else {
-            return Ok(None);
-        };
-        let local = self.head()?;
-        if local.tree == attachment.head.tree {
-            return Ok(Some(AttachedWorld::Current { attachment, local }));
-        }
-        if let Some(remote) = self
-            .remote_world(local.number)?
-            .filter(|remote| remote.number > attachment.head.number)
-        {
-            let attachment = Attachment {
-                head: remote,
-                ..attachment
-            };
-            self.write_attachment(&attachment)?;
-            return Ok(Some(AttachedWorld::Current { attachment, local }));
-        }
-        Ok(Some(AttachedWorld::Diverged { attachment, local }))
-    }
-
-    /// Moves the local World from `local`, the head [`Repository::attached_world`] checked,
+    /// Moves the local World from `local`, a head [`Repository::follows_attachment`] accepted,
     /// to `head`, a verified remote head newer than the attached one whose tree is stored,
     /// then records it in `attach.json`. The advance is a compare-and-swap on `local`, so a
     /// Publish here since the check is never replaced: the sync is refused instead. It is
@@ -261,6 +267,9 @@ impl Repository {
                     ));
                 }
             }
+            // A stop here leaves a sync World that `attach.json` does not name yet;
+            // [`Repository::interrupted_sync`] finds it.
+            crate::repository::failpoint("sync_after_advance");
         }
         self.write_attachment(&Attachment {
             head: head.clone(),

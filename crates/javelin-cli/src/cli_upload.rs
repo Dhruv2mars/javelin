@@ -205,7 +205,8 @@ pub(crate) fn uploads(
         .entries()
         .values()
         .flatten()
-        .map(|entry| entry.content())
+        // A hidden entry names no object.
+        .filter_map(|entry| entry.content())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();

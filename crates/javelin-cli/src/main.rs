@@ -109,6 +109,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "refresh") {
         return cli_remote::layer_refresh(args.into_iter().skip(2).collect());
     }
+    if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "take") {
+        return cli_remote::layer_take(args.into_iter().skip(2).collect());
+    }
     if args.first().is_some_and(|a| a == "blame") {
         return cli::blame(args.into_iter().skip(1).collect()).map_err(Into::into);
     }

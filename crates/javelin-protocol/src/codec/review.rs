@@ -27,13 +27,15 @@ pub struct RequestSummary {
     pub revision: u32,
 }
 
-/// One immutable revision and the principals that approved exactly it.
+/// One immutable revision and the principals that approved exactly it. `checkpoint` is
+/// `None` when the caller may not read the revision's checkpoint, which names paths and
+/// content IDs, so its ID never confirms what a hidden entry holds. The revision's snapshot
+/// tree is never sent: it names hidden content in plain form.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionDetail {
     pub index: u32,
     pub base: VersionNumber,
-    pub checkpoint: ObjectId,
-    pub tree: ObjectId,
+    pub checkpoint: Option<ObjectId>,
     pub approvals: Vec<String>,
 }
 
@@ -120,8 +122,7 @@ pub(super) fn put_detail(out: &mut Vec<u8>, detail: &ReviewDetail) {
     for revision in &detail.revisions {
         out.extend_from_slice(&revision.index.to_be_bytes());
         out.extend_from_slice(&revision.base.get().to_be_bytes());
-        put_id(out, &revision.checkpoint);
-        put_id(out, &revision.tree);
+        put_optional_id(out, revision.checkpoint.as_ref());
         put_u32(out, revision.approvals.len());
         for approver in &revision.approvals {
             put_short(out, approver);
@@ -147,7 +148,7 @@ pub(super) fn detail_len(detail: &ReviewDetail) -> Result<usize, ProtocolError> 
         if revision.approvals.len() > MAX_WANT {
             return Err(limit("count exceeds limit"));
         }
-        len += 4 + 8 + 32 + 32 + 4;
+        len += 4 + 8 + 33 + 4;
         for approver in &revision.approvals {
             len += short(approver)?;
         }
@@ -169,8 +170,7 @@ pub(super) fn read_detail(r: &mut Reader<'_>) -> Result<ReviewDetail, ProtocolEr
     for _ in 0..n {
         let index = r.u32()?;
         let base = r.version()?;
-        let checkpoint = r.id()?;
-        let tree = r.id()?;
+        let checkpoint = r.optional_id()?;
         let count = r.count(MAX_WANT)?;
         let mut approvals = Vec::new();
         for _ in 0..count {
@@ -180,7 +180,6 @@ pub(super) fn read_detail(r: &mut Reader<'_>) -> Result<ReviewDetail, ProtocolEr
             index,
             base,
             checkpoint,
-            tree,
             approvals,
         });
     }

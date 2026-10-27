@@ -67,10 +67,16 @@ pub fn handle(
                 authorize(gate, token, now, Scope::ReviewWrite, Some(layer.as_str()))?;
             let actor = principal(&grant)?;
             let id = review_id(request)?;
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                *checkpoint,
+                Some(*base),
+            )?;
             if repo.layer_state(layer).is_err() {
                 return Ok(review_refused(refusal::UNKNOWN_LAYER));
             }
-            let revision = match revision_ref(repo, *checkpoint, *base)? {
+            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -102,7 +108,13 @@ pub fn handle(
                 target(records, gate, token, now, Scope::ReviewWrite, &id)?;
             let review = settled(repo, review)?;
             let actor = principal(&grant)?;
-            let revision = match revision_ref(repo, *checkpoint, *base)? {
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                *checkpoint,
+                Some(*base),
+            )?;
+            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -183,6 +195,12 @@ pub fn handle(
             if pinned.base() != *base {
                 return Ok(publish_refused(code::INVALID_INPUT));
             }
+            crate::auth::check_checkpoint_write(
+                repo,
+                &gate.reader(&grant),
+                pinned.checkpoint(),
+                Some(*base),
+            )?;
             let command = Command {
                 operation: operation.clone(),
                 actor,
@@ -238,12 +256,14 @@ pub fn handle(
         } => {
             let id = review_id(request)?;
             let layer = request_layer(records, &id)?;
-            let (_, permissions) = authorize(gate, token, now, Scope::Read, layer.as_deref())?;
+            let (grant, permissions) = authorize(gate, token, now, Scope::Read, layer.as_deref())?;
             let Some(layer) = layer else {
                 return Err(unknown_request());
             };
             let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
             Ok(Message::ReviewDetail(detail(
+                repo,
+                &gate.reader(&grant),
                 request,
                 &layer,
                 &review,
@@ -307,29 +327,33 @@ fn summary(
 }
 
 /// `ReadReview`: every revision with its approvals, and the comments from `from` that
-/// fit the budget.
+/// fit the budget. A revision's checkpoint `reader` may not read is left out, as `Get`
+/// treats it: never stored.
 fn detail(
+    repo: &Repository,
+    reader: &javelin::Reader,
     request: &javelin_protocol::codec::RequestId,
     layer: &str,
     review: &Review,
     required_approvals: u32,
     from: u32,
 ) -> Result<ReviewDetail, ProtocolError> {
-    let revisions = review
-        .revisions()
-        .iter()
-        .map(|revision| RevisionDetail {
+    let mut revisions = Vec::new();
+    for revision in review.revisions() {
+        let checkpoint = revision.revision.checkpoint();
+        let id = CheckpointId::parse(&checkpoint.to_string())?;
+        let readable = matches!(repo.checkpoint_visible(id, reader), Ok(true));
+        revisions.push(RevisionDetail {
             index: revision.index,
             base: revision.revision.base(),
-            checkpoint: revision.revision.checkpoint(),
-            tree: revision.revision.tree(),
+            checkpoint: readable.then_some(checkpoint),
             approvals: revision
                 .approvals
                 .iter()
                 .map(|approver| approver.as_str().to_owned())
                 .collect(),
-        })
-        .collect();
+        });
+    }
     let mut comments = Vec::new();
     let mut size = 0;
     for comment in review.comments().iter().skip(from as usize) {
@@ -515,12 +539,17 @@ fn publish_checkpoint(
 
 /// Reads a revision's checkpoint and its tree root. Refusals come back as a code, so the
 /// caller can reply without recording anything.
+/// A checkpoint `reader` may not read is absent to it, as one never stored.
 fn revision_ref(
     repo: &mut Repository,
+    reader: &javelin::Reader,
     checkpoint: ObjectId,
     base: VersionNumber,
 ) -> Result<Result<RevisionRef, &'static str>, ProtocolError> {
     let id = CheckpointId::parse(&checkpoint.to_string())?;
+    if !matches!(repo.checkpoint_visible(id, reader), Ok(true)) {
+        return Ok(Err("missing_object"));
+    }
     let Ok(stored) = repo.read_checkpoint(id) else {
         return Ok(Err("missing_object"));
     };

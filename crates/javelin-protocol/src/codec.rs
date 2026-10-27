@@ -9,7 +9,10 @@
 
 use std::io::{self, Read, Write};
 
-use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, VersionNumber, tree::Chunk};
+use javelin::{
+    LayerId, ObjectId, Opening, OperationId, PublishAttribution, SealedKind, VersionNumber,
+    tree::Chunk,
+};
 
 use crate::{ProtocolError, limits::*};
 
@@ -19,8 +22,8 @@ mod review;
 mod wire;
 
 pub use hosting::{
-    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
-    RequestStatus, ReviewOutcome, Role, Visibility,
+    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome,
+    RequestId, RequestStatus, ReviewOutcome, Role, Visibility,
 };
 pub use review::{CommentDetail, MAX_REQUESTS, RequestSummary, ReviewDetail, RevisionDetail};
 use wire::*;
@@ -47,6 +50,7 @@ const LAYER_STACK: u8 = 0x37;
 const PUBLISH_LAYER: u8 = 0x38;
 const PUBLISH_OUTCOME: u8 = 0x39;
 const PUBLISH_REQUEST: u8 = 0x3a;
+const LAYER_TAKE: u8 = 0x3b;
 const LAYER_CREATE: u8 = 0x3c;
 const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
@@ -54,6 +58,8 @@ const CHANGESET: u8 = 0x42;
 const CHANGESET_PART: u8 = 0x43;
 const ATTRIBUTION: u8 = 0x44;
 const ATTRIBUTED: u8 = 0x45;
+const OPEN: u8 = 0x46;
+const OPENED: u8 = 0x47;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -221,13 +227,15 @@ pub enum Message {
     LayerHead {
         layer: LayerId,
     },
-    /// Reply to `LayerHead`. `seq` is the head's sequence number.
+    /// Reply to `LayerHead`. `seq` is the head's sequence number; `lease` says whether the
+    /// caller's device holds the writer lease.
     LayerState {
         layer: LayerId,
         base: VersionNumber,
         seq: u64,
         head: ObjectId,
         state: LayerStatus,
+        lease: LeaseHolder,
     },
     /// Stack `source` onto `target`, which must still be at `target_head`.
     LayerStack {
@@ -235,6 +243,13 @@ pub enum Message {
         target: LayerId,
         target_head: ObjectId,
         source: ObjectId,
+    },
+    /// Move `layer`'s writer lease to the caller's device. Only the Layer's owner may take
+    /// it. Reply: `LayerOutcome`, `Accepted` with the node's head. A repeated operation
+    /// replays its recorded outcome.
+    LayerTake {
+        operation: OperationId,
+        layer: LayerId,
     },
     /// Publish a whole Layer as the next World version, over `base`.
     PublishLayer {
@@ -284,6 +299,14 @@ pub enum Message {
         number: VersionNumber,
         publication: Option<(LayerId, PublishAttribution)>,
     },
+    /// Fetch: the openings of hidden entries, by commitment, at most `MAX_WANT`.
+    /// Reply: `Opened`.
+    Open(Vec<ObjectId>),
+    /// The openings the caller may read, each with its commitment, in request order.
+    /// A commitment the node cannot open for this caller is left out, so the reply
+    /// does not say whether it exists. The audience is not sent: the caller holds it in
+    /// the committed entry. Each opening is checked against its commitment on decode.
+    Opened(Vec<(ObjectId, Opening)>),
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
         operation: OperationId,
@@ -471,6 +494,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             seq,
             head,
             state,
+            lease,
         } => {
             out.push(LAYER_STATE);
             put_short(&mut out, layer.as_str());
@@ -478,6 +502,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.extend_from_slice(&seq.to_be_bytes());
             put_id(&mut out, head);
             out.push(state.code());
+            out.push(lease.code());
         }
         Message::LayerStack {
             operation,
@@ -490,6 +515,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             put_short(&mut out, target.as_str());
             put_id(&mut out, target_head);
             put_id(&mut out, source);
+        }
+        Message::LayerTake { operation, layer } => {
+            out.push(LAYER_TAKE);
+            put_short(&mut out, operation.as_str());
+            put_short(&mut out, layer.as_str());
         }
         Message::PublishLayer {
             operation,
@@ -582,6 +612,23 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                     put_attribution(&mut out, attribution);
                 }
                 None => put_short(&mut out, ""),
+            }
+        }
+        Message::Open(commitments) => {
+            out.push(OPEN);
+            put_u32(&mut out, commitments.len());
+            for commitment in commitments {
+                put_id(&mut out, commitment);
+            }
+        }
+        Message::Opened(openings) => {
+            out.push(OPENED);
+            put_u32(&mut out, openings.len());
+            for (commitment, opening) in openings {
+                put_id(&mut out, commitment);
+                out.extend_from_slice(&opening.salt);
+                out.push(opening.kind as u8);
+                put_id(&mut out, &opening.content);
             }
         }
         Message::OpenRequest {
@@ -744,10 +791,13 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         },
         Message::LayerCreate { layer, .. } => 1 + short(layer.as_str())? + 8,
         Message::LayerHead { layer } => 1 + short(layer.as_str())?,
-        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 1,
+        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 2,
         Message::LayerStack {
             operation, target, ..
         } => 1 + short(operation.as_str())? + short(target.as_str())? + 64,
+        Message::LayerTake { operation, layer } => {
+            1 + short(operation.as_str())? + short(layer.as_str())?
+        }
         Message::PublishLayer {
             operation,
             layer,
@@ -795,6 +845,18 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
                 Some((layer, PublishAttribution::Agent { .. })) => short(layer.as_str())? + 35,
                 None => 1,
             }
+        }
+        Message::Open(commitments) => {
+            if commitments.len() > MAX_WANT {
+                return Err(limit("count exceeds limit"));
+            }
+            5 + commitments.len() * 32
+        }
+        Message::Opened(openings) => {
+            if openings.len() > MAX_WANT {
+                return Err(limit("count exceeds limit"));
+            }
+            5 + openings.len() * (32 + javelin::SALT_BYTES + 1 + 32)
         }
         Message::OpenRequest {
             operation,
@@ -954,12 +1016,17 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             seq: r.u64()?,
             head: r.id()?,
             state: r.layer_status()?,
+            lease: r.lease_holder()?,
         },
         LAYER_STACK => Message::LayerStack {
             operation: r.operation()?,
             target: r.layer()?,
             target_head: r.id()?,
             source: r.id()?,
+        },
+        LAYER_TAKE => Message::LayerTake {
+            operation: r.operation()?,
+            layer: r.layer()?,
         },
         PUBLISH_LAYER => Message::PublishLayer {
             operation: r.operation()?,
@@ -1034,6 +1101,35 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
                 number,
                 publication,
             }
+        }
+        OPEN => {
+            let n = r.count(MAX_WANT)?;
+            let mut commitments = Vec::new();
+            for _ in 0..n {
+                commitments.push(r.id()?);
+            }
+            Message::Open(commitments)
+        }
+        OPENED => {
+            let n = r.count(MAX_WANT)?;
+            let mut openings = Vec::new();
+            for _ in 0..n {
+                let commitment = r.id()?;
+                let opening = Opening {
+                    salt: r.take(javelin::SALT_BYTES)?.try_into().unwrap(),
+                    kind: SealedKind::decode(i64::from(r.u8()?))
+                        .map_err(|_| malformed("unknown hidden entry kind"))?,
+                    content: r.id()?,
+                };
+                if opening.commitment() != commitment {
+                    return Err(ProtocolError::new(
+                        code::ID_MISMATCH,
+                        format!("opening does not match commitment {commitment}"),
+                    ));
+                }
+                openings.push((commitment, opening));
+            }
+            Message::Opened(openings)
         }
         RESOLVED => Message::Resolved {
             number: r.version()?,
