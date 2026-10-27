@@ -67,3 +67,20 @@ pub fn authorized(repository: &str, request: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&request[end + 2..]);
     out
 }
+
+/// A ten-minute token like [`token_for`], issued to device `dev`, and limited to `layer`
+/// when one is given (D26).
+pub fn device_token(sub: &str, repository: &str, dev: &str, layer: Option<&str>) -> String {
+    let now = now();
+    let mut claims = test_keys::claims(
+        sub,
+        repository,
+        &ALL,
+        now,
+        now + 600,
+        &format!("{sub}-{dev}-jti"),
+    );
+    claims.dev = dev.to_string();
+    claims.layer = layer.map(str::to_string);
+    test_keys::issuer().issue(&claims).unwrap()
+}

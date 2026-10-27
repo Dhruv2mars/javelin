@@ -21,8 +21,8 @@ mod hosting;
 mod wire;
 
 pub use hosting::{
-    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
-    RequestStatus, ReviewOutcome, Role, Visibility,
+    CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome,
+    RequestId, RequestStatus, ReviewOutcome, Role, Visibility,
 };
 use wire::*;
 
@@ -48,6 +48,7 @@ const LAYER_STACK: u8 = 0x37;
 const PUBLISH_LAYER: u8 = 0x38;
 const PUBLISH_OUTCOME: u8 = 0x39;
 const PUBLISH_REQUEST: u8 = 0x3a;
+const LAYER_TAKE: u8 = 0x3b;
 const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
 const CHANGESET: u8 = 0x42;
@@ -213,13 +214,15 @@ pub enum Message {
     LayerHead {
         layer: LayerId,
     },
-    /// Reply to `LayerHead`. `seq` is the head's sequence number.
+    /// Reply to `LayerHead`. `seq` is the head's sequence number; `lease` says whether the
+    /// caller's device holds the writer lease.
     LayerState {
         layer: LayerId,
         base: VersionNumber,
         seq: u64,
         head: ObjectId,
         state: LayerStatus,
+        lease: LeaseHolder,
     },
     /// Stack `source` onto `target`, which must still be at `target_head`.
     LayerStack {
@@ -227,6 +230,13 @@ pub enum Message {
         target: LayerId,
         target_head: ObjectId,
         source: ObjectId,
+    },
+    /// Move `layer`'s writer lease to the caller's device. Only the Layer's owner may take
+    /// it. Reply: `LayerOutcome`, `Accepted` with the node's head. A repeated operation
+    /// replays its recorded outcome.
+    LayerTake {
+        operation: OperationId,
+        layer: LayerId,
     },
     /// Publish a whole Layer as the next World version, over `base`.
     PublishLayer {
@@ -449,6 +459,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             seq,
             head,
             state,
+            lease,
         } => {
             out.push(LAYER_STATE);
             put_short(&mut out, layer.as_str());
@@ -456,6 +467,7 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.extend_from_slice(&seq.to_be_bytes());
             put_id(&mut out, head);
             out.push(state.code());
+            out.push(lease.code());
         }
         Message::LayerStack {
             operation,
@@ -468,6 +480,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             put_short(&mut out, target.as_str());
             put_id(&mut out, target_head);
             put_id(&mut out, source);
+        }
+        Message::LayerTake { operation, layer } => {
+            out.push(LAYER_TAKE);
+            put_short(&mut out, operation.as_str());
+            put_short(&mut out, layer.as_str());
         }
         Message::PublishLayer {
             operation,
@@ -717,10 +734,13 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
             LayerOutcome::Refused { code } => 2 + short(code)?,
         },
         Message::LayerHead { layer } => 1 + short(layer.as_str())?,
-        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 1,
+        Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 2,
         Message::LayerStack {
             operation, target, ..
         } => 1 + short(operation.as_str())? + short(target.as_str())? + 64,
+        Message::LayerTake { operation, layer } => {
+            1 + short(operation.as_str())? + short(layer.as_str())?
+        }
         Message::PublishLayer {
             operation,
             layer,
@@ -931,12 +951,17 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             seq: r.u64()?,
             head: r.id()?,
             state: r.layer_status()?,
+            lease: r.lease_holder()?,
         },
         LAYER_STACK => Message::LayerStack {
             operation: r.operation()?,
             target: r.layer()?,
             target_head: r.id()?,
             source: r.id()?,
+        },
+        LAYER_TAKE => Message::LayerTake {
+            operation: r.operation()?,
+            layer: r.layer()?,
         },
         PUBLISH_LAYER => Message::PublishLayer {
             operation: r.operation()?,

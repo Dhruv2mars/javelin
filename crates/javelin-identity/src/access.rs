@@ -46,6 +46,9 @@ pub struct Need<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Grant {
     pub principal: Option<String>,
+    /// The device the token was issued to, or `None` for an anonymous read. A Layer's writer
+    /// lease names one device (`docs/direction.md`, Layers follow their owner).
+    pub device: Option<String>,
     pub role: Role,
     /// The check-name globs the token may report. Empty unless the token carries them.
     pub checks: Vec<String>,
@@ -225,6 +228,7 @@ impl Access {
         }
         Ok(Grant {
             principal: Some(claims.sub),
+            device: Some(claims.dev),
             role,
             checks: claims.checks,
         })
@@ -237,6 +241,7 @@ impl Access {
             {
                 Ok(Grant {
                     principal: None,
+                    device: None,
                     role: Role::Read,
                     checks: Vec::new(),
                 })
