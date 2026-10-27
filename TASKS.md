@@ -38,6 +38,19 @@ CI left open. Work from it, in roughly this order:
   from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
   ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
   capture fix. Kill on observable progress instead of measured time.
+- [ ] Windows `layer_creates_wait_for_an_advance_and_stay_consistent` flake: concurrent
+  `create_layer` returns `Busy("database is locked")` (PR #95 run `40374043826`, 3 of 5
+  threads; PR #101 job `121973967155`, 1 of 5). Blocked on GitHub (account suspended
+  2026-10-27). Done so far: no create or open path holds a SQLite transaction, statement or
+  write lock across filesystem work or the store-lock wait (code read of `layer.rs`,
+  `workspace.rs`, `repository.rs`). `create_layer` is a short `BEGIN IMMEDIATE`. macOS
+  passed 15/15. Windows passed 40/40 in isolation, about 11 s per binary against 45 to 63 s
+  in the failing CI jobs, so the flake needs a loaded disk. The traced loaded run (4
+  binaries at once, diag run `40442668503`, local branch `diag/windows-layer-busy`)
+  finished, but its logs are unread. Unconfirmed lead: on a slow disk, Windows Defender or
+  journal delete-pending stalls in DELETE journal mode lengthen each commit until queued
+  creates pass 5 s. Next: read that run's `busy handler` and `COMMIT` timings, then fix and
+  prove on Windows CI.
 
 ## Working rules
 
