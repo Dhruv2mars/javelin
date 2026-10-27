@@ -146,10 +146,13 @@ impl Traces {
         };
         for (kind, trace) in items {
             // A trace the reader may not read at all, such as one only a version above its
-            // frontier publishes, is left to `Get`, which answers it as never stored.
+            // frontier publishes, is left to `Get`, which answers it as never stored. One the
+            // reader uploaded is served back: it already holds the bytes, and refusing it would
+            // confirm a restricted trace with those bytes exists.
             if *kind == Kind::Blob
                 && self.visibility(*trace)? == TraceVisibility::Restricted
                 && repo.readable(*trace, reader)?
+                && !repo.uploaded(*trace, reader)?
             {
                 return Err(restricted());
             }

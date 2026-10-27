@@ -465,6 +465,21 @@ fn a_restricted_trace_of_a_held_version_is_absent_outside_the_repository() {
     );
     // A member may read the version, so it is told the trace is restricted.
     assert_eq!(detail(&replies[2]).0, "forbidden");
+
+    // A stranger who guesses the trace's bytes and uploads them reads them back exactly as
+    // on a node that never held the trace.
+    let mut plain = Node::new();
+    plain.at(T0 + 10);
+    let guess = vec![
+        (Who::Stranger, Message::Want(vec![(Kind::Blob, trace)])),
+        (
+            Who::Stranger,
+            Message::Objects(vec![(Kind::Blob, trace, b"private reasoning".to_vec())]),
+        ),
+        (Who::Stranger, Message::Get(vec![(Kind::Blob, trace)])),
+        (Who::Anonymous, Message::Get(vec![(Kind::Blob, trace)])),
+    ];
+    assert_eq!(node.session(&guess), plain.session(&guess));
 }
 
 #[test]
