@@ -202,7 +202,7 @@ fn render(command: &str, disclosure: &Disclosure) -> Output {
 /// A delay in the largest whole unit.
 fn describe(seconds: u64) -> String {
     for (unit, size) in [("d", 86_400), ("h", 3600), ("m", 60)] {
-        if seconds % size == 0 {
+        if seconds.is_multiple_of(size) {
             return format!("{}{unit}", seconds / size);
         }
     }
