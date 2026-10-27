@@ -3,3 +3,4 @@
 # Proof runs upload raw evidence as CI artifacts; never commit it.
 tools/*/evidence/
 tools/*/hardening-evidence/
+.vercel

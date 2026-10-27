@@ -1,5 +1,5 @@
-// Builds the forge to static assets in `dist/`: index.html, app.js and styles.css. Any
-// static host, or a Cloudflare Worker with an SPA fallback to index.html, can serve them.
+// Builds the forge to static assets in `dist/`: index.html, app.js and styles.css. Vercel
+// serves them (`vercel.json`); any static host with an SPA fallback to index.html can.
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 

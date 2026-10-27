@@ -4,6 +4,7 @@ import { readBounded } from "../../../packages/protocol/src";
 import { contents } from "../src/data";
 import { MAX_EDITS, diffLines } from "../src/diff";
 import { relativeTargets, renderMarkdown, resolveRelative } from "../src/markdown";
+import * as landing from "../src/landing";
 import { findTarget, parseRoute } from "../src/routes";
 
 const lines = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => `${f(i)}\n`).join("");
@@ -114,4 +115,40 @@ test("a reply past the frame limit is refused while it streams", async () => {
   await expect(readBounded(new Response(endless), 64 * 1024)).rejects.toMatchObject({ code: "limit_exceeded" });
   expect(pulled).toBeLessThan(100);
   expect(await readBounded(new Response(Uint8Array.of(1, 2, 3)), 3)).toEqual(Uint8Array.of(1, 2, 3));
+});
+
+test("the landing form opens a repository by node address and ID", () => {
+  const { openTarget, defaultName, rememberedRepositories } = landing;
+  expect(openTarget(" https://node.example.com/ ", "repo_lantern", "")).toEqual({
+    ok: true,
+    url: "/node.example.com/repo_lantern?node=https%3A%2F%2Fnode.example.com&repository=repo_lantern",
+  });
+  expect(openTarget("http://127.0.0.1:7878", "repo:1", "demo/lantern")).toEqual({
+    ok: true,
+    url: "/demo/lantern?node=http%3A%2F%2F127.0.0.1%3A7878&repository=repo%3A1",
+  });
+  expect(defaultName({ node: "http://127.0.0.1:7878", repository: "repo:1" })).toBe("127.0.0.1-7878/repo-1");
+  // The default name parses as a repository route.
+  expect(parseRoute(`/${defaultName({ node: "http://[::1]:7878", repository: "x" })}`).page).toBe("tree");
+  expect(openTarget("node.example.com", "r", "").ok).toBe(false);
+  expect(openTarget("https://node.example.com/v2", "r", "").ok).toBe(false);
+  expect(openTarget("https://node.example.com", "", "").ok).toBe(false);
+  expect(openTarget("https://node.example.com", "r", "no-slash").ok).toBe(false);
+  expect(openTarget("https://node.example.com", "r", "a/b/c").ok).toBe(false);
+
+  const items = new Map([
+    ["forge:bad/value", "{"],
+    ["forge:demo/lantern", JSON.stringify({ node: "http://127.0.0.1:7878", repository: "repo_forge_demo" })],
+    ["other", "x"],
+  ]);
+  const storage = {
+    get length() {
+      return items.size;
+    },
+    key: (i: number) => [...items.keys()][i] ?? null,
+    getItem: (k: string) => items.get(k) ?? null,
+  } as unknown as Storage;
+  // A corrupt entry is skipped, and the entries after it are still listed.
+  expect(rememberedRepositories(storage).map(([k]) => k)).toEqual(["demo/lantern"]);
+  expect(rememberedRepositories(null)).toEqual([]);
 });

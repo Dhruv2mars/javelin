@@ -1,11 +1,13 @@
 # Forge (read-only pages)
 
-The first pages of javelin.codes. The browser reads a repository's node directly over
+The first pages of javelin.codes, live at https://javelin-codes.vercel.app until the domain is
+connected. The browser reads a repository's node directly over
 protocol v2 (`POST {node}/v2/r/{repository}`), with no Javelin-run server in between
 (`docs/build-contract.md`, Hosting ownership). Public repositories need no account (D24).
 
 | Page | URL |
 | --- | --- |
+| Landing: what Javelin is, install, open a repository by node URL and ID | `/` |
 | Repository home: files at the head, README rendered | `/OWNER/REPO` |
 | Directory at a version | `/OWNER/REPO/tree/N/PATH` |
 | File at a version (highlighted text, notice for binary) | `/OWNER/REPO/file/N/PATH` |
@@ -41,9 +43,25 @@ directory instead of the demo). Tests and `dev` build the binaries with cargo un
 the repository is public, so a directory with no `permissions.json` gets a public one, which
 the forge reads without a token.
 
+## Deploy
+
+Vercel serves the static build from the `javelin-codes` project (Hobby plan) through its Git
+integration. Every push to `main` that changes `apps/forge/` or `packages/protocol/` deploys
+production; pull requests get preview deployments, and other pushes skip the build
+(`ignoreCommand`). The project's root directory is `apps/forge`, and `vercel.json` holds the
+rest: bun install and build, `dist/` as output, index.html for every page route so direct loads
+and refreshes work, and the security headers. The CSP lets the page fetch any `https:` node,
+and `http://localhost` and `http://127.0.0.1` nodes for local work.
+
+To deploy by hand from a checkout linked with `vercel link --project javelin-codes`, run from
+the repository root:
+
+    vercel build --prod && vercel deploy --prebuilt --prod
+
 ## Layout
 
 - `src/data.ts`: page data loaders, no DOM. `src/app.ts`: routing and rendering.
+- `src/landing.ts`: the page at `/` and its open-a-repository form.
 - `src/diff.ts` (Myers line diff), `src/highlight.ts`, `src/markdown.ts` (raw HTML escaped,
   unsafe link schemes dropped), `src/routes.ts`.
 - `scripts/node.ts`: seeds a repository with the `javelin` CLI and runs `javelin-node serve`.
