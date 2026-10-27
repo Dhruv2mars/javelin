@@ -398,12 +398,13 @@ try {
         if (await killed(S.discardArgs(bulkRepo, id), delay)) landed++;
         // The next command finishes or undoes the discard: an active Layer is intact; a
         // discarded one has no directory, and its data is reclaimed.
-        await S.path(bulkRepo, id);
+        const next = await S.path(bulkRepo, id);
         if (await S.active(bulkRepo, id)) {
           sameTree(before, tree(path), `Layer ${id} still active after an interrupted discard`);
           await S.discard(bulkRepo, id);
           outcomes.push('rolled-back');
         } else {
+          assert(next.exists === false, `workspace path reports a live directory for discarded Layer ${id}: ${JSON.stringify(next.r.json).slice(0, 300)}`);
           assert(!fs.existsSync(path), `Layer ${id} is discarded but its directory is still at ${path} after the next command`);
           outcomes.push('rolled-forward');
         }
@@ -536,21 +537,36 @@ try {
   });
   await check('capture', 'concurrent-rewrites-during-capture', async () => {
     fs.mkdirSync(join(a.path, 'hot'));
-    const writer = spawn(process.execPath, [join(here, 'gate2-writer.mjs'), join(a.path, 'hot'), '3000'], { stdio: ['ignore', 'pipe', 'inherit'] });
-    let finalGen = ''; writer.stdout.on('data', d => { finalGen += d; });
-    const done = new Promise(r => writer.on('exit', r));
-    await sleep(200);
+    // The writer runs until told to stop, not for a fixed time: checkpoint latency is not
+    // part of the contract, and a slow host must not starve the check of captures.
+    const stop = join(root, `writer-stop-${randomBytes(4).toString('hex')}`);
+    const writer = spawn(process.execPath, [join(here, 'gate2-writer.mjs'), join(a.path, 'hot'), stop, '120000'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let output = ''; writer.stdout.on('data', d => { output += d; });
+    let exited = false;
+    const done = new Promise(r => writer.on('exit', code => { exited = true; r(code); }));
+    // Captures start once both files hold a complete version, so every one should hold them.
+    for (const deadline = Date.now() + 30000; !output.includes('ready\n') && !exited && Date.now() < deadline;) await sleep(20);
+    if (!output.includes('ready\n')) { writer.kill(); throw new Error(`writer never became ready: ${exited ? `exited ${await done}` : 'no first version within 30 s'}`); }
+    // At least 3 s of rewrites and at least 4 distinct checkpoints taken while they run.
     const during = [];
-    let uncertain = 0;
-    let running = true; done.then(() => { running = false; });
-    while (running) {
-      const r = await S.checkpoint(repo, 'layer-a');
-      assert(r.code === 0 || (r.json?.ok === false && r.json?.error?.code), `capture during rewrites crashed: exit ${r.code} ${r.stderr.slice(0, 300)}`);
-      const cp = r.code === 0 ? hexUnder(r.json, /checkpoint/i) : null;
-      uncertain += find(r.json, k => k === 'uncertain', Array.isArray)?.length ?? 0;
-      if (cp && !during.includes(cp)) during.push(cp);
-    }
-    assert(await done === 0, 'writer failed');
+    let uncertain = 0, captures = 0;
+    const started = Date.now();
+    try {
+      while (!exited && (Date.now() - started < 3000 || during.length < 4) && Date.now() - started < 90000) {
+        const r = await S.checkpoint(repo, 'layer-a');
+        captures++;
+        assert(r.code === 0 || (r.json?.ok === false && r.json?.error?.code), `capture during rewrites crashed: exit ${r.code} ${r.stderr.slice(0, 300)}`);
+        const cp = r.code === 0 ? hexUnder(r.json, /checkpoint/i) : null;
+        uncertain += find(r.json, k => k === 'uncertain', Array.isArray)?.length ?? 0;
+        if (cp && !during.includes(cp)) during.push(cp);
+      }
+    } finally { fs.writeFileSync(stop, ''); }
+    const code = await done;
+    fs.rmSync(stop);
+    assert(code === 0, `writer failed: exit ${code}`);
+    assert(!output.includes('safety limit'), `writer stopped by its safety limit before the probe finished: ${output.trim()}`);
+    assert(during.length >= 4, `only ${during.length} distinct checkpoints from ${captures} captures in ${Date.now() - started} ms of rewrites`);
+    const finalGen = output.replace('ready\n', '');
     const snap = await snapshot(repo, await S.capture(repo, 'layer-a'));
     for (const f of ['inplace.txt', 'atomic.txt']) assert(snap[`hot/${f}`] === fileHash(fs.readFileSync(join(a.path, 'hot', f))), `final hot/${f} not captured after rewrites stopped`);
     // Atomic saves replace whole files; every captured version must be a complete one.

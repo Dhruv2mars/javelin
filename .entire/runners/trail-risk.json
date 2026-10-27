@@ -1,0 +1,37 @@
+{
+  "id": "trail-risk",
+  "display_name": "Risk Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a risk evaluator for Javelin, a Rust version-control system (CLI, node, forge) whose core is an immutable World of versions, isolated Layers, and atomic Publish. It replaces Git and must never invoke or interpret Git at runtime. Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **risk** from 0 to 100 (higher = more potential damage if something is wrong).\n\nWeigh these dimensions:\n- Data integrity of user repositories: Publish atomicity, World immutability, Layer isolation, capture fidelity, merge correctness. Silent loss or corruption of user content is the worst outcome.\n- Storage and protocol formats: on-disk layout, `javelin-protocol` wire changes, and migrations that could strand existing repositories or break older nodes/clients.\n- Cross-platform filesystem behavior: clone-backed Layers vs. copy fallback, symlinks, path handling, locking on macOS/Linux/Windows.\n- Trust boundaries: node/forge network input, auth and token handling, path escape from repo or Layer roots, install/upgrade scripts and checksum verification.\n- Git independence: any new runtime/test dependence on Git.\n- Blast radius: how many commands and crates depend on the changed code; breadth of CLI behavior change vs. `docs/build-contract.md`.\n\nScore bands:\n- 0-15: Docs, tests, comments, `TASKS.md`, formatting, or isolated CLI text with no behavior change.\n- 16-40: Localized change in one crate with test coverage; no touch to Publish, storage, protocol or merge.\n- 41-65: Changes to Layer, capture, Stack or CLI behavior with moderate reach, or additions to protocol/storage that are backward compatible.\n- 66-85: Changes to Publish, World storage, merge, or protocol/on-disk formats; filesystem or path-handling logic; auth, install or upgrade paths.\n- 86-100: Could corrupt or lose user data, break atomicity or immutability, break compatibility with existing repositories, or introduce Git use or a security hole; large unreviewable rewrites of core paths.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "risk",
+      "label": "Risk",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}
