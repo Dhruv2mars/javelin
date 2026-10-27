@@ -3,9 +3,7 @@
 import { escapeHtml as esc } from "./highlight";
 import { type Config, type Target, validTarget } from "./routes";
 
-export const RELEASE = "v0.1.0-alpha.1";
-const GITHUB = "https://github.com/Dhruv2mars/javelin";
-const RELEASES = `${GITHUB}/releases`;
+const SOURCE = "https://entire.com/et/dhruv2mars/javelin";
 
 /** A forge name (`owner/repo`) for a target opened without one: the node's host and the ID. */
 export function defaultName(t: Target): string {
@@ -188,27 +186,22 @@ export function landingPage(config: Config, storage: Storage | null) {
       <section class="band" id="install" aria-labelledby="install-title">
         <div class="band-head">
           <h2 id="install-title">Install the CLI</h2>
-          <p>Javelin is pre-release. Each <a href="${RELEASES}">GitHub release</a> has an installer that checks the archive's SHA-256 before installing. Pin a tag for now.</p>
+          <p>Javelin is pre-release. Release builds with installers for macOS, Linux and Windows are coming. Until then, build the CLI from <a href="${SOURCE}">its source on Entire</a>.</p>
         </div>
         <div class="band-body">
-          <h3>macOS and Linux</h3>
+          <h3>From source</h3>
           ${sh([
-            `curl -fsSLO ${RELEASES}/download/${RELEASE}/install.sh`,
-            `sh install.sh --version ${RELEASE}`,
+            "entire repo clone /et/dhruv2mars/javelin",
+            "cd javelin",
+            "cargo install --locked --path crates/javelin-cli",
             "javelin --version",
           ])}
-          <h3>Windows PowerShell</h3>
-          ${sh([
-            `Invoke-WebRequest ${RELEASES}/download/${RELEASE}/install.ps1 -OutFile install.ps1`,
-            `powershell -ExecutionPolicy Bypass -File .\\install.ps1 -Version ${RELEASE}`,
-            "javelin --version",
-          ])}
-          <p class="muted">Newer tags, archives and checksums are on the <a href="${RELEASES}">releases page</a>. <a href="${GITHUB}/blob/main/docs/install.md">The install guide</a> covers platforms and upgrades.</p>
+          <p class="muted">This needs a Rust toolchain and a C compiler, and the <code>entire</code> CLI to clone. It installs <code>javelin</code> into Cargo's bin directory.</p>
         </div>
       </section>
 
       <footer class="landing-foot">
-        <p>Javelin is open source and pre-release. <a href="${GITHUB}">Source on GitHub</a>.</p>
+        <p>Javelin is open source and pre-release. <a href="${SOURCE}">Source on Entire</a>.</p>
       </footer>
     </div>`;
 }

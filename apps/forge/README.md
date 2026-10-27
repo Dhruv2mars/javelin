@@ -7,7 +7,7 @@ protocol v2 (`POST {node}/v2/r/{repository}`), with no Javelin-run server in bet
 
 | Page | URL |
 | --- | --- |
-| Landing: what Javelin is, install, open a repository by node URL and ID | `/` |
+| Landing: what Javelin is, building from source, open a repository by node URL and ID | `/` |
 | Repository home: files at the head, README rendered | `/OWNER/REPO` |
 | Directory at a version | `/OWNER/REPO/tree/N/PATH` |
 | File at a version (highlighted text, notice for binary) | `/OWNER/REPO/file/N/PATH` |
@@ -45,18 +45,17 @@ the forge reads without a token.
 
 ## Deploy
 
-Vercel serves the static build from the `javelin-codes` project (Hobby plan) through its Git
-integration. Every push to `main` that changes `apps/forge/` or `packages/protocol/` deploys
-production, and pull requests get preview deployments. A push that changes neither since the
-branch's last deployment skips the build (`ignoreCommand`). The project's root directory is `apps/forge`, and `vercel.json` holds the
-rest: bun install and build, `dist/` as output, index.html for every page route so direct loads
-and refreshes work, and the security headers. The CSP lets the page fetch any `https:` node,
-and `http://localhost` and `http://127.0.0.1` nodes for local work.
+Vercel serves the static build from the `javelin-codes` project on the Hobby plan. Nothing
+deploys on push. From a clean `main` checkout, logged in to the `dhruv2mars` Vercel account,
+run:
 
-To deploy by hand from a checkout linked with `vercel link --project javelin-codes`, run from
-the repository root:
+    bun run deploy
 
-    vercel build --prod && vercel deploy --prebuilt --prod
+`scripts/deploy.ts` runs `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt
+--prod`, so the build runs locally and only its output is uploaded. `vercel.json` holds the
+settings: bun install and build, `dist/` as output, index.html for every page route so direct
+loads and refreshes work, and the security headers. The CSP lets the page fetch any `https:`
+node, plus `http://localhost` and `http://127.0.0.1` nodes for local work.
 
 ## Layout
 
