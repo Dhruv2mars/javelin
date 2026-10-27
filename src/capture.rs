@@ -42,26 +42,6 @@ use crate::{
     ignore::{CONFIG, LIMIT},
 };
 
-/// Receives each local capture that advanced a Layer, right after it is recorded.
-/// `source` holds the captured blobs, and `before` is the head the changes were captured
-/// against. A sink that cannot upload returns `Err`; the capture stays recorded locally.
-pub trait CheckpointSink {
-    fn upload(
-        &mut self,
-        source: &Repository,
-        operation: &OperationId,
-        before: &LayerHead,
-        changes: &SparseChanges,
-    ) -> std::result::Result<(), String>;
-}
-
-impl Repository {
-    /// Sets the sink that uploads captures. Replaces any previous sink.
-    pub fn set_checkpoint_sink(&mut self, sink: Box<dyn CheckpointSink + Send>) {
-        self.sink = Some(sink);
-    }
-}
-
 /// Reads of one entry before it is reported uncertain.
 pub const ATTEMPTS: usize = 3;
 /// Entries modified this close to (or after) the scan start are racy.

@@ -4,13 +4,25 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# `native` is the self-hosted node: its data directory, the loopback HTTP server, the
+# `javelin-node` binary and the volume alias probe in Stack. Without it the crate is the node
+# core that `javelin-node-cloudflare` builds for wasm32-unknown-unknown.
+[features]
+default = ["native"]
+native = ["javelin/fs", "javelin-stack/fs"]
+
+[[bin]]
+name = "javelin-node"
+path = "src/main.rs"
+required-features = ["native"]
+
 [dependencies]
-javelin = { path = "../.." }
+javelin = { path = "../..", default-features = false }
 javelin-collaboration = { path = "../javelin-collaboration" }
 javelin-identity = { path = "../javelin-identity" }
 javelin-merge = { path = "../javelin-merge" }
 javelin-protocol = { path = "../javelin-protocol" }
-javelin-stack = { path = "../javelin-stack" }
+javelin-stack = { path = "../javelin-stack", default-features = false }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"

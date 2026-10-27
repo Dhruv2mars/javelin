@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-javelin = { path = "../.." }
+javelin = { path = "../..", default-features = false }
 serde_json = "1.0"
 
 [dev-dependencies]

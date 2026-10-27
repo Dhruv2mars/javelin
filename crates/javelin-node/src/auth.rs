@@ -4,15 +4,15 @@
 //! `stale_permissions` for an out-of-date push. The HTTP server passes the token from each
 //! request's `Authorization: Bearer` header, or `None` for an anonymous caller.
 //!
-//! A self-hosted node keeps what the gate starts from in its data directory: the applied
-//! permissions (`permissions.json`) and the public keys it trusts (`keys.json`). The control
-//! plane writes both; the node never holds a signing key.
+//! A node keeps what the gate starts from in its storage: the applied permissions
+//! (`permissions.json`) and the public keys it trusts (`keys.json`), files in a self-hosted
+//! node's data directory. The control plane writes both; the node never holds a signing key.
 
+#[cfg(feature = "native")]
+use std::path::Path;
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
-    io::{self, ErrorKind, Write},
-    path::Path,
+    io::{self, ErrorKind},
 };
 
 use javelin::Reader;
@@ -21,10 +21,12 @@ use javelin_identity::{Access, Grant, KeySet, Need, Refusal, Revocation};
 use javelin_protocol::ProtocolError;
 use serde::{Deserialize, Serialize};
 
+use crate::storage::{self, Storage};
+
 /// The applied permissions in a node's data directory.
-pub const PERMISSIONS_FILE: &str = "permissions.json";
+pub const PERMISSIONS_FILE: &str = storage::PERMISSIONS;
 /// The public keys a node trusts, in its data directory.
-pub const KEYS_FILE: &str = "keys.json";
+pub const KEYS_FILE: &str = storage::KEYS;
 
 pub struct Gate {
     access: Access,
@@ -40,14 +42,20 @@ impl Gate {
     /// The gate a node serving `dir` starts with: its stored keys and permissions. The
     /// repository is the one the permissions name, or `name` before the first push, when
     /// every request is refused.
+    #[cfg(feature = "native")]
     pub fn load(dir: &Path, name: &str) -> io::Result<Self> {
-        let permissions = read_permissions(dir)?;
+        Self::load_from(&storage::Directory::new(dir), name)
+    }
+
+    /// `load` for a node on any storage.
+    pub fn load_from(storage: &dyn Storage, name: &str) -> io::Result<Self> {
+        let permissions = stored_permissions(storage)?;
         let repository = match &permissions {
             Some(permissions) => permissions.repository.clone(),
             None => RepositoryId::parse(name)
                 .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error.to_string()))?,
         };
-        let mut gate = Self::new(repository, read_keys(dir)?);
+        let mut gate = Self::new(repository, stored_keys(storage)?);
         if let Some(permissions) = permissions {
             gate.apply(permissions)
                 .map_err(|error| io::Error::new(ErrorKind::InvalidData, error.detail))?;
@@ -161,58 +169,71 @@ fn refused(refusal: Refusal) -> ProtocolError {
 
 /// The permissions stored in `dir`, or `None` before the first push. A file that does not
 /// parse is `InvalidData`.
+#[cfg(feature = "native")]
 pub fn read_permissions(dir: &Path) -> io::Result<Option<AppliedPermissions>> {
-    let bytes = match fs::read(dir.join(PERMISSIONS_FILE)) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let stored: Stored = serde_json::from_slice(&bytes).map_err(|error| corrupt(&error))?;
-    stored.into_permissions().map(Some)
+    stored_permissions(&storage::Directory::new(dir))
 }
 
 /// Stores `permissions` in `dir`, replacing what was there in one rename.
+#[cfg(feature = "native")]
 pub fn write_permissions(dir: &Path, permissions: &AppliedPermissions) -> io::Result<()> {
-    let bytes = serde_json::to_vec_pretty(&Stored::from(permissions)).map_err(io::Error::other)?;
-    write_replacing(&dir.join(PERMISSIONS_FILE), &bytes)
+    store_permissions(&storage::Directory::new(dir), permissions)
 }
 
 /// The keys stored in `dir`. With none stored the node trusts no key, so only anonymous
 /// reads of a public repository pass.
+#[cfg(feature = "native")]
 pub fn read_keys(dir: &Path) -> io::Result<KeySet> {
-    match fs::read(dir.join(KEYS_FILE)) {
-        Ok(bytes) => KeySet::from_json(&bytes).map_err(|error| corrupt(&error)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(KeySet::new()),
-        Err(error) => Err(error),
-    }
+    stored_keys(&storage::Directory::new(dir))
 }
 
 /// Stores the keys the node trusts in `dir`, replacing what was there in one rename.
+#[cfg(feature = "native")]
 pub fn write_keys(dir: &Path, keys: &KeySet) -> io::Result<()> {
-    write_replacing(&dir.join(KEYS_FILE), &keys.to_json())
+    store_keys(&storage::Directory::new(dir), keys)
+}
+
+/// The permissions in `storage`, or `None` before the first push. A document that does not
+/// parse is `InvalidData`.
+pub fn stored_permissions(storage: &dyn Storage) -> io::Result<Option<AppliedPermissions>> {
+    let Some(bytes) = storage.read(PERMISSIONS_FILE)? else {
+        return Ok(None);
+    };
+    parse_permissions(&bytes).map(Some)
+}
+
+/// Permissions in the stored JSON layout (`permissions.json`), which is also the layout a
+/// control plane pushes to a Cloudflare node. Unknown fields are ignored; anything else that
+/// does not parse is `InvalidData`.
+pub fn parse_permissions(bytes: &[u8]) -> io::Result<AppliedPermissions> {
+    let stored: Stored = serde_json::from_slice(bytes).map_err(|error| corrupt(&error))?;
+    stored.into_permissions()
+}
+
+/// Stores `permissions` in `storage`, replacing what was there.
+pub fn store_permissions(
+    storage: &dyn Storage,
+    permissions: &AppliedPermissions,
+) -> io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(&Stored::from(permissions)).map_err(io::Error::other)?;
+    storage.write(PERMISSIONS_FILE, &bytes)
+}
+
+/// The keys in `storage`. With none stored the node trusts no key.
+pub fn stored_keys(storage: &dyn Storage) -> io::Result<KeySet> {
+    match storage.read(KEYS_FILE)? {
+        Some(bytes) => KeySet::from_json(&bytes).map_err(|error| corrupt(&error)),
+        None => Ok(KeySet::new()),
+    }
+}
+
+/// Stores the keys the node trusts in `storage`, replacing what was there.
+pub fn store_keys(storage: &dyn Storage, keys: &KeySet) -> io::Result<()> {
+    storage.write(KEYS_FILE, &keys.to_json())
 }
 
 fn corrupt(error: &dyn std::fmt::Display) -> io::Error {
     io::Error::new(ErrorKind::InvalidData, format!("{error}"))
-}
-
-/// Writes through a temporary file, so a crash leaves the old or the new content. The file
-/// is private to its owner on Unix.
-fn write_replacing(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(tmp, path)
 }
 
 #[derive(Serialize, Deserialize)]

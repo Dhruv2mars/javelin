@@ -84,7 +84,7 @@ pub fn stack_layer_resolved(
         &ours_manifest,
         &theirs_manifest,
         choices,
-        |paths| repo.aliased_paths(paths),
+        |paths| aliased_paths(repo, paths),
         |id| repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize),
     )
     .map_err(StackError::Merge)?;
@@ -152,4 +152,16 @@ fn record_resolution(
     let bytes =
         serde_json::to_vec(&json!({ "resolutions": resolutions })).expect("resolution encoding");
     Ok(repo.put_blob(&bytes)?)
+}
+
+/// Merged paths that alias another one on this machine's volume.
+#[cfg(feature = "fs")]
+fn aliased_paths(repo: &Repository, paths: &[RepoPath]) -> javelin::Result<Vec<RepoPath>> {
+    repo.aliased_paths(paths)
+}
+
+/// No volume to probe: no path is an alias here.
+#[cfg(not(feature = "fs"))]
+fn aliased_paths(_: &Repository, _: &[RepoPath]) -> javelin::Result<Vec<RepoPath>> {
+    Ok(Vec::new())
 }

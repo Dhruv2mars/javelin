@@ -1,6 +1,9 @@
+#[cfg(feature = "fs")]
 use std::{fs, path::Path, time::Duration};
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
+#[cfg(feature = "fs")]
+use rusqlite::OpenFlags;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use sha2::Digest;
 
@@ -14,6 +17,7 @@ use crate::{
 
 const FORMAT: i64 = 10;
 const APPLICATION: i64 = 0x4a41564c;
+#[cfg(feature = "fs")]
 const DATABASE: &str = "repository.sqlite3";
 // A World version's primary record is its changeset: one `changes` row per changed
 // path, NULL kind for deletion. Its derived tree root is stored with the version,
@@ -137,23 +141,58 @@ pub struct Repository {
     pub(crate) conn: Connection,
     /// Recorded in every checkpoint this handle captures or stacks.
     pub(crate) provenance: Option<crate::Provenance>,
-    /// Told about each capture that advances a Layer. See `capture::CheckpointSink`.
-    pub(crate) sink: Option<Box<dyn crate::capture::CheckpointSink + Send>>,
+    /// Told about each capture that advances a Layer. See [`CheckpointSink`].
+    pub(crate) sink: Option<Box<dyn CheckpointSink + Send>>,
+}
+
+/// Receives each local capture that advanced a Layer, right after it is recorded.
+/// `source` holds the captured blobs, and `before` is the head the changes were captured
+/// against. A sink that cannot upload returns `Err`; the capture stays recorded locally.
+pub trait CheckpointSink {
+    fn upload(
+        &mut self,
+        source: &Repository,
+        operation: &OperationId,
+        before: &crate::LayerHead,
+        changes: &SparseChanges,
+    ) -> std::result::Result<(), String>;
 }
 
 impl Repository {
+    /// Sets the sink that uploads captures. Replaces any previous sink.
+    pub fn set_checkpoint_sink(&mut self, sink: Box<dyn CheckpointSink + Send>) {
+        self.sink = Some(sink);
+    }
+
+    /// Creates empty immutable World 0 in `conn`, or validates the store it already holds.
+    /// The caller opened `conn` and chose its storage and journal; this touches no
+    /// filesystem. An interrupted empty initialization can be retried; a database that holds
+    /// anything else is refused.
+    pub fn init_on(mut conn: Connection) -> Result<Self> {
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        create_in(&mut conn, None, || Ok(()))?;
+        Ok(Self {
+            conn,
+            provenance: None,
+            sink: None,
+        })
+    }
+
     /// Creates empty immutable World 0, or validates and reopens an existing store.
     /// An interrupted empty initialization can be retried; foreign data is never replaced.
+    #[cfg(feature = "fs")]
     pub fn init(root: impl AsRef<Path>) -> Result<Self> {
         Self::initialize(root, None)
     }
 
     /// Like [`Repository::init`], and creates `adoption` on World 0 in the same transaction,
     /// so no store exists with World 0 but without the adoption Layer.
+    #[cfg(feature = "fs")]
     pub(crate) fn init_adopting(root: impl AsRef<Path>, adoption: &crate::LayerId) -> Result<Self> {
         Self::initialize(root, Some(adoption))
     }
 
+    #[cfg(feature = "fs")]
     fn initialize(root: impl AsRef<Path>, adoption: Option<&crate::LayerId>) -> Result<Self> {
         let root = fs::canonicalize(root)?;
         if !root.is_dir() {
@@ -171,10 +210,7 @@ impl Repository {
         let path = directory.join(DATABASE);
         validate_database_path(&path)?;
         let mut conn = connect(&path, true)?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let format: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let application: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
-        if format == 0 && application == 0 {
+        create_in(&mut conn, adoption, || {
             for entry in fs::read_dir(&directory)? {
                 let entry = entry?;
                 if entry.file_name() != DATABASE
@@ -186,62 +222,8 @@ impl Repository {
                     ));
                 }
             }
-            let tables: i64 =
-                tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
-            if tables != 0 {
-                return Err(Error::CorruptRepository(
-                    "unrecognized database; refusing initialization".into(),
-                ));
-            }
-            tx.execute_batch(SCHEMA)?;
-            tx.execute_batch(crate::layer::SCHEMA)?;
-            tx.execute_batch(crate::publish::SCHEMA)?;
-            tx.execute_batch(crate::stack::SCHEMA)?;
-            tx.execute_batch(crate::radar::SCHEMA)?;
-            tx.execute_batch(crate::blame::SCHEMA)?;
-            for table in [
-                "objects",
-                "versions",
-                "changes",
-                "attempts",
-                "repository_identity",
-                "layer_heads",
-                "layer_attempts",
-                "publications",
-                "stacks",
-                "blame",
-                "seals",
-                "views",
-                "view_chunks",
-                "object_access",
-                "uploads",
-            ] {
-                for action in ["UPDATE", "DELETE"] {
-                    tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
-                }
-            }
-            let empty = insert_object(&tx, ObjectKind::Tree, &[0])?;
-            tx.execute(
-                "INSERT INTO versions(number,id,tree) VALUES(0,?1,?2)",
-                params![
-                    version_id(None, empty, &SparseChanges::default()).to_string(),
-                    empty.to_string()
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO views(version,root) VALUES(0,?1)",
-                [empty.to_string()],
-            )?;
-            index_public_in(&tx, empty, &SparseChanges::default())?;
-            if let Some(layer) = adoption {
-                crate::layer::create_on_version_in(&tx, layer, VersionNumber::new(0)?)?;
-            }
-        } else {
-            validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
-        }
-        #[cfg(test)]
-        test_boundary("init_before_commit");
-        tx.commit()?;
+            Ok(())
+        })?;
         sync_directory(&directory)?;
         sync_directory(&root)?;
         #[cfg(test)]
@@ -253,6 +235,7 @@ impl Repository {
         })
     }
 
+    #[cfg(feature = "fs")]
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = fs::canonicalize(root)?;
         let directory = root.join(".javelin");
@@ -852,6 +835,7 @@ fn validate_state_with_checkpoints(
     Ok(history)
 }
 
+#[cfg(feature = "fs")]
 fn validate_directory(path: &Path) -> Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if !meta.is_dir() || meta.file_type().is_symlink() {
@@ -862,6 +846,7 @@ fn validate_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "fs")]
 fn validate_database_path(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => Err(Error::InvalidInput(
@@ -873,6 +858,78 @@ fn validate_database_path(path: &Path) -> Result<()> {
     }
 }
 
+/// Creates World 0 in an empty database, or validates an existing store, in one
+/// transaction. `fresh` runs first on an empty database and may refuse it, as a directory
+/// holding unexpected files is refused.
+fn create_in(
+    conn: &mut Connection,
+    adoption: Option<&crate::LayerId>,
+    fresh: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let format: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let application: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    if format == 0 && application == 0 {
+        fresh()?;
+        let tables: i64 = tx.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
+        if tables != 0 {
+            return Err(Error::CorruptRepository(
+                "unrecognized database; refusing initialization".into(),
+            ));
+        }
+        tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(crate::layer::SCHEMA)?;
+        tx.execute_batch(crate::publish::SCHEMA)?;
+        tx.execute_batch(crate::stack::SCHEMA)?;
+        tx.execute_batch(crate::radar::SCHEMA)?;
+        tx.execute_batch(crate::blame::SCHEMA)?;
+        for table in [
+            "objects",
+            "versions",
+            "changes",
+            "attempts",
+            "repository_identity",
+            "layer_heads",
+            "layer_attempts",
+            "publications",
+            "stacks",
+            "blame",
+            "seals",
+            "views",
+            "view_chunks",
+            "object_access",
+            "uploads",
+        ] {
+            for action in ["UPDATE", "DELETE"] {
+                tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
+            }
+        }
+        let empty = insert_object(&tx, ObjectKind::Tree, &[0])?;
+        tx.execute(
+            "INSERT INTO versions(number,id,tree) VALUES(0,?1,?2)",
+            params![
+                version_id(None, empty, &SparseChanges::default()).to_string(),
+                empty.to_string()
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO views(version,root) VALUES(0,?1)",
+            [empty.to_string()],
+        )?;
+        index_public_in(&tx, empty, &SparseChanges::default())?;
+        if let Some(layer) = adoption {
+            crate::layer::create_on_version_in(&tx, layer, VersionNumber::new(0)?)?;
+        }
+    } else {
+        validate_state_with_checkpoints(&mut crate::layer::CheckpointReader::new(&tx))?;
+    }
+    #[cfg(test)]
+    test_boundary("init_before_commit");
+    tx.commit()?;
+    Ok(())
+}
+
+#[cfg(feature = "fs")]
 fn connect(path: &Path, create: bool) -> Result<Connection> {
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -892,6 +949,7 @@ fn connect(path: &Path, create: bool) -> Result<Connection> {
     Ok(conn)
 }
 
+#[cfg(feature = "fs")]
 pub(crate) fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     fs::File::open(path)?.sync_all()?;

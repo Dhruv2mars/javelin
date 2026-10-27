@@ -1,12 +1,20 @@
 [workspace]
-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
-default-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
+members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-cloudflare", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
+default-members = [".", "crates/javelin-cli", "crates/javelin-collaboration", "crates/javelin-control", "crates/javelin-identity", "crates/javelin-merge", "crates/javelin-node", "crates/javelin-node-cloudflare", "crates/javelin-node-worker", "crates/javelin-protocol", "crates/javelin-stack"]
 resolver = "3"
 
 [package]
 name = "javelin"
 version = "0.1.0"
 edition = "2024"
+
+# `fs` holds everything that touches a filesystem: Layer workspaces, capture, adoption,
+# attachments, the outbox and path-based `Repository::init` and `open`. Without it the crate is
+# the node core: World log, objects, Layers, Stack, Publish and audiences over a SQLite
+# connection the caller opens, and it builds for wasm32-unknown-unknown.
+[features]
+default = ["fs"]
+fs = ["dep:libc"]
 
 [dependencies]
 # Salts for hidden-entry commitments come from the operating system's CSPRNG.
@@ -18,7 +26,11 @@ sha2 = "0.11.1"
 thiserror = "2.0.21"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.190"
+libc = { version = "0.2.190", optional = true }
+
+# A Worker has no OS randomness; salts come from `crypto.getRandomValues` (`.cargo/config.toml`).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 # hooks: the Publish write-transaction cost test counts SQLite VM instructions.
