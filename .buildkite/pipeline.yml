@@ -17,3 +17,18 @@ steps:
       # tests assert read-only paths stay read-only, which root ignores: run them as a normal user
       useradd -m ci && chown -R ci:ci . && chmod -R a+rwX /usr/local/cargo
       su ci -c 'PATH=/usr/local/cargo/bin:$$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup cargo test --locked --workspace --all-targets --all-features'
+
+  - label: ":cloudflare: node core for wasm"
+    key: wasm
+    agents: { queue: linux-small }
+    timeout_in_minutes: 30
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          environment: [CARGO_TERM_COLOR=never]
+    # The Cloudflare node's wasm module, SQLite included (clang and llvm-ar build it). The
+    # Worker glue (wasm-bindgen) and wrangler run where the node is deployed, not here.
+    command: |
+      apt-get update -qq && apt-get install -y -qq clang llvm > /dev/null
+      rustup target add wasm32-unknown-unknown
+      AR_wasm32_unknown_unknown=llvm-ar cargo build --locked --release --target wasm32-unknown-unknown -p javelin-node-cloudflare

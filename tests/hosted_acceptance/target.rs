@@ -156,11 +156,14 @@ fn target_repository_flows_and_retries() {
     for (id, reason) in [
         (
             "gate4.exact-revision-authorization",
-            "the Worker serves provision, permissions and state only (U13); review is not served",
+            "no wire message creates a Layer yet, so no Publish Request can be opened on a \
+             remote node; the review partition's parity with the self-hosted node is proven in \
+             crates/javelin-node-cloudflare/tests/parity.rs",
         ),
         (
             "gate4.immutable-prior-revisions",
-            "the Worker serves provision, permissions and state only (U13); review is not served",
+            "no wire message creates a Layer yet, so no Publish Request can be opened on a \
+             remote node",
         ),
         (
             "gate4.fork-data-without-credentials",
@@ -169,12 +172,13 @@ fn target_repository_flows_and_retries() {
         ),
         (
             "gate4.restricted-traces",
-            "the Worker stores no Worlds or traces yet (U13 scope)",
+            "traces are restricted through the node's library API only; no wire message carries \
+             them",
         ),
         (
             "gate4.distinct-outage-outcomes",
-            "the Worker has no repository wire for Layer writes or Publish yet, so the queued \
-             node-down and control-plane-down outcomes cannot be driven through it",
+            "no wire message creates a Layer yet, so the queued node-down and \
+             control-plane-down outcomes of Layer writes cannot be driven through the Worker",
         ),
     ] {
         target.not_verified(id, reason);
@@ -185,8 +189,9 @@ fn target_repository_flows_and_retries() {
             "workerd and miniflare are not accepted for coordinator transactions \
              (docs/online-design.md section 6); only a deployed Durable Object proves them"
         } else {
-            "the Worker has no World-log commit path yet; the commit transaction is proven on a \
-             deployed Durable Object by tools/spike-do (SPIKE_URL), outside this suite"
+            "the Worker runs the World-log commit path, but no wire message creates the Layer a \
+             Publish needs yet; parity with the self-hosted commit path is proven in \
+             crates/javelin-node-cloudflare/tests/parity.rs"
         },
     );
 }

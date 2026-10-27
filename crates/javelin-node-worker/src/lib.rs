@@ -1,20 +1,21 @@
 //! The managed repository node on Cloudflare (U13, `docs/online-design.md` 4.10, D1, D23).
 //!
-//! The node runs in `tools/node-cloudflare`: a Worker and one Durable Object per repository.
-//! The Rust core does not compile to wasm32 (the `javelin` root crate uses unix-only file
-//! operations and bundled SQLite), so D23's fallback applies and the Worker is TypeScript. This
+//! The node runs in `tools/node-cloudflare`: a Worker and one Durable Object per repository,
+//! which runs the Rust node core compiled to wasm (`crates/javelin-node-cloudflare`). This
 //! crate is the control plane's side of it: [`CloudflareNode`] implements the same
 //! [`NodeLink`] pushes that `LocalNode` implements for a self-hosted node, over HTTPS with the
 //! node's admin token, and [`CloudflareNode::snapshot`] reads the node's state back.
 //!
-//! The conformance suite in `tests/common` runs the same assertions against `LocalNode` (in
-//! CI) and against a workerd `wrangler dev` node (`tools/node-cloudflare`, `bun run test`).
+//! The conformance suite in `tests/common` runs the same assertions, admin pushes and
+//! protocol version 2, against `LocalNode` and the loopback server, and against the Worker on
+//! `wrangler dev` or deployed (`tools/node-cloudflare`, `bun run test`).
 
 use std::{collections::BTreeMap, sync::OnceLock, time::Duration};
 
 use javelin::Repository;
 use javelin_collaboration::{AppliedPermissions, RepositoryId, Role, Visibility};
 use javelin_control::{ControlError, NodeLink};
+use javelin_identity::KeySet;
 use javelin_protocol::ProtocolError;
 use serde_json::{Value, json};
 
@@ -167,6 +168,12 @@ impl NodeLink for CloudflareNode {
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {
         let url = self.url(&permissions.repository, "permissions");
         self.put(&url, &permissions_json(permissions))
+    }
+
+    fn trust(&self, repository: &RepositoryId, keys: &KeySet) -> Result<(), ControlError> {
+        let keys: Value = serde_json::from_slice(&keys.to_json())
+            .map_err(|error| ControlError::Storage(error.to_string()))?;
+        self.put(&self.url(repository, "keys"), &keys)
     }
 }
 

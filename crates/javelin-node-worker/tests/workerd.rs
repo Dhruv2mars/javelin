@@ -1,4 +1,5 @@
-//! The conformance suite against a Cloudflare node on `wrangler dev` (or a deployed node).
+//! The conformance suite against a Cloudflare node on `wrangler dev` (or a deployed node),
+//! its admin routes and its protocol version 2 endpoint.
 //! It needs `JAVELIN_NODE_URL` and `JAVELIN_NODE_ADMIN_TOKEN`, so it is ignored by default;
 //! `tools/node-cloudflare` runs it with `bun run test`. A deployed node keeps its state, so a
 //! rerun there names a fresh repository in `JAVELIN_NODE_REPOSITORY`.
@@ -29,6 +30,20 @@ fn workerd_node_conforms() {
     common::run(&node, &repository, &|| {
         node.snapshot(&repository).expect("state")
     });
+}
+
+#[test]
+#[ignore = "needs a running node; run through tools/node-cloudflare"]
+fn workerd_node_serves_the_wire() {
+    let node = node();
+    let repository = RepositoryId::parse(&format!("{}_wire", repository().as_str())).expect("id");
+    let url = std::env::var("JAVELIN_NODE_URL").expect("JAVELIN_NODE_URL");
+    common::run(&node, &repository, &|| {
+        node.snapshot(&repository).expect("state")
+    });
+    let wire = common::Wire::new(&url, &repository);
+    let absent = RepositoryId::parse(&format!("{}_absent", repository.as_str())).expect("id");
+    common::run_wire(&node, &repository, &wire, &common::Wire::new(&url, &absent));
 }
 
 #[test]
