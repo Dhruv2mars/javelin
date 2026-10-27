@@ -34,17 +34,14 @@ CI left open. Work from it, in roughly this order:
   trash move, kept a live directory until a reclaiming command ran. The next command
   naming the Layer now finishes the move. The second was a probe timing assumption. The
   concurrent-rewrite check now waits for 4 distinct checkpoints, not a fixed 3 s window.
-- [ ] Gate 2 `crash/interrupted-create-recovers` assumes timing too. Its kill points come
+- [x] Gate 2 `crash/interrupted-create-recovers` assumes timing too. Its kill points came
   from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
-  ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
-  capture fix. Kill on observable progress instead of measured time.
-  - In progress on `fix/gate2-create-crash-probe` (not pushed: GitHub account suspended).
-    The create check now kills at observed states: held at the store lock with its Layer
-    recorded (`gate2_seed --hold-store`, deterministic), and after its directory appears
-    but before exit (spin-polled, retried up to 20 creates). The reference model takes the
-    same lock. Still to do: finish local loop and slowed-create proof runs, CI checks,
-    then push, PR, sol-loop and bots once GitHub is back. First local APFS run: both
-    kills landed (`recorded`, then `placed` on the first try); every crash check VERIFIED.
+  ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Now it kills at observed
+  states: held at the store lock with its Layer recorded (`gate2_seed --hold-store`), and
+  after its directory appears but before exit. Trail https://entire.com/et/dhruv2mars/-/trails/14.
+  APFS: 9 of 9 runs VERIFIED, including slowed creates; the old check reproduced "only 0
+  kills landed" with slow timing creates. Linux: Buildkite runs the crash clause. Windows:
+  not run.
 
 ## Move to Entire (2026-10-27)
 
