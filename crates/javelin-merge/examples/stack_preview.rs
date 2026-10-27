@@ -74,7 +74,9 @@ fn run(root: &str) -> Result<()> {
     }
     let id = repo.put_manifest(&Manifest::new(entries)?)?;
     let merged = repo.read_manifest(id)?;
-    let content = merged.entries()[&RepoPath::parse("src/main.rs")?].content();
+    let content = merged.entries()[&RepoPath::parse("src/main.rs")?]
+        .content()
+        .unwrap();
     let text = String::from_utf8(repo.read_blob(content)?)?;
     if text != "fn main() {\n    ONE();\n    two();\n    THREE();\n}\n" {
         return Err(format!("unexpected merged text {text:?}").into());
