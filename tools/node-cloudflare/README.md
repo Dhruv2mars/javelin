@@ -69,8 +69,9 @@ same token.
 
     https://javelin-node.dhruv-sharma10102005.workers.dev
 
-The Rust node replaced the TypeScript node there on 2026-10-28 (version
-`3ffe1098-5392-44b7-8cec-91bafda4d764` and later), on Workers Free. The admin token is a 32-byte
+The Rust node replaced the TypeScript node there on 2026-10-28 (first version
+`3ffe1098-5392-44b7-8cec-91bafda4d764`, current `a35a386b-1b97-4c5c-996f-812389033127`), on
+Workers Free. The admin token is a 32-byte
 random hex string set with `wrangler secret put` and kept on the owner's machine in
 `~/.config/javelin/cloudflare-node-admin-token`; it is not in this repository or any log.
 
