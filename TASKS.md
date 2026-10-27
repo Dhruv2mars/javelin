@@ -43,7 +43,8 @@ CI left open. Work from it, in roughly this order:
     recorded (`gate2_seed --hold-store`, deterministic), and after its directory appears
     but before exit (spin-polled, retried up to 20 creates). The reference model takes the
     same lock. Still to do: finish local loop and slowed-create proof runs, CI checks,
-    then push, PR, sol-loop and bots once GitHub is back.
+    then push, PR, sol-loop and bots once GitHub is back. First local APFS run: both
+    kills landed (`recorded`, then `placed` on the first try); every crash check VERIFIED.
 
 ## Working rules
 
