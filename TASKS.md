@@ -32,7 +32,16 @@ CI left open. Work from it, in roughly this order:
   and forge.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
-- [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
+- [x] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker
+  (`feat/node-core-wasm`). `javelin` without `fs` and `javelin-node` without `native` build
+  for wasm32; `Storage`/`Coordination` in `crates/javelin-node/src/storage.rs`; the Durable
+  Object runs the core with SQLite on a page-row VFS (`crates/javelin-node-cloudflare`).
+  Conformance (admin + protocol v2) passes on the self-hosted node, `wrangler dev` and the
+  deployed Worker; parity test in `crates/javelin-node-cloudflare/tests/parity.rs`; Free-plan
+  measurements in `tools/node-cloudflare/README.md`. TypeScript node and `tools/spike-do` deleted.
+  - [ ] A wire message that creates a Layer, so a remote node's commit path, Stack and review
+    can be driven end to end (#101 or after); then rerun the hosted acceptance `target_*`.
+  - [ ] Fork on the Cloudflare node (`NodeLink::fork` across two objects).
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
 - [ ] CI design (waiting on the user).

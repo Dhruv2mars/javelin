@@ -427,9 +427,8 @@ Object implementation.
 
 **Authority.** `javelin-node` holds the World log (4.5), Layer partitions, review partitions,
 traces and applied permissions behind traits. The in-process authority and the hosted node
-use the same protocol. On the wasm path they share the same core code. On the TypeScript
-fallback (D23), parity with the Rust node is a test, not shared code (`G§Open questions`,
-recommended default, adopted 2026-10-20).
+use the same protocol and, since 2026-10-28, the same core code: the Cloudflare node is the
+Rust core compiled to wasm (D23), behind the `Storage` and `Coordination` traits.
 
 **Immutable transfers.**
 - `Objects` writes are verified before they are stored: the bytes hash to the claimed ID, the
@@ -615,8 +614,8 @@ infrastructure. Self-hosted: the `javelin-node` binary with file-backed stores, 
 anywhere; the reference implementation and test target. Cloudflare: the owner's account on
 Workers Free, with one SQLite-backed Durable Object per repository as coordinator and object
 store (rows of at most 2 MB, section 4.5), and R2 allowed for large objects inside the free tier. The
-Worker runs the Rust core compiled to wasm via workers-rs (D23). If that spike fails, a thin
-TypeScript Worker (bun-managed) speaks the same protocol and is tested against the Rust node.
+Durable Object runs the Rust core compiled to wasm (D23): its SQLite databases sit on a VFS
+whose pages are the object's own SQLite rows, and a thin JavaScript Worker routes to it.
 U13's first step verifies the Free-plan limits (section 9); until then they are unverified.
 
 **Creation flow** (`C§Hosting ownership`: "name, visibility, Publish setting, provider, and
@@ -765,7 +764,10 @@ does not change contract text.
 - **D23. Node runtime.** Decided 2026-10-20: the self-hosted node is native Rust. Cloudflare: U13 tries
   the Rust core compiled to wasm in a Worker (workers-rs). If that spike fails, use a thin
   TypeScript Worker (bun-managed) that speaks the same protocol and is tested against the Rust
-  node. Rationale: one core for both paths, with a fallback if wasm does not build.
+  node. Rationale: one core for both paths, with a fallback if wasm does not build. Outcome:
+  the TypeScript fallback ran from U13 until 2026-10-28; since then the core builds for wasm
+  and runs in the object through wasm-bindgen and a thin JavaScript shim, not workers-rs
+  (`tools/node-cloudflare/README.md`).
 - **D24. Anonymous read of public repositories.** Decided 2026-10-20: yes for attach and fetch;
   Publish, OpenRequest, Revise, Approve and Comment need identity. Rationale: public reads need no
   account.
@@ -846,8 +848,6 @@ Not verified (marked unverified until checked):
 - A Free plan without a payment method. The Workers pricing page says Free is the default plan;
   no page requires a card (2026-10-26). Not tested: the account used has a card on file.
 - Whether R2 needs a payment method. From the user's account; not checked. R2 is not used.
-- The Rust core compiled to wasm via workers-rs (D23). The root crate still fails the wasm build
-  (2026-10-26); the split it needs is sketched in `tools/node-cloudflare/README.md`.
 
 Settled 2026-10-26 by measurement on a deployed Free-plan Worker (`tools/node-cloudflare`,
 `bun run probe`): Durable Object CPU is not held to the Worker's 10 ms, and Durable Object

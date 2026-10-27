@@ -1,7 +1,9 @@
 {
   "name": "javelin-node",
-  "main": "src/index.ts",
+  "main": "src/worker.js",
   "compatibility_date": "2026-10-01",
+  // Builds the Rust node core to wasm and its wasm-bindgen glue into build/.
+  "build": { "command": "bun run build" },
   "durable_objects": {
     "bindings": [{ "name": "REPOSITORY_NODE", "class_name": "RepositoryNode" }]
   },
