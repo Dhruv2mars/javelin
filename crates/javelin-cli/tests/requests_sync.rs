@@ -620,7 +620,7 @@ fn sync_refuses_a_local_world_that_moved_and_a_chain_that_misses_the_anchor() {
     let head = Repository::open(&author).unwrap().head().unwrap();
     let attached = attachment(&author);
     let output = team.author(&["sync", "--repo", s(&author)]);
-    assert_eq!(refused(output), "world_diverged");
+    assert_eq!(refused(output), "local_world_diverged");
     assert_eq!(Repository::open(&author).unwrap().head().unwrap(), head);
     assert_eq!(attachment(&author), attached);
 }

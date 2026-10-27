@@ -462,7 +462,7 @@ returns exit 1 with its `code`, after the fetch. A node that cannot be reached i
 
 Sync never replaces local history. If the local World moved away from the attachment,
 because `workspace publish` ran in this attached repository, sync refuses with
-`world_diverged` and exit 1. The message names the published Layer's last checkpoint:
+`local_world_diverged` and exit 1. The message names the published Layer's last checkpoint:
 `javelin layer clone NEW --checkpoint HASH` makes a Layer from it, and `javelin request open`
 proposes that Layer to the node. To follow the node again, attach a fresh directory.
 

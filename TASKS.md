@@ -32,7 +32,7 @@ CI left open. Work from it, in roughly this order:
   `crates/javelin-cli/tests/requests_sync.rs` against the node's server with real tokens.
 - [x] `javelin sync`: replays the outbox, fetches from the attached head as trust anchor,
   advances the local World and rolling base, rewrites `attach.json`; refuses
-  `world_diverged` and a chain that misses the anchor (`chain_mismatch`).
+  `local_world_diverged` and a chain that misses the anchor (`chain_mismatch`).
 - [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
   and `revise` upload a Layer to the node.
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.

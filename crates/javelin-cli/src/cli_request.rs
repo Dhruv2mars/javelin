@@ -18,7 +18,7 @@
 //! `sync` replays the outbox, then fetches the node's head verified from the attached head
 //! (the trust anchor), stores what is missing, advances the local World and the rolling base,
 //! and rewrites `attach.json`. A local World that moved away from the attachment is refused
-//! with `world_diverged`: sync never replaces local history.
+//! with `local_world_diverged`: sync never replaces local history.
 
 use std::{
     cell::RefCell,
@@ -57,7 +57,7 @@ use crate::{
 };
 
 /// Local refusal: the local World moved away from the attached remote World.
-pub const WORLD_DIVERGED: &str = "world_diverged";
+pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
 /// Where this clone keeps what it last saw of the requests it authored.
 const REQUESTS: &str = "requests.json";
 
@@ -778,7 +778,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
                     )
                 });
             return Err(CliError::Remote(RemoteError::new(
-                WORLD_DIVERGED,
+                LOCAL_WORLD_DIVERGED,
                 format!(
                     "local World {} is not the attached remote World {}: it was published in \
                      this repository, not on the node, and sync never replaces it.{recover} To \
