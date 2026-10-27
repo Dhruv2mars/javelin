@@ -89,12 +89,15 @@ async function ok(args, cwd) {
   if (r.code !== 0 || r.json?.ok === false) throw new Error(`javelin ${r.args.join(' ')} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 400)}`);
   return r;
 }
+// Processes the probe keeps alive on purpose (a create held at the store lock, a lock holder).
+const deliberate = new Set();
 function javelinProcesses() {
   let lines;
   if (win && !script) lines = spawnSync('tasklist', ['/FO', 'CSV', '/NH', '/FI', `IMAGENAME eq ${basename(javelin)}`], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.toLowerCase().includes(basename(javelin).toLowerCase()));
   else if (win) lines = spawnSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | % { "$($_.ProcessId) $($_.CommandLine)" }'], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.includes(javelin) && !l.includes('gate2.mjs'));
   else lines = spawnSync('ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.includes(javelin) && !l.includes('gate2.mjs') && !l.trim().startsWith(`${process.pid} `));
-  return lines.map(l => l.trim()).filter(Boolean);
+  const pid = l => Number(l.startsWith('"') ? l.split('","')[1] : l.split(/\s+/)[0]);
+  return lines.map(l => l.trim()).filter(l => l && !deliberate.has(pid(l)));
 }
 
 // ---- the command surface (the only place that knows command names and JSON shape) ---
@@ -146,6 +149,21 @@ const S = {
   capture: async (repo, id) => hexUnder((await ok(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id))).json, /checkpoint/i),
   discardArgs: (repo, id, op = `discard-${id}`) => ['workspace', 'discard', id, '--operation', op, '--repo', repo],
   discard: (repo, id, op) => ok(S.discardArgs(repo, id, op)),
+  // Takes the workspace store lock that create, open, discard and recover serialize on, and
+  // resolves with its release. The fixture tool holds it (gate2_seed --hold-store).
+  holdStore: async repo => {
+    const argv = seeder.endsWith('.mjs') ? [process.execPath, seeder, 'hold-store', repo] : [seeder, '--hold-store', repo];
+    const child = spawn(argv[0], argv.slice(1), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    deliberate.add(child.pid);
+    let out = '', exited = false;
+    child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { out += d; });
+    const done = new Promise(r => child.on('exit', () => { exited = true; deliberate.delete(child.pid); r(); }));
+    for (const deadline = Date.now() + 30000; !out.includes('"held"');) {
+      if (exited || Date.now() > deadline) { child.kill(); throw new Error(`could not hold the store lock: ${out.trim().slice(0, 300) || 'no reply within 30 s'}`); }
+      await sleep(5);
+    }
+    return async () => { child.stdin.end(); await done; };
+  },
 };
 
 // ---- trees and fixtures -------------------------------------------------------------
@@ -333,7 +351,8 @@ try {
       return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
     });
 
-    // Crash safety: kill each operation at spread points across its own measured duration.
+    // Crash safety. Checkpoint and discard are killed at spread points across their own
+    // measured duration; create is killed at states the probe observes.
     async function killed(args, delay, cwd) {
       const run = launch(args, cwd);
       let exited = false; run.exited.then(() => { exited = true; });
@@ -348,21 +367,60 @@ try {
     const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
     const bulkWorld = await S.head(bulkRepo);
     await check('crash', 'interrupted-create-recovers', async () => {
-      // The fastest of three runs, so the kill points fall inside a typical create.
-      let duration = Infinity;
-      for (let t = 0; t < 3; t++) { duration = Math.min(duration, await timed(S.createArgs(bulkRepo, `time-create-${t}`, bulkWorld))); await S.discard(bulkRepo, `time-create-${t}`); }
-      let landed = 0;
-      for (const [i, delay] of points(duration).entries()) {
-        const id = `kill-create-${i}`;
-        if (await killed(S.createArgs(bulkRepo, id, bulkWorld), delay)) landed++;
-        // The next command sees either no Layer, or one whose directory is complete or absent.
+      // Each kill lands at a state the probe saw, never after a guessed delay: a slow or
+      // fast machine changes how long each wait takes, not where the create stops.
+      // A create held at the store lock, observed once its Layer is recorded.
+      async function held(id) {
+        const release = await S.holdStore(bulkRepo);
+        const run = launch(S.createArgs(bulkRepo, id, bulkWorld));
+        deliberate.add(run.child.pid);
+        let exited = false; run.exited.then(() => { exited = true; });
+        for (const deadline = Date.now() + 60000; ; await sleep(10)) {
+          const p = await S.path(bulkRepo, id);
+          if (p.r.code === 0 && p.path) return { run, root: p.path, dirBeforeKill: p.exists, release, exited: () => exited };
+          if (exited || Date.now() > deadline) { run.child.kill('SIGKILL'); await release(); throw new Error(`create ${id} ${exited ? `exited ${run.result.code}` : 'recorded no Layer within 60 s'} while the store lock was held: ${run.result.stderr.slice(0, 300)}`); }
+        }
+      }
+      const kills = [];
+      async function finish(id, run, phase) {
+        await run.exited; await Promise.race([run.closed, sleep(2000)]);
+        deliberate.delete(run.child.pid);
+        // A killed process never exits 0; one the probe did not kill must succeed.
+        const landed = phase !== null && run.result.code !== 0;
+        assert(phase !== null || run.result.code === 0, `create ${id} exited ${run.result.code}: ${run.result.stderr.slice(0, 300)}`);
+        report.commands.push({ args: run.result.args, killedAt: phase, landed, code: run.result.code, signal: run.result.signal });
+        // The next command sees the Layer with a complete directory or none; a retry completes it.
         const p = await S.path(bulkRepo, id);
-        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after an interrupted create`);
+        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after a create killed ${phase}`);
         sameTree(worldTree, tree((await S.create(bulkRepo, id, bulkWorld)).path), `retried create ${id}`);
         await S.discard(bulkRepo, id);
+        if (landed) kills.push(phase);
+        return landed;
       }
-      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms create`);
-      return { durationMs: duration, landed };
+      // Recorded, before its directory: the create waits on the held lock until killed.
+      {
+        const h = await held('kill-create-recorded');
+        h.run.child.kill('SIGKILL');
+        await h.release();
+        assert(!h.dirBeforeKill, 'the Layer directory existed while the store lock was held');
+        assert(await finish('kill-create-recorded', h.run, 'recorded'), 'a create held at the store lock exited before its kill');
+      }
+      // Directory in place, before the command exits: spin rather than sleep, since the
+      // window can be shorter than a timer tick. A create that exits first is retried.
+      let attempts = 0;
+      while (!kills.includes('placed') && attempts < 20) {
+        const id = `kill-create-placed-${attempts++}`;
+        const h = await held(id);
+        await h.release();
+        let seen = false;
+        while (!seen && !h.exited()) {
+          for (const until = performance.now() + 5; !seen && performance.now() < until;) if (fs.existsSync(h.root)) { h.run.child.kill('SIGKILL'); seen = true; }
+          if (!seen) await new Promise(r => setImmediate(r));
+        }
+        await finish(id, h.run, seen ? 'placed' : null);
+      }
+      assert(kills.includes('placed'), `no kill landed between the directory appearing and the create exiting in ${attempts} creates`);
+      return { kills, placedAttempts: attempts };
     });
     await check('crash', 'interrupted-checkpoint-recovers', async () => {
       const k = await S.create(bulkRepo, 'kill-checkpoint');

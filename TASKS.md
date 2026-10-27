@@ -38,6 +38,12 @@ CI left open. Work from it, in roughly this order:
   from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
   ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
   capture fix. Kill on observable progress instead of measured time.
+  - In progress on `fix/gate2-create-crash-probe` (not pushed: GitHub account suspended).
+    The create check now kills at observed states: held at the store lock with its Layer
+    recorded (`gate2_seed --hold-store`, deterministic), and after its directory appears
+    but before exit (spin-polled, retried up to 20 creates). The reference model takes the
+    same lock. Still to do: finish local loop and slowed-create proof runs, CI checks,
+    then push, PR, sol-loop and bots once GitHub is back.
 
 ## Working rules
 
