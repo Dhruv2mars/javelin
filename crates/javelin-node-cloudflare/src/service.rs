@@ -18,7 +18,8 @@
 use javelin_collaboration::RepositoryId;
 use javelin_identity::KeySet;
 use javelin_node::{
-    FileWorldLog, admin,
+    FileWorldLog,
+    admin::{self, ApplyError},
     auth::{self, Gate},
     storage::{Coordination, Storage},
     wire,
@@ -194,11 +195,11 @@ impl<S: Storage + Coordination> Node<S> {
                     json!({ "applied": applied, "epoch": permissions.epoch }),
                 ))
             }
-            Err(error) if error.code == "stale_permissions" => Ok(Response::json(
+            Err(ApplyError::Refused(refusal)) => Ok(Response::json(
                 409,
-                json!({ "error": "stale_permissions", "seen": seen }),
+                json!({ "error": refusal.code, "seen": seen }),
             )),
-            Err(error) => Err(error),
+            Err(ApplyError::Storage(error)) => Err(error.into()),
         }
     }
 

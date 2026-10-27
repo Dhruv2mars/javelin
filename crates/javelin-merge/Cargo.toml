@@ -8,4 +8,5 @@ publish = false
 javelin = { path = "../..", default-features = false }
 
 [dev-dependencies]
+javelin = { path = "../..", features = ["fs"] }
 tempfile = "3.27.0"

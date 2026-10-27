@@ -14,7 +14,7 @@ fs = ["javelin/fs"]
 [dependencies]
 javelin = { path = "../..", default-features = false }
 javelin-merge = { path = "../javelin-merge" }
-javelin-protocol = { path = "../javelin-protocol" }
+javelin-protocol = { path = "../javelin-protocol", default-features = false }
 serde_json = "1.0.154"
 
 [dev-dependencies]

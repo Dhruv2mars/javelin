@@ -38,8 +38,11 @@ pub fn read(pages: &dyn Pages, file: &str, size: u64, buf: &mut [u8], offset: u6
         let index = at / PAGE as u64;
         let within = (at % PAGE as u64) as usize;
         let take = (PAGE - within).min((end.min(size) - at) as usize);
-        if let Some(page) = pages.get(file, index)? {
-            let available = page.len().saturating_sub(within).min(take);
+        // A page shorter than `within` was written only before it: the rest reads as zero.
+        if let Some(page) = pages.get(file, index)?
+            && page.len() > within
+        {
+            let available = (page.len() - within).min(take);
             let into = (at - offset) as usize;
             buf[into..into + available].copy_from_slice(&page[within..within + available]);
         }
@@ -190,6 +193,16 @@ mod tests {
         let mut buf = [9; 6];
         assert!(!read(&pages, "f", size, &mut buf, 0).unwrap());
         assert_eq!(&buf, b"abc\0\0\0");
+    }
+
+    #[test]
+    fn a_gap_past_a_short_page_reads_as_zero() {
+        let pages = MemPages::default();
+        write(&pages, "f", 0, b"abc", 0).unwrap();
+        let size = write(&pages, "f", 3, b"x", PAGE as u64).unwrap();
+        let mut buf = [9; 4];
+        assert!(read(&pages, "f", size, &mut buf, 10).unwrap());
+        assert_eq!(buf, [0; 4]);
     }
 
     #[test]

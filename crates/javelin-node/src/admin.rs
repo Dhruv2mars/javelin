@@ -40,23 +40,31 @@ pub fn provisioned_genesis(
     Ok(Some((zero.id, zero.tree)))
 }
 
+/// Why a permissions push was not applied.
+#[derive(Debug)]
+pub enum ApplyError {
+    /// The gate refused it, as `stale_permissions` for an older epoch.
+    Refused(ProtocolError),
+    /// Storage failed. `InvalidData` means the stored permissions do not parse.
+    Storage(std::io::Error),
+}
+
 /// Applies a permissions push with `Gate::apply`'s epoch rules: an older epoch, or the same
 /// epoch with other content, is `stale_permissions`; the same push again is accepted and
-/// changes nothing. Returns whether the stored permissions changed.
-pub fn apply(
-    storage: &dyn Storage,
-    permissions: &AppliedPermissions,
-) -> Result<bool, ProtocolError> {
-    let stored = auth::stored_permissions(storage)?;
+/// changes nothing. Returns whether the stored permissions changed. The caller keeps other
+/// pushes to the same storage out while this runs.
+pub fn apply(storage: &dyn Storage, permissions: &AppliedPermissions) -> Result<bool, ApplyError> {
+    let stored = auth::stored_permissions(storage).map_err(ApplyError::Storage)?;
     let mut gate = Gate::new(permissions.repository.clone(), KeySet::new());
     if let Some(current) = &stored {
-        gate.apply(current.clone())?;
+        gate.apply(current.clone()).map_err(ApplyError::Refused)?;
     }
-    gate.apply(permissions.clone())?;
+    gate.apply(permissions.clone())
+        .map_err(ApplyError::Refused)?;
     if stored.as_ref() == Some(permissions) {
         return Ok(false);
     }
-    auth::store_permissions(storage, permissions)?;
+    auth::store_permissions(storage, permissions).map_err(ApplyError::Storage)?;
     Ok(true)
 }
 
