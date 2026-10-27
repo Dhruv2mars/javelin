@@ -17,8 +17,9 @@ changing product behavior.
 ## Checks
 
 The repository lives on Entire (`origin` is `entire://.../et/dhruv2mars/javelin`). The
-`github` remote is a frozen archive: never push to it. Nothing runs CI, so the owner runs
-these locally before handing off, and the hub runs them again on the merge result:
+`github` remote is a frozen archive: never push to it. Buildkite runs these on Linux for
+every push (`.buildkite/pipeline.yml`, free `linux-small` queue) and reports to the trail as
+a gate. The owner also runs them locally on macOS before handing off:
 
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -36,11 +37,11 @@ these locally before handing off, and the hub runs them again on the merge resul
 - Never push to another thread's branch or edit another thread's worktree.
 - The hub thread coordinates and owns `TASKS.md`. Update `TASKS.md` in your own worktree;
   the hub consolidates.
-- The hub merges a trail once the local checks pass on the merge result and
-  `entire trail merge --dry-run` passes: `entire trail approve`, then `entire trail merge`.
-  Never `--force`.
-- Only macOS runs the checks now. Linux and Windows are unverified until a runner exists;
-  say so in every hand-off that touches platform behavior.
+- The hub merges a trail once its Buildkite build is green, the local macOS checks pass on
+  the merge result, and `entire trail merge --dry-run` passes: `entire trail approve`, then
+  `entire trail merge`. Never `--force`. Builds: `bk api /pipelines/javelin/builds`.
+- Windows has no runner, and Gate 2 and the workspace probes run nowhere automatically.
+  Say so in every hand-off that touches platform behavior.
 - An explicit user pause overrides autonomy and scheduled continuations until the user resumes.
 - Reuse existing T3 threads; settle finished ones.
 
