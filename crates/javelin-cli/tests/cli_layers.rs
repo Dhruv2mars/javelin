@@ -629,7 +629,9 @@ fn binary_stack_merges_frozen_source_and_replays_original_inputs_and_ancestry() 
     );
     assert_eq!(
         repo.read_blob(
-            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")].content(),
+            repo.checkpoint_manifest(frozen.id()).unwrap().entries()[&path("file")]
+                .content()
+                .unwrap(),
         )
         .unwrap(),
         b"FIRST\nanchor\nLAST\n"

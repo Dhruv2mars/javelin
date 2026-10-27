@@ -243,6 +243,13 @@ pub enum FileEntry {
     Symlink {
         target: ObjectId,
     },
+    /// An entry outside the public audience, in committed form: a file or a whole
+    /// directory, named by a salted commitment to what it holds (`crate::Opening`).
+    /// Only Publish writes one; a Layer never does.
+    Hidden {
+        commitment: ObjectId,
+        audience: crate::Audience,
+    },
 }
 
 /// How an owner resolves one conflicting path. Javelin never picks a side itself.
@@ -261,11 +268,17 @@ pub enum Choice {
 }
 
 impl FileEntry {
-    pub fn content(&self) -> ObjectId {
+    /// The blob this entry names. None for a hidden entry, which names no object.
+    pub fn content(&self) -> Option<ObjectId> {
         match self {
-            Self::Regular { content, .. } => *content,
-            Self::Symlink { target } => *target,
+            Self::Regular { content, .. } => Some(*content),
+            Self::Symlink { target } => Some(*target),
+            Self::Hidden { .. } => None,
         }
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        matches!(self, Self::Hidden { .. })
     }
 }
 
@@ -464,6 +477,11 @@ pub(crate) trait WorldIndex {
     fn files_under(&self, dir: &RepoPath, version: VersionNumber) -> Result<Vec<RepoPath>>;
     /// Validates a new entry's referenced content.
     fn check_entry(&self, entry: &FileEntry) -> Result<()>;
+    /// True over committed trees, where hidden entries are ordinary leaves. Over a
+    /// view, a hidden entry is one this store cannot open, so a change may not touch it.
+    fn committed(&self) -> bool {
+        false
+    }
 }
 
 /// Validates a delta against the snapshot of `base` and drops no-op entries. The
@@ -480,6 +498,20 @@ pub(crate) fn normalize(
             index.check_entry(entry)?;
         }
         let before = index.entry_at(path, base)?;
+        if !index.committed() {
+            // An unseen path is never written, deleted or written below.
+            if before.as_ref().is_some_and(FileEntry::is_hidden) {
+                return Err(Error::HiddenPath(path.clone()));
+            }
+            for ancestor in path.ancestors() {
+                if index
+                    .entry_at(&ancestor, base)?
+                    .is_some_and(|e| e.is_hidden())
+                {
+                    return Err(Error::HiddenPath(path.clone()));
+                }
+            }
+        }
         if after.is_none() && before.is_none() {
             let (start, end) = path.descendant_range();
             let added_child = changes

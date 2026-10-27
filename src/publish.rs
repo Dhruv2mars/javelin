@@ -11,9 +11,12 @@ use crate::{
     domain::{ObjectKind, version_id},
     layer::{checkpoint_in, event_state_in, head_in, latest_event_state_in, verify_head},
     repository::{
-        Index, Sql, append_version_in, changeset_in, decode_id, failpoint,
-        head_in as world_head_in, insert_object, read_object, validate_format, version_in,
+        Index, Seals, Sql, append_version_in, changeset_in, decode_id, failpoint,
+        head_in as world_head_in, insert_object, insert_opening_in, insert_view_chunk, open_in,
+        policy_in, read_object, validate_format, version_in, view_in,
     },
+    seal::Sealer,
+    tree::Trees,
 };
 
 pub(crate) const SCHEMA: &str = "
@@ -163,12 +166,16 @@ impl Repository {
                 },
                 Some(Err(paths)) => PublishOutcome::Conflict { paths },
                 Some(Ok(Candidate {
+                    plain,
+                    view,
+                    view_chunks,
                     changes,
                     tree,
                     chunks,
+                    openings,
                 })) => {
                     let guard = guard.take().expect("guard runs at most once");
-                    guard(&against, &changes)?;
+                    guard(&against, &plain)?;
                     let number = crate::repository::next_number(against.number)?;
                     tx.execute(
                         "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
@@ -177,8 +184,24 @@ impl Repository {
                     for (_, bytes) in &chunks {
                         insert_object(&tx, ObjectKind::Tree, bytes)?;
                     }
-                    let version = append_version_in(&tx, &against, operation, &changes, tree)?;
-                    crate::blame::record_in(&tx, expected.layer(), version.number, &changes)?;
+                    for (opening, audience) in &openings {
+                        insert_opening_in(&tx, opening, audience)?;
+                    }
+                    for (id, bytes) in &view_chunks {
+                        insert_view_chunk(&tx, *id, bytes)?;
+                    }
+                    let version =
+                        append_version_in(&tx, &against, operation, &changes, tree, view)?;
+                    // An agent trace follows the repository's read rule (D25), so the
+                    // version publishes it; a node refuses a restricted one on its own.
+                    if let PublishAttribution::Agent {
+                        context: Some(trace),
+                        ..
+                    } = attribution
+                    {
+                        crate::repository::grant_public_in(&tx, *trace)?;
+                    }
+                    crate::blame::record_in(&tx, expected.layer(), version.number, &plain)?;
                     crate::radar::untrack_in(&tx, expected.layer())?;
                     PublishOutcome::Published { version }
                 }
@@ -281,12 +304,17 @@ struct Plan {
     composed: Option<std::result::Result<Candidate, Vec<RepoPath>>>,
 }
 
-/// The new version's changeset and its derived tree. New chunks are computed
-/// outside the lock and written in the short transaction.
+/// The new version: the Layer's plain changeset and the view it gives, then their
+/// committed form with its new openings. New chunks are computed outside the lock and
+/// written in the short transaction.
 struct Candidate {
+    plain: SparseChanges,
+    view: ObjectId,
+    view_chunks: Vec<(ObjectId, Vec<u8>)>,
     changes: SparseChanges,
     tree: ObjectId,
     chunks: Vec<(ObjectId, Vec<u8>)>,
+    openings: Vec<(crate::Opening, crate::Audience)>,
 }
 
 /// Cost scales with the Layer's own records and its changeset, not with history.
@@ -339,7 +367,7 @@ fn prepare_in(
         == (LayerState::Active {
             head: expected.clone(),
         }) {
-        Some(compose_in(conn, expected, &against)?)
+        Some(compose_in(conn, expected, &against, true)?)
     } else {
         None
     };
@@ -393,33 +421,72 @@ fn revision(state: &LayerState) -> u64 {
 }
 
 /// Uses end-to-end base/head differences, not intervening World attempts: the
-/// base and head trees are walked only along the Layer's changed paths, and any
+/// base and head views are walked only along the Layer's changed paths, and any
 /// subtree with the same hash on both sides is skipped. The candidate is the
 /// Layer's changeset, which is canonical relative to `world` whenever nothing
-/// intersects; its tree is the head tree plus that changeset. O(change x depth).
+/// intersects; its view is the head view plus that changeset. With `seal`, the
+/// changeset is then sealed under the new version's policy (`Sealer`): a hidden
+/// entry it changes gets a fresh commitment, and a policy change reseals the whole
+/// snapshot. O(change x depth), or O(snapshot) for a policy change.
 fn compose_in(
     conn: &Connection,
     head: &LayerHead,
     world: &WorldVersion,
+    seal: bool,
 ) -> Result<std::result::Result<Candidate, Vec<RepoPath>>> {
     let checkpoint = checkpoint_in(conn, head.checkpoint().object())?;
     if checkpoint.base().version() > world.number {
         return Err(corrupt("publication World precedes Layer base"));
     }
-    let index = Index::over(Sql::buffer(conn));
+    let index = Index::over(Sql::buffer(conn).view());
     let base = index.root(checkpoint.base().version())?;
+    let head_view = index.root(world.number)?;
     let found = index
         .trees
-        .intersections(base, world.tree, checkpoint.changes())?;
+        .intersections(base, head_view, checkpoint.changes())?;
     if !found.is_empty() {
         return Ok(Err(found.into_iter().collect()));
     }
-    let changes = checkpoint.changes().clone();
-    let tree = index.trees.apply(world.tree, &changes)?;
+    let plain = checkpoint.changes().clone();
+    let view = index.trees.apply(head_view, &plain)?;
+    let committed = Trees::new(Sql::buffer(conn));
+    let (changes, tree, openings) = if seal {
+        let policy = policy_in(conn, &index.trees, view)?;
+        let mut sealer = Sealer {
+            committed: &committed,
+            view: &index.trees,
+            openings: &Seals::all(conn),
+            policy: &policy,
+            created: Vec::new(),
+        };
+        let (changes, tree) = if plain.entries().contains_key(crate::audience::POLICY_PATH) {
+            let all = SparseChanges::new(
+                index
+                    .trees
+                    .entries(view)?
+                    .into_iter()
+                    .map(|(path, entry)| (path, Some(entry))),
+            )?;
+            let sealed = sealer.seal(None, view, &all)?;
+            let tree = committed.apply(crate::tree::empty(), &sealed)?;
+            (committed.diff(world.tree, tree)?, tree)
+        } else {
+            let changes = sealer.seal(Some(world.tree), view, &plain)?;
+            let tree = committed.apply(world.tree, &changes)?;
+            (changes, tree)
+        };
+        (changes, tree, sealer.created)
+    } else {
+        (SparseChanges::default(), world.tree, Vec::new())
+    };
     Ok(Ok(Candidate {
+        plain,
+        view,
+        view_chunks: index.trees.into_store().buffered(),
         changes,
         tree,
-        chunks: index.trees.into_store().buffered(),
+        chunks: committed.into_store().buffered(),
+        openings,
     }))
 }
 
@@ -619,13 +686,26 @@ fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationRece
             {
                 return Err(corrupt("invalid successful publication binding"));
             }
-            let candidate = compose_in(conn, &expected, &against)?
+            // Sealing uses fresh salts, so the committed form is not recomputed here.
+            // The view must be the Layer composed onto the World it saw, and the stored
+            // committed changeset must hash to the version ID and open to that view.
+            let candidate = compose_in(conn, &expected, &against, false)?
                 .map_err(|_| corrupt("successful publication intersects World changes"))?;
             let version = world_at(conn, result)?;
+            let changes = changeset_in(conn, version.number)?;
+            let parent_view = view_in(conn, against.number)?;
             if version.operation.as_ref() != Some(&operation)
-                || version.tree != candidate.tree
-                || version.id != version_id(Some(against.id), candidate.tree, &candidate.changes)
-                || changeset_in(conn, version.number)? != candidate.changes
+                || view_in(conn, version.number)? != candidate.view
+                || version.id != version_id(Some(against.id), version.tree, &changes)
+                || open_in(
+                    conn,
+                    version.number,
+                    against.tree,
+                    parent_view,
+                    version.tree,
+                    &changes,
+                    true,
+                )? != candidate.view
             {
                 return Err(corrupt(
                     "published World disagrees with complete Layer composition",
@@ -641,7 +721,7 @@ fn receipt_in(conn: &Connection, row: &PublicationRow) -> Result<PublicationRece
                 if !exact {
                     return Err(corrupt("conflict did not observe exact Active head"));
                 }
-                let paths = compose_in(conn, &expected, &against)?
+                let paths = compose_in(conn, &expected, &against, false)?
                     .err()
                     .ok_or_else(|| corrupt("publication conflict has no intersections"))?;
                 PublishOutcome::Conflict { paths }

@@ -215,7 +215,7 @@ impl Repository {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         validate_format(&tx)?;
-        let empty = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[], None)?;
+        let empty = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[], None, None)?;
         let head = create_in(&tx, layer, &empty)?;
         failpoint("layer_create_before_commit");
         tx.commit()?;
@@ -295,6 +295,18 @@ impl Repository {
         expected: &LayerHead,
         changes: &SparseChanges,
     ) -> Result<LayerUpdate> {
+        self.capture_layer_as(operation, expected, changes, None)
+    }
+
+    /// `capture_layer` for a remote writer: an entry naming an object the writer may not
+    /// read (`Repository::readable`) is refused as missing, exactly as one never stored.
+    pub fn capture_layer_as(
+        &mut self,
+        operation: &OperationId,
+        expected: &LayerHead,
+        changes: &SparseChanges,
+        writer: Option<&crate::Reader>,
+    ) -> Result<LayerUpdate> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -303,8 +315,14 @@ impl Repository {
         crate::publish::refuse_published_in(&tx, operation, expected.layer())?;
         let before = checkpoint_in(&tx, expected.checkpoint.0)?;
         let provenance = self.provenance.as_ref();
-        let candidate =
-            prepare_checkpoint(&tx, &before.base, changes, &before.sources, provenance)?;
+        let candidate = prepare_checkpoint(
+            &tx,
+            &before.base,
+            changes,
+            &before.sources,
+            provenance,
+            writer,
+        )?;
         let outcome = update_in(&tx, operation, expected, candidate, false, None, None)?;
         #[cfg(test)]
         crate::repository::test_boundary("layer_before_commit");
@@ -413,9 +431,11 @@ pub(crate) fn prepare_checkpoint(
     changes: &SparseChanges,
     sources: &[CheckpointId],
     provenance: Option<&crate::Provenance>,
+    writer: Option<&crate::Reader>,
 ) -> Result<Candidate> {
     validate_base(conn, base)?;
-    let changes = crate::domain::normalize(&Index::new(conn), base.version, changes)?;
+    let index = Index::new(conn).writing_as(writer);
+    let changes = crate::domain::normalize(&index, base.version, changes)?;
     let provenance = provenance
         .map(|p| crate::blame::store_provenance(conn, p))
         .transpose()?;
@@ -628,7 +648,7 @@ pub(crate) fn create_on_version_in(
         version,
         world: version_in(conn, version)?.id,
     };
-    let empty = prepare_checkpoint(conn, &base, &SparseChanges::new([])?, &[], None)?;
+    let empty = prepare_checkpoint(conn, &base, &SparseChanges::new([])?, &[], None, None)?;
     create_in(conn, layer, &empty)
 }
 

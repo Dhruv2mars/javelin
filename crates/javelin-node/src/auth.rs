@@ -15,6 +15,7 @@ use std::{
     path::Path,
 };
 
+use javelin::Reader;
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Access, Grant, KeySet, Need, Refusal, Revocation};
 use javelin_protocol::ProtocolError;
@@ -83,6 +84,75 @@ impl Gate {
     ) -> Result<Grant, ProtocolError> {
         self.access.authorize(token, now, need).map_err(refused)
     }
+}
+
+/// The audiences a caller reads, from its role in the repository: no role is an outsider,
+/// Read and Review are members, Maintain is a maintainer. Named groups are not applied yet.
+pub fn reader_for(role: Option<Role>) -> Reader {
+    match role {
+        None => Reader::outsider(),
+        Some(Role::Maintain) => Reader::maintainer(),
+        Some(Role::Read | Role::Review) => Reader::member([]),
+    }
+}
+
+impl Gate {
+    /// The audiences of an authorized request, from the role the applied permissions grant
+    /// the caller by name. An anonymous caller, and an authenticated one that a public
+    /// repository only lets read, hold no granted role: both are outsiders.
+    pub fn reader(&self, grant: &Grant) -> Reader {
+        let role = grant
+            .principal
+            .as_deref()
+            .and_then(|principal| PrincipalId::parse(principal).ok())
+            .and_then(|principal| self.permissions()?.roles.get(&principal).copied());
+        let reader = reader_for(role);
+        match &grant.principal {
+            Some(principal) => reader.with_principal(principal.clone()),
+            None => reader,
+        }
+    }
+}
+
+/// Refuses a write by `writer` whose `changes`, over World `base`, touch a path outside the
+/// caller's audiences (`Repository::check_writer`). The refusal is `forbidden` and names no
+/// path, so it does not reveal which hidden path matched.
+pub fn check_write(
+    repo: &javelin::Repository,
+    writer: &Reader,
+    changes: &javelin::SparseChanges,
+    base: javelin::VersionNumber,
+) -> Result<(), ProtocolError> {
+    match repo.check_writer(changes, base, writer) {
+        Err(javelin::Error::HiddenPath(_)) => Err(ProtocolError::new(
+            "forbidden",
+            "the change touches a path outside the caller's audiences",
+        )),
+        other => Ok(other?),
+    }
+}
+
+/// `check_write` for the changes of stored checkpoint `checkpoint` over its own base, or over
+/// `base` when given. A checkpoint this store does not hold, or one the writer may not read,
+/// is left to the handler, which refuses both exactly as absent: refusing an unreadable one
+/// here would confirm that it exists.
+pub fn check_checkpoint_write(
+    repo: &javelin::Repository,
+    writer: &Reader,
+    checkpoint: javelin::ObjectId,
+    base: Option<javelin::VersionNumber>,
+) -> Result<(), ProtocolError> {
+    let Ok(id) = javelin::CheckpointId::parse(&checkpoint.to_string()) else {
+        return Ok(());
+    };
+    if !repo.checkpoint_visible(id, writer).unwrap_or(false) {
+        return Ok(());
+    }
+    let Ok(checkpoint) = repo.read_checkpoint(id) else {
+        return Ok(());
+    };
+    let base = base.unwrap_or(checkpoint.base().version());
+    check_write(repo, writer, checkpoint.changes(), base)
 }
 
 fn refused(refusal: Refusal) -> ProtocolError {

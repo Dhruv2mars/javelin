@@ -505,13 +505,14 @@ fn every_world_version_records_its_derived_root_and_check_recomputes_it() {
         let next: Snapshot = next
             .into_iter()
             .map(|(p, e)| {
-                let content = blobs[(e.content().as_bytes()[31] % 5) as usize];
+                let content = blobs[(e.content().unwrap().as_bytes()[31] % 5) as usize];
                 let e = match e {
                     FileEntry::Regular { executable, .. } => FileEntry::Regular {
                         content,
                         executable,
                     },
                     FileEntry::Symlink { .. } => FileEntry::Symlink { target: content },
+                    FileEntry::Hidden { .. } => unreachable!("random snapshots are plain"),
                 };
                 (p, e)
             })
