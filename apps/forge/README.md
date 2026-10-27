@@ -7,7 +7,7 @@ protocol v2 (`POST {node}/v2/r/{repository}`), with no Javelin-run server in bet
 
 | Page | URL |
 | --- | --- |
-| Landing: what Javelin is, building from source, open a repository by node URL and ID | `/` |
+| Landing: what Javelin is, install status, open a repository by node URL and ID | `/` |
 | Repository home: files at the head, README rendered | `/OWNER/REPO` |
 | Directory at a version | `/OWNER/REPO/tree/N/PATH` |
 | File at a version (highlighted text, notice for binary) | `/OWNER/REPO/file/N/PATH` |

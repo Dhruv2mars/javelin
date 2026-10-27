@@ -207,9 +207,6 @@
   font-weight: 600;
 }
 
-.band-body h3 ~ h3 {
-  margin-top: 24px;
-}
 
 .prose-block {
   margin: 0;
@@ -311,19 +308,7 @@
   margin-top: 36px;
 }
 
-.command {
-  margin: 0;
-  padding: 14px 16px;
-  overflow-x: auto;
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
-  font: 0.875rem/1.7 var(--mono);
-}
 
-.command + p {
-  margin-top: 20px;
-}
 
 .landing-foot {
   margin-top: 96px;

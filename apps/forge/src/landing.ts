@@ -125,8 +125,6 @@ function repositoryList(config: Config, storage: Storage | null) {
   return `<div class="known"><h3>Opened in this browser</h3><ul class="entries">${rows}</ul></div>`;
 }
 
-const sh = (lines: string[]) => `<pre class="command"><code>${lines.map(esc).join("\n")}</code></pre>`;
-
 export function landingPage(config: Config, storage: Storage | null) {
   return `
     <div class="landing">
@@ -186,17 +184,10 @@ export function landingPage(config: Config, storage: Storage | null) {
       <section class="band" id="install" aria-labelledby="install-title">
         <div class="band-head">
           <h2 id="install-title">Install the CLI</h2>
-          <p>Javelin is pre-release. Release builds with installers for macOS, Linux and Windows are coming. Until then, build the CLI from <a href="${SOURCE}">its source on Entire</a>.</p>
+          <p>Install opens soon.</p>
         </div>
-        <div class="band-body">
-          <h3>From source</h3>
-          ${sh([
-            "entire repo clone /et/dhruv2mars/javelin",
-            "cd javelin",
-            "cargo install --locked --path crates/javelin-cli",
-            "javelin --version",
-          ])}
-          <p class="muted">This needs a Rust toolchain and a C compiler, and the <code>entire</code> CLI to clone. It installs <code>javelin</code> into Cargo's bin directory.</p>
+        <div class="band-body prose-block">
+          <p>Javelin is pre-release. Release builds with installers for macOS, Linux and Windows are coming, and the commands will be here. Until then you can read <a href="${SOURCE}">the source on Entire</a>.</p>
         </div>
       </section>
 

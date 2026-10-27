@@ -29,8 +29,9 @@ CI left open. Work from it, in roughly this order:
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
 - [x] Forge live on Vercel at https://javelin-codes.vercel.app (Hobby, CLI deploys with
-  `bun run deploy` in `apps/forge` from `main`): landing page at `/` with build-from-source
-  install and open-by-node-URL, SPA fallback and security headers. Proved against a tunneled `javelin-node serve`.
+  `bun run deploy` in `apps/forge` from `main`): landing page at `/` with install status
+  (installers coming) and open-by-node-URL, SPA fallback and security headers. Proved
+  against a tunneled `javelin-node serve`.
 - [ ] CI design (waiting on the user).
 - [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
   the first was a product gap. A Layer discarded or published, then killed before the
