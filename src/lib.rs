@@ -31,6 +31,7 @@ pub use layer::{
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
+pub use repository::diag;
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
 pub use workspace::{
     BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,

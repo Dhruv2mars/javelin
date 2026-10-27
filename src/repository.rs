@@ -203,6 +203,7 @@ impl Repository {
         }
         validate_directory(&directory)?;
         validate_database_path(&path)?;
+        diag("Repository::open start");
         let conn = connect(&path, false)?;
         let tx = conn.unchecked_transaction()?;
         let format: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -569,7 +570,8 @@ fn connect(path: &Path, create: bool) -> Result<Connection> {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
     let conn = Connection::open_with_flags(path, flags)?;
-    conn.busy_timeout(Duration::from_secs(5))?;
+    let _ = Duration::from_secs(5);
+    conn.busy_handler(Some(diag_busy))?;
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=EXTRA; PRAGMA fullfsync=ON;")?;
     let journal: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
     if journal != "delete" {
@@ -578,6 +580,45 @@ fn connect(path: &Path, create: bool) -> Result<Connection> {
         ));
     }
     Ok(conn)
+}
+
+static DIAG_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+pub fn diag(msg: &str) {
+    if std::env::var_os("JAVELIN_DIAG").is_some() {
+        let t = DIAG_START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis();
+        let th = std::thread::current();
+        eprintln!(
+            "[diag {t:>6}ms {:?} {}] {msg}",
+            th.id(),
+            th.name().unwrap_or("-")
+        );
+    }
+}
+thread_local! { static BUSY_SINCE: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) }; }
+fn diag_busy(count: i32) -> bool {
+    const DELAYS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
+    if count == 0 {
+        BUSY_SINCE.with(|c| c.set(Some(std::time::Instant::now())));
+    }
+    let since = BUSY_SINCE
+        .with(|c| c.get())
+        .unwrap_or_else(std::time::Instant::now);
+    let waited = since.elapsed().as_millis() as u64;
+    if count == 0 || count % 10 == 0 {
+        diag(&format!("busy handler count={count} waited={waited}ms"));
+    }
+    if waited >= 5000 {
+        diag(&format!(
+            "busy handler GIVING UP count={count} waited={waited}ms"
+        ));
+        return false;
+    }
+    let d = DELAYS[(count as usize).min(DELAYS.len() - 1)];
+    std::thread::sleep(Duration::from_millis(d));
+    true
 }
 
 pub(crate) fn sync_directory(path: &Path) -> Result<()> {

@@ -211,14 +211,20 @@ impl Repository {
 
     /// Retry with the same ID/base returns the initial frozen head, even after updates.
     pub fn create_layer(&mut self, layer: &LayerId, base: &LayerBase) -> Result<LayerHead> {
+        crate::repository::diag(&format!("create_layer {} BEGIN IMMEDIATE", layer.as_str()));
         let tx = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .inspect_err(|e| crate::repository::diag(&format!("create_layer BEGIN failed {e}")))?;
+        crate::repository::diag("create_layer got RESERVED");
         validate_format(&tx)?;
         let empty = prepare_checkpoint(&tx, base, &SparseChanges::new([])?, &[], None)?;
         let head = create_in(&tx, layer, &empty)?;
         failpoint("layer_create_before_commit");
-        tx.commit()?;
+        crate::repository::diag("create_layer COMMIT");
+        tx.commit()
+            .inspect_err(|e| crate::repository::diag(&format!("create_layer COMMIT failed {e}")))?;
+        crate::repository::diag("create_layer committed");
         failpoint("layer_create_after_commit");
         Ok(head)
     }

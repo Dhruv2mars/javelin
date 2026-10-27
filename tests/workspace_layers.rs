@@ -71,6 +71,7 @@ fn world(repo: &mut Repository, specs: &BTreeMap<String, Spec>) -> VersionNumber
 }
 
 fn open(repo: &mut Repository, layer: &str, version: VersionNumber) -> WorkspaceReport {
+    javelin::diag(&format!("layer_base {layer}"));
     let base = repo.layer_base(version).unwrap();
     repo.create_layer(&id(layer), &base).unwrap();
     repo.open_workspace(&id(layer)).unwrap()
@@ -508,6 +509,7 @@ fn layer_creates_wait_for_an_advance_and_stay_consistent() {
         threads.iter().all(|t| !t.is_finished()),
         "creates must wait for the advance"
     );
+    javelin::diag("test releases workspace lock");
     held.unlock().unwrap();
     for thread in threads {
         thread.join().unwrap();

@@ -1,0 +1,33 @@
+name: Diag
+on:
+  push:
+    branches: ['diag/**']
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TERM_COLOR: never
+jobs:
+  diag:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - run: cargo test --locked -p javelin --test workspace_layers --no-run
+      - name: Loop
+        env:
+          JAVELIN_DIAG: '1'
+        run: |
+          fails=0
+          for i in $(seq 1 40); do
+            if ! cargo test --locked -p javelin --test workspace_layers > out.txt 2>&1; then
+              fails=$((fails+1)); echo "=== iteration $i FAILED"; grep -v "^\s*[0-9]*: \|^\s*at " out.txt | tail -400
+            else
+              echo "iteration $i ok"
+            fi
+          done
+          echo "fails=$fails"

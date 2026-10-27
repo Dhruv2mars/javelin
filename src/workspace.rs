@@ -160,7 +160,13 @@ impl Repository {
     /// Materializes an active Layer's directory by cloning the rolling base and applying
     /// its checkpoint. Idempotent: an existing directory is returned untouched.
     pub fn open_workspace(&mut self, layer: &LayerId) -> Result<WorkspaceReport> {
+        crate::repository::diag(&format!(
+            "open_workspace {} waiting store lock",
+            layer.as_str()
+        ));
         let store = Store::lock(self)?;
+        crate::repository::diag("open_workspace got store lock");
+        let _g = DiagGuard;
         let recovery = store.recover(self, Some(RECLAIM_BUDGET))?;
         let head = match self.layer_state(layer)? {
             LayerState::Active { head } => head,
@@ -195,11 +201,14 @@ impl Repository {
         let checkpoint = self.read_checkpoint(head.checkpoint())?;
         let version = checkpoint.base().version();
         let started = Instant::now();
+        crate::repository::diag("open_workspace ensure_rolling");
         let (rolling_at, mut base) = self.ensure_rolling(&store, version)?;
+        crate::repository::diag(&format!("open_workspace rolling ready {:?}", base.source));
         let rolling = store.rolling();
         let staging = store.staging(&format!("layer~{}", layer.as_str()));
         let built = (|| {
             let clone = unsealed(&rolling, || clone::clone_tree(&rolling, &staging))?;
+            crate::repository::diag("open_workspace cloned");
             open_root(&staging)?;
             if rolling_at > version {
                 // The rolling base is ahead of this Layer: rewind the clone to its World.
@@ -716,6 +725,13 @@ fn millis(started: Instant) -> u64 {
 }
 
 /// The locked store directory. Every mutation happens while this value lives.
+struct DiagGuard;
+impl Drop for DiagGuard {
+    fn drop(&mut self) {
+        crate::repository::diag("open_workspace done (store lock released)");
+    }
+}
+
 struct Store {
     dir: PathBuf,
     _lock: fs::File,
