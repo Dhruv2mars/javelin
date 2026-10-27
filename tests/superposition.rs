@@ -661,3 +661,35 @@ fn older_formats_are_refused() {
     let error = Repository::open(dir.path()).err().unwrap();
     assert_eq!(error.code(), "unsupported_format");
 }
+
+#[test]
+fn names_with_special_characters_are_sealed() {
+    let (_dir, mut repo) = repo();
+    let names = [
+        ".env*prod",
+        ".env?x",
+        ".env prod",
+        ".env[1]",
+        ".ENV",
+        ".Env.local",
+    ];
+    let mut edits: Vec<(&str, Option<&[u8]>)> = vec![(POLICY_PATH, Some(b".env* maintainers\n"))];
+    edits.extend(names.iter().map(|n| (*n, Some(TOKEN))));
+    edits.push(("env*prod", Some(b"public\n")));
+    let version = publish(&mut repo, "names", &edits);
+    let committed = repo.committed_at(version.number).unwrap();
+    for name in names {
+        assert_eq!(
+            hidden(&committed, name).1,
+            Audience::Maintainers,
+            "{name:?}"
+        );
+    }
+    assert!(!committed.entries()[&path("env*prod")].is_hidden());
+    let changeset = repo.changeset(version.number).unwrap().canonical_bytes();
+    assert!(!contains(
+        &changeset,
+        ObjectId::for_blob(TOKEN).to_string().as_bytes()
+    ));
+    repo.check().unwrap();
+}

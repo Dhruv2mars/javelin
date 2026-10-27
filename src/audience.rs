@@ -86,6 +86,22 @@ impl Audience {
     }
 }
 
+impl Audience {
+    /// The narrower of two audiences: readable only by readers of both, rounded down to
+    /// `maintainers` when two different groups meet (maintainers read every audience).
+    pub fn meet(self, other: &Audience) -> Audience {
+        match (self, other) {
+            (Audience::Public, other) => other.clone(),
+            (narrower, Audience::Public) => narrower,
+            (Audience::Maintainers, _) | (_, Audience::Maintainers) => Audience::Maintainers,
+            (Audience::Members, other) => other.clone(),
+            (narrower, Audience::Members) => narrower,
+            (Audience::Group(a), Audience::Group(b)) if a == *b => Audience::Group(a),
+            (Audience::Group(_), Audience::Group(_)) => Audience::Maintainers,
+        }
+    }
+}
+
 impl fmt::Display for Audience {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.as_str())
@@ -111,6 +127,9 @@ pub struct Reader {
     member: bool,
     maintainer: bool,
     groups: BTreeSet<String>,
+    /// Who the caller is, when authenticated. Objects this principal uploaded are readable
+    /// by it whatever their audience: it already holds their bytes.
+    principal: Option<String>,
 }
 
 impl Reader {
@@ -125,6 +144,7 @@ impl Reader {
             member: true,
             maintainer: false,
             groups: groups.into_iter().collect(),
+            principal: None,
         }
     }
 
@@ -135,7 +155,20 @@ impl Reader {
             member: true,
             maintainer: true,
             groups: BTreeSet::new(),
+            principal: None,
         }
+    }
+
+    /// The same reader, identified as `principal`.
+    pub fn with_principal(self, principal: impl Into<String>) -> Self {
+        Self {
+            principal: Some(principal.into()),
+            ..self
+        }
+    }
+
+    pub fn principal(&self) -> Option<&str> {
+        self.principal.as_deref()
     }
 
     pub fn is_member(&self) -> bool {
@@ -205,17 +238,30 @@ impl Policy {
         Ok(Self { rules })
     }
 
-    /// The audience of the file or directory at `path`.
+    /// The audience of the file or directory at `path`: the last matching rule's, else
+    /// public. Matching fails toward the narrower audience: a rule that matches `path` only
+    /// when letter case is ignored, as on a case-folding volume, can narrow the result but
+    /// never widen it. The policy file itself is always public.
     pub fn audience(&self, path: &str) -> Audience {
         if path == POLICY_PATH {
             return Audience::Public;
         }
         let components: Vec<&str> = path.split('/').collect();
-        self.rules
+        let folded: Vec<String> = components.iter().map(|c| fold(c)).collect();
+        let folded: Vec<&str> = folded.iter().map(String::as_str).collect();
+        let exact = self
+            .rules
             .iter()
             .rev()
-            .find(|(pattern, _)| matches_path(pattern, &components))
-            .map_or(Audience::Public, |(_, audience)| audience.clone())
+            .find(|(pattern, _)| matches_path(pattern, &components, false))
+            .map_or(Audience::Public, |(_, audience)| audience.clone());
+        self.rules
+            .iter()
+            .filter(|(_, audience)| *audience != Audience::Public)
+            .filter(|(pattern, _)| {
+                !matches_path(pattern, &components, false) && matches_path(pattern, &folded, true)
+            })
+            .fold(exact, |narrowest, (_, audience)| narrowest.meet(audience))
     }
 
     /// The hidden entries on the way to `path`, outermost first: the byte length of
@@ -244,16 +290,28 @@ impl Policy {
     }
 }
 
+/// Lower-cases a name for case-insensitive matching.
+fn fold(name: &str) -> String {
+    name.chars().flat_map(char::to_lowercase).collect()
+}
+
 /// Matches path components against pattern components, where `**` matches any run of
-/// components. Greedy with one backtrack point, so O(pattern x path).
-fn matches_path(pattern: &[String], path: &[&str]) -> bool {
+/// components. With `folded`, `path` is already lower-cased and each pattern component is
+/// compared lower-cased. Greedy with one backtrack point, so O(pattern x path).
+fn matches_path(pattern: &[String], path: &[&str], folded: bool) -> bool {
     let (mut p, mut s) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while s < path.len() {
         if p < pattern.len() && pattern[p] == "**" {
             star = Some((p, s));
             p += 1;
-        } else if p < pattern.len() && matches_name(&pattern[p], path[s]) {
+        } else if p < pattern.len()
+            && if folded {
+                matches_name(&fold(&pattern[p]), path[s])
+            } else {
+                matches_name(&pattern[p], path[s])
+            }
+        {
             p += 1;
             s += 1;
         } else if let Some((sp, ss)) = star {
@@ -267,19 +325,22 @@ fn matches_path(pattern: &[String], path: &[&str]) -> bool {
     pattern[p..].iter().all(|c| c == "**")
 }
 
-/// Matches one name against a glob with `*` and `?`. O(pattern x name).
+/// Matches one name against a glob. In a pattern, `*` and `?` are always wildcards, so a
+/// name that holds them literally is matched by them too: a pattern never fails to match
+/// because of a special character in a name. O(pattern x name).
 fn matches_name(pattern: &str, name: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let name: Vec<char> = name.chars().collect();
     let (mut p, mut s) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while s < name.len() {
-        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == name[s]) {
-            p += 1;
-            s += 1;
-        } else if p < pattern.len() && pattern[p] == '*' {
+        // The wildcard comes first: a literal `*` in the name must not consume it.
+        if p < pattern.len() && pattern[p] == '*' {
             star = Some((p, s));
             p += 1;
+        } else if p < pattern.len() && (pattern[p] == '?' || pattern[p] == name[s]) {
+            p += 1;
+            s += 1;
         } else if let Some((sp, ss)) = star {
             p = sp + 1;
             s = ss + 1;
@@ -353,6 +414,51 @@ mod tests {
         ] {
             assert!(Policy::parse(text.as_bytes()).is_err(), "{text:?}");
         }
+    }
+
+    #[test]
+    fn special_characters_in_names_never_escape_a_rule() {
+        let p = policy(
+            ".env* maintainers\n?secret members\na?b/** maintainers\nkeys/[x] maintainers\n",
+        );
+        for name in [
+            ".env*prod",
+            ".env*",
+            ".env**",
+            ".env?",
+            ".env ",
+            ".env prod",
+            ".env[1]",
+            ".env#x",
+            ".env\\x",
+            ".envé",
+            ".env\u{1f512}",
+        ] {
+            assert_eq!(p.audience(name), Audience::Maintainers, "{name:?}");
+        }
+        assert_eq!(p.audience("*secret"), Audience::Members);
+        assert_eq!(p.audience("?secret"), Audience::Members);
+        assert_eq!(p.audience(" secret"), Audience::Members);
+        assert_eq!(p.audience("a*b/x"), Audience::Maintainers);
+        assert_eq!(p.audience("a?b/x"), Audience::Maintainers);
+        assert_eq!(p.audience("keys/[x]"), Audience::Maintainers);
+        // Wildcards still need their surroundings to match.
+        assert_eq!(p.audience("env*prod"), Audience::Public);
+        assert_eq!(p.audience("x.env"), Audience::Public);
+        assert_eq!(p.audience("secret"), Audience::Public);
+    }
+
+    #[test]
+    fn letter_case_can_only_narrow_an_audience() {
+        let p = policy("** members\nsrc/** public\n.env* maintainers\n");
+        // A name that matches only when case is ignored is still hidden.
+        assert_eq!(p.audience(".ENV"), Audience::Maintainers);
+        assert_eq!(p.audience(".Env.local"), Audience::Maintainers);
+        // A public rule never widens a path through case folding.
+        assert_eq!(p.audience("SRC/a"), Audience::Members);
+        assert_eq!(p.audience("src/a"), Audience::Public);
+        let groups = policy("a/** group:x\nA/** group:y\n");
+        assert_eq!(groups.audience("a/f"), Audience::Maintainers);
     }
 
     #[test]
