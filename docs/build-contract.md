@@ -236,8 +236,8 @@ Dependent PRs must name their base and cannot claim independent acceptance.
 Workers report evidence and a VERIFIED, NOT VERIFIED, or INCONCLUSIVE result.
 The hub inspects the actual artifact before checking an item. The hub may merge a trail
 once the checks in `AGENTS.md` pass on the merge result and the trail's gates pass.
-Since 2026-10-27 the repository lives on Entire and no CI runs, so those checks are local
-and cover macOS only.
+Since 2026-10-27 the repository lives on Entire. Buildkite runs the checks on Linux for
+every push, the owner runs them on macOS, and nothing runs them on Windows.
 
 The user's 2026-10-16 workflow update supersedes earlier draft-first and repeated
 review requirements. Each owner implements its task, runs relevant checks, opens
