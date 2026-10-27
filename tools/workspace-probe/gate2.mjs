@@ -388,9 +388,9 @@ try {
       async function finish(id, run, phase) {
         await run.exited; await Promise.race([run.closed, sleep(2000)]);
         deliberate.delete(run.child.pid);
-        // A killed process never exits 0; one the probe did not kill must succeed.
-        const landed = phase !== null && run.result.code !== 0;
-        assert(phase !== null || run.result.code === 0, `create ${id} exited ${run.result.code}: ${run.result.stderr.slice(0, 300)}`);
+        // Landed only if the kill ended it; any other exit must be a success.
+        const landed = phase !== null && run.result.signal === 'SIGKILL';
+        assert(landed || run.result.code === 0, `create ${id} exited ${run.result.code}: ${run.result.stderr.slice(0, 300)}`);
         report.commands.push({ args: run.result.args, killedAt: phase, landed, code: run.result.code, signal: run.result.signal });
         // The next command sees the Layer with a complete directory or none; a retry completes it.
         const p = await S.path(bulkRepo, id);

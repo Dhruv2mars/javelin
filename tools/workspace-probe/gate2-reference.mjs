@@ -213,10 +213,11 @@ function newLayer(s, id, world, m) {
 }
 // One directory change at a time, like javelin's workspace.lock. The lock is a directory
 // naming its holder, renamed into place whole; a holder that died no longer holds it.
+// Candidates stay out of tmp, which every command's recover() empties.
 function lockStore(s) {
   const lock = join(s.dir, 'workspace.lock'), pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
-    const mine = join(s.dir, 'tmp', `lock-${process.pid}-${randomBytes(4).toString('hex')}`);
+    const mine = join(s.dir, `lock-${process.pid}-${randomBytes(4).toString('hex')}`);
     fs.mkdirSync(mine); fs.writeFileSync(join(mine, 'pid'), String(process.pid));
     try { fs.renameSync(mine, lock); return () => fs.rmSync(lock, { recursive: true, force: true }); } catch { fs.rmSync(mine, { recursive: true, force: true }); }
     let holder = 0; try { holder = Number(fs.readFileSync(join(lock, 'pid'), 'utf8')); } catch {}
