@@ -37,3 +37,8 @@ CI runs these on macOS, Linux and Windows, with a failing `git` first on `PATH`:
 - The hub may merge a PR once all its checks pass. Merge with `--merge`.
 - An explicit user pause overrides autonomy and scheduled continuations until the user resumes.
 - Reuse existing T3 threads; settle finished ones.
+
+<!-- entire-agent:begin -->
+Read .entire/agent-guide.md for this repository's workflow, source inspection, and verification guidance.
+@.entire/agent-guide.md
+<!-- entire-agent:end -->
