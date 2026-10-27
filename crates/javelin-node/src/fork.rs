@@ -7,6 +7,11 @@
 //! so its bytes never reach the fork. A restricted trace the reader may see stays restricted in
 //! the fork. Roles are not copied.
 //!
+//! Hidden entries follow the reader too. Committed trees are copied whole, so every hidden
+//! entry keeps its commitment and the fork's version IDs match the source's. An entry's opening
+//! and content are copied only when the reader is in its audience; otherwise the fork holds the
+//! commitment alone and its view leaves the entry out.
+//!
 //! The copy is resumable. Trees and blobs are copied before the versions that name them, each
 //! stored tree is complete, and a version is written by one transaction. The origin is written
 //! last, so a fork with an origin is finished.
@@ -14,7 +19,8 @@
 use std::collections::BTreeMap;
 
 use javelin::{
-    AdvanceOutcome, ObjectId, OperationId, PublishAttribution, Repository, VersionNumber,
+    AdvanceOutcome, FileEntry, ObjectId, OperationId, PublishAttribution, Reader, Repository,
+    VersionNumber,
     tree::{Chunk, MAX_CHUNK, Node},
 };
 use javelin_collaboration::Role;
@@ -55,7 +61,7 @@ pub struct Forked {
 
 /// Copies `source`'s log up to `upto` into `target`, which must hold no versions past 0 or an
 /// earlier, unfinished copy of the same fork. `reader` is the role the forker holds in the
-/// source, which decides whether restricted traces may be copied.
+/// source, which decides whether restricted traces and hidden entries may be copied.
 pub fn fork(
     source: &FileWorldLog,
     source_name: &str,
@@ -63,6 +69,20 @@ pub fn fork(
     upto: VersionNumber,
     reader: Role,
 ) -> Result<Forked, ProtocolError> {
+    fork_for(source, source_name, target, upto, Some(reader))
+}
+
+/// Like `fork`, for a forker who may hold no role in the source: `None` is an outsider, who
+/// copies public content only.
+pub fn fork_for(
+    source: &FileWorldLog,
+    source_name: &str,
+    target: &mut FileWorldLog,
+    upto: VersionNumber,
+    role: Option<Role>,
+) -> Result<Forked, ProtocolError> {
+    let audiences = crate::auth::reader_for(role);
+    let reader = role.unwrap_or(Role::Read);
     if let Some(origin) = origin(target)? {
         if origin.source == source_name && origin.number == upto {
             return Ok(Forked {
@@ -88,7 +108,12 @@ pub fn fork(
     }
     for number in start.number.get() + 1..=upto.get() {
         let version = source.repo().version(VersionNumber::new(number)?)?;
-        copy_tree(source.repo(), WorldLog::repository(target), version.tree)?;
+        copy_tree(
+            source.repo(),
+            WorldLog::repository(target),
+            version.tree,
+            &audiences,
+        )?;
         let advanced = WorldLog::repository(target).advance_to_tree(
             &OperationId::parse(&format!("fork-{number}"))?,
             VersionNumber::new(number - 1)?,
@@ -284,8 +309,14 @@ fn note(earliest: &mut BTreeMap<String, u64>, trace: ObjectId, number: u64) {
 }
 
 /// Copies one tree chunk and everything under it. A chunk already in `to` is complete, so the
-/// walk stops there, which keeps a resumed copy incremental.
-fn copy_tree(from: &Repository, to: &mut Repository, root: ObjectId) -> Result<(), ProtocolError> {
+/// walk stops there, which keeps a resumed copy incremental. A hidden entry's content and opening
+/// are copied, opening last, only when `reader` may read it.
+fn copy_tree(
+    from: &Repository,
+    to: &mut Repository,
+    root: ObjectId,
+    reader: &Reader,
+) -> Result<(), ProtocolError> {
     if to.has_tree(root)? {
         return Ok(());
     }
@@ -293,12 +324,25 @@ fn copy_tree(from: &Repository, to: &mut Repository, root: ObjectId) -> Result<(
     let chunk = Chunk::decode(&bytes)?;
     for (_, node) in chunk.entries() {
         match node {
-            Node::File(entry) => copy_blob(from, to, entry.content())?,
-            Node::Dir(child) => copy_tree(from, to, child)?,
+            Node::File(FileEntry::Hidden { commitment, .. }) => {
+                for (_, opening, audience) in from.openings(&[commitment], reader)? {
+                    match opening.file() {
+                        Some(_) => copy_blob(from, to, opening.content)?,
+                        None => copy_tree(from, to, opening.content, reader)?,
+                    }
+                    to.put_opening(&opening, &audience)?;
+                }
+            }
+            Node::File(entry) => {
+                if let Some(blob) = entry.content() {
+                    copy_blob(from, to, blob)?;
+                }
+            }
+            Node::Dir(child) => copy_tree(from, to, child, reader)?,
         }
     }
     for child in chunk.children() {
-        copy_tree(from, to, child)?;
+        copy_tree(from, to, child, reader)?;
     }
     to.put_tree(&bytes)?;
     Ok(())

@@ -264,7 +264,8 @@ fn golden_node_and_local_stacks_produce_the_same_changes() {
         .checkpoint_manifest(stacked.checkpoint())
         .unwrap()
         .entries()[&path("notes.txt")]
-        .content();
+        .content()
+        .unwrap();
     assert_eq!(local.read_blob(merged).unwrap(), MERGED);
     assert_eq!(theirs.stack_sources(), [node_source.checkpoint()]);
     node.check().unwrap();
@@ -465,9 +466,9 @@ fn refresh_imports_the_nodes_stacked_head() {
     let now = active(&local, "target");
     assert_eq!(now.revision(), 2);
     let manifest = local.checkpoint_manifest(now.checkpoint()).unwrap();
-    let merged = manifest.entries()[&path("notes.txt")].content();
+    let merged = manifest.entries()[&path("notes.txt")].content().unwrap();
     assert_eq!(local.read_blob(merged).unwrap(), MERGED);
-    let new = manifest.entries()[&path("new.txt")].content();
+    let new = manifest.entries()[&path("new.txt")].content().unwrap();
     assert_eq!(local.read_blob(new).unwrap(), b"new\n");
     local.check().unwrap();
 

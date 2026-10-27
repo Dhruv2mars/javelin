@@ -297,6 +297,7 @@ fn net_revert_to_base_permits_publish_but_identical_new_results_conflict() {
                         .unwrap()
                         .entries()[&path("same")]
                         .content()
+                        .unwrap()
                 )
                 .unwrap(),
                 b"B"
@@ -338,7 +339,7 @@ fn exact_prefix_delete_modify_mode_and_symlink_intersections_are_explicit() {
         let a = regular(&mut repo, b"A");
         let b = regular(&mut repo, b"B");
         let executable = FileEntry::Regular {
-            content: a.content(),
+            content: a.content().unwrap(),
             executable: true,
         };
         let link = FileEntry::Symlink {
@@ -886,14 +887,14 @@ fn tampered_receipt_relations_composition_and_accepted_graph_never_fall_back() {
                 db.execute_batch("DROP TRIGGER changes_no_UPDATE;").unwrap();
                 db.execute(
                     "UPDATE changes SET content=?1 WHERE version=2",
-                    [a.content().to_string()],
+                    [a.content().unwrap().to_string()],
                 )
                 .unwrap();
             }
             "old-blob" => {
                 db.execute(
                     "UPDATE objects SET bytes=x'00' WHERE id=?1",
-                    [a.content().to_string()],
+                    [a.content().unwrap().to_string()],
                 )
                 .unwrap();
             }

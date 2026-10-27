@@ -4,6 +4,7 @@
 
 mod adopt;
 mod attach;
+mod audience;
 mod blame;
 pub mod capture;
 mod domain;
@@ -13,12 +14,14 @@ pub mod outbox;
 mod publish;
 mod radar;
 mod repository;
+mod seal;
 mod stack;
 pub mod tree;
 mod workspace;
 
 pub use adopt::Adoption;
 pub use attach::{Attachment, RemoteHead};
+pub use audience::{Audience, MAX_POLICY_BYTES, MAX_RULES, POLICY_PATH, Policy, Reader};
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::{Capture, CheckpointSink};
 pub use domain::{
@@ -32,6 +35,7 @@ pub use layer::{
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
 pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
+pub use seal::{Opening, SALT_BYTES, SealedKind};
 pub use workspace::{
     BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,
     WorkspaceRecovery, WorkspaceRefresh, WorkspaceReport,
@@ -87,6 +91,8 @@ pub enum Error {
         .0.join(", ")
     )]
     RefreshConflict(Vec<String>),
+    #[error("path {0:?} is hidden from this writer; a change cannot touch it")]
+    HiddenPath(RepoPath),
 }
 
 /// Lock contention is `busy`: SQLite rolls back the refused transaction, so nothing
@@ -145,6 +151,7 @@ impl Error {
             Self::Busy(_) => "busy",
             Self::Unsupported(_) => "unsupported",
             Self::RefreshConflict(_) => "refresh_conflict",
+            Self::HiddenPath(_) => "hidden_path",
         }
     }
 }

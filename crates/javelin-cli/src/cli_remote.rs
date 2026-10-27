@@ -30,7 +30,7 @@ use javelin_control::Endpoint;
 use javelin_protocol::{
     Message, ProtocolError,
     codec::{PublishOutcome, VERSION, code, decode, encode, read_frame, write_frame},
-    fetch::{Blobs, fetch},
+    fetch::{Blobs, fetch_opened},
 };
 use javelin_stack::remote::{self as stack_remote, Refresh};
 use serde_json::{Value, json};
@@ -579,12 +579,14 @@ fn stage(
     repo.check_attach()?;
 
     // Pinned to the number resolved above: World versions are immutable, so the fetch
-    // reads exactly the head this attach reports.
+    // reads exactly the head this attach reports. Hidden entries the node opens for this
+    // caller's token arrive with their content; the rest stay commitments and are left out
+    // of the base.
     let trees = MemoryStore::default();
     let fetched = {
         let mut blobs = RepoBlobs(&mut repo);
         let version = Some(VersionNumber::new(head.number)?);
-        fetch(
+        fetch_opened(
             Down(link),
             Up(link),
             &trees,
@@ -600,6 +602,14 @@ fn stage(
         id: fetched.id,
         tree: fetched.tree,
     };
+    // Each opening's content is stored before the opening, and every opening before the
+    // World that uses it, so the attached view opens them.
+    for (opening, audience) in fetched.openings.values() {
+        if opening.file().is_none() {
+            repo.import_tree(&trees, opening.content)?;
+        }
+        repo.put_opening(opening, audience)?;
+    }
     repo.import_tree(&trees, fetched.tree)?;
     repo.attach_head(&fetched_head)?;
     Ok((repo, fetched_head))

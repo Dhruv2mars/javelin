@@ -737,7 +737,7 @@ fn structural_changes_validate_the_whole_resolved_tree_and_modes_and_symlinks() 
     let target = repo.put_blob(b"../keep").unwrap();
     let link = FileEntry::Symlink { target };
     let mode = FileEntry::Regular {
-        content: large.content(),
+        content: large.content().unwrap(),
         executable: true,
     };
     let head2 = applied(
@@ -754,7 +754,7 @@ fn structural_changes_validate_the_whole_resolved_tree_and_modes_and_symlinks() 
     let manifest = repo.checkpoint_manifest(head2.checkpoint()).unwrap();
     let manifest_id = repo.put_manifest(&manifest).unwrap();
     assert_eq!(repo.read_manifest(manifest_id).unwrap(), manifest);
-    assert_eq!(repo.read_blob(link.content()).unwrap(), b"../keep");
+    assert_eq!(repo.read_blob(link.content().unwrap()).unwrap(), b"../keep");
     let bytes = repo.manifest_bytes(manifest_id).unwrap();
     assert!(
         String::from_utf8(bytes)
@@ -816,7 +816,7 @@ fn malformed_or_missing_checkpoint_graphs_and_head_history_never_fall_back() {
             "stale-content" => {
                 db.execute(
                     "UPDATE objects SET bytes=x'00' WHERE id=?1",
-                    [stale_content.content().to_string()],
+                    [stale_content.content().unwrap().to_string()],
                 )
                 .unwrap();
             }
@@ -830,7 +830,7 @@ fn malformed_or_missing_checkpoint_graphs_and_head_history_never_fall_back() {
             "content" => {
                 db.execute(
                     "UPDATE objects SET bytes=x'00' WHERE id=?1",
-                    [changed.content().to_string()],
+                    [changed.content().unwrap().to_string()],
                 )
                 .unwrap();
             }

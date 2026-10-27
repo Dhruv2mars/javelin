@@ -9,7 +9,10 @@
 
 use std::io::{self, Read, Write};
 
-use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, VersionNumber, tree::Chunk};
+use javelin::{
+    LayerId, ObjectId, Opening, OperationId, PublishAttribution, SealedKind, VersionNumber,
+    tree::Chunk,
+};
 
 use crate::{ProtocolError, limits::*};
 
@@ -51,6 +54,8 @@ const CHANGESET: u8 = 0x42;
 const CHANGESET_PART: u8 = 0x43;
 const ATTRIBUTION: u8 = 0x44;
 const ATTRIBUTED: u8 = 0x45;
+const OPEN: u8 = 0x46;
+const OPENED: u8 = 0x47;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -271,6 +276,14 @@ pub enum Message {
         number: VersionNumber,
         publication: Option<(LayerId, PublishAttribution)>,
     },
+    /// Fetch: the openings of hidden entries, by commitment, at most `MAX_WANT`.
+    /// Reply: `Opened`.
+    Open(Vec<ObjectId>),
+    /// The openings the caller may read, each with its commitment, in request order.
+    /// A commitment the node cannot open for this caller is left out, so the reply
+    /// does not say whether it exists. The audience is not sent: the caller holds it in
+    /// the committed entry. Each opening is checked against its commitment on decode.
+    Opened(Vec<(ObjectId, Opening)>),
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
         operation: OperationId,
@@ -549,6 +562,23 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                 None => put_short(&mut out, ""),
             }
         }
+        Message::Open(commitments) => {
+            out.push(OPEN);
+            put_u32(&mut out, commitments.len());
+            for commitment in commitments {
+                put_id(&mut out, commitment);
+            }
+        }
+        Message::Opened(openings) => {
+            out.push(OPENED);
+            put_u32(&mut out, openings.len());
+            for (commitment, opening) in openings {
+                put_id(&mut out, commitment);
+                out.extend_from_slice(&opening.salt);
+                out.push(opening.kind as u8);
+                put_id(&mut out, &opening.content);
+            }
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -738,6 +768,18 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
                 Some((layer, PublishAttribution::Agent { .. })) => short(layer.as_str())? + 35,
                 None => 1,
             }
+        }
+        Message::Open(commitments) => {
+            if commitments.len() > MAX_WANT {
+                return Err(limit("count exceeds limit"));
+            }
+            5 + commitments.len() * 32
+        }
+        Message::Opened(openings) => {
+            if openings.len() > MAX_WANT {
+                return Err(limit("count exceeds limit"));
+            }
+            5 + openings.len() * (32 + javelin::SALT_BYTES + 1 + 32)
         }
         Message::OpenRequest {
             operation,
@@ -969,6 +1011,35 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
                 number,
                 publication,
             }
+        }
+        OPEN => {
+            let n = r.count(MAX_WANT)?;
+            let mut commitments = Vec::new();
+            for _ in 0..n {
+                commitments.push(r.id()?);
+            }
+            Message::Open(commitments)
+        }
+        OPENED => {
+            let n = r.count(MAX_WANT)?;
+            let mut openings = Vec::new();
+            for _ in 0..n {
+                let commitment = r.id()?;
+                let opening = Opening {
+                    salt: r.take(javelin::SALT_BYTES)?.try_into().unwrap(),
+                    kind: SealedKind::decode(i64::from(r.u8()?))
+                        .map_err(|_| malformed("unknown hidden entry kind"))?,
+                    content: r.id()?,
+                };
+                if opening.commitment() != commitment {
+                    return Err(ProtocolError::new(
+                        code::ID_MISMATCH,
+                        format!("opening does not match commitment {commitment}"),
+                    ));
+                }
+                openings.push((commitment, opening));
+            }
+            Message::Opened(openings)
         }
         RESOLVED => Message::Resolved {
             number: r.version()?,
