@@ -25,7 +25,8 @@ CI left open. Work from it, in roughly this order:
   `crates/javelin-protocol/tests/superposition.rs`, `crates/javelin-node/tests/fork_hidden.rs`.
   - [x] Wire the caller's role into the node's reads and `check_writer` into its writes
     (`crates/javelin-node/tests/wire_hidden.rs`).
-  - [ ] Authorize Layer object reads, so an unpublished hidden edit cannot be confirmed by ID.
+  - [x] Authorize Layer object reads, so an unpublished hidden edit cannot be confirmed by ID
+    (uploads are recorded per principal; `wire_hidden.rs`).
   - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
   and forge.
