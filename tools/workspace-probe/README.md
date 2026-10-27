@@ -161,3 +161,6 @@ fail its own check.
 a ReFS Dev Drive. Linux runs under `no_new_privs`; Windows runs through
 `deelevate.rs`, which drops the runner's administrator token to a standard-user,
 Medium-integrity token.
+
+`.buildkite/pipeline.yml` runs the `crash` clause on Linux, in a container whose overlay
+volume takes the copy fallback.

@@ -17,3 +17,20 @@ steps:
       # tests assert read-only paths stay read-only, which root ignores: run them as a normal user
       useradd -m ci && chown -R ci:ci . && chmod -R a+rwX /usr/local/cargo
       su ci -c 'PATH=/usr/local/cargo/bin:$$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup cargo test --locked --workspace --all-targets --all-features'
+
+  # Gate 2's crash clause (tools/workspace-probe/README.md) on Linux; the container's
+  # overlay volume takes the copy fallback. Unprivileged, like the tests.
+  - label: ":boom: Gate 2 crash clause"
+    key: gate2-crash
+    agents: { queue: linux-small }
+    timeout_in_minutes: 60
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          environment: [CARGO_TERM_COLOR=never]
+    command: |
+      cargo build --locked --release -p javelin-cli
+      cargo build --locked --release -p javelin --example gate2_seed
+      curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
+      useradd -m ci && chown -R ci:ci .
+      su ci -c '/usr/local/package/bin/bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin --seed target/release/examples/gate2_seed --dir /tmp/gate2 --fs overlay --expect copy --out /tmp/gate2.json --only crash'
