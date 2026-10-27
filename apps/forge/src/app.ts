@@ -129,8 +129,12 @@ function directoryPage(r: { owner: string; repo: string }, d: DirectoryPage) {
         d.path,
       )}</div></article>`
     : "";
+  const delayed = d.delayed
+    ? `<p class="notice delayed">The public view of this repository is delayed. It shows the repository as it was a while ago; members see newer versions.</p>`
+    : "";
   return `
     ${masthead(r, v, d.head, "code", `${attribution(v, d.publication)}. Tree <code>${short(d.version.tree)}</code>`)}
+    ${delayed}
     <div class="code-layout">
       <section class="files" aria-label="Files">
         ${d.path ? crumbs(r, v, d.path) : ""}

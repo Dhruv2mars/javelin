@@ -1,7 +1,17 @@
 // A read-only node client: one protocol v2 message per `POST {node}/v2/r/{repository}`.
 // Every object is checked against its ID before it is returned, so a reader trusts the
 // node for availability, never for content.
-import { type Hex, Kind, type Message, type Publication, ProtocolError, decode, encode, limits } from "./codec";
+import {
+  type Disclosure,
+  type Hex,
+  Kind,
+  type Message,
+  type Publication,
+  ProtocolError,
+  decode,
+  encode,
+  limits,
+} from "./codec";
 import { type Changeset, type Chunk, decodeChunk, objectId, parseChangeset, versionId } from "./objects";
 
 export type Resolved = { number: number; id: Hex; tree: Hex };
@@ -46,6 +56,14 @@ export class NodeClient {
     const reply = await this.call({ type: "resolve", version });
     if (reply.type !== "resolved" || (version !== null && reply.number !== version)) throw unexpected();
     return { number: reply.number, id: reply.id, tree: reply.tree };
+  }
+
+  /** How the repository discloses its versions to this caller: for a reader outside it, its frontier and whether the public view is delayed. */
+  async disclosure(): Promise<Disclosure> {
+    const reply = await this.call({ type: "readDisclosure" });
+    if (reply.type !== "disclosure") throw unexpected();
+    const { type: _, ...disclosure } = reply;
+    return disclosure;
   }
 
   /** Who published `version`: its Layer and declared attribution, or null. */
