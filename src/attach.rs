@@ -3,18 +3,24 @@
 //! tree, blobs, World and rolling base are local, so its presence means the store holds
 //! that head. The network half (fetching from a node) lives in `javelin-cli`, which can
 //! depend on the protocol crate. See `docs/online-design.md` section 4.1 (U4).
+//!
+//! Local World numbers are not the remote's. Each World that attach or `javelin sync`
+//! advances to is recorded under `attach-<number>-<id>` or `sync-<number>-<id>`, naming the
+//! remote version it holds, so a Layer's base maps back to the remote World it was made over.
 
 use std::{fs, io::Write, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdvanceOutcome, Error, ObjectId, OperationId, Repository, Result,
+    AdvanceOutcome, Error, ObjectId, OperationId, Repository, Result, VersionNumber, WorldVersion,
+    genesis_version_id,
     tree::{self, Node},
 };
 
 const ATTACHMENT: &str = "attach.json";
 const ATTACH_PREFIX: &str = "attach-";
+const SYNC_PREFIX: &str = "sync-";
 
 /// A head a node reported: its World number, chain ID and root tree. The number is the
 /// remote World's, which the local store does not share after attach (see `attach_head`).
@@ -36,9 +42,34 @@ pub struct Attachment {
     pub head: RemoteHead,
 }
 
-/// The operation that records an attach to the chain `head` belongs to.
-fn attach_operation(head: &RemoteHead) -> Result<OperationId> {
-    OperationId::parse(&format!("{ATTACH_PREFIX}{}", head.id))
+/// The operation that records an advance to remote `head`: `<prefix><number>-<id>`.
+fn remote_operation(prefix: &str, head: &RemoteHead) -> Result<OperationId> {
+    OperationId::parse(&format!("{prefix}{}-{}", head.number, head.id))
+}
+
+/// The remote head an attach or sync operation names, holding `tree`.
+fn remote_of(operation: &OperationId, tree: ObjectId) -> Option<RemoteHead> {
+    let rest = [ATTACH_PREFIX, SYNC_PREFIX]
+        .iter()
+        .find_map(|prefix| operation.as_str().strip_prefix(prefix))?;
+    let (number, id) = rest.split_once('-')?;
+    Some(RemoteHead {
+        number: number.parse().ok()?,
+        id: ObjectId::parse(id).ok()?,
+        tree,
+    })
+}
+
+/// Where the local World stands against its attachment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AttachedWorld {
+    /// The local head holds the attached head. An interrupted sync is finished first.
+    Current(Attachment),
+    /// The local World moved away from the attachment, by a Publish here. Sync refuses it.
+    Diverged {
+        attachment: Attachment,
+        local: WorldVersion,
+    },
 }
 
 impl Repository {
@@ -132,7 +163,7 @@ impl Repository {
         self.check_attach()?;
         let local = self.head()?;
         if local.tree != head.tree {
-            let operation = attach_operation(head)?;
+            let operation = remote_operation(ATTACH_PREFIX, head)?;
             match self.advance_to_tree(&operation, local.number, head.tree)? {
                 AdvanceOutcome::Accepted { .. } => {}
                 AdvanceOutcome::Stale { .. } => {
@@ -143,6 +174,82 @@ impl Repository {
             }
         }
         Ok(())
+    }
+
+    /// The remote World a local World holds, as attach and sync recorded it: `None` for a
+    /// World made here, or before the attachment. World 0 is the remote's World 0, since both
+    /// are the fixed empty genesis.
+    pub fn remote_world(&self, local: VersionNumber) -> Result<Option<RemoteHead>> {
+        let Some(attachment) = self.attachment()? else {
+            return Ok(None);
+        };
+        let version = self.version(local)?;
+        if let Some(operation) = &version.operation
+            && let Some(remote) = remote_of(operation, version.tree)
+            && self.publication(operation)?.is_none()
+        {
+            return Ok(Some(remote));
+        }
+        if local.get() == 0 {
+            return Ok(Some(RemoteHead {
+                number: 0,
+                id: genesis_version_id(),
+                tree: version.tree,
+            }));
+        }
+        if self.head()?.number == local && version.tree == attachment.head.tree {
+            return Ok(Some(attachment.head));
+        }
+        Ok(None)
+    }
+
+    /// Checks the local head against the attachment. A sync that advanced the World and was
+    /// interrupted before `attach.json` names a newer remote head than the attachment; that
+    /// head was verified before the advance, so the attachment is completed to it here.
+    /// Any other local head that does not hold the attached tree was published here.
+    pub fn attached_world(&self) -> Result<Option<AttachedWorld>> {
+        let Some(attachment) = self.attachment()? else {
+            return Ok(None);
+        };
+        let local = self.head()?;
+        if local.tree == attachment.head.tree {
+            return Ok(Some(AttachedWorld::Current(attachment)));
+        }
+        if let Some(remote) = self
+            .remote_world(local.number)?
+            .filter(|remote| remote.number > attachment.head.number)
+        {
+            let attachment = Attachment {
+                head: remote,
+                ..attachment
+            };
+            self.write_attachment(&attachment)?;
+            return Ok(Some(AttachedWorld::Current(attachment)));
+        }
+        Ok(Some(AttachedWorld::Diverged { attachment, local }))
+    }
+
+    /// Moves the local World to `head`, a verified remote head newer than the attached one
+    /// whose tree is stored, then records it in `attach.json`. The advance is recorded under
+    /// `sync-<number>-<id>`, so a retry after a crash finds it done. The caller checks the
+    /// local World first with [`Repository::attached_world`] and warms the rolling base after.
+    pub fn sync_head(&mut self, attachment: &Attachment, head: &RemoteHead) -> Result<()> {
+        let local = self.head()?;
+        if local.tree != head.tree {
+            let operation = remote_operation(SYNC_PREFIX, head)?;
+            match self.advance_to_tree(&operation, local.number, head.tree)? {
+                AdvanceOutcome::Accepted { .. } => {}
+                AdvanceOutcome::Stale { .. } => {
+                    return Err(Error::InvalidInput(
+                        "the local World moved during sync; retry".into(),
+                    ));
+                }
+            }
+        }
+        self.write_attachment(&Attachment {
+            head: head.clone(),
+            ..attachment.clone()
+        })
     }
 
     fn attachment_path(&self) -> Result<PathBuf> {

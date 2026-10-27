@@ -18,7 +18,7 @@ pub mod tree;
 mod workspace;
 
 pub use adopt::Adoption;
-pub use attach::{Attachment, RemoteHead};
+pub use attach::{AttachedWorld, Attachment, RemoteHead};
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
 pub use capture::{Capture, CheckpointSink};
 pub use domain::{
