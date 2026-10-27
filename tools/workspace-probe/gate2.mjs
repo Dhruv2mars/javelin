@@ -295,61 +295,64 @@ try {
     const worldTree = tree(warm.path);
     // Reclaim all trash now, so no deferred reclaim frees space inside a measured create.
     await ok(['workspace', 'recover', '--repo', bulkRepo]);
-    // No deletions between readings: ReFS frees deleted space lazily, and a free landing
-    // inside a measured step would hide a copy. The byte-copy control therefore runs last.
-    // A one-off free (an earlier deletion or truncation settling) spoils one attempt: free
-    // space rises in a step, or the two identical creates disagree. Repeat with fresh
-    // Layers, deleting nothing, until an attempt is clean.
-    const mb = n => Math.round(n / 1048576);
-    const spoiled = d => Object.entries(d).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * d.bulkMB).map(([k, v]) => `${k} ${v}`)
-      .concat(Math.abs(d.createMB - d.secondCreateMB) > 0.25 * d.bulkMB ? [`identical creates used ${d.createMB} and ${d.secondCreateMB} MB`] : []);
     const attempts = [];
-    let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      f0 = await stableFree();
-      l1 = await S.create(bulkRepo, `bulk-1-${attempt}`);
-      f1 = await stableFree();
-      const textArgv = argvFor(S.createArgs(bulkRepo, `bulk-2-${attempt}`));
-      textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
-      f2 = await stableFree();
-      fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
-      fe = await stableFree();
-      await S.capture(bulkRepo, `bulk-1-${attempt}`);
-      fc = await stableFree();
-      const control = join(root, `control-copy-${attempt}`);
-      fs.mkdirSync(control);
-      for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
-      fk = await stableFree();
-      deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
-      attempts.push(deltas);
-      if (!spoiled(deltas).length) break;
+    // The crash checks need only the bulk Layer, not these minutes of measurements.
+    if (want('sharing')) {
+      // No deletions between readings: ReFS frees deleted space lazily, and a free landing
+      // inside a measured step would hide a copy. The byte-copy control therefore runs last.
+      // A one-off free (an earlier deletion or truncation settling) spoils one attempt: free
+      // space rises in a step, or the two identical creates disagree. Repeat with fresh
+      // Layers, deleting nothing, until an attempt is clean.
+      const mb = n => Math.round(n / 1048576);
+      const spoiled = d => Object.entries(d).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * d.bulkMB).map(([k, v]) => `${k} ${v}`)
+        .concat(Math.abs(d.createMB - d.secondCreateMB) > 0.25 * d.bulkMB ? [`identical creates used ${d.createMB} and ${d.secondCreateMB} MB`] : []);
+      let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        f0 = await stableFree();
+        l1 = await S.create(bulkRepo, `bulk-1-${attempt}`);
+        f1 = await stableFree();
+        const textArgv = argvFor(S.createArgs(bulkRepo, `bulk-2-${attempt}`));
+        textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
+        f2 = await stableFree();
+        fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
+        fe = await stableFree();
+        await S.capture(bulkRepo, `bulk-1-${attempt}`);
+        fc = await stableFree();
+        const control = join(root, `control-copy-${attempt}`);
+        fs.mkdirSync(control);
+        for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
+        fk = await stableFree();
+        deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
+        attempts.push(deltas);
+        if (!spoiled(deltas).length) break;
+      }
+      report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
+      await check('sharing', 'byte-copy-control-is-measurable', () => {
+        assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
+        const why = spoiled(deltas);
+        assert(why.length === 0, `every one of ${attempts.length} attempts was spoiled by a concurrent free (last: ${why.join(', ')}); it could hide a copy`);
+        return { deltas, attempts: attempts.length };
+      });
+      await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
+        if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
+        else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
+        return deltas;
+      });
+      await check('sharing', 'edit-and-capture-stay-sparse', () => {
+        assert(f2 - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(f2 - fe)} MB`);
+        assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
+        return deltas;
+      });
+      await check('sharing', 'strategy-reported', () => {
+        assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
+        const copy = /copy/i.test(l1.strategy);
+        assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
+        const text = `${textCreate.stdout}${textCreate.stderr}`;
+        assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
+        if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
+        return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
+      });
     }
-    report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
-    await check('sharing', 'byte-copy-control-is-measurable', () => {
-      assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
-      const why = spoiled(deltas);
-      assert(why.length === 0, `every one of ${attempts.length} attempts was spoiled by a concurrent free (last: ${why.join(', ')}); it could hide a copy`);
-      return { deltas, attempts: attempts.length };
-    });
-    await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
-      if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
-      else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'edit-and-capture-stay-sparse', () => {
-      assert(f2 - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(f2 - fe)} MB`);
-      assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'strategy-reported', () => {
-      assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
-      const copy = /copy/i.test(l1.strategy);
-      assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
-      const text = `${textCreate.stdout}${textCreate.stderr}`;
-      assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
-      if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
-      return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
-    });
 
     // Crash safety. Checkpoint and discard are killed at spread points across their own
     // measured duration; create is killed at states the probe observes.

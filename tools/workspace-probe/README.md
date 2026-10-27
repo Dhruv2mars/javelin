@@ -116,9 +116,14 @@ checkpoint and discard recovering on the next command.
 
 No check depends on how fast a command runs. Concurrent rewrites run until the probe
 has taken at least 3 s of captures and 4 distinct checkpoints (90 s at most), and
-captures start once the writer reports both files written. Kill points are spread over each
-operation's own measured duration. After an interrupted discard, `workspace path` must
-not report a directory for a Layer that ended up discarded.
+captures start once the writer reports both files written. An interrupted create is killed
+at states the probe observes. First, `gate2_seed --hold-store` holds the workspace store lock,
+so the create stops with its Layer recorded and no directory. Second, the probe watches for
+the Layer's directory and kills the create after it appears but before the command exits.
+If a create exits before that kill lands, the probe retries with a new Layer, up to 20
+times. Checkpoint and discard kill points are spread over each operation's own measured
+duration. After an interrupted discard, `workspace path` must not report a directory for a
+Layer that ended up discarded.
 
 ```sh
 rustc --edition 2021 -o /tmp/shim tools/workspace-probe/shim.rs
@@ -131,8 +136,8 @@ rtk proxy bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin \
 ```
 
 `--expect` is `shared` for clone-capable filesystems and `copy` for the fallback.
-`--only CLAUSE,...` limits the run; `--bulk-mb N` sizes the sharing fixture
-(default 128). Exit 0 means every check is VERIFIED, 1 that one is not, and 2 that
+`--only CLAUSE,...` limits the run, and the free-space measurements run only with
+`sharing`; `--bulk-mb N` sizes the sharing fixture (default 128). Exit 0 means every check is VERIFIED, 1 that one is not, and 2 that
 setup failed. `--known gate2-known-failures.json` lists product bugs the proof has
 already found, per filesystem, with their finding: if only those fail the exit is 3
 and the verdict stays NOT VERIFIED; a listed check that passes fails the run, so the
