@@ -14,4 +14,6 @@ steps:
       rustup component add rustfmt clippy
       cargo fmt --all -- --check
       cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      cargo test --locked --workspace --all-targets --all-features
+      # tests assert read-only paths stay read-only, which root ignores: run them as a normal user
+      useradd -m ci && chown -R ci:ci . && chmod -R a+rwX /usr/local/cargo
+      su ci -c 'PATH=/usr/local/cargo/bin:\$\$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup cargo test --locked --workspace --all-targets --all-features'
