@@ -9,6 +9,8 @@ mod cli_check;
 mod cli_control;
 mod cli_remote;
 mod cli_request;
+mod cli_sync;
+mod cli_upload;
 
 const HELP: &str = cli::HELP;
 
@@ -117,7 +119,7 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         return cli_request::request(args.into_iter().skip(1).collect());
     }
     if args.first().is_some_and(|a| a == "sync") {
-        return cli_request::sync(args.into_iter().skip(1).collect());
+        return cli_sync::sync(args.into_iter().skip(1).collect());
     }
     if args.first().is_some_and(|a| a == "outbox") && args.get(1).is_some_and(|a| a == "replay") {
         return cli_remote::outbox_replay(args.into_iter().skip(2).collect());

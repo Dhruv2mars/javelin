@@ -624,3 +624,78 @@ fn sync_refuses_a_local_world_that_moved_and_a_chain_that_misses_the_anchor() {
     assert_eq!(Repository::open(&author).unwrap().head().unwrap(), head);
     assert_eq!(attachment(&author), attached);
 }
+
+#[test]
+fn revisions_chain_through_queued_ones_and_sync_reports_a_refused_record() {
+    let team = Team::start(1);
+    let node = team.deployment.node_url.clone();
+    let author = team.attach("author", None);
+    let down = closed_url();
+    let revise = |n: &str, operation: &str| {
+        ok(team.author(&[
+            "request",
+            "revise",
+            "pr-1",
+            "--revision",
+            n,
+            "--operation",
+            operation,
+            "--repo",
+            s(&author),
+        ]))
+    };
+
+    ok(team.author(&["workspace", "create", "work", "--repo", s(&author)]));
+    let file = author.join(".javelin/layers/work/a.txt");
+    fs::write(&file, "1\n").unwrap();
+    ok(team.author(&[
+        "request",
+        "open",
+        "pr-1",
+        "--layer",
+        "work",
+        "--operation",
+        "open-1",
+        "--repo",
+        s(&author),
+    ]));
+
+    // Revision 2 is queued offline. Revision 3 is submitted online before any sync: the queued
+    // records go first, so it follows revision 2's checkpoint, not the node's older head.
+    set_node(&author, &down);
+    fs::write(&file, "2\n").unwrap();
+    assert_eq!(revise("1", "revise-2")["queued"], true);
+    set_node(&author, &node);
+    fs::write(&file, "3\n").unwrap();
+    assert_eq!(revise("2", "revise-3")["revision"], 3);
+
+    // Revision 4 is queued offline again, after the online one, and is delivered.
+    set_node(&author, &down);
+    fs::write(&file, "4\n").unwrap();
+    assert_eq!(revise("3", "revise-4")["queued"], true);
+    // A queued Publish of a stale revision is delivered and refused.
+    let queued = ok(team.author(&[
+        "request",
+        "publish",
+        "pr-1",
+        "--revision",
+        "1",
+        "--operation",
+        "publish-1",
+        "--repo",
+        s(&author),
+    ]));
+    assert_eq!(queued["queued"], true, "{queued}");
+    set_node(&author, &node);
+    let synced = team.author(&["sync", "--repo", s(&author)]);
+    assert_eq!(synced.status.code(), Some(1), "{}", describe(&synced));
+    let synced = stdout(&synced);
+    assert_eq!(synced["ok"], false);
+    assert_eq!(synced["code"], "stale_revision", "{synced}");
+    assert_eq!(synced["outbox"]["pending"], 0);
+    let shown = ok(team.as_token(
+        &team.rita,
+        &["request", "show", "pr-1", "--repo", s(&author)],
+    ));
+    assert_eq!(shown["revision"], 4, "{shown}");
+}

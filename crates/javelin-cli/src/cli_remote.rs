@@ -1009,7 +1009,7 @@ pub fn outbox_replay(args: Vec<OsString>) -> std::result::Result<Output, CliErro
 }
 
 /// A short view of a node's reply, for output.
-fn summary(outcome: &[u8]) -> Value {
+pub(crate) fn summary(outcome: &[u8]) -> Value {
     match decode(outcome) {
         Ok(Message::PublishOutcome(PublishOutcome::Published { number, .. })) => {
             json!({"published": number})

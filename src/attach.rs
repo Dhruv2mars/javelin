@@ -63,8 +63,12 @@ fn remote_of(operation: &OperationId, tree: ObjectId) -> Option<RemoteHead> {
 /// Where the local World stands against its attachment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AttachedWorld {
-    /// The local head holds the attached head. An interrupted sync is finished first.
-    Current(Attachment),
+    /// The local head, `local`, holds the attached head. An interrupted sync is finished
+    /// first.
+    Current {
+        attachment: Attachment,
+        local: WorldVersion,
+    },
     /// The local World moved away from the attachment, by a Publish here. Sync refuses it.
     Diverged {
         attachment: Attachment,
@@ -213,7 +217,7 @@ impl Repository {
         };
         let local = self.head()?;
         if local.tree == attachment.head.tree {
-            return Ok(Some(AttachedWorld::Current(attachment)));
+            return Ok(Some(AttachedWorld::Current { attachment, local }));
         }
         if let Some(remote) = self
             .remote_world(local.number)?
@@ -224,24 +228,36 @@ impl Repository {
                 ..attachment
             };
             self.write_attachment(&attachment)?;
-            return Ok(Some(AttachedWorld::Current(attachment)));
+            return Ok(Some(AttachedWorld::Current { attachment, local }));
         }
         Ok(Some(AttachedWorld::Diverged { attachment, local }))
     }
 
-    /// Moves the local World to `head`, a verified remote head newer than the attached one
-    /// whose tree is stored, then records it in `attach.json`. The advance is recorded under
-    /// `sync-<number>-<id>`, so a retry after a crash finds it done. The caller checks the
-    /// local World first with [`Repository::attached_world`] and warms the rolling base after.
-    pub fn sync_head(&mut self, attachment: &Attachment, head: &RemoteHead) -> Result<()> {
-        let local = self.head()?;
-        if local.tree != head.tree {
+    /// Moves the local World from `local`, the head [`Repository::attached_world`] checked,
+    /// to `head`, a verified remote head newer than the attached one whose tree is stored,
+    /// then records it in `attach.json`. The advance is a compare-and-swap on `local`, so a
+    /// Publish here since the check is never replaced: the sync is refused instead. It is
+    /// recorded under `sync-<number>-<id>`, so a retry after a crash finds it done. The
+    /// caller warms the rolling base after.
+    pub fn sync_head(
+        &mut self,
+        attachment: &Attachment,
+        local: &WorldVersion,
+        head: &RemoteHead,
+    ) -> Result<()> {
+        if local.tree == head.tree {
+            if self.head()?.number != local.number {
+                return Err(Error::InvalidInput(
+                    "the local World moved during sync; nothing was changed".into(),
+                ));
+            }
+        } else {
             let operation = remote_operation(SYNC_PREFIX, head)?;
             match self.advance_to_tree(&operation, local.number, head.tree)? {
                 AdvanceOutcome::Accepted { .. } => {}
                 AdvanceOutcome::Stale { .. } => {
                     return Err(Error::InvalidInput(
-                        "the local World moved during sync; retry".into(),
+                        "the local World moved during sync; nothing was changed".into(),
                     ));
                 }
             }

@@ -1,6 +1,5 @@
-//! `javelin request` runs the Publish Request loop on the attached node, and `javelin sync`
-//! keeps the local World current with it. See `docs/online-design.md` sections 4.1, 4.4 and
-//! 4.8, and `docs/cli.md`.
+//! `javelin request` runs the Publish Request loop on the attached node. See
+//! `docs/online-design.md` sections 4.4 and 4.8, and `docs/cli.md`.
 //!
 //! The node holds requests, revisions, approvals and comments; a revision is a checkpoint of
 //! the author's Layer on the node. `open` and `revise` therefore upload the local Layer's
@@ -14,15 +13,9 @@
 //! node is reachable ([`Repository::foreign_capture`]), from the node head this clone last
 //! saw for the Layer, kept in `.javelin/requests.json`. `open`, `approve` and `comment` need a
 //! live answer and refuse with `node_unavailable`.
-//!
-//! `sync` replays the outbox, then fetches the node's head verified from the attached head
-//! (the trust anchor), stores what is missing, advances the local World and the rolling base,
-//! and rewrites `attach.json`. A local World that moved away from the attachment is refused
-//! with `local_world_diverged`: sync never replaces local history.
 
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
     ffi::OsString,
     fs,
     io::Write,
@@ -30,49 +23,39 @@ use std::{
 };
 
 use javelin::{
-    AttachedWorld, Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead,
-    Repository, SparseChanges, VersionNumber,
+    Attachment, Error, LayerId, ObjectId, OperationId, RemoteHead, Repository, VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
-    tree::{self, MemoryStore},
 };
 use javelin_protocol::{
     Kind, Message,
     codec::{
-        LayerOutcome, LayerStatus, PublishOutcome, RequestId, RequestStatus, ReviewDetail,
-        ReviewOutcome, code, decode, encode,
+        PublishOutcome, RequestId, RequestStatus, ReviewDetail, ReviewOutcome, code, decode, encode,
     },
-    fetch::{Anchor, fetch},
-    limits::{MAX_BLOB, MAX_FRAME, MAX_OBJECTS, MAX_TREE, MAX_WANT},
-    sender,
 };
 use serde_json::{Value, json};
 
 use crate::{
     CliError,
     cli::Output,
-    cli_remote::{
-        Down, Link, NodeTransport, RemoteError, RepoBlobs, Session, Up, call, parse_target, remote,
-        unexpected,
+    cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, unexpected},
+    cli_upload::{
+        create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
 };
 
-/// Local refusal: the local World moved away from the attached remote World.
-pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
 /// Where this clone keeps what it last saw of the requests it authored.
 const REQUESTS: &str = "requests.json";
 
-type Outcome = std::result::Result<Output, CliError>;
-/// One outbox record to enqueue: its kind, scope, operation and wire message.
-type Queued = (Record, String, OperationId, Vec<u8>);
+pub(crate) type Outcome = std::result::Result<Output, CliError>;
 
 /// Parsed `request` options. Each may appear once.
-struct Options {
-    positionals: Vec<String>,
+pub(crate) struct Options {
+    pub(crate) positionals: Vec<String>,
     values: std::collections::BTreeMap<String, String>,
 }
 
 impl Options {
-    fn parse(args: Vec<OsString>, allowed: &[&str], usage: &str) -> Result<Self, Error> {
+    pub(crate) fn parse(args: Vec<OsString>, allowed: &[&str], usage: &str) -> Result<Self, Error> {
         let invalid = || Error::InvalidInput(format!("expected: {usage}"));
         let mut parsed = Self {
             positionals: Vec::new(),
@@ -131,7 +114,7 @@ impl Options {
         OperationId::parse(self.required("--operation")?)
     }
 
-    fn root(&self) -> Result<PathBuf, Error> {
+    pub(crate) fn root(&self) -> Result<PathBuf, Error> {
         match self.get("--repo") {
             Some(path) => Ok(PathBuf::from(path)),
             None => Ok(std::env::current_dir()?),
@@ -140,10 +123,10 @@ impl Options {
 }
 
 /// The attached repository: its store, attachment and root.
-struct Attached {
-    root: PathBuf,
-    repo: Repository,
-    attachment: Attachment,
+pub(crate) struct Attached {
+    pub(crate) root: PathBuf,
+    pub(crate) repo: Repository,
+    pub(crate) attachment: Attachment,
 }
 
 impl Attached {
@@ -160,7 +143,7 @@ impl Attached {
     }
 
     /// A session for reads, which go out anonymously when no token can be had.
-    fn reading(&self) -> Result<RefCell<Link>, CliError> {
+    pub(crate) fn reading(&self) -> Result<RefCell<Link>, CliError> {
         Ok(Link::new(self.target()?))
     }
 
@@ -176,11 +159,11 @@ impl Attached {
         ))?)
     }
 
-    fn outbox(&self) -> Result<Outbox, CliError> {
+    pub(crate) fn outbox(&self) -> Result<Outbox, CliError> {
         Ok(Outbox::open(&self.root, &self.attachment.repository)?)
     }
 
-    fn transport(&self) -> Result<NodeTransport, CliError> {
+    pub(crate) fn transport(&self) -> Result<NodeTransport, CliError> {
         Ok(NodeTransport::new(
             &self.attachment.node,
             &self.attachment.repository,
@@ -295,8 +278,19 @@ fn revise(args: Vec<OsString>) -> Outcome {
             (None, None) => read_review(&link, &request, 0)?.summary.layer,
         };
         let (_, changes, base) = local_changes(&mut attached.repo, &layer)?;
-        // The node's head for the Layer, read now, or as this clone last saw it.
-        let state = create_layer(&link, &layer, &base).and_then(|()| node_head(&link, &layer));
+        // The node's head for the Layer, read now, or as this clone last saw it. Earlier
+        // queued records go first: until they are delivered, the node's head is not the one
+        // this revision follows.
+        if outbox.pending().count() > 0 {
+            outbox.replay(&mut attached.transport()?)?;
+        }
+        let state = match outbox.pending().count() {
+            0 => create_layer(&link, &layer, &base).and_then(|()| node_head(&link, &layer)),
+            _ => Err(RemoteError::new(
+                code::NODE_UNAVAILABLE,
+                "earlier queued records are still waiting for the node",
+            )),
+        };
         let (head, bytes, online) = match state {
             Ok((head, bytes)) => (head, bytes, true),
             Err(error) if error.code == code::NODE_UNAVAILABLE => match &record {
@@ -747,442 +741,6 @@ fn list(args: Vec<OsString>) -> Outcome {
     ))
 }
 
-/// `javelin sync [--repo DIR]`
-pub fn sync(args: Vec<OsString>) -> Outcome {
-    let usage = "javelin sync [--repo DIR] [--json]";
-    let options = Options::parse(args, &["--repo"], usage)?;
-    if !options.positionals.is_empty() {
-        return Err(Error::InvalidInput(format!("expected: {usage}")).into());
-    }
-    let root = options.root()?;
-    let mut repo = Repository::open(&root)?;
-    let attachment = match repo.attached_world()? {
-        None => {
-            return Err(Error::InvalidInput(
-                "this repository is not attached to a node; attach first".into(),
-            )
-            .into());
-        }
-        Some(AttachedWorld::Diverged { attachment, local }) => {
-            let recover = local
-                .operation
-                .as_ref()
-                .map(|operation| repo.publication(operation))
-                .transpose()?
-                .flatten()
-                .map_or(String::new(), |receipt| {
-                    format!(
-                        " Its Layer's last checkpoint is {0}: `javelin layer clone NEW \
-                         --checkpoint {0}` then `javelin request open` proposes it to the node.",
-                        receipt.expected.checkpoint().object()
-                    )
-                });
-            return Err(CliError::Remote(RemoteError::new(
-                LOCAL_WORLD_DIVERGED,
-                format!(
-                    "local World {} is not the attached remote World {}: it was published in \
-                     this repository, not on the node, and sync never replaces it.{recover} To \
-                     follow the node, attach a fresh directory: `javelin attach {}/{} DIR`",
-                    local.number, attachment.head.number, attachment.node, attachment.repository
-                ),
-            )));
-        }
-        Some(AttachedWorld::Current(attachment)) => attachment,
-    };
-    let attached = Attached {
-        root: root.clone(),
-        repo: Repository::open(&root)?,
-        attachment: attachment.clone(),
-    };
-
-    // Queued work goes first, so a queued Publish is in the World this sync fetches.
-    let mut outbox = attached.outbox()?;
-    let replay = match outbox.pending().count() {
-        0 => None,
-        _ => Some(outbox.replay(&mut attached.transport()?)?),
-    };
-    if let Some(stall) = replay.as_ref().and_then(|replay| replay.stalled.as_ref())
-        && matches!(stall.fault, Fault::NodeUnavailable(_))
-    {
-        return Err(CliError::Remote(RemoteError::new(
-            code::NODE_UNAVAILABLE,
-            stall.fault.detail(),
-        )));
-    }
-    let delivered: Vec<Value> = replay
-        .iter()
-        .flat_map(|replay| &replay.delivered)
-        .map(|delivered| {
-            let entry = outbox.entry(delivered.seq);
-            json!({
-                "seq": delivered.seq,
-                "kind": entry.map(|entry| entry.kind.as_str()),
-                "operation": entry.map(|entry| entry.operation.as_str()),
-            })
-        })
-        .collect();
-    let stalled = replay.as_ref().and_then(|replay| replay.stalled.as_ref());
-    let pending = outbox.pending().count();
-    drop(outbox);
-
-    // Only the versions after the attached head are verified, from its ID.
-    let link = attached.reading()?;
-    let anchor = Anchor {
-        number: VersionNumber::new(attachment.head.number)?,
-        id: attachment.head.id,
-        tree: attachment.head.tree,
-    };
-    let trees = Trees {
-        repo: &attached.repo,
-        staged: MemoryStore::default(),
-    };
-    let fetched = {
-        let mut blobs = RepoBlobs(&mut repo);
-        fetch(
-            Down(&link),
-            Up(&link),
-            &trees,
-            &mut blobs,
-            Some(&anchor),
-            None,
-            None,
-        )
-        .map_err(|e| CliError::Remote(remote(&link, e)))?
-    };
-    let head = RemoteHead {
-        number: fetched.number.get(),
-        id: fetched.id,
-        tree: fetched.tree,
-    };
-    let advanced = head.number != attachment.head.number;
-    let base = if advanced {
-        repo.import_tree(&trees, head.tree)?;
-        repo.sync_head(&attachment, &head)?;
-        Some(repo.warm_base()?)
-    } else {
-        None
-    };
-    let local = repo.head()?;
-    let mut text = if advanced {
-        format!(
-            "Synced {} from remote World {} to {} (local World {}).",
-            attachment.repository, attachment.head.number, head.number, local.number
-        )
-    } else {
-        format!(
-            "{} is current at remote World {} (local World {}).",
-            attachment.repository, head.number, local.number
-        )
-    };
-    if replay.is_some() {
-        text.push_str(&format!(
-            "\nDelivered {} queued records; {pending} pending.",
-            delivered.len()
-        ));
-    }
-    let (stall, stall_code, exit) = match stalled {
-        Some(stall) => {
-            text.push_str(&format!(
-                "\nRecord {} waits: {}: {}",
-                stall.seq,
-                stall.fault.code(),
-                stall.fault.detail()
-            ));
-            (
-                json!({"seq": stall.seq, "code": stall.fault.code(), "detail": stall.fault.detail()}),
-                json!(stall.fault.code()),
-                1,
-            )
-        }
-        None => (Value::Null, Value::Null, 0),
-    };
-    let value = json!({
-        "ok": exit == 0,
-        "command": "sync",
-        "node": attachment.node,
-        "repository": attachment.repository,
-        "from": attachment.head,
-        "head": head,
-        "advanced": advanced,
-        "local_head": local,
-        "base": base,
-        "outbox": {"delivered": delivered, "stalled": stall, "pending": pending},
-        "code": stall_code,
-    });
-    Ok((value, text, exit))
-}
-
-/// Tree chunks for a fetch: the local store's, then the ones this fetch received. A chunk
-/// the store holds has its whole closure, so an unchanged subtree is never requested again.
-struct Trees<'a> {
-    repo: &'a Repository,
-    staged: MemoryStore,
-}
-
-impl tree::Store for Trees<'_> {
-    fn load(&self, id: ObjectId) -> javelin::Result<Vec<u8>> {
-        if self.repo.has_tree(id)? {
-            return self.repo.tree_bytes_bounded(id, MAX_TREE);
-        }
-        self.staged.load(id)
-    }
-    fn save(&self, id: ObjectId, bytes: &[u8]) -> javelin::Result<()> {
-        self.staged.save(id, bytes)
-    }
-}
-
-/// Captures the Layer's workspace, then returns its complete changes and the remote World
-/// its base holds.
-fn local_changes(
-    repo: &mut Repository,
-    layer: &LayerId,
-) -> Result<(Option<javelin::Capture>, SparseChanges, RemoteHead), CliError> {
-    repo.set_provenance(crate::cli::provenance(None)?);
-    let capture = repo.capture_workspace(layer)?;
-    let head = match repo.layer_state(layer)? {
-        LayerState::Active { head } => head,
-        _ => {
-            return Err(Error::InvalidInput(format!(
-                "Layer {} is not active; propose work from an active Layer",
-                layer.as_str()
-            ))
-            .into());
-        }
-    };
-    let checkpoint = repo.read_checkpoint(head.checkpoint())?;
-    if checkpoint.changes().entries().is_empty() {
-        return Err(Error::InvalidInput(format!(
-            "Layer {} has no changes to propose",
-            layer.as_str()
-        ))
-        .into());
-    }
-    let local = checkpoint.base().version();
-    let base = repo.remote_world(local)?.ok_or_else(|| {
-        Error::InvalidInput(format!(
-            "Layer {}'s base, local World {local}, was not fetched from the node; create the \
-             Layer from a World that attach or sync brought here",
-            layer.as_str()
-        ))
-    })?;
-    Ok((capture, checkpoint.changes().clone(), base))
-}
-
-/// The node's checkpoint after an upload.
-struct NodeHead {
-    checkpoint: ObjectId,
-    bytes: Vec<u8>,
-}
-
-/// Brings the Layer on the node to `changes`: creates it over remote World `base` if it is
-/// missing, then uploads the blobs and changes object it lacks and appends them. A Layer the
-/// node already holds at these changes is left as it is, so a retry appends nothing.
-fn upload(
-    link: &RefCell<Link>,
-    repo: &Repository,
-    layer: &LayerId,
-    base: &RemoteHead,
-    changes: &SparseChanges,
-    operation: &OperationId,
-) -> Result<NodeHead, CliError> {
-    create_layer(link, layer, base).map_err(CliError::Remote)?;
-    let (head, bytes) = node_head(link, layer).map_err(CliError::Remote)?;
-    if Repository::foreign_checkpoint_changes(&bytes)? == *changes {
-        return Ok(NodeHead {
-            checkpoint: head,
-            bytes,
-        });
-    }
-    let session = &mut Session(link);
-    sender::upload_blobs(session, repo, changes).map_err(|e| CliError::Remote(remote(link, e)))?;
-    let id =
-        sender::upload_changes(session, changes).map_err(|e| CliError::Remote(remote(link, e)))?;
-    let append = derived("append", operation);
-    match sender::append(session, &append, layer, Some(head), id)
-        .map_err(|e| CliError::Remote(remote(link, e)))?
-    {
-        LayerOutcome::Accepted { checkpoint, .. } => Ok(NodeHead {
-            checkpoint,
-            bytes: node_checkpoint(link, checkpoint)?,
-        }),
-        LayerOutcome::Stale { head } => Err(CliError::Remote(RemoteError::new(
-            code::LAYER_STALE,
-            format!(
-                "Layer {} moved on the node to {head}, perhaps from another device; run \
-                 `javelin layer refresh {}` and retry",
-                layer.as_str(),
-                layer.as_str()
-            ),
-        ))),
-        LayerOutcome::Refused { code: refused } => Err(CliError::Remote(RemoteError::new(
-            &refused,
-            format!("the node refused the upload to Layer {}", layer.as_str()),
-        ))),
-    }
-}
-
-/// Creates the Layer on the node over remote World `base`, unless it is there already.
-fn create_layer(
-    link: &RefCell<Link>,
-    layer: &LayerId,
-    base: &RemoteHead,
-) -> std::result::Result<(), RemoteError> {
-    let base_number =
-        VersionNumber::new(base.number).map_err(|e| RemoteError::new(e.code(), e.to_string()))?;
-    match call(
-        link,
-        &Message::LayerCreate {
-            layer: layer.clone(),
-            base: base_number,
-        },
-    )? {
-        Message::LayerOutcome(LayerOutcome::Accepted { .. }) => Ok(()),
-        Message::LayerOutcome(LayerOutcome::Refused { code: refused }) => Err(RemoteError::new(
-            &refused,
-            format!(
-                "the node refused Layer {} over remote World {}: it may exist there over \
-                 another World; use another Layer ID",
-                layer.as_str(),
-                base.number
-            ),
-        )),
-        _ => Err(unexpected()),
-    }
-}
-
-/// The node's head checkpoint for an active Layer, and its bytes.
-fn node_head(
-    link: &RefCell<Link>,
-    layer: &LayerId,
-) -> std::result::Result<(ObjectId, Vec<u8>), RemoteError> {
-    let node = sender::layer_head(&mut Session(link), layer).map_err(|e| remote(link, e))?;
-    match node.status {
-        LayerStatus::Active => {}
-        LayerStatus::Published => {
-            return Err(RemoteError::new(
-                code::LAYER_PUBLISHED,
-                format!("Layer {} is published on the node", layer.as_str()),
-            ));
-        }
-        LayerStatus::Discarded => {
-            return Err(RemoteError::new(
-                "layer_discarded",
-                format!("Layer {} is discarded on the node", layer.as_str()),
-            ));
-        }
-    }
-    let bytes = node_checkpoint(link, node.head).map_err(|error| match error {
-        CliError::Remote(error) => error,
-        other => RemoteError::new(other.code(), other.to_string()),
-    })?;
-    Ok((node.head, bytes))
-}
-
-/// The node's checkpoint `id`, checked against its ID.
-fn node_checkpoint(link: &RefCell<Link>, id: ObjectId) -> Result<Vec<u8>, CliError> {
-    match call(link, &Message::Get(vec![(Kind::Checkpoint, id)])).map_err(CliError::Remote)? {
-        Message::Objects(mut objects)
-            if objects.len() == 1 && objects[0].0 == Kind::Checkpoint && objects[0].1 == id =>
-        {
-            let bytes = objects.remove(0).2;
-            if Kind::Checkpoint.id(&bytes) != id {
-                return Err(CliError::Remote(RemoteError::new(
-                    code::ID_MISMATCH,
-                    format!("checkpoint {id} does not hash to its ID"),
-                )));
-            }
-            Ok(bytes)
-        }
-        _ => Err(CliError::Remote(unexpected())),
-    }
-}
-
-/// The outbox records that upload `changes`: blob batches, then the changes object. With a
-/// live `link`, only what the node lacks; without one, everything, since the node may lack
-/// any of it and stores each object once.
-fn uploads(
-    link: Option<&RefCell<Link>>,
-    repo: &Repository,
-    changes: &SparseChanges,
-    layer: &LayerId,
-    operation: &OperationId,
-) -> Result<Vec<Queued>, CliError> {
-    let blobs: Vec<ObjectId> = changes
-        .entries()
-        .values()
-        .flatten()
-        .map(|entry| entry.content())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let bytes = changes.canonical_bytes();
-    let changes_id = Kind::Checkpoint.id(&bytes);
-    let (blobs, send_changes) = match link {
-        Some(link) => (
-            missing(link, Kind::Blob, &blobs)?,
-            !missing(link, Kind::Checkpoint, &[changes_id])?.is_empty(),
-        ),
-        None => (blobs, true),
-    };
-    let mut batches: Vec<Vec<(Kind, ObjectId, Vec<u8>)>> = Vec::new();
-    let mut size = 0;
-    for id in blobs {
-        let blob = repo.read_blob_bounded(id, MAX_BLOB)?;
-        let len = javelin_protocol::codec::OBJECT_OVERHEAD + blob.len();
-        let full = batches
-            .last()
-            .is_none_or(|batch| batch.len() == MAX_OBJECTS || size + len > MAX_FRAME / 2);
-        if full {
-            batches.push(Vec::new());
-            size = 0;
-        }
-        size += len;
-        batches
-            .last_mut()
-            .expect("a batch")
-            .push((Kind::Blob, id, blob));
-    }
-    if send_changes {
-        batches.push(vec![(Kind::Checkpoint, changes_id, bytes)]);
-    }
-    batches
-        .into_iter()
-        .enumerate()
-        .map(|(n, objects)| {
-            let operation = derived(&format!("upload{n}"), operation);
-            let payload = encode(&Message::Objects(objects)).map_err(remote_error)?;
-            Ok((
-                Record::Upload,
-                layer.as_str().to_owned(),
-                operation,
-                payload,
-            ))
-        })
-        .collect()
-}
-
-/// Which of `ids` the node lacks.
-fn missing(link: &RefCell<Link>, kind: Kind, ids: &[ObjectId]) -> Result<Vec<ObjectId>, CliError> {
-    let mut lacking = Vec::new();
-    for chunk in ids.chunks(MAX_WANT) {
-        let items: Vec<_> = chunk.iter().map(|id| (kind, *id)).collect();
-        match call(link, &Message::Want(items.clone())).map_err(CliError::Remote)? {
-            Message::Missing(found) if found.iter().all(|item| items.contains(item)) => {
-                lacking.extend(found.into_iter().map(|(_, id)| id));
-            }
-            _ => return Err(CliError::Remote(unexpected())),
-        }
-    }
-    Ok(lacking)
-}
-
-/// An operation ID for one step of `operation`, the same on every retry.
-fn derived(step: &str, operation: &OperationId) -> OperationId {
-    let seed = format!("javelin-request\0{step}\0{}", operation.as_str());
-    OperationId::parse(&format!("{step}-{}", ObjectId::for_blob(seed.as_bytes())))
-        .expect("a derived operation ID is valid")
-}
-
 fn queued(outbox: &Outbox, kind: Record, operation: &OperationId) -> bool {
     outbox
         .entries()
@@ -1298,7 +856,7 @@ fn state(status: RequestStatus) -> &'static str {
     }
 }
 
-fn remote_error(error: javelin_protocol::ProtocolError) -> CliError {
+pub(crate) fn remote_error(error: javelin_protocol::ProtocolError) -> CliError {
     CliError::Remote(error.into())
 }
 
