@@ -54,7 +54,7 @@ locally on macOS. Since 2026-10-27 Buildkite runs fmt, clippy and tests on Linux
 every push (`.buildkite/pipeline.yml`).
 
 - [x] Point `AGENTS.md` and the contract at trails and local checks.
-- [ ] Land the open work as trails, in order: #99 superposition, #101 Layer lease, CLI
+- [ ] Land the open work as trails, in order: #99 superposition (merged, trail 7), #101 Layer lease, CLI
   requests and sync (after #101), #103 forge on Vercel, Gate 2 create probe.
 - [ ] Forge deploys to Vercel from the CLI, since Vercel's Git integration cannot follow
   Entire. Install instructions stop pointing at GitHub releases.
