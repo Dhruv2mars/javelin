@@ -12,7 +12,7 @@ use crate::{
     tree::{self, Node, Trees},
 };
 
-const FORMAT: i64 = 10;
+const FORMAT: i64 = 11;
 const APPLICATION: i64 = 0x4a41564c;
 const DATABASE: &str = "repository.sqlite3";
 // A World version's primary record is its changeset: one `changes` row per changed
@@ -90,10 +90,13 @@ CREATE TABLE view_chunks (
     bytes BLOB NOT NULL
 ) STRICT;
 -- Who may read each object a version reaches: `public` through a committed tree, or the
--- audience of the hidden entry it is inside. Derived, and rebuilt by check().
+-- audience of the hidden entry it is inside. `since` is the first version that reached it
+-- for that audience, so a reader held at a frontier below it treats it as absent.
+-- Derived, and rebuilt by check().
 CREATE TABLE object_access (
     id TEXT NOT NULL REFERENCES objects(id),
     audience TEXT NOT NULL,
+    since INTEGER NOT NULL CHECK(since>=0),
     PRIMARY KEY(id,audience)
 ) STRICT, WITHOUT ROWID;
 CREATE TRIGGER versions_order BEFORE INSERT ON versions
@@ -103,7 +106,7 @@ BEGIN SELECT RAISE(ABORT, 'World versions must be contiguous'); END;
 -- this index SQLite scans every attempt inside the Publish write transaction.
 CREATE INDEX attempts_result ON attempts(result);
 PRAGMA application_id=1245795916;
-PRAGMA user_version=10;
+PRAGMA user_version=11;
 ";
 
 /// One World version. `tree` is the root of its derived snapshot tree; `id` is its
@@ -232,7 +235,12 @@ impl Repository {
                 "INSERT INTO views(version,root) VALUES(0,?1)",
                 [empty.to_string()],
             )?;
-            index_public_in(&tx, empty, &SparseChanges::default())?;
+            index_public_in(
+                &tx,
+                empty,
+                &SparseChanges::default(),
+                VersionNumber::new(0)?,
+            )?;
             if let Some(layer) = adoption {
                 crate::layer::create_on_version_in(&tx, layer, VersionNumber::new(0)?)?;
             }
@@ -488,10 +496,14 @@ impl Repository {
     /// Whether checkpoint `id`'s bytes may go to `reader`. A checkpoint is plain: it names
     /// paths and content IDs. It is served only when every path it changes is visible under
     /// every policy from its base through the head, which covers the version that published
-    /// it and any version its content reached through Stack.
+    /// it and any version its content reached through Stack. A reader held at a frontier
+    /// reads no checkpoint: a Layer's work is above every version.
     pub fn checkpoint_visible(&self, id: crate::CheckpointId, reader: &Reader) -> Result<bool> {
         if reader.reads_all() {
             return Ok(true);
+        }
+        if reader.frontier().is_some() {
+            return Ok(false);
         }
         let checkpoint = {
             let tx = self.conn.unchecked_transaction()?;
@@ -768,16 +780,24 @@ pub(crate) fn readable_in(conn: &Connection, id: ObjectId, reader: &Reader) -> R
         return Ok(true);
     }
     let audiences = conn
-        .prepare_cached("SELECT audience FROM object_access WHERE id=?1")?
-        .query_map([id.to_string()], |r| r.get::<_, String>(0))?
+        .prepare_cached("SELECT audience,since FROM object_access WHERE id=?1")?
+        .query_map([id.to_string()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    for audience in audiences {
-        if reader.can_read(&decode_audience(&audience)?) {
+    for (audience, since) in audiences {
+        if reader.can_read(&decode_audience(&audience)?)
+            && reader.sees(VersionNumber::decode(since)?)
+        {
             return Ok(true);
         }
     }
     if uploaded_in(conn, id, reader)? {
         return Ok(true);
+    }
+    // A Layer is above every version, so a reader held at a frontier never reads its work.
+    if reader.frontier().is_some() {
+        return Ok(false);
     }
     let paths = conn
         .prepare_cached("SELECT DISTINCT path FROM layer_paths WHERE content=?1")?
@@ -1345,20 +1365,31 @@ pub(crate) fn insert_opening_in(
             "opening of {commitment} is stored with another audience"
         )));
     }
-    index_sealed_in(conn, opening, audience)?;
+    index_sealed_in(conn, opening, audience, since)?;
     Ok(commitment)
 }
 
-/// Marks an object a version publishes outside its tree, such as an agent trace, public.
-pub(crate) fn grant_public_in(conn: &Connection, id: ObjectId) -> Result<()> {
-    grant_in(conn, id, &Audience::Public)
+/// Marks an object that `version` publishes outside its tree, such as an agent trace, public.
+pub(crate) fn grant_public_in(
+    conn: &Connection,
+    id: ObjectId,
+    version: VersionNumber,
+) -> Result<()> {
+    grant_in(conn, id, &Audience::Public, version)
 }
 
-fn grant_in(conn: &Connection, id: ObjectId, audience: &Audience) -> Result<()> {
+/// Grants are made in version order, so an existing grant already holds the earliest
+/// `since` and is kept.
+fn grant_in(
+    conn: &Connection,
+    id: ObjectId,
+    audience: &Audience,
+    since: VersionNumber,
+) -> Result<()> {
     conn.prepare_cached(
-        "INSERT INTO object_access(id,audience) VALUES(?1,?2) ON CONFLICT DO NOTHING",
+        "INSERT INTO object_access(id,audience,since) VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
     )?
-    .execute(params![id.to_string(), audience.to_string()])?;
+    .execute(params![id.to_string(), audience.to_string(), since.sql()])?;
     Ok(())
 }
 
@@ -1368,34 +1399,45 @@ fn granted_in(conn: &Connection, id: ObjectId, audience: &Audience) -> Result<bo
         .exists(params![id.to_string(), audience.to_string()])?)
 }
 
-/// Marks what a new version makes public: the committed chunks first reached from its
-/// root, and the blobs of its plain changes. Work is O(new chunks + change).
-fn index_public_in(conn: &Connection, root: ObjectId, changes: &SparseChanges) -> Result<()> {
+/// Marks what new version `version` makes public: the committed chunks first reached from
+/// its root, and the blobs of its plain changes. Work is O(new chunks + change).
+fn index_public_in(
+    conn: &Connection,
+    root: ObjectId,
+    changes: &SparseChanges,
+    version: VersionNumber,
+) -> Result<()> {
     let public = Audience::Public;
     let trees = Trees::new(Sql::read(conn));
     for id in reachable(&trees, root, false, &mut |id| granted_in(conn, id, &public))? {
-        grant_in(conn, id, &public)?;
+        grant_in(conn, id, &public, version)?;
     }
     for entry in changes.entries().values().flatten() {
         if let Some(blob) = entry.content() {
-            grant_in(conn, blob, &public)?;
+            grant_in(conn, blob, &public, version)?;
         }
     }
     Ok(())
 }
 
-/// Marks what an opening makes readable to its audience: the blob, or the directory's
-/// committed chunks and plain blobs, not following nested hidden entries.
-fn index_sealed_in(conn: &Connection, opening: &Opening, audience: &Audience) -> Result<()> {
+/// Marks what an opening first used by version `since` makes readable to its audience: the
+/// blob, or the directory's committed chunks and plain blobs, not following nested hidden
+/// entries.
+fn index_sealed_in(
+    conn: &Connection,
+    opening: &Opening,
+    audience: &Audience,
+    since: VersionNumber,
+) -> Result<()> {
     if opening.kind != SealedKind::Directory {
-        return grant_in(conn, opening.content, audience);
+        return grant_in(conn, opening.content, audience, since);
     }
     let trees = Trees::new(Sql::read(conn));
     let found = reachable(&trees, opening.content, true, &mut |id| {
         granted_in(conn, id, audience)
     })?;
     for id in found {
-        grant_in(conn, id, audience)?;
+        grant_in(conn, id, audience, since)?;
     }
     Ok(())
 }
@@ -1403,39 +1445,49 @@ fn index_sealed_in(conn: &Connection, opening: &Opening, audience: &Audience) ->
 /// Rebuilds `object_access` from every version and opening and compares it with the
 /// stored table. O(stored trees).
 fn check_access_in(conn: &Connection, history: &[WorldVersion]) -> Result<()> {
-    use std::collections::BTreeSet;
-    let mut expected = BTreeSet::<(ObjectId, String)>::new();
+    use std::collections::BTreeMap;
+    // Each grant keeps the earliest version that made it: versions are walked in order,
+    // traces at their version, and openings by `since`.
+    let mut expected = BTreeMap::<(ObjectId, String), u64>::new();
     let trees = Trees::new(Sql::read(conn));
     let public = Audience::Public.to_string();
     for version in history {
-        let mut known = |id: ObjectId| Ok(expected.contains(&(id, public.clone())));
+        let since = version.number.get();
+        let mut known = |id: ObjectId| Ok(expected.contains_key(&(id, public.clone())));
         let found = reachable(&trees, version.tree, false, &mut known)?;
-        expected.extend(found.into_iter().map(|id| (id, public.clone())));
-        if version.number.get() > 0 {
+        for id in found {
+            expected.entry((id, public.clone())).or_insert(since);
+        }
+        if since > 0 {
             for entry in changeset_in(conn, version.number)?
                 .entries()
                 .values()
                 .flatten()
             {
                 if let Some(blob) = entry.content() {
-                    expected.insert((blob, public.clone()));
+                    expected.entry((blob, public.clone())).or_insert(since);
                 }
             }
         }
         trees.forget();
     }
-    for trace in conn
-        .prepare("SELECT context FROM publications WHERE outcome=1 AND context IS NOT NULL")?
-        .query_map([], |r| r.get::<_, String>(0))?
+    for (trace, version) in conn
+        .prepare("SELECT context,result FROM publications WHERE outcome=1 AND context IS NOT NULL")?
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?
     {
-        expected.insert((decode_id(&trace)?, public.clone()));
+        let since = VersionNumber::decode(version)?.get();
+        expected
+            .entry((decode_id(&trace)?, public.clone()))
+            .and_modify(|at| *at = (*at).min(since))
+            .or_insert(since);
     }
     let seals = conn
-        .prepare("SELECT commitment FROM seals ORDER BY commitment")?
-        .query_map([], |r| r.get::<_, String>(0))?
+        .prepare("SELECT commitment,since FROM seals ORDER BY since,commitment")?
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    for commitment in seals {
+    for (commitment, since) in seals {
+        let since = VersionNumber::decode(since)?.get();
         let (opening, audience) = Seals::all(conn)
             .opening(decode_id(&commitment)?)?
             .ok_or_else(|| Error::CorruptRepository("opening vanished".into()))?;
@@ -1444,22 +1496,33 @@ fn check_access_in(conn: &Connection, history: &[WorldVersion]) -> Result<()> {
             validate_entry(conn, &file)?;
         }
         if opening.kind == SealedKind::Directory {
-            let mut known = |id: ObjectId| Ok(expected.contains(&(id, audience.clone())));
+            let mut known = |id: ObjectId| Ok(expected.contains_key(&(id, audience.clone())));
             let found = reachable(&trees, opening.content, true, &mut known)?;
-            expected.extend(found.into_iter().map(|id| (id, audience.clone())));
+            for id in found {
+                expected.entry((id, audience.clone())).or_insert(since);
+            }
             trees.forget();
         } else {
-            expected.insert((opening.content, audience));
+            expected.entry((opening.content, audience)).or_insert(since);
         }
     }
     let stored = conn
-        .prepare("SELECT id,audience FROM object_access")?
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .prepare("SELECT id,audience,since FROM object_access")?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?
         .map(|row| {
-            let (id, audience) = row?;
-            Ok((decode_id(&id)?, audience))
+            let (id, audience, since) = row?;
+            Ok((
+                (decode_id(&id)?, audience),
+                VersionNumber::decode(since)?.get(),
+            ))
         })
-        .collect::<Result<BTreeSet<_>>>()?;
+        .collect::<Result<BTreeMap<_, _>>>()?;
     if stored != expected {
         return Err(Error::CorruptRepository(
             "object access index disagrees with the World".into(),
@@ -1523,7 +1586,7 @@ pub(crate) fn append_version_in(
     }
     conn.prepare_cached("INSERT INTO views(version,root) VALUES(?1,?2)")?
         .execute(params![version.number.sql(), view.to_string()])?;
-    index_public_in(conn, tree, changes)?;
+    index_public_in(conn, tree, changes, version.number)?;
     Ok(version)
 }
 

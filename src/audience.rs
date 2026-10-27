@@ -130,6 +130,9 @@ pub struct Reader {
     /// Who the caller is, when authenticated. Objects this principal uploaded are readable
     /// by it whatever their audience: it already holds their bytes.
     principal: Option<String>,
+    /// The newest World version the reader may see, when it is held below the head: the
+    /// public frontier, for a reader outside the repository. `None` sees every version.
+    frontier: Option<crate::VersionNumber>,
 }
 
 impl Reader {
@@ -145,6 +148,7 @@ impl Reader {
             maintainer: false,
             groups: groups.into_iter().collect(),
             principal: None,
+            frontier: None,
         }
     }
 
@@ -156,6 +160,7 @@ impl Reader {
             maintainer: true,
             groups: BTreeSet::new(),
             principal: None,
+            frontier: None,
         }
     }
 
@@ -169,6 +174,26 @@ impl Reader {
 
     pub fn principal(&self) -> Option<&str> {
         self.principal.as_deref()
+    }
+
+    /// The same reader, held at World `frontier`: versions above it, and everything only
+    /// they reach, are absent to it. A node holds every reader outside the repository at
+    /// the public frontier.
+    pub fn with_frontier(self, frontier: crate::VersionNumber) -> Self {
+        Self {
+            frontier: Some(frontier),
+            ..self
+        }
+    }
+
+    /// The version this reader is held at, if any.
+    pub fn frontier(&self) -> Option<crate::VersionNumber> {
+        self.frontier
+    }
+
+    /// Whether `version` is at or below this reader's frontier.
+    pub fn sees(&self, version: crate::VersionNumber) -> bool {
+        self.frontier.is_none_or(|frontier| version <= frontier)
     }
 
     pub fn is_member(&self) -> bool {
