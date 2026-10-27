@@ -54,7 +54,7 @@ pub struct RemoteError {
 }
 
 impl RemoteError {
-    fn new(code: &str, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &str, detail: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             detail: detail.into(),
@@ -71,14 +71,14 @@ impl From<ProtocolError> for RemoteError {
     }
 }
 
-struct Target {
+pub(crate) struct Target {
     /// `https://HOST[:PORT]` (plain `http` only for this machine), as stored in `attach.json`.
     node: String,
     repository: String,
     agent: ureq::Agent,
 }
 
-fn parse_target(text: &str) -> Result<Target> {
+pub(crate) fn parse_target(text: &str) -> Result<Target> {
     let usage =
         "expected a node URL https://HOST[:PORT]/REPOSITORY (plain http only for localhost)";
     let (scheme, rest) = text
@@ -104,7 +104,7 @@ fn parse_target(text: &str) -> Result<Target> {
 }
 
 /// The transport state shared by both halves of one protocol session.
-struct Link {
+pub(crate) struct Link {
     target: Target,
     credential: Credential,
     /// Whether a request may go out without a token. Reads may, so a public repository stays
@@ -121,12 +121,12 @@ struct Link {
 
 impl Link {
     /// A session for reads, which go out anonymously when no token can be had.
-    fn new(target: Target) -> RefCell<Self> {
+    pub(crate) fn new(target: Target) -> RefCell<Self> {
         Self::with(target, true)
     }
 
     /// A session for writes, which are refused before sending when no token can be had.
-    fn writing(target: Target) -> RefCell<Self> {
+    pub(crate) fn writing(target: Target) -> RefCell<Self> {
         Self::with(target, false)
     }
 
@@ -297,7 +297,7 @@ fn framed(body: &[u8]) -> Vec<u8> {
 }
 
 /// The write half of a protocol session.
-struct Up<'a>(&'a RefCell<Link>);
+pub(crate) struct Up<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Write for Up<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -311,7 +311,7 @@ impl Write for Up<'_> {
 
 /// The read half of a protocol session. A read with no reply left sends the buffered
 /// frame first, so a reply is never read before its request has gone out.
-struct Down<'a>(&'a RefCell<Link>);
+pub(crate) struct Down<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Read for Down<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -329,7 +329,7 @@ impl Read for Down<'_> {
 
 /// The transport's own failure, when there was one, is more specific than the protocol
 /// error it caused.
-fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
+pub(crate) fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
     link.borrow()
         .failure
         .clone()
@@ -337,7 +337,10 @@ fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
 }
 
 /// One request and its reply. A node's `Error` reply becomes the returned error.
-fn call(link: &RefCell<Link>, message: &Message) -> std::result::Result<Message, RemoteError> {
+pub(crate) fn call(
+    link: &RefCell<Link>,
+    message: &Message,
+) -> std::result::Result<Message, RemoteError> {
     write_frame(&mut Up(link), message).map_err(|e| remote(link, e))?;
     match read_frame(&mut Down(link)) {
         Ok(Some(Message::Error { code, detail })) => Err(RemoteError { code, detail }),
@@ -350,7 +353,7 @@ fn call(link: &RefCell<Link>, message: &Message) -> std::result::Result<Message,
     }
 }
 
-fn unexpected() -> RemoteError {
+pub(crate) fn unexpected() -> RemoteError {
     RemoteError::new("unexpected_message", "unexpected reply from the node")
 }
 
@@ -387,7 +390,7 @@ fn resolve(link: &RefCell<Link>) -> std::result::Result<RemoteHead, RemoteError>
 }
 
 /// Blobs go straight into the local store, which keys them by content.
-struct RepoBlobs<'a>(&'a mut Repository);
+pub(crate) struct RepoBlobs<'a>(pub(crate) &'a mut Repository);
 
 impl Blobs for RepoBlobs<'_> {
     fn has(&self, id: ObjectId) -> bool {
@@ -748,7 +751,7 @@ fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
 }
 
 /// Both halves of one session, for protocol code that reads and writes one link.
-struct Session<'a>(&'a RefCell<Link>);
+pub(crate) struct Session<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Write for Session<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
