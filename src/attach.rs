@@ -15,6 +15,8 @@ use crate::{
 
 const ATTACHMENT: &str = "attach.json";
 const ATTACH_PREFIX: &str = "attach-";
+/// The operation prefix of a World advance that follows the node to a newer head.
+pub const SYNC_PREFIX: &str = "sync-";
 
 /// A head a node reported: its World number, chain ID and root tree. The number is the
 /// remote World's, which the local store does not share after attach (see `attach_head`).
@@ -86,6 +88,30 @@ impl Repository {
         }
         self.put_tree(&bytes)?;
         Ok(())
+    }
+
+    /// The operation that advances this store to `head`, a newer head of its attachment.
+    pub fn sync_operation(head: &RemoteHead) -> Result<OperationId> {
+        OperationId::parse(&format!("{SYNC_PREFIX}{}", head.id))
+    }
+
+    /// Whether the local head is still the World this store recorded for `attachment`'s
+    /// head: the same tree, made by the attach or sync to that head's chain ID (World 0 when
+    /// the head's tree is empty). Anything else, such as a local Publish, is local divergence
+    /// that following the node would overwrite.
+    pub fn follows_attachment(&self, attachment: &Attachment) -> Result<bool> {
+        let local = self.head()?;
+        if local.tree != attachment.head.tree {
+            return Ok(false);
+        }
+        let recorded = [
+            attach_operation(&attachment.head)?,
+            Self::sync_operation(&attachment.head)?,
+        ];
+        Ok(match &local.operation {
+            Some(operation) => recorded.contains(operation),
+            None => local.number.get() == 0,
+        })
     }
 
     /// Whether an attach was interrupted before `attach.json` was written. Attach advances

@@ -237,7 +237,9 @@ writes at a time. `crates/javelin-node/src/lease.rs` keeps a lease per Layer in 
 - `javelin layer take ID [--operation OP]` first checks that the Layer can be brought here:
   the Layer's base World is matched to a local World by its tree, since remote and local
   numbers differ (a newer one is fetched and verified from the attached head, as attach
-  does; an older one this repository lacks is refused), and an existing local Layer is
+  does, and refused with `local_world_diverged` when the local World head is not the
+  attachment's own World, so local divergence is never overwritten; an older one this
+  repository lacks is refused), and an existing local Layer is
   refreshed. Only then does it send `LayerTake`, create the Layer locally if needed, move it
   to the node's head as `layer refresh` does, and open (or refresh) its clone-backed
   directory. A replayed take reports the recorded take and, read from `LayerState.lease`,

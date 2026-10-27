@@ -526,3 +526,56 @@ fn take_finds_the_base_world_by_tree_and_refuses_before_moving_the_lease() {
         "{text}"
     );
 }
+
+#[test]
+fn take_never_overwrites_a_local_world_the_node_lacks() {
+    let root = TempDir::new().unwrap();
+    let node = Live::start(&root.path().join("node"), |log| {
+        advance(log, "world-1", b"one\n");
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    let attached = Repository::open(&desktop.project).unwrap().head().unwrap();
+
+    // A local Publish in the attached repository: its World now has a version the node lacks.
+    let (code, created) = desktop.json(&["workspace", "create", "mine", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{created}");
+    let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    fs::write(dir.join("local.txt"), b"only here\n").unwrap();
+    let (code, published) = desktop.json(&[
+        "workspace",
+        "publish",
+        "mine",
+        "--operation",
+        "publish-local",
+        "--repo",
+        desktop.repo(),
+    ]);
+    assert_eq!(code, Some(0), "{published}");
+    let local = Repository::open(&desktop.project).unwrap().head().unwrap();
+    assert_eq!(local.number.get(), attached.number.get() + 1);
+
+    // The node moves on, with a Layer over its newer World.
+    node.change(|log| {
+        let two = advance(log, "world-2", b"two\n");
+        log.create_layer(&layer("newer"), two).unwrap();
+    });
+
+    // Following the node would replace the local World's tree: refused before the lease moves.
+    let (code, refused) = desktop.json(&["layer", "take", "newer", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(1), "{refused}");
+    assert_eq!(refused["error"]["code"], "local_world_diverged");
+    let message = refused["error"]["message"].as_str().unwrap();
+    assert!(message.contains(&local.id.to_string()), "{message}");
+    assert!(message.contains("fresh `javelin attach`"), "{message}");
+    assert_eq!(node.lease(&desktop.token, "newer"), LeaseHolder::Free);
+    let repo = Repository::open(&desktop.project).unwrap();
+    assert_eq!(repo.head().unwrap(), local, "the local World is untouched");
+    assert_eq!(repo.attachment().unwrap().unwrap().head.number, 1);
+    assert!(repo.layer_state(&layer("newer")).is_err());
+    drop(repo);
+
+    // A fresh attach of the same node takes it.
+    let fresh = Device::attach(root.path(), "fresh", &node.url, wire_support::OWNER);
+    let (code, taken) = fresh.json(&["layer", "take", "newer", "--repo", fresh.repo()]);
+    assert_eq!(code, Some(0), "{taken}");
+}

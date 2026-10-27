@@ -1016,10 +1016,16 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
     Ok((value, text, 0))
 }
 
+/// Refusal for following the node when the local World has versions the node lacks.
+pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
+
 /// The local World holding remote World `base`'s tree. Remote and local numbers differ, so
 /// the World is matched by its tree. One this repository lacks is fetched as attach does,
 /// verified from the attached head, and the local World advances to it; a remote World
-/// older than the attached one cannot be fetched that way and is refused.
+/// older than the attached one cannot be fetched that way and is refused. The node is the
+/// World's authority, so the advance never overwrites local divergence: a local head that
+/// is not the attachment's own World, such as a local Publish, is refused with
+/// `local_world_diverged` before anything is fetched.
 fn local_world(
     link: &RefCell<Link>,
     repo: &mut Repository,
@@ -1048,6 +1054,25 @@ fn local_world(
         ))
         .into());
     }
+    if !repo.follows_attachment(attached)? {
+        let local = repo.head()?;
+        return Err(CliError::Remote(RemoteError::new(
+            LOCAL_WORLD_DIVERGED,
+            format!(
+                "this repository's World {} (id {}, tree {}) is not the attached remote World {} \
+                 (id {}, tree {}): it has local versions the node lacks, and following the node \
+                 to remote World {base} would overwrite them. Nothing was changed and the lease \
+                 did not move. Take the Layer from a fresh `javelin attach` directory; this \
+                 repository keeps its local Worlds.",
+                local.number,
+                local.id,
+                local.tree,
+                attached.head.number,
+                attached.head.id,
+                attached.head.tree
+            ),
+        )));
+    }
     let anchor = Anchor {
         number: VersionNumber::new(attached.head.number)?,
         id: attached.head.id,
@@ -1069,7 +1094,12 @@ fn local_world(
     };
     repo.import_tree(&trees, fetched.tree)?;
     let local = repo.head()?;
-    let operation = OperationId::parse(&format!("sync-{}", fetched.id))?;
+    let target = RemoteHead {
+        number: fetched.number.get(),
+        id: fetched.id,
+        tree: fetched.tree,
+    };
+    let operation = Repository::sync_operation(&target)?;
     let version = match repo.advance_to_tree(&operation, local.number, fetched.tree)? {
         AdvanceOutcome::Accepted { version } => version,
         AdvanceOutcome::Stale { .. } => {
@@ -1077,11 +1107,7 @@ fn local_world(
         }
     };
     repo.write_attachment(&Attachment {
-        head: RemoteHead {
-            number: fetched.number.get(),
-            id: fetched.id,
-            tree: fetched.tree,
-        },
+        head: target,
         ..attached.clone()
     })?;
     Ok(version.number)
