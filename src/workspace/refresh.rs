@@ -69,6 +69,11 @@ impl Repository {
     /// command reads Layer state. `None` when there is no directory or the Layer is
     /// no longer active, so there is nothing to capture.
     ///
+    /// The directory of a discarded or published Layer exists only when a crash stopped
+    /// the step after the terminal commit. This moves it into trash, so the next command
+    /// that names the Layer finishes the step and never reports a live directory for it.
+    /// Best effort: recovery finishes it otherwise and reports any error.
+    ///
     /// A directory whose head came from Stack and that is not synced with it is behind:
     /// it is not scanned, because capturing it would revert the stacked work.
     pub fn capture_workspace(&mut self, layer: &LayerId) -> Result<Option<Capture>> {
@@ -76,10 +81,13 @@ impl Repository {
         if !root.try_exists()? {
             return Ok(None);
         }
-        let _store = Store::lock(self)?;
+        let store = Store::lock(self)?;
         let head = match self.layer_state(layer)? {
             LayerState::Active { head } => head,
-            _ => return Ok(None),
+            _ => {
+                let _ = store.trash(&root, &format!("layer~{}", layer.as_str()));
+                return Ok(None);
+            }
         };
         self.capture_synced(layer, head, &root, true).map(Some)
     }
