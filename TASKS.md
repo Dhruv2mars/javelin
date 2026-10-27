@@ -28,6 +28,9 @@ CI left open. Work from it, in roughly this order:
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
+- [x] Forge live on Vercel at https://javelin-codes.vercel.app (Hobby, Git integration from
+  `main`, root `apps/forge`): landing page at `/` with install and open-by-node-URL, SPA
+  fallback and security headers. Proved against a tunneled `javelin-node serve`.
 - [ ] CI design (waiting on the user).
 - [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
   the first was a product gap. A Layer discarded or published, then killed before the
