@@ -57,7 +57,7 @@ pub(crate) fn stack(
     }) {
         // A source the caller may not read is absent to it: the same refusal as a
         // checkpoint that was never stored.
-        let hidden = !repo.checkpoint_visible(source, reader).unwrap_or(true);
+        let hidden = !matches!(repo.checkpoint_visible(source, reader), Ok(true));
         let attempt = if hidden {
             Err(StackError::Storage(Error::MissingObject(source.object())))
         } else if current.as_ref() == Some(&head) {
@@ -129,10 +129,12 @@ pub(crate) fn get_checkpoints(
     let mut size = 5;
     for (kind, id) in items.into_iter().take(MAX_OBJECTS) {
         let checkpoint = CheckpointId::parse(&id.to_string())?;
-        let bytes = repo.checkpoint_object(checkpoint)?;
-        if !repo.checkpoint_visible(checkpoint, reader)? {
+        // Visibility first, and any failure to read it as a checkpoint (absent, another
+        // kind) answered as absent, so nothing about an unreadable object shows.
+        if !matches!(repo.checkpoint_visible(checkpoint, reader), Ok(true)) {
             return Err(javelin::Error::MissingObject(id).into());
         }
+        let bytes = repo.checkpoint_object(checkpoint)?;
         if bytes.len() > MAX_CHECKPOINT {
             return Err(ProtocolError::new(
                 code::LIMIT_EXCEEDED,

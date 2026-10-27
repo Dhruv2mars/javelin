@@ -337,7 +337,10 @@ fn check_writes(
 ) -> Result<(), ProtocolError> {
     match message {
         Message::LayerAppend {
-            layer, checkpoint, ..
+            layer,
+            parent,
+            checkpoint,
+            ..
         } => {
             let Some(changes) = crate::layer::load_changes(log.records(), *checkpoint)? else {
                 return Ok(());
@@ -349,12 +352,29 @@ fn check_writes(
             let Ok(LayerState::Active { head }) = log.repo().layer_state(layer) else {
                 return Ok(());
             };
+            // An unreadable parent is left to the append, which treats it as stale.
+            let previous = parent
+                .and_then(|parent| javelin::CheckpointId::parse(&parent.to_string()).ok())
+                .filter(|parent| matches!(log.repo().checkpoint_visible(*parent, writer), Ok(true)))
+                .and_then(|parent| log.repo().read_checkpoint(parent).ok());
+            let Some(previous) = previous else {
+                return Ok(());
+            };
+            // The append replaces the whole delta, so the writer must be able to make every
+            // path the transition changes: new or edited entries and dropped ones.
+            let mut transition = changes.entries().clone();
+            for (path, entry) in previous.changes().entries() {
+                if changes.entries().get(path) != Some(entry) {
+                    transition.entry(path.clone()).or_insert(None);
+                }
+            }
+            let transition = javelin::SparseChanges::new(transition)?;
             let base = log
                 .repo()
                 .read_checkpoint(head.checkpoint())?
                 .base()
                 .version();
-            auth::check_write(log.repo(), writer, &changes, base)
+            auth::check_write(log.repo(), writer, &transition, base)
         }
         Message::LayerStack {
             target_head,

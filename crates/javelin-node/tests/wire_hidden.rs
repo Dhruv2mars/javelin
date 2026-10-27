@@ -9,8 +9,8 @@ use std::{
 };
 
 use javelin::{
-    FileEntry, LayerId, ObjectId, OperationId, POLICY_PATH, PublishAttribution, Reader, RepoPath,
-    SparseChanges, VersionNumber,
+    FileEntry, LayerId, LayerState, ObjectId, OperationId, POLICY_PATH, PublishAttribution, Reader,
+    RepoPath, SparseChanges, VersionNumber,
 };
 use javelin_collaboration::{PrincipalId, Role, Visibility};
 use javelin_identity::test_keys;
@@ -618,4 +618,83 @@ fn an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back() {
         "missing_object"
     );
     server.join().unwrap();
+}
+
+#[test]
+fn a_probe_of_another_kind_confirms_nothing() {
+    let dir = TempDir::new().unwrap();
+    let log = node(&dir);
+    let member = token_for("member", REPO);
+    let (addr, server) = start(&dir, log, 4);
+    let secret = ObjectId::for_blob(SECRET);
+    let never = ObjectId::for_blob(b"TOKEN=guess\n");
+    // Asking for the hidden blob as a tree or a checkpoint answers as for an absent one.
+    for id in [secret, never] {
+        assert_eq!(
+            send(addr, Some(&member), &Message::Want(vec![(Kind::Tree, id)])),
+            Message::Missing(vec![(Kind::Tree, id)])
+        );
+    }
+    let (code, detail) = error(send(
+        addr,
+        Some(&member),
+        &Message::Get(vec![(Kind::Checkpoint, never)]),
+    ));
+    assert_eq!(
+        error(send(
+            addr,
+            Some(&member),
+            &Message::Get(vec![(Kind::Checkpoint, secret)])
+        )),
+        (
+            code,
+            detail.replace(&never.to_string(), &secret.to_string())
+        )
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn an_append_cannot_drop_an_edit_the_writer_cannot_see() {
+    let dir = TempDir::new().unwrap();
+    let mut log = node(&dir);
+    // A maintainer's Layer edits `.env`; a member's empty append against it would drop it.
+    let shared = append(&mut log, "shared", &[(".env", Some(b"TOKEN=2\n"))]);
+    let member = token_for("member", REPO);
+    let (addr, server) = start(&dir, log, 3);
+    let empty = SparseChanges::default().canonical_bytes();
+    let changes = ObjectId::for_checkpoint(&empty);
+    assert!(matches!(
+        send(
+            addr,
+            Some(&member),
+            &Message::Objects(vec![(Kind::Checkpoint, changes, empty)])
+        ),
+        Message::Stored { .. }
+    ));
+    let append = |parent: ObjectId, n: &str| Message::LayerAppend {
+        operation: op(n),
+        layer: layer("shared"),
+        parent: Some(parent),
+        checkpoint: changes,
+    };
+    // The unreadable head is a parent the member cannot name: stale, as for any other.
+    let reply = send(addr, Some(&member), &append(shared, "drop"));
+    assert_eq!(
+        reply,
+        send(
+            addr,
+            Some(&member),
+            &append(ObjectId::for_checkpoint(b"{}"), "other")
+        )
+    );
+    assert!(
+        matches!(reply, Message::LayerOutcome(LayerOutcome::Stale { .. })),
+        "{reply:?}"
+    );
+    let log = server.join().unwrap();
+    let LayerState::Active { head } = log.repo().layer_state(&layer("shared")).unwrap() else {
+        panic!("the Layer moved")
+    };
+    assert_eq!(head.checkpoint().object(), shared);
 }

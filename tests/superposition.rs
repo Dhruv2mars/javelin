@@ -693,3 +693,47 @@ fn names_with_special_characters_are_sealed() {
     ));
     repo.check().unwrap();
 }
+
+#[test]
+fn a_nested_rule_never_widens_its_enclosing_audience() {
+    let (_dir, mut repo) = repo();
+    let version = publish(
+        &mut repo,
+        "nested",
+        &[
+            (
+                POLICY_PATH,
+                Some(b"secret/** maintainers\nsecret/a members\n"),
+            ),
+            ("secret/a", Some(b"inner\n")),
+            ("secret/b", Some(b"other\n")),
+        ],
+    );
+    let committed = repo.committed_at(version.number).unwrap();
+    let (secret, audience) = hidden(&committed, "secret");
+    assert_eq!(audience, Audience::Maintainers);
+    // Inside, `secret/a` is not a separate members' entry: it is the maintainers' too.
+    let [(_, opening, _)] = repo
+        .openings(&[secret], &Reader::maintainer())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let mut inner = Vec::new();
+    chunks(&repo, opening.content, &mut inner);
+    let chunk = Chunk::decode(&inner[0]).unwrap();
+    assert!(
+        chunk
+            .entries()
+            .all(|(_, node)| !matches!(node, Node::File(FileEntry::Hidden { .. })))
+    );
+    // A member can neither read the inner blob by a guessed ID nor open anything.
+    let blob = ObjectId::for_blob(b"inner\n");
+    assert!(!repo.readable(blob, &Reader::member([])).unwrap());
+    assert!(repo.readable(blob, &Reader::maintainer()).unwrap());
+    assert!(
+        repo.openings(&[secret], &Reader::member([]))
+            .unwrap()
+            .is_empty()
+    );
+    repo.check().unwrap();
+}

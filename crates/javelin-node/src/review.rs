@@ -417,7 +417,7 @@ fn revision_ref(
     base: VersionNumber,
 ) -> Result<Result<RevisionRef, &'static str>, ProtocolError> {
     let id = CheckpointId::parse(&checkpoint.to_string())?;
-    if !repo.checkpoint_visible(id, reader).unwrap_or(true) {
+    if !matches!(repo.checkpoint_visible(id, reader), Ok(true)) {
         return Ok(Err("missing_object"));
     }
     let Ok(stored) = repo.read_checkpoint(id) else {

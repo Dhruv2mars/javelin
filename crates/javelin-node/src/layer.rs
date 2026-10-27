@@ -109,6 +109,13 @@ pub(crate) fn append(
         LayerState::Active { head } if Some(head.checkpoint().object()) == parent => Some(head),
         _ => None,
     }) {
+        // An append replaces the Layer's whole delta. A head the writer may not read is not
+        // a parent it can name: the append is stale, as for any head it does not hold.
+        if let Some(writer) = writer
+            && !matches!(repo.checkpoint_visible(head.checkpoint(), writer), Ok(true))
+        {
+            continue;
+        }
         update = Some(repo.capture_layer_as(operation, &head, &changes, writer));
         if !matches!(update, Some(Err(Error::OperationIdReused(_)))) {
             break;

@@ -242,13 +242,20 @@ fn handle(
             unique(&items)?;
             let mut missing = Vec::new();
             for (kind, id) in items {
+                if kind == Kind::Checkpoint {
+                    return Err(checkpoint_unserved());
+                }
+                // Hidden from this caller: reported missing, as if never stored, before
+                // anything about the stored object, such as its kind, can show.
+                if !repo.readable(id, reader)? {
+                    missing.push((kind, id));
+                    continue;
+                }
                 let found = match kind {
                     Kind::Blob => repo.has_blob(id),
-                    Kind::Tree => repo.has_tree(id),
-                    Kind::Checkpoint => return Err(checkpoint_unserved()),
+                    _ => repo.has_tree(id),
                 }?;
-                // Hidden from this caller: reported missing, as if never stored.
-                if !found || !repo.readable(id, reader)? {
+                if !found {
                     missing.push((kind, id));
                 }
             }

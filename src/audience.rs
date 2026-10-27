@@ -266,7 +266,8 @@ impl Policy {
 
     /// The hidden entries on the way to `path`, outermost first: the byte length of
     /// each hidden prefix (the whole path when the entry itself is hidden) and its
-    /// audience. O(depth x rules).
+    /// effective audience, the meet of its own and every enclosing one, so a nested entry
+    /// is never readable by anyone its enclosing entry hides it from. O(depth x rules).
     pub fn hidden_along(&self, path: &str) -> Vec<(usize, Audience)> {
         let mut out = Vec::new();
         let mut parent = Audience::Public;
@@ -275,8 +276,10 @@ impl Policy {
             .map(|(i, _)| i)
             .chain(std::iter::once(path.len()));
         for end in ends {
-            let audience = self.audience(&path[..end]);
-            if audience != Audience::Public && audience != parent {
+            // Inside a hidden entry, a rule can only narrow: an entry is readable only by
+            // readers of everything that encloses it.
+            let audience = parent.clone().meet(&self.audience(&path[..end]));
+            if audience != parent {
                 out.push((end, audience.clone()));
             }
             parent = audience;
@@ -399,6 +402,24 @@ mod tests {
             vec![("internal".len(), Audience::Members)]
         );
         assert!(p.hidden_along("src/x").is_empty());
+        // A wider rule inside a narrower hidden entry cannot widen it.
+        let p = policy("secret/** maintainers\nsecret/a members\nsecret/pub/** public\n");
+        assert_eq!(
+            p.hidden_along("secret/a"),
+            vec![("secret".len(), Audience::Maintainers)]
+        );
+        assert_eq!(
+            p.hidden_along("secret/pub/x"),
+            vec![("secret".len(), Audience::Maintainers)]
+        );
+        let p = policy("team/** members\nteam/ops/** group:ops\n");
+        assert_eq!(
+            p.hidden_along("team/ops/k"),
+            vec![
+                ("team".len(), Audience::Members),
+                ("team/ops".len(), Audience::Group("ops".into()))
+            ]
+        );
     }
 
     #[test]
