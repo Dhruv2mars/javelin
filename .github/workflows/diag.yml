@@ -17,14 +17,16 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-      - run: cargo test --locked -p javelin --test workspace_layers --no-run
+      - run: |
+          exe=$(cargo test --locked -p javelin --test workspace_layers --no-run --message-format=json | jq -r 'select(.executable != null) | .executable' | tail -1)
+          echo "EXE=$exe" >> "$GITHUB_ENV"; echo "$exe"
       - name: Loop
         env:
           JAVELIN_DIAG: '1'
         run: |
           fails=0
           for i in $(seq 1 25); do
-            for k in 1 2 3 4; do cargo test --locked -p javelin --test workspace_layers > out$k.txt 2>&1 & done
+            for k in 1 2 3 4; do "$EXE" > out$k.txt 2>&1 & done
             wait
             for k in 1 2 3 4; do
               if ! grep -q "test result: ok" out$k.txt; then
