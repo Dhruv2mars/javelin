@@ -417,6 +417,34 @@ rules never silently untracks an entry. `.javelinignore` itself is always
 captured. Capture never removes ignored bytes. The same matcher is available to
 library callers as `javelin::IgnoreRules`.
 
+## Public frontier
+
+```text
+javelin frontier --node https://HOST[:PORT] --repository ID [--json]
+javelin delay [DURATION] --node https://HOST[:PORT] --repository ID [--json]
+javelin embargo --operation ID [--until UNIX] --node https://HOST[:PORT] --repository ID [--json]
+javelin embargo release VERSION --node https://HOST[:PORT] --repository ID [--json]
+```
+
+A reader outside a hosted repository sees it at its public frontier: the newest version
+older than the disclosure delay with no unreleased embargo at or below it. Members see the
+head (`docs/direction.md`, Superposition).
+
+`frontier` prints the frontier. A member also sees the delay and each unreleased embargo;
+anyone else sees only whether the public view is delayed. It reads with this device's
+credential for the repository or `JAVELIN_TOKEN`, and signed out without one.
+
+`delay` shows the delay, or sets it with Maintain. `DURATION` is seconds, or a count
+followed by `s`, `m`, `h` or `d`; `0` turns the delay off. Each version becomes public on
+its own once the delay has passed since it was published.
+
+`embargo --operation ID` embargoes the Publish with that operation ID, with Maintain. Send
+it before the Publish: readers outside the repository then stay below the version it makes
+until Unix time `--until`, or until `embargo release VERSION`, and every version waiting
+behind it becomes public at once (each still after the delay). Repeating the same embargo is
+safe; a Publish already decided cannot gain one. Changes print the disclosure as a member
+sees it. A refusal exits 1 with the node's code.
+
 ## Output and exit status
 
 `--json` prints one JSON object. Successful results and stale outcomes go to

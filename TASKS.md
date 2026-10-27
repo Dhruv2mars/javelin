@@ -30,6 +30,14 @@ CI left open. Work from it, in roughly this order:
   - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
   and forge.
+  - [x] Disclosure delay, embargo and the public frontier on the node (`disclosure.rs`,
+    format 11 `object_access.since`), CLI (`javelin frontier`, `delay`, `embargo`) and forge
+    (frontier as the head, "delayed" notice). Tests: `crates/javelin-node/tests/wire_frontier.rs`,
+    `apps/forge/test/frontier.test.ts`. macOS only; Linux and Windows unverified.
+  - [ ] When `ListRequests`/`ReadReview` (trail 3) land, answer callers outside the repository
+    as for no request, as `ReadRequest` does, so review state cannot name a held version.
+  - [ ] `--embargo` on the hosted Publish commands once trail 3's CLI Publish lands; until
+    then `javelin embargo --operation ID` precedes the Publish.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
 - [ ] Layer writer lease and `javelin layer take` (replaces D21).
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
