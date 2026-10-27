@@ -1,0 +1,17 @@
+# Buildkite CI (replaces .github/workflows now that this repo lives on Entire).
+# Runs on the free hosted linux-small queue; checkout comes from the Entire plugin Buildkite adds to every job.
+# Linux subset of ci.yml (fmt, clippy, tests, release build); macOS/Windows matrices need paid queues.
+steps:
+  - label: ":rust: fmt, clippy, test"
+    key: rust
+    agents: { queue: linux-small }
+    timeout_in_minutes: 60
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          environment: [CARGO_TERM_COLOR=never, RUST_BACKTRACE=1]
+    command: |
+      rustup component add rustfmt clippy
+      cargo fmt --all -- --check
+      cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      cargo test --locked --workspace --all-targets --all-features
