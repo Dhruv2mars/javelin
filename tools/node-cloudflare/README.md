@@ -83,7 +83,24 @@ Checks run against it on 2026-10-28:
 
 ## Measured on Workers Free
 
-MEASUREMENTS
+Measured on the deployed node on 2026-10-28 (`wrangler deploy` output, `wrangler tail --format
+json` during the conformance run, the account's GraphQL analytics, and
+`x-javelin-database-bytes`). Each figure is against the Free-plan limit in the table below.
+
+| Item | Measured | Free-plan limit | Headroom |
+| --- | --- | --- | --- |
+| Bundle | 3,325 KiB uploaded, 1,213 KiB gzip | 64 MiB uncompressed; no compressed limit | 19x |
+| Worker startup | 5 to 6 ms | 1 s | 160x |
+| Worker CPU per request | max 2.07 ms over the run (analytics `max.cpuTime`); p50 0 ms in the tail | 10 ms | 4.8x |
+| Object CPU per request | max 102 ms (the first request to a new object: wasm instantiation, SQLite schema, World 0), next highest 50 ms; p50 1 ms, p95 33 ms over 23 sampled requests | 30 s | 290x |
+| Object storage per repository | 3,325,952 bytes for a provisioned, empty repository (about 50 B-trees at 64 KiB a page); unchanged by the suite's uploads | 1 GB documented per object, 5 GB per account | about 1,500 empty repositories per account |
+| Rows per provision | about 71 written and 69 read (one provision and one state read, analytics delta) | 100,000 written and 5,000,000 read per day | about 1,400 provisions a day |
+| The account's whole day (2026-10-27 UTC): both deploys, two conformance runs' repositories, the migrated repository | 416 rows written, 519 read, 60 Worker requests, 55 object requests | as above | under 0.5% of a day |
+
+The page size trades storage for rows: smaller pages would shrink an empty repository
+(an estimated 0.8 MB at 16 KiB, not measured) but write more rows for every large object, and rows written per day
+is the quota a busy repository meets first. The node does not enforce any of this yet (the
+budget is a separate task).
 
 ## Free-plan limits
 

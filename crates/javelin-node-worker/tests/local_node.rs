@@ -39,5 +39,5 @@ fn local_node_conforms() {
     thread::spawn(move || serve(&listener, &name, &mut log, &gate, None));
     let wire = common::Wire::new(&base, &repository);
     let absent = common::Wire::new(&base, &RepositoryId::parse("repo_absent").expect("id"));
-    common::run_wire(&node, &repository, &wire, &absent);
+    common::run_wire(&repository, &wire, &absent);
 }

@@ -41,9 +41,11 @@ fn workerd_node_serves_the_wire() {
     common::run(&node, &repository, &|| {
         node.snapshot(&repository).expect("state")
     });
+    javelin_control::NodeLink::trust(&node, &repository, &javelin_identity::test_keys::keys())
+        .expect("trust the test key");
     let wire = common::Wire::new(&url, &repository);
     let absent = RepositoryId::parse(&format!("{}_absent", repository.as_str())).expect("id");
-    common::run_wire(&node, &repository, &wire, &common::Wire::new(&url, &absent));
+    common::run_wire(&repository, &wire, &common::Wire::new(&url, &absent));
 }
 
 #[test]

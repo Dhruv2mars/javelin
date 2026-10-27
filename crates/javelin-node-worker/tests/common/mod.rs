@@ -218,13 +218,11 @@ fn code(message: &Message) -> Option<&str> {
     }
 }
 
-/// The protocol version 2 half of the suite, after `run`: the node trusts the public test
-/// key, and the repository is public at epoch 2, with `admin` holding Maintain and `reviewer`
-/// Review. `wire` reaches the repository and `absent` a repository the node does not serve.
-pub fn run_wire(node: &dyn NodeLink, repository: &RepositoryId, wire: &Wire, absent: &Wire) {
-    node.trust(repository, &test_keys::keys())
-        .expect("trust the test key");
-
+/// The protocol version 2 half of the suite, after `run` and once the node trusts
+/// `test_keys::keys()`: the repository is public at epoch 2, with `admin` holding Maintain and
+/// `reviewer` Review. `wire` reaches the repository and `absent` a repository the node does not
+/// serve.
+pub fn run_wire(repository: &RepositoryId, wire: &Wire, absent: &Wire) {
     // Transport: the endpoint answers a CORS preflight, refuses other methods and other
     // repositories, and refuses a credential that is not a bearer token.
     assert_eq!(wire.status_of("OPTIONS"), 204);
