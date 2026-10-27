@@ -118,6 +118,9 @@ Additions, all in `codec.rs`:
 | 0x54 | `Comment` | `{ operation, request, revision: Option<u32>, body }` | `ReviewOutcome` |
 | 0x55 | `ReadRequest` | `{ request }` | `RequestState` 0x56 |
 | 0x44 | `Attribution` | `{ version }` | `Attributed` 0x45: `{ number, publication: Option<(layer, attribution)> }` |
+| 0x3c | `LayerCreate` | `{ layer, base }` | `LayerOutcome` (`Accepted { seq: 0, checkpoint }`; a retry with the same base replays) |
+| 0x57 | `ListRequests` | `{ after: Option<RequestId> }` | `RequestList` 0x58: `{ requests: [{ request, layer, author, state, revision }], more }` |
+| 0x59 | `ReadReview` | `{ request, comments_from }` | `ReviewDetail` 0x5a: `{ summary, required_approvals, revisions: [{ index, base, checkpoint, tree, approvals }], comments, comments_total }` |
 
 Outcome shapes:
 
@@ -130,6 +133,10 @@ Outcome shapes:
 - `attribution` in `PublishLayer`: `Human`, or `Agent { context: Option<ObjectId>,
   allow_missing_trace: bool }`. A missing trace without the override refuses with
   `missing_agent_trace` (`A§Publish`).
+
+`LayerCreate`, `ListRequests` and `ReadReview` serve `javelin request`: a client creates its
+Layer on the node before the first `LayerAppend`, and lists and shows requests with their
+revisions, approvals and comments (`docs/cli.md`, Publish Requests).
 
 `Attribution` serves the forge's history: the Layer and declared attribution of the Publish
 that made a version, absent for World 0 and for versions advanced without a Layer.

@@ -25,6 +25,16 @@ CI left open. Work from it, in roughly this order:
   and forge.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
 - [ ] Layer writer lease and `javelin layer take` (replaces D21).
+- [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
+  list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,
+  open, approve and comment refuse). New wire messages `LayerCreate`, `ListRequests` and
+  `ReadReview`; `open` and `revise` upload the Layer's changes to the node. Evidence:
+  `crates/javelin-cli/tests/requests_sync.rs` against the node's server with real tokens.
+- [x] `javelin sync`: replays the outbox, fetches from the attached head as trust anchor,
+  advances the local World and rolling base, rewrites `attach.json`; refuses
+  `world_diverged` and a chain that misses the anchor (`chain_mismatch`).
+- [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
+  and `revise` upload a Layer to the node.
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
