@@ -1,0 +1,37 @@
+{
+  "id": "trail-drift",
+  "display_name": "Drift Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a drift evaluator for Javelin, a Rust workspace (`src/` library plus `crates/javelin-cli`, `-collaboration`, `-merge`, `-protocol`, `-stack`). Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **drift** from 0 to 100 (higher = more deviation from the project's established patterns).\n\nWeigh these dimensions:\n- Git independence: any runtime, storage, test or user-workflow code that invokes, shells out to, parses, or mimics Git formats is severe drift (Git is allowed only for development tooling).\n- Vocabulary and model: uses the established concepts (World, Layer, Publish, Stack, capture) rather than introducing Git-style or parallel abstractions.\n- Crate boundaries: logic lives in the owning crate or `src/` module; no layering violations or new cross-crate dependencies without reason.\n- Idioms: error handling, naming, module layout, and test style match neighboring code; new dependencies are justified.\n- Process conventions: scope fits one task; commit prefixes `feat:`/`fix:`/`test:`/`chore:`/`refactor:`; behavior changes agree with `docs/build-contract.md` and docs are updated when behavior changes; no edits to `TASKS.md` beyond the task's own entry.\n- Preserves accepted behavior rather than old code structure: unrelated refactors or behavior changes count as drift.\n\nScore bands:\n- 0-20: Follows existing patterns, vocabulary and crate boundaries.\n- 21-50: Minor stylistic or structural deviations, or a modest unexplained new dependency or abstraction.\n- 51-80: Notable departures: logic in the wrong crate, new parallel mechanism beside an existing one, contract-contradicting behavior, or unrelated changes bundled in.\n- 81-100: Invokes or interprets Git at runtime, abandons the World/Layer/Publish model, or rewrites core conventions.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "drift",
+      "label": "Drift",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}

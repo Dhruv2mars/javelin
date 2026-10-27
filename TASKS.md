@@ -13,11 +13,11 @@ CI left open. Work from it, in roughly this order:
   `archive/*` tags, delete every merged branch.
 - [x] Record the direction and amend the contract, the online design, the Git 3.0
   direction, README and AGENTS.md.
-- [ ] Token transport: bearer tokens on the wire, outbox refresh through the control
+- [x] Token transport: bearer tokens on the wire, outbox refresh through the control
   plane, network control-plane client, `node_unavailable` for 5xx.
-- [ ] History verification proportional to new versions (trust anchor).
-- [ ] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
-- [ ] First real deploy of the Cloudflare node on the owner's account, free tier only;
+- [x] History verification proportional to new versions (trust anchor).
+- [x] Forge read-only pages: repo home, file, history, version diff (`apps/forge/`).
+- [x] First real deploy of the Cloudflare node on the owner's account, free tier only;
   settle every unverified free-tier limit.
 - [ ] Superposition storage format: salted commitments for hidden tree entries, identical
   IDs for every reader. Must land before any real repository is stored.
@@ -48,6 +48,26 @@ CI left open. Work from it, in roughly this order:
   from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
   ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
   capture fix. Kill on observable progress instead of measured time.
+
+## Move to Entire (2026-10-27)
+
+GitHub suspended the Dhruv2mars account on 2026-10-27. The repository moved to Entire
+with every branch intact; trails replace PRs, Sol is the only reviewer, and checks run
+locally on macOS only.
+
+- [x] Point `AGENTS.md` and the contract at trails and local checks.
+- [ ] Land the open work as trails, in order: #99 superposition, #101 Layer lease, CLI
+  requests and sync (after #101), #103 forge on Vercel, Gate 2 create probe.
+- [ ] Forge deploys to Vercel from the CLI, since Vercel's Git integration cannot follow
+  Entire. Install instructions stop pointing at GitHub releases.
+- [ ] Release binaries: GitHub releases are gone. Decide where `javelin` binaries are
+  published.
+- [ ] Linux and Windows have no runner. The Windows `database is locked` flake under
+  concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
+  the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
+- [ ] Delete the temporary `diag/windows-layer-busy` branch from origin.
+- [ ] `.github/workflows/` no longer runs. Keep it as the record of the old CI until a
+  runner replaces it.
 
 ## Working rules
 
