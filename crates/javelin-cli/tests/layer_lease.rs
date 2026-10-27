@@ -21,7 +21,7 @@ use javelin::{
     outbox::{Kind, Outbox},
 };
 use javelin_collaboration::{PrincipalId, Role, Visibility};
-use javelin_node::{FileWorldLog, bind_loopback, serve};
+use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, serve};
 use javelin_protocol::{
     Message,
     codec::{Kind as ObjectKind, LayerOutcome, LeaseHolder, decode, encode},
@@ -332,6 +332,10 @@ struct Live {
 
 impl Live {
     fn start(dir: &Path, seed: impl FnOnce(&mut FileWorldLog)) -> Self {
+        Self::start_gated(dir, wire_support::gate(REPO), seed)
+    }
+
+    fn start_gated(dir: &Path, gate: Gate, seed: impl FnOnce(&mut FileWorldLog)) -> Self {
         let mut log = FileWorldLog::open(dir).unwrap();
         seed(&mut log);
         let listener = bind_loopback("127.0.0.1:0").unwrap();
@@ -339,7 +343,6 @@ impl Live {
         let (jobs, queue) = mpsc::channel::<Job>();
         let (finished, done) = mpsc::channel();
         thread::spawn(move || {
-            let gate = wire_support::gate(REPO);
             loop {
                 let _ = serve(&listener, REPO, &mut log, &gate, Some(1));
                 while let Ok(job) = queue.try_recv() {
@@ -727,4 +730,87 @@ fn take_refuses_a_workspace_whose_edits_conflict_before_moving_the_lease() {
         "the laptop keeps the lease"
     );
     assert_eq!(fs::read(workspace.join("notes.txt")).unwrap(), b"desktop\n");
+}
+
+/// Publishes `files` as Layer `name` over the node's head, as the next World.
+fn publish_files(log: &mut FileWorldLog, name: &str, files: &[(&str, &[u8])]) {
+    let base = log.head().unwrap().number;
+    log.create_layer(&layer(name), base).unwrap();
+    let changes = SparseChanges::new(files.iter().map(|(path, bytes)| {
+        (
+            RepoPath::parse(path).unwrap(),
+            Some(FileEntry::Regular {
+                content: log.repository().put_blob(bytes).unwrap(),
+                executable: false,
+            }),
+        )
+    }))
+    .unwrap();
+    let head = log
+        .append(&op(&format!("write-{name}")), &layer(name), &changes)
+        .unwrap();
+    let outcome = log
+        .publish_layer(
+            &op(&format!("publish-{name}")),
+            &layer(name),
+            head.checkpoint().object(),
+            base,
+            &javelin::PublishAttribution::Human,
+        )
+        .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            javelin_protocol::codec::PublishOutcome::Published { .. }
+        ),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn a_take_brings_only_what_the_caller_can_read() {
+    let root = TempDir::new().unwrap();
+    let mut gate = wire_support::gate(REPO);
+    let mut permissions = wire_support::permissions(REPO, Visibility::Public);
+    permissions.epoch = 2;
+    permissions
+        .roles
+        .insert(PrincipalId::parse("member").unwrap(), Role::Read);
+    gate.apply(permissions).unwrap();
+    // World 1 makes `.env` the maintainers' and holds one; Layer `work` edits `src/a`.
+    let node = Live::start_gated(&root.path().join("node"), gate, |log| {
+        publish_files(
+            log,
+            "seed",
+            &[
+                (javelin::POLICY_PATH, b".env maintainers\n"),
+                (".env", b"TOKEN=1\n"),
+                ("src/a", b"a\n"),
+            ],
+        );
+        let one = log.head().unwrap().number;
+        log.create_layer(&layer("work"), one).unwrap();
+    });
+    let member = Device::attach(root.path(), "member", &node.url, "member");
+
+    let (code, taken) = member.json(&["layer", "take", "work", "--repo", member.repo()]);
+    assert_eq!(code, Some(0), "{taken}");
+    let workspace = PathBuf::from(taken["root"].as_str().unwrap());
+    assert_eq!(fs::read(workspace.join("src/a")).unwrap(), b"a\n");
+    assert!(
+        !workspace.join(".env").exists(),
+        "the maintainers' file stays hidden"
+    );
+
+    // A newer base fetched by the take is opened for the caller only, as attach does.
+    node.change(|log| {
+        publish_files(log, "more", &[(".env", b"TOKEN=2\n"), ("src/b", b"b\n")]);
+        let two = log.head().unwrap().number;
+        log.create_layer(&layer("newer"), two).unwrap();
+    });
+    let (code, newer) = member.json(&["layer", "take", "newer", "--repo", member.repo()]);
+    assert_eq!(code, Some(0), "{newer}");
+    let workspace = PathBuf::from(newer["root"].as_str().unwrap());
+    assert_eq!(fs::read(workspace.join("src/b")).unwrap(), b"b\n");
+    assert!(!workspace.join(".env").exists());
 }

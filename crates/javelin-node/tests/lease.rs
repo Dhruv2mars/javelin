@@ -483,3 +483,94 @@ fn layer_head_tells_the_caller_whether_its_device_holds_the_lease() {
     assert_eq!(lease(&laptop), LeaseHolder::Caller);
     assert_eq!(lease(&device(DESKTOP)), LeaseHolder::Other);
 }
+
+#[test]
+fn a_layer_whose_head_the_caller_cannot_read_cannot_be_taken() {
+    use javelin::{POLICY_PATH, PublishAttribution};
+    use javelin_protocol::{codec::PublishOutcome, receiver::WorldLog};
+
+    let dir = TempDir::new().unwrap();
+    let mut permissions =
+        wire_support::permissions(REPO, javelin_collaboration::Visibility::Public);
+    permissions
+        .roles
+        .insert(PrincipalId::parse("member").unwrap(), Role::Read);
+    auth::write_permissions(dir.path(), &permissions).unwrap();
+    auth::write_keys(dir.path(), &test_keys::keys()).unwrap();
+    let mut log = FileWorldLog::open(dir.path()).unwrap();
+    let file = |log: &mut FileWorldLog, path: &str, bytes: &[u8]| {
+        (
+            RepoPath::parse(path).unwrap(),
+            Some(FileEntry::Regular {
+                content: log.repository().put_blob(bytes).unwrap(),
+                executable: false,
+            }),
+        )
+    };
+    // World 1 makes `.env` the maintainers'. Layer `secret` edits it; `public` edits `src/a`.
+    let policy = file(&mut log, POLICY_PATH, b".env maintainers\n");
+    let seed = SparseChanges::new([policy]).unwrap();
+    log.create_layer(&layer("seed"), VersionNumber::new(0).unwrap())
+        .unwrap();
+    let head = log.append(&op("seed-1"), &layer("seed"), &seed).unwrap();
+    let outcome = log
+        .publish_layer(
+            &op("publish-seed"),
+            &layer("seed"),
+            head.checkpoint().object(),
+            VersionNumber::new(0).unwrap(),
+            &PublishAttribution::Human,
+        )
+        .unwrap();
+    assert!(
+        matches!(outcome, PublishOutcome::Published { .. }),
+        "{outcome:?}"
+    );
+    let one = VersionNumber::new(1).unwrap();
+    for (name, path) in [("secret", ".env"), ("public", "src/a")] {
+        log.create_layer(&layer(name), one).unwrap();
+        let changes = SparseChanges::new([file(&mut log, path, b"x\n")]).unwrap();
+        log.append(&op(&format!("write-{name}")), &layer(name), &changes)
+            .unwrap();
+    }
+    let gate = Gate::load(dir.path(), REPO).unwrap();
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let _ = serve(&listener, REPO, &mut log, &gate, None);
+    });
+    let node = Node {
+        addr,
+        first: ObjectId::for_blob(b"unused"),
+        other: ObjectId::for_blob(b"unused"),
+        edits: Vec::new(),
+    };
+
+    // A member reads `src/a` but not `.env`: it takes `public`, and taking `secret`, whose
+    // head holds `.env`, is refused without moving the lease.
+    let member = device_token("member", REPO, "dev-member", None);
+    assert!(matches!(
+        node.take(&member, "take-1", "public"),
+        Message::LayerOutcome(LayerOutcome::Accepted { .. })
+    ));
+    assert_eq!(
+        error_code(node.take(&member, "take-2", "secret")),
+        code::FORBIDDEN
+    );
+    let lease = match send(
+        addr,
+        &member,
+        &Message::LayerHead {
+            layer: layer("secret"),
+        },
+    ) {
+        Message::LayerState { lease, .. } => lease,
+        other => panic!("not a Layer state: {other:?}"),
+    };
+    assert_eq!(lease, LeaseHolder::Free);
+    // The owner, a maintainer, reads it and takes it.
+    assert!(matches!(
+        node.take(&device(LAPTOP), "take-3", "secret"),
+        Message::LayerOutcome(LayerOutcome::Accepted { .. })
+    ));
+}
