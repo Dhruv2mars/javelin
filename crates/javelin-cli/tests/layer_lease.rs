@@ -666,3 +666,65 @@ fn a_sync_named_world_the_node_does_not_hold_is_still_divergence() {
     let repo = Repository::open(&desktop.project).unwrap();
     assert_eq!(repo.attachment().unwrap().unwrap().head.number, 1);
 }
+
+#[test]
+fn take_refuses_a_local_layer_on_another_base_before_moving_the_lease() {
+    let root = TempDir::new().unwrap();
+    // The node's `work` is empty over World 0; the desktop's is empty over its World 1.
+    let node = Live::start(&root.path().join("node"), |log| {
+        advance(log, "world-1", b"one\n");
+        log.create_layer(&layer("work"), VersionNumber::new(0).unwrap())
+            .unwrap();
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    let (code, created) = desktop.json(&["layer", "create", "work", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{created}");
+
+    let (code, refused) = desktop.json(&["layer", "take", "work", "--repo", desktop.repo()]);
+    assert_ne!(code, Some(0), "{refused}");
+    assert_eq!(refused["error"]["code"], "layer_diverged");
+    assert_eq!(node.lease(&desktop.token, "work"), LeaseHolder::Free);
+}
+
+#[test]
+fn take_refuses_a_workspace_whose_edits_conflict_before_moving_the_lease() {
+    let root = TempDir::new().unwrap();
+    let node = Live::start(&root.path().join("node"), |log| {
+        log.create_layer(&layer("work"), VersionNumber::new(0).unwrap())
+            .unwrap();
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    let laptop = Device::attach(root.path(), "laptop", &node.url, wire_support::OWNER);
+    let (code, taken) = desktop.json(&["layer", "take", "work", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{taken}");
+    let workspace = PathBuf::from(taken["root"].as_str().unwrap());
+
+    // The laptop takes the Layer and the node's head changes `notes.txt`, while the
+    // desktop's directory holds an uncaptured edit to the same file.
+    let (code, _) = laptop.json(&["layer", "take", "work", "--repo", laptop.repo()]);
+    assert_eq!(code, Some(0));
+    node.change(|log| {
+        let content = log.repository().put_blob(b"node\n").unwrap();
+        let changes = SparseChanges::new([(
+            RepoPath::parse("notes.txt").unwrap(),
+            Some(FileEntry::Regular {
+                content,
+                executable: false,
+            }),
+        )])
+        .unwrap();
+        log.append(&op("write-1"), &layer("work"), &changes)
+            .unwrap();
+    });
+    fs::write(workspace.join("notes.txt"), b"desktop\n").unwrap();
+
+    let (code, refused) = desktop.json(&["layer", "take", "work", "--repo", desktop.repo()]);
+    assert_ne!(code, Some(0), "{refused}");
+    assert_eq!(refused["error"]["code"], "refresh_conflict");
+    assert_eq!(
+        node.lease(&laptop.token, "work"),
+        LeaseHolder::Caller,
+        "the laptop keeps the lease"
+    );
+    assert_eq!(fs::read(workspace.join("notes.txt")).unwrap(), b"desktop\n");
+}

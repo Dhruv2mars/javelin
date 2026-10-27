@@ -916,6 +916,15 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         None => Some(stack_remote::refresh(&mut Session(&link), &mut repo, &layer).map_err(read)?),
         Some(_) => None,
     };
+    // A directory whose uncaptured edits conflict with that head would refuse its refresh.
+    if refresh.is_some()
+        && repo
+            .workspace_root(&layer)?
+            .try_exists()
+            .map_err(Error::from)?
+    {
+        repo.refresh_preview(&layer)?;
+    }
     let (seq, node_head) = match call(
         &link,
         &Message::LayerTake {

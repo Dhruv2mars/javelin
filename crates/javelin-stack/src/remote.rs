@@ -55,9 +55,9 @@ pub enum Refresh {
 /// Brings the local Layer `layer` to the head the node holds for it.
 ///
 /// The node's head checkpoint is read and checked against its ID, then its changes are
-/// compared with the local head's. Equal changes are current. Otherwise the node must be
-/// ahead (its `seq` past the local revision) on the same base tree, or the refresh is
-/// refused with `layer_diverged`: the local head may hold captures the node lacks. The
+/// compared with the local head's. Both must sit on the same base tree, and then equal
+/// changes are current. Otherwise the node must be ahead (its `seq` past the local
+/// revision), or the refresh is refused with `layer_diverged`: the local head may hold captures the node lacks. The
 /// missing blobs are fetched, and the head is imported as a Stack result
 /// ([`Repository::import_stacked_head`]), so capture will not run over a directory that
 /// lacks it. This moves the head only: the caller refreshes the Layer's directory.
@@ -93,6 +93,23 @@ pub fn refresh(
     };
     let changes = Repository::foreign_checkpoint_changes(&fetch_checkpoint(link, node.head)?)?;
     let ours = repo.read_checkpoint(local.checkpoint())?;
+    // Equal changes over different bases are different Layers, so the bases are compared
+    // first.
+    let tree = match request(
+        link,
+        &Message::Resolve {
+            version: Some(node.base),
+        },
+    )? {
+        Message::Resolved { tree, .. } => tree,
+        _ => return Err(unexpected()),
+    };
+    if repo.version(ours.base().version())?.tree != tree {
+        return Err(ProtocolError::new(
+            LAYER_DIVERGED,
+            "the local Layer and the node's have different base trees",
+        ));
+    }
     if ours.changes() == &changes {
         return Ok(Refresh::Current {
             seq: node.seq,
@@ -108,21 +125,6 @@ pub fn refresh(
                 local.revision(),
                 node.seq
             ),
-        ));
-    }
-    let tree = match request(
-        link,
-        &Message::Resolve {
-            version: Some(node.base),
-        },
-    )? {
-        Message::Resolved { tree, .. } => tree,
-        _ => return Err(unexpected()),
-    };
-    if repo.version(ours.base().version())?.tree != tree {
-        return Err(ProtocolError::new(
-            LAYER_DIVERGED,
-            "the local Layer and the node's have different base trees",
         ));
     }
     fetch_blobs(link, repo, &changes)?;
