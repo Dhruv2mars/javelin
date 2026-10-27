@@ -1043,6 +1043,19 @@ pub fn call_node(
     call(&Link::writing(target), message)
 }
 
+/// One read of `repository` on the node at `https://HOST[:PORT]`, with the repository's
+/// credential when there is one and signed out otherwise. A node `Error` reply becomes the
+/// error.
+pub fn read_node(
+    node: &str,
+    repository: &str,
+    message: &Message,
+) -> std::result::Result<Message, RemoteError> {
+    let target = parse_target(&format!("{}/{repository}", node.trim_end_matches('/')))
+        .map_err(|error| RemoteError::new(error.code(), error.to_string()))?;
+    call(&Link::new(target), message)
+}
+
 #[cfg(test)]
 mod tests {
     use javelin::{FileEntry, Manifest, OperationId, RepoPath, Repository, VersionNumber};
