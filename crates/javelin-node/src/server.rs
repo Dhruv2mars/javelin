@@ -282,7 +282,9 @@ fn serve_one(
         | Message::Approve { .. }
         | Message::Comment { .. }
         | Message::PublishRequest { .. }
-        | Message::ReadRequest { .. } => return review::handle(log, gate, token, now, &message),
+        | Message::ReadRequest { .. }
+        | Message::ListRequests { .. }
+        | Message::ReadReview { .. } => return review::handle(log, gate, token, now, &message),
         Message::CheckReport(report) => {
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
@@ -306,6 +308,11 @@ fn serve_one(
             target_head,
             source,
         )?)),
+        Message::LayerCreate { layer, base } => Ok(Message::LayerOutcome(crate::layer::create(
+            log.parts().0,
+            &layer,
+            base,
+        )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
             crate::stack::get_checkpoints(log.repo(), items)
         }
@@ -319,7 +326,9 @@ fn serve_one(
 /// by content. Everything else, replies sent as requests included, needs `read`.
 fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
-        Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
+        Message::LayerAppend { layer, .. } | Message::LayerCreate { layer, .. } => {
+            (Scope::LayerWrite, Some(layer))
+        }
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
         Message::Publish { .. } => (Scope::Publish, None),
