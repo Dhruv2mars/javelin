@@ -900,6 +900,7 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         attached.node, attached.repository
     ))?);
     let read = |e| CliError::Remote(remote(&link, e));
+    let attached = recover_attachment(&link, &mut repo, attached)?;
     // Everything that can refuse the Layer here runs before the lease moves: the base World
     // is found by identity (fetched when it is newer than this repository's), and a local
     // Layer is refreshed, which refuses one holding captures the node lacks.
@@ -1016,6 +1017,53 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
     Ok((value, text, 0))
 }
 
+/// Finishes a sync that stopped after the local World advanced and before `attach.json`
+/// named the new head. The local head counts only when a sync made it and the node holds
+/// that remote version with the same chain ID and tree; then it is recorded and returned.
+/// Any other head is left alone, and the attachment returned unchanged.
+fn recover_attachment(
+    link: &RefCell<Link>,
+    repo: &mut Repository,
+    attached: Attachment,
+) -> std::result::Result<Attachment, CliError> {
+    if repo.follows_attachment(&attached)? {
+        return Ok(attached);
+    }
+    let Some(head) = repo.interrupted_sync()? else {
+        return Ok(attached);
+    };
+    if head.number <= attached.head.number {
+        return Ok(attached);
+    }
+    let resolved = call(
+        link,
+        &Message::Resolve {
+            version: Some(VersionNumber::new(head.number)?),
+        },
+    )
+    .map_err(CliError::Remote)?;
+    match resolved {
+        Message::Resolved { id, tree, .. } if id == head.id && tree == head.tree => {
+            let repaired = Attachment { head, ..attached };
+            repo.write_attachment(&repaired)?;
+            Ok(repaired)
+        }
+        _ => Ok(attached),
+    }
+}
+
+/// Exits at the named point when `JAVELIN_FAILPOINT` names it, for crash tests. Debug
+/// builds only, like the library's failpoints.
+#[cfg(debug_assertions)]
+fn failpoint(name: &str) {
+    if std::env::var_os("JAVELIN_FAILPOINT").is_some_and(|set| set == name) {
+        std::process::exit(86);
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn failpoint(_: &str) {}
+
 /// Refusal for following the node when the local World has versions the node lacks.
 pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
 
@@ -1106,6 +1154,9 @@ fn local_world(
             return Err(Error::InvalidInput("the local World moved; retry".into()).into());
         }
     };
+    // A stop here leaves a sync World that `attach.json` does not name yet;
+    // `recover_attachment` finishes it on the next take.
+    failpoint("take_after_sync_advance");
     repo.write_attachment(&Attachment {
         head: target,
         ..attached.clone()

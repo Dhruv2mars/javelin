@@ -393,7 +393,9 @@ this repository lacks is refused with `invalid_input`. The node is the World's a
 the fetch never overwrites local divergence: when this repository's World head is not the
 attached head (for example after a local `workspace publish`), the take is refused with
 `local_world_diverged`, naming both heads; take the Layer from a fresh `javelin attach`
-directory. Those checks, and the refresh of an
+directory. A take that stopped after the World followed the node but before
+`attach.json` recorded it is finished by the next take: a head made by `sync-<number>-<id>`
+that the node confirms (same chain ID and tree) is written to `attach.json` first. Those checks, and the refresh of an
 existing local Layer, run before the lease moves. A retried `--operation OP` replays the
 recorded take; JSON `holds_lease` and `lease` (`this_device`, `another_device`) say who holds
 it now, and the text says plainly when another device does. Only the Layer's owner can take the lease (`forbidden` otherwise),

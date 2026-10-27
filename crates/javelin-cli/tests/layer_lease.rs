@@ -579,3 +579,90 @@ fn take_never_overwrites_a_local_world_the_node_lacks() {
     let (code, taken) = fresh.json(&["layer", "take", "newer", "--repo", fresh.repo()]);
     assert_eq!(code, Some(0), "{taken}");
 }
+
+#[test]
+fn a_take_stopped_between_the_sync_and_attach_json_is_finished_by_the_next_take() {
+    let root = TempDir::new().unwrap();
+    let node = Live::start(&root.path().join("node"), |log| {
+        advance(log, "world-1", b"one\n");
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    node.change(|log| {
+        let two = advance(log, "world-2", b"two\n");
+        log.create_layer(&layer("newer"), two).unwrap();
+    });
+
+    // The take stops after the local World follows the node, before `attach.json` says so,
+    // and before the lease moves.
+    let stopped = Command::new(env!("CARGO_BIN_EXE_javelin"))
+        .env("JAVELIN_HOME", &desktop.home)
+        .env("JAVELIN_TOKEN", &desktop.token)
+        .env("JAVELIN_FAILPOINT", "take_after_sync_advance")
+        .args(["--json", "layer", "take", "newer", "--repo", desktop.repo()])
+        .output()
+        .unwrap();
+    assert_eq!(stopped.status.code(), Some(86), "{stopped:?}");
+    let repo = Repository::open(&desktop.project).unwrap();
+    assert_eq!(repo.head().unwrap().number.get(), 2, "the World advanced");
+    assert_eq!(repo.attachment().unwrap().unwrap().head.number, 1);
+    drop(repo);
+    assert_eq!(node.lease(&desktop.token, "newer"), LeaseHolder::Free);
+
+    // The retry finishes `attach.json` from the node, then takes the Layer.
+    let (code, taken) = desktop.json(&["layer", "take", "newer", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{taken}");
+    let workspace = PathBuf::from(taken["root"].as_str().unwrap());
+    assert_eq!(fs::read(workspace.join("world.txt")).unwrap(), b"two\n");
+    let repo = Repository::open(&desktop.project).unwrap();
+    assert_eq!(repo.head().unwrap().number.get(), 2, "no second advance");
+    assert_eq!(repo.attachment().unwrap().unwrap().head.number, 2);
+    drop(repo);
+
+    // A later take follows the node again from the repaired attachment.
+    node.change(|log| {
+        let three = advance(log, "world-3", b"three\n");
+        log.create_layer(&layer("later"), three).unwrap();
+    });
+    let (code, later) = desktop.json(&["layer", "take", "later", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(0), "{later}");
+    let repo = Repository::open(&desktop.project).unwrap();
+    assert_eq!(repo.head().unwrap().number.get(), 3);
+    assert_eq!(repo.attachment().unwrap().unwrap().head.number, 3);
+}
+
+#[test]
+fn a_sync_named_world_the_node_does_not_hold_is_still_divergence() {
+    let root = TempDir::new().unwrap();
+    let node = Live::start(&root.path().join("node"), |log| {
+        advance(log, "world-1", b"one\n");
+    });
+    let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
+    // A local advance that names a sync to a remote version the node never had.
+    let mut repo = Repository::open(&desktop.project).unwrap();
+    let content = repo.put_blob(b"forged\n").unwrap();
+    let tree = repo
+        .put_snapshot(
+            &Manifest::new([(
+                RepoPath::parse("world.txt").unwrap(),
+                FileEntry::Regular {
+                    content,
+                    executable: false,
+                },
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+    let forged = format!("sync-2-{}", ObjectId::for_blob(b"not on the node"));
+    let head = repo.head().unwrap().number;
+    repo.advance_to_tree(&op(&forged), head, tree).unwrap();
+    drop(repo);
+    node.change(|log| {
+        let two = advance(log, "world-2", b"two\n");
+        log.create_layer(&layer("newer"), two).unwrap();
+    });
+    let (code, refused) = desktop.json(&["layer", "take", "newer", "--repo", desktop.repo()]);
+    assert_eq!(code, Some(1), "{refused}");
+    assert_eq!(refused["error"]["code"], "local_world_diverged");
+    let repo = Repository::open(&desktop.project).unwrap();
+    assert_eq!(repo.attachment().unwrap().unwrap().head.number, 1);
+}

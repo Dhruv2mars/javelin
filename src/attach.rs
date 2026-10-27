@@ -90,9 +90,40 @@ impl Repository {
         Ok(())
     }
 
-    /// The operation that advances this store to `head`, a newer head of its attachment.
+    /// The operation that advances this store to `head`, a newer head of its attachment:
+    /// `sync-<remote number>-<chain ID>`, so an advance whose `attach.json` was never
+    /// written can be checked against the node ([`Repository::interrupted_sync`]).
     pub fn sync_operation(head: &RemoteHead) -> Result<OperationId> {
-        OperationId::parse(&format!("{SYNC_PREFIX}{}", head.id))
+        OperationId::parse(&format!("{SYNC_PREFIX}{}-{}", head.number, head.id))
+    }
+
+    /// The remote head a sync advanced the local head to, when that is what made the local
+    /// head: a `sync-` World with no publication receipt, since Publish always records one.
+    /// The tree is the local head's. `None` for any other head. The caller checks the head
+    /// against the node before recording it in `attach.json`.
+    pub fn interrupted_sync(&self) -> Result<Option<RemoteHead>> {
+        let local = self.head()?;
+        let Some(operation) = &local.operation else {
+            return Ok(None);
+        };
+        let Some((number, id)) = operation
+            .as_str()
+            .strip_prefix(SYNC_PREFIX)
+            .and_then(|rest| rest.split_once('-'))
+        else {
+            return Ok(None);
+        };
+        let (Ok(number), Ok(id)) = (number.parse::<u64>(), ObjectId::parse(id)) else {
+            return Ok(None);
+        };
+        if self.publication(operation)?.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(RemoteHead {
+            number,
+            id,
+            tree: local.tree,
+        }))
     }
 
     /// Whether the local head is still the World this store recorded for `attachment`'s
