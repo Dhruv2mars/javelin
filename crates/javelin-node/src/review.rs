@@ -231,10 +231,8 @@ pub fn handle(
         Message::ReadRequest { request } => {
             let id = review_id(request)?;
             let layer = request_layer(records, &id)?;
-            let (grant, permissions) = authorize(gate, token, now, Scope::Read, layer.as_deref())?;
-            // A request is work above the public frontier, and its state would say what
-            // was published: a caller outside the repository is told no request exists.
-            if layer.is_none() || !gate.reader(&grant).is_member() {
+            let (_, permissions) = authorize(gate, token, now, Scope::Read, layer.as_deref())?;
+            if layer.is_none() {
                 return Err(unknown_request());
             }
             let review = settled(repo, restore(records, &permissions.repository, &id)?)?;

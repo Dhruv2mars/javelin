@@ -132,14 +132,25 @@ impl Traces {
         Ok(repo.read_blob_bounded(trace, MAX_BLOB)?)
     }
 
-    /// Refuses a fetch that names a restricted trace. The wire carries no caller identity yet,
-    /// so every fetch is anonymous, and an anonymous caller never reads a restricted trace.
-    pub fn refuse_wire_fetch(&self, message: &Message) -> Result<(), ProtocolError> {
+    /// Refuses a fetch that names a restricted trace `reader` could otherwise read. The wire
+    /// carries no caller identity yet, so every fetch is anonymous, and an anonymous caller
+    /// never reads a restricted trace.
+    pub fn refuse_wire_fetch(
+        &self,
+        repo: &Repository,
+        reader: &javelin::Reader,
+        message: &Message,
+    ) -> Result<(), ProtocolError> {
         let Message::Get(items) = message else {
             return Ok(());
         };
         for (kind, trace) in items {
-            if *kind == Kind::Blob && self.visibility(*trace)? == TraceVisibility::Restricted {
+            // A trace the reader may not read at all, such as one only a version above its
+            // frontier publishes, is left to `Get`, which answers it as never stored.
+            if *kind == Kind::Blob
+                && self.visibility(*trace)? == TraceVisibility::Restricted
+                && repo.readable(*trace, reader)?
+            {
                 return Err(restricted());
             }
         }

@@ -36,6 +36,9 @@ CI left open. Work from it, in roughly this order:
     `apps/forge/test/frontier.test.ts`. macOS only; Linux and Windows unverified.
   - [ ] When `ListRequests`/`ReadReview` (trail 3) land, answer callers outside the repository
     as for no request, as `ReadRequest` does, so review state cannot name a held version.
+  - [ ] Outside contributors (signed in, no role) are refused every Layer, Publish Request and
+    check message so none can name a held version. When Layers gain owners (trail 3's
+    `LayerCreate`), let them reach their own Layers based at or below the frontier.
   - [ ] `--embargo` on the hosted Publish commands once trail 3's CLI Publish lands; until
     then `javelin embargo --operation ID` precedes the Publish.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.

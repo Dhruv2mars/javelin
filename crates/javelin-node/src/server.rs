@@ -291,6 +291,7 @@ fn serve_one(
     now: u64,
     message: Message,
 ) -> Result<Message, ProtocolError> {
+    refuse_outsider_work(gate, token, now, &message)?;
     match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
@@ -321,13 +322,9 @@ fn serve_one(
     if grant.is_some() {
         check_writes(log, &reader, &message)?;
     }
-    log.traces().refuse_wire_fetch(&message)?;
+    log.traces()
+        .refuse_wire_fetch(log.repo(), &reader, &message)?;
     match message {
-        // A Layer is work above every version, and its base would name one: a reader held
-        // at the frontier is told no Layer exists.
-        Message::LayerHead { layer } if reader.frontier().is_some() => {
-            Err(crate::layer::unknown_layer(&layer))
-        }
         Message::LayerStack {
             operation,
             target,
@@ -346,6 +343,41 @@ fn serve_one(
         }
         message => handle_request_as(log, message, &reader),
     }
+}
+
+/// Refuses a caller without a role in the repository any message about Layers, Publish
+/// Requests or check results, before anything stored is looked up. A Layer is work above
+/// every version: its state, base and checkpoints, a request's state, or a check's subject
+/// could each name a version above the public frontier, and whether one exists must not
+/// show. A public repository grants every signed-in caller Read, which carries the write
+/// scopes, so this holds whatever the token carries. The token is checked first, with no
+/// Layer named, so that refusal does not depend on stored state either.
+fn refuse_outsider_work(
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: &Message,
+) -> Result<(), ProtocolError> {
+    let scope = match message {
+        Message::LayerHead { .. } | Message::ReadRequest { .. } => Scope::Read,
+        Message::LayerAppend { .. } | Message::LayerStack { .. } => Scope::LayerWrite,
+        Message::OpenRequest { .. } | Message::Revise { .. } | Message::Comment { .. } => {
+            Scope::ReviewWrite
+        }
+        Message::Approve { .. } => Scope::ReviewApprove,
+        Message::PublishRequest { .. } | Message::PublishLayer { .. } => Scope::Publish,
+        Message::CheckReport(_) => Scope::CheckReport,
+        Message::Get(items) if crate::stack::all_checkpoints(items) => Scope::Read,
+        _ => return Ok(()),
+    };
+    let grant = gate.check(token, now, Need { scope, layer: None })?;
+    if gate.reader(&grant).is_member() {
+        return Ok(());
+    }
+    Err(ProtocolError::new(
+        code::FORBIDDEN,
+        "Layers, Publish Requests and check results need a role in the repository",
+    ))
 }
 
 /// The disclosure messages. Anyone who may read the repository reads its disclosure, as

@@ -235,9 +235,11 @@ fn the_wire_never_serves_a_restricted_trace() {
     let served = fetch(addr, &[(Kind::Blob, inherited)]);
     server.join().unwrap();
 
+    // No version publishes the restricted trace, so to an anonymous caller it is absent, not
+    // refused: a refusal would confirm it exists.
     assert!(matches!(
         refused,
-        Message::Error { ref code, .. } if code == "forbidden"
+        Message::Error { ref code, .. } if code == "missing_object"
     ));
     assert!(matches!(served, Message::Objects(ref o) if o.len() == 1));
 }

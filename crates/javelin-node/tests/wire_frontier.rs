@@ -24,7 +24,10 @@ use javelin_node::{
 };
 use javelin_protocol::{
     Message,
-    codec::{Disclosure, Embargoed, Kind, PublishOutcome, RequestId, decode, encode},
+    codec::{
+        CheckReport, Conclusion, Disclosure, Embargoed, Kind, PublishOutcome, RequestId, decode,
+        encode,
+    },
     receiver::WorldLog,
 };
 use tempfile::TempDir;
@@ -179,6 +182,16 @@ impl Node {
         files: &[(&str, &[u8])],
         embargo: Option<Option<u64>>,
     ) -> VersionNumber {
+        self.publish_as(name, files, embargo, javelin::PublishAttribution::Human)
+    }
+
+    fn publish_as(
+        &mut self,
+        name: &str,
+        files: &[(&str, &[u8])],
+        embargo: Option<Option<u64>>,
+        attribution: javelin::PublishAttribution,
+    ) -> VersionNumber {
         let checkpoint = self.append(name, files);
         let base = self.log().head().unwrap().number;
         let operation = op(&format!("publish-{name}"));
@@ -199,7 +212,7 @@ impl Node {
                 layer: layer(name),
                 expected: checkpoint,
                 base,
-                attribution: javelin::PublishAttribution::Human,
+                attribution,
             },
         ));
         match self.session(&requests).pop().unwrap() {
@@ -276,6 +289,39 @@ fn battery(probe: &Probe) -> Vec<Message> {
         Message::ReadRequest {
             request: RequestId::parse("request-fix").unwrap(),
         },
+        // A public repository grants a signed-in caller the write scopes; without a role it
+        // still reaches no Layer, request or check result.
+        Message::LayerStack {
+            operation: op("stack-probe"),
+            target: layer("fix"),
+            target_head: probe.checkpoint,
+            source: probe.checkpoint,
+        },
+        Message::LayerAppend {
+            operation: op("append-probe"),
+            layer: layer("fix"),
+            parent: Some(probe.checkpoint),
+            checkpoint: probe.checkpoint,
+        },
+        Message::OpenRequest {
+            operation: op("open-probe"),
+            request: RequestId::parse("request-fix").unwrap(),
+            layer: layer("fix"),
+            checkpoint: probe.checkpoint,
+            base: v(1),
+        },
+        Message::CheckReport(CheckReport {
+            operation: op("check-probe"),
+            repository: REPO.into(),
+            subject_tree: probe.tree,
+            subject_checkpoint: None,
+            name: "ci/unit".into(),
+            conclusion: Conclusion::Success,
+            details_url: None,
+            summary: None,
+            started_at: T0,
+            completed_at: T0,
+        }),
         Message::SetDelay { delay: 0 },
         Message::Release { version: v(2) },
         Message::Embargo {
@@ -375,6 +421,50 @@ fn an_embargoed_version_is_invisible_outside_the_repository() {
             embargoes: Vec::new()
         }
     );
+}
+
+#[test]
+fn a_restricted_trace_of_a_held_version_is_absent_outside_the_repository() {
+    let mut node = Node::new();
+    node.at(T0 + 10);
+    let trace = node
+        .log()
+        .repository()
+        .put_blob(b"private reasoning")
+        .unwrap();
+    node.publish_as(
+        "fix",
+        &[("src/a", b"patched\n")],
+        Some(None),
+        javelin::PublishAttribution::Agent {
+            context: Some(trace),
+            allow_missing_trace: false,
+        },
+    );
+    let gate = Gate::load(node.dir.path(), REPO).unwrap();
+    let owner = node.token(Who::Owner);
+    let now = node.now();
+    let log = node.log();
+    log.traces()
+        .restrict(&gate, log.repo(), owner.as_deref(), now, trace)
+        .unwrap();
+    let never = ObjectId::for_blob(b"never stored");
+    let replies = node.session(&[
+        (Who::Anonymous, Message::Get(vec![(Kind::Blob, never)])),
+        (Who::Anonymous, Message::Get(vec![(Kind::Blob, trace)])),
+        (Who::Member, Message::Get(vec![(Kind::Blob, trace)])),
+    ]);
+    let detail = |reply: &Message| match reply {
+        Message::Error { code, detail } => (code.clone(), detail.clone()),
+        other => panic!("expected a refusal, got {other:?}"),
+    };
+    let (code, absent) = detail(&replies[0]);
+    assert_eq!(
+        detail(&replies[1]),
+        (code, absent.replace(&never.to_string(), &trace.to_string()))
+    );
+    // A member may read the version, so it is told the trace is restricted.
+    assert_eq!(detail(&replies[2]).0, "forbidden");
 }
 
 #[test]
