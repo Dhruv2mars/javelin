@@ -40,7 +40,8 @@ CI left open. Work from it, in roughly this order:
   deployed Worker; parity test in `crates/javelin-node-cloudflare/tests/parity.rs`; Free-plan
   measurements in `tools/node-cloudflare/README.md`. TypeScript node and `tools/spike-do` deleted.
   - [ ] A wire message that creates a Layer, so a remote node's commit path, Stack and review
-    can be driven end to end (#101 or after); then rerun the hosted acceptance `target_*`.
+    can be driven end to end (#101 added leases, not creation); then rerun the hosted
+    acceptance `target_*`.
   - [ ] Fork on the Cloudflare node (`NodeLink::fork` across two objects).
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.

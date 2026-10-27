@@ -10,7 +10,7 @@ Scope is the Free plan only. Nothing here needs or should use a paid tier or a p
 ## How it runs
 
 - `crates/javelin-node` without its `native` feature is the node core: the World-log commit
-  path, objects, Layers, Stack, review, checks, traces and audiences, and `wire::handle`, which
+  path, objects, Layers and their writer leases, Stack, review, checks, traces and audiences, and `wire::handle`, which
   answers one protocol version 2 body. It reaches its provider only through two traits in
   `storage.rs`: `Storage` (the repository, the node's records, two documents) and
   `Coordination` (the one ordering point per repository). The root `javelin` crate without its
@@ -89,8 +89,8 @@ json` during the conformance run, the account's GraphQL analytics, and
 
 | Item | Measured | Free-plan limit | Headroom |
 | --- | --- | --- | --- |
-| Bundle | 3,325 KiB uploaded, 1,213 KiB gzip | 64 MiB uncompressed; no compressed limit | 19x |
-| Worker startup | 5 to 6 ms | 1 s | 160x |
+| Bundle | 3,358 KiB uploaded, 1,222 KiB gzip (with #101's leases) | 64 MiB uncompressed; no compressed limit | 19x |
+| Worker startup | 4 to 6 ms | 1 s | 160x |
 | Worker CPU per request | max 2.07 ms over the run (analytics `max.cpuTime`); p50 0 ms in the tail | 10 ms | 4.8x |
 | Object CPU per request | max 102 ms (the first request to a new object: wasm instantiation, SQLite schema, World 0), next highest 50 ms; p50 1 ms, p95 33 ms over 23 sampled requests | 30 s | 290x |
 | Object storage per repository | 3,325,952 bytes for a provisioned, empty repository (about 50 B-trees at 64 KiB a page); unchanged by the suite's uploads | 1 GB documented per object, 5 GB per account | about 1,500 empty repositories per account |
@@ -132,7 +132,8 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
 
 - `crates/javelin-node-cloudflare/tests/parity.rs` runs one scenario on a self-hosted data
   directory and on `PageStorage` over in-memory pages, natively: uploads, `LayerAppend`,
-  `PublishLayer` (the commit path), its replay and a reused operation, reads that follow the
+  `PublishLayer` (the commit path), its replay and a reused operation, the writer lease
+  (`LayerHead`, `LayerTake`), reads that follow the
   caller's audiences, a write refused for a hidden path, a Publish Request that publishes, and
   the browser and anonymous refusals. Every reply matches, object IDs masked (hidden entries are
   salted per store). It also checks that a reopened node keeps what it committed and that a
@@ -150,8 +151,9 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
 
 ## Known gaps
 
-- No wire message creates a Layer yet (Layer lease and `javelin layer take` are #101), so on a
-  remote node no Layer exists for `LayerAppend`, `PublishLayer`, Stack or a Publish Request. The
+- No wire message creates a Layer yet (#101 added the writer lease and `LayerTake`, not
+  creation), so on a remote node no Layer exists for `LayerAppend`, `LayerTake`,
+  `PublishLayer`, Stack or a Publish Request. The
   Worker runs the commit path, but only the parity test drives it; the hosted acceptance
   `target_*` checks that need it stay not verified.
 - Fork is not served: `NodeLink::fork` needs two repositories' objects to stream between.

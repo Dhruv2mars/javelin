@@ -1,7 +1,8 @@
 //! The node core on Durable Object storage answers the wire exactly as the self-hosted node
 //! does. One scenario runs on a self-hosted data directory (`Directory`) and on the pages a
 //! Durable Object keeps (`PageStorage` over `MemPages`): object uploads, `LayerAppend`, the
-//! World-log commit path (`PublishLayer`, its replay and a reused operation), reads that
+//! World-log commit path (`PublishLayer`, its replay and a reused operation), the writer
+//! lease (`LayerHead`, `LayerTake`), reads that
 //! follow the caller's audiences (#99), a write refused for a hidden path, a Publish Request,
 //! and the browser and anonymous refusals. Every reply must match, with object IDs masked:
 //! hidden entries are salted per store, so IDs over them differ between any two stores.
@@ -253,6 +254,23 @@ fn scenario(log: &mut FileWorldLog) -> Vec<String> {
 
     // A Publish Request publishes World 2.
     let feature = s.layer_with("feature", 1, &[("src/b", b"b\n")]);
+    // The first append took the Layer's writer lease for the owner; only the owner moves it.
+    s.send(
+        Some("owner"),
+        &Message::LayerHead {
+            layer: layer("feature"),
+        },
+    );
+    for caller in ["member", "owner"] {
+        s.send(
+            Some(caller),
+            &Message::LayerTake {
+                operation: op(&format!("take-{caller}")),
+                layer: layer("feature"),
+            },
+        );
+    }
+
     let request = RequestId::parse("pr-1").unwrap();
     s.send(
         Some("owner"),

@@ -288,6 +288,14 @@ pub fn run_wire(repository: &RepositoryId, wire: &Wire, absent: &Wire) {
         )),
         Some("unknown_layer")
     );
+    let take = Message::LayerTake {
+        operation: javelin::OperationId::parse("take-absent").expect("operation"),
+        layer: layer.clone(),
+    };
+    assert_eq!(
+        code(&wire.reply(Some("admin"), &take)),
+        Some("unknown_layer")
+    );
     let publish = Message::PublishLayer {
         operation: javelin::OperationId::parse("publish-absent").expect("operation"),
         layer,
