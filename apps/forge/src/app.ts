@@ -284,7 +284,11 @@ async function render() {
   };
   if (route.page === "index") {
     nodeLabel.textContent = "";
-    return show(landingPage(config, storage()), "Javelin: version control for people and agents");
+    show(landingPage(config, storage()), "Javelin: version control for people and agents");
+    // On a narrow screen the World line scrolls; start at the head, where Publish lands.
+    const line = main.querySelector<HTMLElement>(".wl-scroll");
+    if (line) line.scrollLeft = line.scrollWidth;
+    return;
   }
   if (route.page === "missing") {
     return show(`<section class="failure"><h1>No page here</h1><p>Forge pages look like <code>/OWNER/REPO</code>.</p></section>`, "Not found");
