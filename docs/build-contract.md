@@ -229,13 +229,15 @@ metadata collection remain outside those product executions.
 ## Work ownership
 
 This hub owns `TASKS.md`, this contract, and the integration sequence. Every separate
-implementation thread owns one PR in its own worktree. Work branches may start from
+implementation thread owns one Entire trail (formerly a GitHub PR) in its own worktree. Work branches may start from
 verified unmerged dependencies so progress does not require premature merging.
 Dependent PRs must name their base and cannot claim independent acceptance.
 
 Workers report evidence and a VERIFIED, NOT VERIFIED, or INCONCLUSIVE result.
-The hub inspects the actual artifact before checking an item. The hub may merge a PR
-once all its checks pass.
+The hub inspects the actual artifact before checking an item. The hub may merge a trail
+once the checks in `AGENTS.md` pass on the merge result and the trail's gates pass.
+Since 2026-10-27 the repository lives on Entire and no CI runs, so those checks are local
+and cover macOS only.
 
 The user's 2026-10-16 workflow update supersedes earlier draft-first and repeated
 review requirements. Each owner implements its task, runs relevant checks, opens
