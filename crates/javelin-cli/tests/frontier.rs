@@ -177,10 +177,10 @@ fn a_maintainer_delays_embargoes_and_releases_and_outsiders_see_the_frontier() {
     assert_eq!(signed_out["delayed"], false);
     assert_eq!(signed_out["delay"], Value::Null);
 
-    // A week's delay holds World 1, published just now, from outsiders.
+    // A week's delay holds later versions; World 1 was already public and stays so.
     let set = json(&javelin(&home, Some(&owner), &with(&["delay", "7d"])));
     assert_eq!(set["delay"], 604_800);
-    assert_eq!(set["frontier"], 0);
+    assert_eq!(set["frontier"], 1);
     let outsider = json(&javelin(&home, None, &with(&["delay"])));
     assert_eq!(outsider["delayed"], true);
     assert_eq!(
@@ -196,7 +196,7 @@ fn a_maintainer_delays_embargoes_and_releases_and_outsiders_see_the_frontier() {
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&plain.stdout),
-        "Public frontier: World 0.\nThe public view is delayed.\n"
+        "Public frontier: World 1.\nThe public view is delayed.\n"
     );
     let off = json(&javelin(&home, Some(&owner), &with(&["delay", "0"])));
     assert_eq!(off["frontier"], 1);

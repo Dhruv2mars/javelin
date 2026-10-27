@@ -111,7 +111,6 @@ impl FileWorldLog {
 
     /// The public frontier now: the newest version a reader outside the repository sees.
     pub fn frontier(&self) -> std::result::Result<VersionNumber, ProtocolError> {
-        self.stamp()?;
         crate::disclosure::frontier(&self.records, &self.repo, self.now())
     }
 

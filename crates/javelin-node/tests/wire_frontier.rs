@@ -434,11 +434,21 @@ fn the_frontier_moves_when_the_delay_passes_and_ids_never_change() {
         assert_eq!(node.resolve(Who::Member), 3, "a member reads the head");
     }
 
-    // Turning the delay off shows the head at once.
-    node.at(T0 + WEEK + 300);
-    assert_eq!(node.resolve(Who::Anonymous), 1);
-    node.set_delay(0);
+    // Disclosure is one-way: a longer delay takes nothing back.
+    node.set_delay(10 * WEEK);
     assert_eq!(node.resolve(Who::Anonymous), 3);
+    assert_eq!(node.disclosure(Who::Member).frontier, v(3));
+}
+
+#[test]
+fn turning_the_delay_off_shows_the_head_at_once() {
+    let mut node = Node::new();
+    node.set_delay(WEEK);
+    node.at(T0 + 10);
+    node.publish("two", &[("src/b", b"b\n")], None);
+    assert_eq!(node.resolve(Who::Anonymous), 0);
+    node.set_delay(0);
+    assert_eq!(node.resolve(Who::Anonymous), 2);
 }
 
 #[test]

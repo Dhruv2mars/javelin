@@ -14,7 +14,9 @@
 //!   late stamp only delays disclosure;
 //! - embargoes, keyed by the operation ID of the Publish they hold. An embargo is stored
 //!   before its Publish, so the version it holds is never disclosed early, and is tied to
-//!   that version once the Publish is decided.
+//!   that version once the Publish is decided;
+//! - the newest frontier served so far. Disclosure is one-way: raising the delay never takes
+//!   back a version that was already public.
 
 use javelin::{OperationId, PublishOutcome, Reader, Repository, VersionNumber};
 use javelin_protocol::{
@@ -37,6 +39,10 @@ CREATE TABLE IF NOT EXISTS embargoes (
     until INTEGER,
     released INTEGER,
     version INTEGER UNIQUE
+);
+CREATE TABLE IF NOT EXISTS disclosed (
+    one INTEGER PRIMARY KEY CHECK(one=0),
+    version INTEGER NOT NULL CHECK(version>=0)
 );";
 
 /// Stamps every version the node has not seen with `now`, never earlier than the last
@@ -94,12 +100,15 @@ pub fn stamp(records: &Connection, repo: &Repository, now: u64) -> Result<(), Pr
     Ok(())
 }
 
-/// The public frontier at Unix time `now`. Call `stamp` first.
+/// The public frontier at Unix time `now`: the newest version older than the delay with no
+/// unreleased embargo at or below it, and never below a frontier already served. Stamps
+/// first, so every decided embargo is tied to its version before the frontier is decided.
 pub fn frontier(
     records: &Connection,
     repo: &Repository,
     now: u64,
 ) -> Result<VersionNumber, ProtocolError> {
+    stamp(records, repo, now)?;
     let head = repo.head()?.number;
     let delay = delay(records)?;
     let delayed = if delay == 0 {
@@ -124,7 +133,24 @@ pub fn frontier(
         )
         .map_err(storage)?
         .map_or(u64::MAX, |version| (version as u64).saturating_sub(1));
-    Ok(VersionNumber::new(delayed.min(held).min(head.get()))?)
+    let disclosed: u64 = records
+        .query_row("SELECT version FROM disclosed WHERE one=0", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .optional()
+        .map_err(storage)?
+        .map_or(0, |version| version as u64);
+    let frontier = delayed.min(held).min(head.get()).max(disclosed);
+    if frontier > disclosed {
+        records
+            .execute(
+                "INSERT INTO disclosed(one,version) VALUES(0,?1) \
+                 ON CONFLICT(one) DO UPDATE SET version=excluded.version",
+                [frontier as i64],
+            )
+            .map_err(storage)?;
+    }
+    Ok(VersionNumber::new(frontier)?)
 }
 
 /// `reader` as it reads now: a reader outside the repository is held at the frontier.

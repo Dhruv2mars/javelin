@@ -436,7 +436,8 @@ credential for the repository or `JAVELIN_TOKEN`, and signed out without one.
 
 `delay` shows the delay, or sets it with Maintain. `DURATION` is seconds, or a count
 followed by `s`, `m`, `h` or `d`; `0` turns the delay off. Each version becomes public on
-its own once the delay has passed since it was published.
+its own once the delay has passed since it was published. A version already public stays
+public when the delay is raised.
 
 `embargo --operation ID` embargoes the Publish with that operation ID, with Maintain. Send
 it before the Publish: readers outside the repository then stay below the version it makes
