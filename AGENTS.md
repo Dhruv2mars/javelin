@@ -16,7 +16,9 @@ changing product behavior.
 
 ## Checks
 
-CI runs these on macOS, Linux and Windows, with a failing `git` first on `PATH`:
+The repository lives on Entire (`origin` is `entire://.../et/dhruv2mars/javelin`). The
+`github` remote is a frozen archive: never push to it. Nothing runs CI, so the owner runs
+these locally before handing off, and the hub runs them again on the merge result:
 
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -27,14 +29,18 @@ CI runs these on macOS, Linux and Windows, with a failing `git` first on `PATH`:
 - Javelin development may use Git. Javelin runtime, storage, tests and user workflows must
   never invoke or interpret Git.
 - Preserve accepted behavior, not old code.
-- One task per branch, worktree and owning thread. Implement, run checks, open a regular PR
-  (no drafts or planning PRs), link it in T3 Code, report briefly, finish. No routine extra
-  review, audit or handoff rounds.
+- One task per branch, worktree and owning thread. Implement, run checks, push the branch,
+  open an Entire trail for it (`entire trail create`), get it through a Sol review, report
+  the trail URL briefly, finish. No drafts, planning trails or routine extra rounds.
 - Small commits prefixed `feat:`, `fix:`, `test:`, `chore:` or `refactor:`.
 - Never push to another thread's branch or edit another thread's worktree.
 - The hub thread coordinates and owns `TASKS.md`. Update `TASKS.md` in your own worktree;
   the hub consolidates.
-- The hub may merge a PR once all its checks pass. Merge with `--merge`.
+- The hub merges a trail once the local checks pass on the merge result and
+  `entire trail merge --dry-run` passes: `entire trail approve`, then `entire trail merge`.
+  Never `--force`.
+- Only macOS runs the checks now. Linux and Windows are unverified until a runner exists;
+  say so in every hand-off that touches platform behavior.
 - An explicit user pause overrides autonomy and scheduled continuations until the user resumes.
 - Reuse existing T3 threads; settle finished ones.
 
