@@ -47,8 +47,8 @@ the forge reads without a token.
 
 Vercel serves the static build from the `javelin-codes` project (Hobby plan) through its Git
 integration. Every push to `main` that changes `apps/forge/` or `packages/protocol/` deploys
-production; pull requests get preview deployments, and other pushes skip the build
-(`ignoreCommand`). The project's root directory is `apps/forge`, and `vercel.json` holds the
+production, and pull requests get preview deployments. A push that changes neither since the
+branch's last deployment skips the build (`ignoreCommand`). The project's root directory is `apps/forge`, and `vercel.json` holds the
 rest: bun install and build, `dist/` as output, index.html for every page route so direct loads
 and refreshes work, and the security headers. The CSP lets the page fetch any `https:` node,
 and `http://localhost` and `http://127.0.0.1` nodes for local work.
@@ -61,7 +61,7 @@ the repository root:
 ## Layout
 
 - `src/data.ts`: page data loaders, no DOM. `src/app.ts`: routing and rendering.
-- `src/landing.ts`: the page at `/` and its open-a-repository form.
+- `src/landing.ts` and `src/landing.css`: the page at `/` and its open-a-repository form.
 - `src/diff.ts` (Myers line diff), `src/highlight.ts`, `src/markdown.ts` (raw HTML escaped,
   unsafe link schemes dropped), `src/routes.ts`.
 - `scripts/node.ts`: seeds a repository with the `javelin` CLI and runs `javelin-node serve`.

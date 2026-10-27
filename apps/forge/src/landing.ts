@@ -26,8 +26,14 @@ export function openTarget(
   if (!validTarget(t)) {
     return { ok: false, error: "A repository ID is 1 to 128 letters, digits, dots, colons, dashes or underscores." };
   }
+  try {
+    new URL(t.node);
+  } catch {
+    return { ok: false, error: "That node address isn't a valid URL. Check the host and port." };
+  }
   const key = name.trim() || defaultName(t);
-  if (!/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/.test(key)) {
+  // `.` and `..` would be collapsed out of the page's path.
+  if (!/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/.test(key) || key.split("/").some((p) => /^\.\.?$/.test(p))) {
     return { ok: false, error: "Name the repository as owner/repo, using letters, digits, dots, dashes or underscores." };
   }
   const q = new URLSearchParams({ node: t.node, repository: t.repository });
@@ -159,7 +165,7 @@ export function landingPage(config: Config, storage: Storage | null) {
         <div class="band-head"><h2 id="hosting-title">Your repository stays on your infrastructure</h2></div>
         <div class="band-body prose-block">
           <p>Javelin runs no hosting. A repository lives on a node that its owner runs: <code>javelin-node</code> on a machine you control, or a node in your own Cloudflare account. Javelin never pays for, holds or reads your storage. The CLI and this site talk to the node directly.</p>
-          <p class="status">Today you can run <code>javelin-node</code> yourself. Connecting a Cloudflare account from the forge is being built.</p>
+          <p class="coming">Today you can run <code>javelin-node</code> yourself. Connecting a Cloudflare account from the forge is being built.</p>
         </div>
       </section>
 
@@ -175,7 +181,7 @@ export function landingPage(config: Config, storage: Storage | null) {
             <dt>Embargo</dt>
             <dd>A Publish can wait for a release time or a maintainer's say-so, then becomes public with everything before it.</dd>
           </dl>
-          <p class="status">The storage format for this is fixed; audiences, the delay and embargoes are being built.</p>
+          <p class="coming">The storage format for this is fixed; audiences, the delay and embargoes are being built.</p>
         </div>
       </section>
 

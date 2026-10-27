@@ -135,6 +135,9 @@ test("the landing form opens a repository by node address and ID", () => {
   expect(openTarget("https://node.example.com", "", "").ok).toBe(false);
   expect(openTarget("https://node.example.com", "r", "no-slash").ok).toBe(false);
   expect(openTarget("https://node.example.com", "r", "a/b/c").ok).toBe(false);
+  expect(openTarget("https://node.example.com:abc", "r", "").ok).toBe(false);
+  expect(openTarget("https://node.example.com", "r", "alice/..").ok).toBe(false);
+  expect(openTarget("https://node.example.com", ".", "").ok).toBe(false);
 
   const items = new Map([
     ["forge:bad/value", "{"],
