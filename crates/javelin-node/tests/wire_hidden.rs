@@ -326,19 +326,46 @@ fn writes_outside_the_callers_audiences_are_forbidden() {
     // The member's own Layer, and a maintainer's Layer that edits `.env`.
     let mine = append(&mut log, "mine", &[]);
     let secret = append(&mut log, "secret", &[(".env", Some(b"TOKEN=2\n"))]);
-    let staged = |log: &mut FileWorldLog, files: &[(&str, Option<&[u8]>)]| {
-        let bytes = changes(log, files).canonical_bytes();
+    let policy_edit = append(
+        &mut log,
+        "policy-edit",
+        &[(POLICY_PATH, Some(b"src/** members\n"))],
+    );
+    let maintainer_layer = append(&mut log, "owner", &[]);
+    let (owner, member) = (token(REPO), token_for("member", REPO));
+    let (addr, server) = start(&dir, log, 18);
+    // Each writer uploads its own blobs and changes, as a client does.
+    let upload = |token: &str, files: &[(&str, &[u8])]| {
+        let blobs = files
+            .iter()
+            .map(|(_, bytes)| (Kind::Blob, ObjectId::for_blob(bytes), bytes.to_vec()))
+            .collect();
+        assert!(matches!(
+            send(addr, Some(token), &Message::Objects(blobs)),
+            Message::Stored { .. }
+        ));
+        let bytes = SparseChanges::new(files.iter().map(|(p, bytes)| {
+            let entry = FileEntry::Regular {
+                content: ObjectId::for_blob(bytes),
+                executable: false,
+            };
+            (path(p), Some(entry))
+        }))
+        .unwrap()
+        .canonical_bytes();
         let id = ObjectId::for_checkpoint(&bytes);
-        log.store_changes(id, &bytes).unwrap();
+        let reply = send(
+            addr,
+            Some(token),
+            &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]),
+        );
+        assert!(matches!(reply, Message::Stored { .. }), "{reply:?}");
         id
     };
-    let to_env = staged(&mut log, &[(".env", Some(b"TOKEN=member\n"))]);
-    let to_notes = staged(&mut log, &[("internal/notes", Some(b"member notes\n"))]);
-    let to_policy = staged(&mut log, &[(POLICY_PATH, Some(b""))]);
-    let maintainer_layer = append(&mut log, "owner", &[]);
-    let to_env_again = staged(&mut log, &[(".env", Some(b"TOKEN=owner\n"))]);
-    let (owner, member) = (token(REPO), token_for("member", REPO));
-    let (addr, server) = start(&dir, log, 7);
+    let to_env = upload(&member, &[(".env", b"TOKEN=member\n")]);
+    let to_notes = upload(&member, &[("internal/notes", b"member notes\n")]);
+    let to_policy = upload(&member, &[(POLICY_PATH, b"")]);
+    let to_env_again = upload(&owner, &[(".env", b"TOKEN=owner\n")]);
     let append_msg =
         |name: &str, parent: ObjectId, changes: ObjectId, n: &str| Message::LayerAppend {
             operation: op(n),
@@ -373,27 +400,35 @@ fn writes_outside_the_callers_audiences_are_forbidden() {
     ) else {
         panic!("the member's write to its own audience was refused")
     };
-    // Stacking a maintainer's hidden edit, or proposing it for review, is a write too.
+    // A maintainer's hidden edit is absent to the member: stacking it or proposing it
+    // for review answers exactly as for a checkpoint that was never stored.
+    let never = ObjectId::for_checkpoint(b"{}never");
+    let stack = |source: ObjectId, n: &str| Message::LayerStack {
+        operation: op(n),
+        target: layer("mine"),
+        target_head: checkpoint,
+        source,
+    };
+    assert_eq!(
+        send(addr, Some(&member), &stack(secret, "m-stack")),
+        send(addr, Some(&member), &stack(never, "m-stack-never"))
+    );
+    let review = |checkpoint: ObjectId, n: &str| Message::OpenRequest {
+        operation: op(n),
+        request: RequestId::parse(n).unwrap(),
+        layer: layer("secret"),
+        checkpoint,
+        base: v(1),
+    };
+    assert_eq!(
+        send(addr, Some(&member), &review(secret, "m-review")),
+        send(addr, Some(&member), &review(never, "m-review-never"))
+    );
+    // A visible change the member may still not make, to the policy, is forbidden.
     forbidden(send(
         addr,
         Some(&member),
-        &Message::LayerStack {
-            operation: op("m-stack"),
-            target: layer("mine"),
-            target_head: checkpoint,
-            source: secret,
-        },
-    ));
-    forbidden(send(
-        addr,
-        Some(&member),
-        &Message::OpenRequest {
-            operation: op("m-review"),
-            request: RequestId::parse("r1").unwrap(),
-            layer: layer("secret"),
-            checkpoint: secret,
-            base: v(1),
-        },
+        &stack(policy_edit, "m-stack-policy"),
     ));
 
     // A maintainer writes and publishes the hidden path.
@@ -456,4 +491,131 @@ fn a_conflict_with_a_hidden_change_names_no_path_to_a_reader_outside_it() {
             paths: vec![path(".env")]
         })
     );
+}
+
+/// One tree chunk with a single file `f` naming `blob`.
+fn tree_naming(blob: ObjectId) -> (ObjectId, Vec<u8>) {
+    use javelin::tree::{MemoryStore, Store, Trees};
+    let trees = Trees::new(MemoryStore::default());
+    let entry = FileEntry::Regular {
+        content: blob,
+        executable: false,
+    };
+    let root = trees.build([(&path("f"), &entry)]).unwrap();
+    (root, trees.store().load(root).unwrap())
+}
+
+#[test]
+fn an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back() {
+    let dir = TempDir::new().unwrap();
+    let mut log = node(&dir);
+    let mine_layer = append(&mut log, "mine", &[]);
+    let (member, stranger) = (token_for("member", REPO), token_for("stranger", REPO));
+    let (addr, server) = start(&dir, log, 13);
+    let upload = |token: &str, kind: Kind, id: ObjectId, bytes: Vec<u8>| {
+        send(
+            addr,
+            Some(token),
+            &Message::Objects(vec![(kind, id, bytes)]),
+        )
+    };
+
+    // Greptile's sequence: a member uploads a tree chunk naming a guessed blob ID. The
+    // published maintainers-only `.env` and a blob that was never stored get the same reply.
+    let secret = ObjectId::for_blob(SECRET);
+    let never = ObjectId::for_blob(b"TOKEN=guess\n");
+    let (guessed, bytes) = tree_naming(secret);
+    let (code, detail) = error(upload(&member, Kind::Tree, guessed, bytes));
+    let (absent, bytes) = tree_naming(never);
+    let reference = error(upload(&member, Kind::Tree, absent, bytes));
+    assert_eq!(
+        (
+            code,
+            detail.replace(&secret.to_string(), &never.to_string())
+        ),
+        reference
+    );
+    assert_eq!(reference.0, "missing_object");
+
+    // The same for an append whose changes name the guessed blob at a public path.
+    let append_naming = |blob: ObjectId, n: &str| {
+        let bytes = SparseChanges::new([(
+            path("src/copy"),
+            Some(FileEntry::Regular {
+                content: blob,
+                executable: false,
+            }),
+        )])
+        .unwrap()
+        .canonical_bytes();
+        let changes = ObjectId::for_checkpoint(&bytes);
+        assert!(matches!(
+            upload(&member, Kind::Checkpoint, changes, bytes),
+            Message::Stored { .. }
+        ));
+        send(
+            addr,
+            Some(&member),
+            &Message::LayerAppend {
+                operation: op(n),
+                layer: layer("mine"),
+                parent: Some(mine_layer),
+                checkpoint: changes,
+            },
+        )
+    };
+    let reply = append_naming(secret, "guess-secret");
+    assert_eq!(reply, append_naming(never, "guess-never"));
+    assert_eq!(
+        reply,
+        Message::LayerOutcome(LayerOutcome::Refused {
+            code: "missing_object".into()
+        })
+    );
+
+    // The member uploads a blob of its own: it may confirm and read that blob, and name
+    // it in a tree, before any version publishes it.
+    let mine = b"member draft\n".to_vec();
+    let id = ObjectId::for_blob(&mine);
+    assert!(matches!(
+        upload(&member, Kind::Blob, id, mine),
+        Message::Stored { count: 1 }
+    ));
+    assert_eq!(
+        send(addr, Some(&member), &Message::Want(vec![(Kind::Blob, id)])),
+        Message::Missing(Vec::new())
+    );
+    assert!(matches!(
+        send(addr, Some(&member), &Message::Get(vec![(Kind::Blob, id)])),
+        Message::Objects(objects) if objects.len() == 1
+    ));
+    let (root, bytes) = tree_naming(id);
+    assert!(matches!(
+        upload(&member, Kind::Tree, root, bytes),
+        Message::Stored { count: 1 }
+    ));
+
+    // Another caller learns nothing about it: unpublished and not theirs.
+    assert_eq!(
+        send(
+            addr,
+            Some(&stranger),
+            &Message::Want(vec![(Kind::Blob, id)])
+        ),
+        Message::Missing(vec![(Kind::Blob, id)])
+    );
+    assert_eq!(
+        error(send(
+            addr,
+            Some(&stranger),
+            &Message::Get(vec![(Kind::Blob, id)])
+        ))
+        .0,
+        "missing_object"
+    );
+    assert_eq!(
+        error(send(addr, None, &Message::Get(vec![(Kind::Blob, id)]))).0,
+        "missing_object"
+    );
+    server.join().unwrap();
 }

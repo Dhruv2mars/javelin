@@ -32,6 +32,9 @@ CREATE TABLE layer_paths (
     CHECK((kind IS NULL)=(content IS NULL))
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX layer_paths_by_layer ON layer_paths(layer);
+-- Which live Layer paths name an object, so a read of unpublished content can be
+-- allowed by the paths that hold it.
+CREATE INDEX layer_paths_by_content ON layer_paths(content);
 ";
 
 /// What would make this Layer's Publish conflict: World advances since its base

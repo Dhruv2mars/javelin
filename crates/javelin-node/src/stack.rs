@@ -33,6 +33,7 @@ pub(crate) fn stack(
     target: &LayerId,
     target_head: ObjectId,
     source: ObjectId,
+    reader: &javelin::Reader,
 ) -> Result<LayerOutcome, ProtocolError> {
     if is_review_layer(target) {
         return Ok(refused(refusal::LAYER_RESERVED));
@@ -54,7 +55,12 @@ pub(crate) fn stack(
         LayerState::Active { head } if head.checkpoint().object() == target_head => Some(head),
         _ => None,
     }) {
-        let attempt = if current.as_ref() == Some(&head) {
+        // A source the caller may not read is absent to it: the same refusal as a
+        // checkpoint that was never stored.
+        let hidden = !repo.checkpoint_visible(source, reader).unwrap_or(true);
+        let attempt = if hidden {
+            Err(StackError::Storage(Error::MissingObject(source.object())))
+        } else if current.as_ref() == Some(&head) {
             javelin_stack::stack_layer(repo, operation, &head, source).map(Some)
         } else {
             repo.stack_operation(operation, &head, source)

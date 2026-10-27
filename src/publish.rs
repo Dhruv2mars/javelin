@@ -192,6 +192,15 @@ impl Repository {
                     }
                     let version =
                         append_version_in(&tx, &against, operation, &changes, tree, view)?;
+                    // An agent trace follows the repository's read rule (D25), so the
+                    // version publishes it; a node refuses a restricted one on its own.
+                    if let PublishAttribution::Agent {
+                        context: Some(trace),
+                        ..
+                    } = attribution
+                    {
+                        crate::repository::grant_public_in(&tx, *trace)?;
+                    }
                     crate::blame::record_in(&tx, expected.layer(), version.number, &plain)?;
                     crate::radar::untrack_in(&tx, expected.layer())?;
                     PublishOutcome::Published { version }

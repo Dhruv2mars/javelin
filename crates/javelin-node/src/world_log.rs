@@ -334,6 +334,7 @@ impl WorldLog for FileWorldLog {
         layer: &LayerId,
         parent: Option<ObjectId>,
         changes: ObjectId,
+        writer: &javelin::Reader,
     ) -> std::result::Result<LayerOutcome, ProtocolError> {
         if is_review_layer(layer) {
             return Ok(LayerOutcome::Refused {
@@ -347,6 +348,7 @@ impl WorldLog for FileWorldLog {
             layer,
             parent,
             changes,
+            Some(writer),
         )
     }
 

@@ -136,7 +136,7 @@ impl Repository {
         validate_format(&tx)?;
         verify_head(&tx, expected)?;
         let before = checkpoint_in(&tx, expected.checkpoint().object())?;
-        let imported = prepare_checkpoint(&tx, before.base(), changes, &[], None)?;
+        let imported = prepare_checkpoint(&tx, before.base(), changes, &[], None, None)?;
         let outcome = stack_in(&tx, operation, expected, imported.id, changes, None, None)?;
         tx.commit()?;
         Ok(outcome)
@@ -161,7 +161,7 @@ fn stack_in(
     sources.push(source);
     sources.sort();
     sources.dedup();
-    let candidate = prepare_checkpoint(tx, before.base(), changes, &sources, provenance)?;
+    let candidate = prepare_checkpoint(tx, before.base(), changes, &sources, provenance, None)?;
     update_in(
         tx,
         operation,

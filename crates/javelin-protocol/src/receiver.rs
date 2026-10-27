@@ -65,14 +65,17 @@ pub trait WorldLog {
     /// canonical changeset are refused as `malformed`.
     fn store_changes(&mut self, id: ObjectId, bytes: &[u8]) -> Result<(), ProtocolError>;
 
-    /// Appends the staged changes `changes` to `layer` after `parent`. Refusals and
-    /// staleness are outcomes. A repeated operation replays its recorded outcome.
+    /// Appends the staged changes `changes` to `layer` after `parent`, for `writer`.
+    /// Refusals and staleness are outcomes. A repeated operation replays its recorded
+    /// outcome. Staged changes, and objects their entries name, that the writer may not
+    /// read are treated exactly as absent.
     fn append_checkpoint(
         &mut self,
         operation: &OperationId,
         layer: &LayerId,
         parent: Option<ObjectId>,
         changes: ObjectId,
+        writer: &Reader,
     ) -> Result<LayerOutcome, ProtocolError>;
 
     /// The `LayerState` reply for `layer`: its base, head sequence, head and status.
@@ -125,9 +128,9 @@ pub fn handle_request_as<L: WorldLog>(
             layer,
             parent,
             checkpoint,
-        } => Ok(Message::LayerOutcome(
-            log.append_checkpoint(&operation, &layer, parent, checkpoint)?,
-        )),
+        } => Ok(Message::LayerOutcome(log.append_checkpoint(
+            &operation, &layer, parent, checkpoint, reader,
+        )?)),
         Message::LayerHead { layer } => log.layer_head(&layer),
         // A batch of only changes objects goes to the log. A mixed batch falls through
         // to `handle`, which refuses checkpoint kinds.
@@ -135,7 +138,12 @@ pub fn handle_request_as<L: WorldLog>(
             unique(&items)?;
             let mut missing = Vec::new();
             for (kind, id) in items {
-                if !log.has_changes(id)? || !log.changes_visible(id, reader)? {
+                // Present only if the caller may read it: it names no path hidden from the
+                // caller, or the caller uploaded it.
+                if !log.has_changes(id)?
+                    || !(log.changes_visible(id, reader)?
+                        || log.repository().uploaded(id, reader)?)
+                {
                     missing.push((kind, id));
                 }
             }
@@ -151,6 +159,9 @@ pub fn handle_request_as<L: WorldLog>(
             }
             for (_, id, bytes) in &objects {
                 log.store_changes(*id, bytes)?;
+                if let Some(principal) = reader.principal() {
+                    log.repository().record_upload(*id, principal)?;
+                }
             }
             Ok(Message::Stored {
                 count: objects.len() as u32,
@@ -166,13 +177,22 @@ pub fn serve(repo: &mut Repository, r: impl Read, w: impl Write) -> Result<(), P
     serve_as(repo, r, w, &Reader::outsider())
 }
 
-/// Serves one session to `reader`.
+/// Serves one session to `reader`. A reader with no principal is identified by the session,
+/// so it may read back what it uploads during the session and nothing else it uploads.
 pub fn serve_as(
     repo: &mut Repository,
     mut r: impl Read,
     mut w: impl Write,
     reader: &Reader,
 ) -> Result<(), ProtocolError> {
+    let session;
+    let reader = match reader.principal() {
+        Some(_) => reader,
+        None => {
+            session = reader.clone().with_principal(session_principal());
+            &session
+        }
+    };
     let mut negotiated = false;
     loop {
         let result = match read_frame(&mut r) {
@@ -244,11 +264,15 @@ fn handle(
                 if actual != *claimed {
                     return Err(mismatch(*claimed, actual));
                 }
-                match kind {
+                let id = match kind {
                     Kind::Blob => repo.put_blob(bytes)?,
-                    Kind::Tree => repo.put_tree(bytes)?,
+                    // A reference the uploader may not read is refused as absent.
+                    Kind::Tree => repo.put_tree_as(bytes, Some(reader))?,
                     Kind::Checkpoint => return Err(checkpoint_unserved()),
                 };
+                if let Some(principal) = reader.principal() {
+                    repo.record_upload(id, principal)?;
+                }
             }
             Ok(Message::Stored {
                 count: objects.len() as u32,
@@ -326,6 +350,21 @@ fn handle(
         }
         _ => Err(unexpected()),
     }
+}
+
+/// A principal unique to one anonymous session of this process.
+fn session_principal() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let seed = format!(
+        "{}:{nanos}:{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    format!("session:{}", ObjectId::for_blob(seed.as_bytes()))
 }
 
 fn all_changes(items: &[(Kind, ObjectId)]) -> bool {

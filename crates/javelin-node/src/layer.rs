@@ -34,6 +34,17 @@ pub(crate) fn changes_visible(
     Ok(repo.visible(changes.entries().keys(), from, reader)?)
 }
 
+/// Whether `reader` may know of staged changes `id`: they name only paths visible to it, or
+/// it uploaded them.
+pub(crate) fn accessible_changes(
+    repo: &Repository,
+    records: &Connection,
+    id: ObjectId,
+    reader: &javelin::Reader,
+) -> Result<bool, ProtocolError> {
+    Ok(changes_visible(repo, records, id, reader)? || repo.uploaded(id, reader)?)
+}
+
 pub(crate) fn has_changes(records: &Connection, id: ObjectId) -> Result<bool, ProtocolError> {
     records
         .query_row(
@@ -73,13 +84,18 @@ pub(crate) fn append(
     layer: &LayerId,
     parent: Option<ObjectId>,
     changes: ObjectId,
+    writer: Option<&javelin::Reader>,
 ) -> Result<LayerOutcome, ProtocolError> {
-    let changes = load_changes(records, changes)?.ok_or_else(|| {
-        ProtocolError::new(
-            "missing_object",
-            format!("changes {changes} are not uploaded"),
-        )
-    })?;
+    let id = changes;
+    let not_uploaded =
+        || ProtocolError::new("missing_object", format!("changes {id} are not uploaded"));
+    let changes = load_changes(records, changes)?.ok_or_else(not_uploaded)?;
+    // Changes the writer may not read are absent to it.
+    if let Some(writer) = writer
+        && !accessible_changes(repo, records, id, writer)?
+    {
+        return Err(not_uploaded());
+    }
     let state = match repo.layer_state(layer) {
         Err(Error::InvalidInput(_)) => return Ok(refused(refusal::UNKNOWN_LAYER)),
         state => state?,
@@ -93,7 +109,7 @@ pub(crate) fn append(
         LayerState::Active { head } if Some(head.checkpoint().object()) == parent => Some(head),
         _ => None,
     }) {
-        update = Some(repo.capture_layer(operation, &head, &changes));
+        update = Some(repo.capture_layer_as(operation, &head, &changes, writer));
         if !matches!(update, Some(Err(Error::OperationIdReused(_)))) {
             break;
         }

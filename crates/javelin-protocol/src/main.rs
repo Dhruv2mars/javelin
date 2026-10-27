@@ -5,7 +5,7 @@
 use std::{io, process::ExitCode};
 
 use javelin::{ObjectId, OperationId, Repository, VersionNumber};
-use javelin_protocol::{Outcome, ProtocolError, push, serve};
+use javelin_protocol::{Outcome, ProtocolError, push, serve_as};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,7 +17,16 @@ fn main() -> ExitCode {
     {
         ["serve", project] => Repository::open(project)
             .map_err(ProtocolError::from)
-            .and_then(|mut repo| serve(&mut repo, io::stdin().lock(), io::stdout().lock())),
+            // Standard input and output reach only whoever runs the binary on the project,
+            // who can read the store's files anyway: the session reads as a maintainer.
+            .and_then(|mut repo| {
+                serve_as(
+                    &mut repo,
+                    io::stdin().lock(),
+                    io::stdout().lock(),
+                    &javelin::Reader::maintainer(),
+                )
+            }),
         ["push", project, tree, operation, expected] => {
             run_push(project, tree, operation, expected)
         }

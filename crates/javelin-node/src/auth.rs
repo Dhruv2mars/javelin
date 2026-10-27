@@ -106,7 +106,11 @@ impl Gate {
             .as_deref()
             .and_then(|principal| PrincipalId::parse(principal).ok())
             .and_then(|principal| self.permissions()?.roles.get(&principal).copied());
-        reader_for(role)
+        let reader = reader_for(role);
+        match &grant.principal {
+            Some(principal) => reader.with_principal(principal.clone()),
+            None => reader,
+        }
     }
 }
 
@@ -129,8 +133,9 @@ pub fn check_write(
 }
 
 /// `check_write` for the changes of stored checkpoint `checkpoint` over its own base, or over
-/// `base` when given. A checkpoint this store does not hold is left to the handler, which
-/// refuses it on its own terms.
+/// `base` when given. A checkpoint this store does not hold, or one the writer may not read,
+/// is left to the handler, which refuses both exactly as absent: refusing an unreadable one
+/// here would confirm that it exists.
 pub fn check_checkpoint_write(
     repo: &javelin::Repository,
     writer: &Reader,
@@ -140,6 +145,9 @@ pub fn check_checkpoint_write(
     let Ok(id) = javelin::CheckpointId::parse(&checkpoint.to_string()) else {
         return Ok(());
     };
+    if !repo.checkpoint_visible(id, writer).unwrap_or(false) {
+        return Ok(());
+    }
     let Ok(checkpoint) = repo.read_checkpoint(id) else {
         return Ok(());
     };

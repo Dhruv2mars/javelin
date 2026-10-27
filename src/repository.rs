@@ -68,6 +68,13 @@ CREATE TABLE seals (
     audience TEXT NOT NULL,
     since INTEGER NOT NULL CHECK(since>=1)
 ) STRICT, WITHOUT ROWID;
+-- Who uploaded each object over the wire. An uploader already holds the bytes, so it may
+-- read them whatever their audience.
+CREATE TABLE uploads (
+    id TEXT NOT NULL,
+    principal TEXT NOT NULL,
+    PRIMARY KEY(id,principal)
+) STRICT, WITHOUT ROWID;
 -- The versions that change the policy, so the policies that governed a span of
 -- versions are found without scanning history.
 CREATE INDEX policy_changes ON changes(version) WHERE path='.javelinpolicy';
@@ -207,6 +214,7 @@ impl Repository {
                 "views",
                 "view_chunks",
                 "object_access",
+                "uploads",
             ] {
                 for action in ["UPDATE", "DELETE"] {
                     tx.execute_batch(&format!("CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT, 'immutable repository data'); END;"))?;
@@ -436,24 +444,28 @@ impl Repository {
     /// Whether `reader` may receive object `id` of `kind`. An object some version reaches
     /// publicly is readable by everyone, and one inside hidden entries only by their
     /// audiences. A Layer upload that no version reaches yet is readable as before.
+    ///
+    /// An object is readable when a version reaches it publicly or inside an audience the
+    /// reader belongs to, when the reader uploaded it, or when a live Layer names it at a
+    /// path visible to the reader under every policy so far. Anything else is treated as
+    /// absent, so no reply confirms that a guessed ID exists.
     pub fn readable(&self, id: ObjectId, reader: &Reader) -> Result<bool> {
-        if reader.reads_all() {
-            return Ok(true);
-        }
-        let audiences = self
-            .conn
-            .prepare_cached("SELECT audience FROM object_access WHERE id=?1")?
-            .query_map([id.to_string()], |r| r.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        if audiences.is_empty() {
-            return Ok(true);
-        }
-        for audience in audiences {
-            if reader.can_read(&decode_audience(&audience)?) {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        readable_in(&self.conn, id, reader)
+    }
+
+    /// Records that `principal` uploaded object `id`, so it may read it back.
+    pub fn record_upload(&mut self, id: ObjectId, principal: &str) -> Result<()> {
+        self.conn
+            .prepare_cached(
+                "INSERT INTO uploads(id,principal) VALUES(?1,?2) ON CONFLICT DO NOTHING",
+            )?
+            .execute(params![id.to_string(), principal])?;
+        Ok(())
+    }
+
+    /// Whether `reader`'s principal uploaded object `id`.
+    pub fn uploaded(&self, id: ObjectId, reader: &Reader) -> Result<bool> {
+        uploaded_in(&self.conn, id, reader)
     }
 
     /// Whether every path in `paths` is visible to `reader` under every policy that
@@ -466,36 +478,11 @@ impl Repository {
         from: VersionNumber,
         reader: &Reader,
     ) -> Result<bool> {
-        if reader.reads_all() {
-            return Ok(true);
-        }
         let tx = self.conn.unchecked_transaction()?;
         validate_format(&tx)?;
-        let head = head_in(&tx)?.number;
-        let mut versions = vec![from.min(head)];
-        versions.extend(
-            tx.prepare_cached(
-                "SELECT version FROM changes WHERE path='.javelinpolicy' AND version>?1 \
-                 AND version<=?2 ORDER BY version",
-            )?
-            .query_map(params![from.sql(), head.sql()], |r| r.get::<_, i64>(0))?
-            .map(|v| VersionNumber::decode(v?))
-            .collect::<Result<Vec<_>>>()?,
-        );
-        let trees = Trees::new(Sql::read(&tx));
-        let policies = versions
-            .into_iter()
-            .map(|version| policy_in(&tx, &trees, tree_in(&tx, version)?))
-            .collect::<Result<Vec<_>>>()?;
+        let visible = visible_in(&tx, paths, from, reader)?;
         tx.commit()?;
-        Ok(paths.into_iter().all(|path| {
-            policies.iter().all(|policy| {
-                policy
-                    .hidden_along(path.as_str())
-                    .iter()
-                    .all(|(_, audience)| reader.can_read(audience))
-            })
-        }))
+        Ok(visible)
     }
 
     /// Whether checkpoint `id`'s bytes may go to `reader`. A checkpoint is plain: it names
@@ -664,20 +651,34 @@ impl Repository {
     /// with the right kind, so a stored tree always has its whole closure and a
     /// receiver that has a chunk needs nothing below it.
     pub fn put_tree(&mut self, bytes: &[u8]) -> Result<ObjectId> {
+        self.put_tree_as(bytes, None)
+    }
+
+    /// `put_tree` for an uploader: a reference the uploader may not read is refused exactly
+    /// as a reference to an object that was never stored, so an upload cannot confirm that
+    /// a guessed hidden ID exists.
+    pub fn put_tree_as(&mut self, bytes: &[u8], uploader: Option<&Reader>) -> Result<ObjectId> {
         let chunk = tree::Chunk::decode(bytes)?;
+        // A hidden entry names no object: its content is not part of the tree.
+        let refs: Vec<_> = chunk
+            .children()
+            .map(|id| (id, ObjectKind::Tree))
+            .chain(chunk.entries().filter_map(|(_, node)| match node {
+                Node::File(entry) => entry.content().map(|id| (id, ObjectKind::Blob)),
+                Node::Dir(id) => Some((id, ObjectKind::Tree)),
+            }))
+            .collect();
+        let readable = refs
+            .iter()
+            .map(|(id, _)| uploader.map_or(Ok(true), |uploader| self.readable(*id, uploader)))
+            .collect::<Result<Vec<_>>>()?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // A hidden entry names no object: its content is not part of the tree.
-        let refs =
-            chunk
-                .children()
-                .map(|id| (id, ObjectKind::Tree))
-                .chain(chunk.entries().filter_map(|(_, node)| match node {
-                    Node::File(entry) => entry.content().map(|id| (id, ObjectKind::Blob)),
-                    Node::Dir(id) => Some((id, ObjectKind::Tree)),
-                }));
-        for (id, expected) in refs {
+        for ((id, expected), readable) in refs.into_iter().zip(readable) {
+            if !readable {
+                return Err(Error::MissingObject(id));
+            }
             let kind: Option<i64> = tx
                 .prepare_cached("SELECT kind FROM objects WHERE id=?1")?
                 .query_row([id.to_string()], |r| r.get(0))
@@ -760,6 +761,79 @@ impl Repository {
         tx.commit()?;
         Ok(report)
     }
+}
+
+pub(crate) fn readable_in(conn: &Connection, id: ObjectId, reader: &Reader) -> Result<bool> {
+    if reader.reads_all() {
+        return Ok(true);
+    }
+    let audiences = conn
+        .prepare_cached("SELECT audience FROM object_access WHERE id=?1")?
+        .query_map([id.to_string()], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for audience in audiences {
+        if reader.can_read(&decode_audience(&audience)?) {
+            return Ok(true);
+        }
+    }
+    if uploaded_in(conn, id, reader)? {
+        return Ok(true);
+    }
+    let paths = conn
+        .prepare_cached("SELECT DISTINCT path FROM layer_paths WHERE content=?1")?
+        .query_map([id.to_string()], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for path in paths {
+        let path = decode_path(&path)?;
+        if visible_in(conn, [&path], VersionNumber::new(0)?, reader)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn uploaded_in(conn: &Connection, id: ObjectId, reader: &Reader) -> Result<bool> {
+    let Some(principal) = reader.principal() else {
+        return Ok(false);
+    };
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM uploads WHERE id=?1 AND principal=?2")?
+        .exists(params![id.to_string(), principal])?)
+}
+
+pub(crate) fn visible_in<'a>(
+    conn: &Connection,
+    paths: impl IntoIterator<Item = &'a RepoPath>,
+    from: VersionNumber,
+    reader: &Reader,
+) -> Result<bool> {
+    if reader.reads_all() {
+        return Ok(true);
+    }
+    let head = head_in(conn)?.number;
+    let mut versions = vec![from.min(head)];
+    versions.extend(
+        conn.prepare_cached(
+            "SELECT version FROM changes WHERE path='.javelinpolicy' AND version>?1 \
+             AND version<=?2 ORDER BY version",
+        )?
+        .query_map(params![from.sql(), head.sql()], |r| r.get::<_, i64>(0))?
+        .map(|v| VersionNumber::decode(v?))
+        .collect::<Result<Vec<_>>>()?,
+    );
+    let trees = Trees::new(Sql::read(conn));
+    let policies = versions
+        .into_iter()
+        .map(|version| policy_in(conn, &trees, tree_in(conn, version)?))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(paths.into_iter().all(|path| {
+        policies.iter().all(|policy| {
+            policy
+                .hidden_along(path.as_str())
+                .iter()
+                .all(|(_, audience)| reader.can_read(audience))
+        })
+    }))
 }
 
 /// Full state validation for explicit integrity reads: World chain, Layers, Stacks,
@@ -1160,12 +1234,20 @@ pub(crate) fn plain_changes_in(conn: &Connection, version: VersionNumber) -> Res
 /// The view root of a World version: its committed root with every hidden entry this
 /// store opens replaced by what it hides.
 pub(crate) fn view_in(conn: &Connection, version: VersionNumber) -> Result<ObjectId> {
-    let root: String = conn
+    let root: Option<String> = conn
         .prepare_cached("SELECT root FROM views WHERE version=?1")?
         .query_row([version.sql()], |r| r.get(0))
-        .optional()?
-        .ok_or(Error::MissingVersion(version))?;
-    decode_id(&root)
+        .optional()?;
+    match root {
+        Some(root) => decode_id(&root),
+        // Every stored version has a view, so a version without one is damage.
+        None => {
+            tree_in(conn, version)?;
+            Err(Error::CorruptRepository(format!(
+                "World version {version} has no view"
+            )))
+        }
+    }
 }
 
 /// The openings stored in `seals`: all of them, or only those a view of one version used.
@@ -1267,6 +1349,11 @@ pub(crate) fn insert_opening_in(
     Ok(commitment)
 }
 
+/// Marks an object a version publishes outside its tree, such as an agent trace, public.
+pub(crate) fn grant_public_in(conn: &Connection, id: ObjectId) -> Result<()> {
+    grant_in(conn, id, &Audience::Public)
+}
+
 fn grant_in(conn: &Connection, id: ObjectId, audience: &Audience) -> Result<()> {
     conn.prepare_cached(
         "INSERT INTO object_access(id,audience) VALUES(?1,?2) ON CONFLICT DO NOTHING",
@@ -1336,6 +1423,13 @@ fn check_access_in(conn: &Connection, history: &[WorldVersion]) -> Result<()> {
             }
         }
         trees.forget();
+    }
+    for trace in conn
+        .prepare("SELECT context FROM publications WHERE outcome=1 AND context IS NOT NULL")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    {
+        expected.insert((decode_id(&trace)?, public.clone()));
     }
     let seals = conn
         .prepare("SELECT commitment FROM seals ORDER BY commitment")?
@@ -1558,6 +1652,9 @@ pub(crate) fn tree_in(conn: &Connection, version: VersionNumber) -> Result<Objec
 pub(crate) struct Index<'a> {
     pub(crate) trees: Trees<Sql<'a>>,
     roots: std::cell::RefCell<std::collections::HashMap<VersionNumber, ObjectId>>,
+    /// A writer whose new entries may name only objects it may read; any other is
+    /// refused as missing, exactly as an object that was never stored.
+    writer: Option<Reader>,
 }
 
 impl<'a> Index<'a> {
@@ -1573,6 +1670,14 @@ impl<'a> Index<'a> {
         Self {
             trees: Trees::new(store),
             roots: Default::default(),
+            writer: None,
+        }
+    }
+    /// The same index, checking new entries against `writer`'s access.
+    pub(crate) fn writing_as(self, writer: Option<&Reader>) -> Self {
+        Self {
+            writer: writer.cloned(),
+            ..self
         }
     }
     pub(crate) fn root(&self, version: VersionNumber) -> Result<ObjectId> {
@@ -1619,7 +1724,13 @@ impl WorldIndex for Index<'_> {
                 "a Layer cannot write a hidden entry".into(),
             ));
         }
-        validate_entry(self.trees.store().conn, entry)
+        let conn = self.trees.store().conn;
+        if let (Some(writer), Some(content)) = (&self.writer, entry.content())
+            && !readable_in(conn, content, writer)?
+        {
+            return Err(Error::MissingObject(content));
+        }
+        validate_entry(conn, entry)
     }
 
     fn committed(&self) -> bool {

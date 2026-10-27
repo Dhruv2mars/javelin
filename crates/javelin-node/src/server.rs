@@ -318,6 +318,7 @@ fn serve_one(
             &target,
             target_head,
             source,
+            &reader,
         )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
             crate::stack::get_checkpoints(log.repo(), items, &reader)
@@ -341,6 +342,10 @@ fn check_writes(
             let Some(changes) = crate::layer::load_changes(log.records(), *checkpoint)? else {
                 return Ok(());
             };
+            // Unreadable staged changes are absent to the writer; the append says so.
+            if !crate::layer::accessible_changes(log.repo(), log.records(), *checkpoint, writer)? {
+                return Ok(());
+            }
             let Ok(LayerState::Active { head }) = log.repo().layer_state(layer) else {
                 return Ok(());
             };

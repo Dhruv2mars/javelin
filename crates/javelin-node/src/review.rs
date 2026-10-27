@@ -72,7 +72,7 @@ pub fn handle(
             if repo.layer_state(layer).is_err() {
                 return Ok(review_refused(refusal::UNKNOWN_LAYER));
             }
-            let revision = match revision_ref(repo, *checkpoint, *base)? {
+            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -110,7 +110,7 @@ pub fn handle(
                 *checkpoint,
                 Some(*base),
             )?;
-            let revision = match revision_ref(repo, *checkpoint, *base)? {
+            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -409,12 +409,17 @@ fn publish_checkpoint(
 
 /// Reads a revision's checkpoint and its tree root. Refusals come back as a code, so the
 /// caller can reply without recording anything.
+/// A checkpoint `reader` may not read is absent to it, as one never stored.
 fn revision_ref(
     repo: &mut Repository,
+    reader: &javelin::Reader,
     checkpoint: ObjectId,
     base: VersionNumber,
 ) -> Result<Result<RevisionRef, &'static str>, ProtocolError> {
     let id = CheckpointId::parse(&checkpoint.to_string())?;
+    if !repo.checkpoint_visible(id, reader).unwrap_or(true) {
+        return Ok(Err("missing_object"));
+    }
     let Ok(stored) = repo.read_checkpoint(id) else {
         return Ok(Err("missing_object"));
     };
