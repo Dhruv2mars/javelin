@@ -3,7 +3,8 @@
 //! Snapshots travel as content-addressed tree chunks and blobs, root first.
 //!
 //! Hosting messages (tags 0x03, 0x06, 0x33-0x3a, 0x50-0x56) move Layer, World and
-//! Publish Request state. Each variant of [`Message`] documents its fields. Encodings
+//! Publish Request state. Disclosure messages (0x48-0x4c) read and change the delay and
+//! embargoes that hold readers outside the repository at its public frontier. Each variant of [`Message`] documents its fields. Encodings
 //! are canonical: an absent optional is a zero flag followed by zeroed bytes, and any
 //! other form of absence is malformed, so one message has one encoding.
 
@@ -17,9 +18,11 @@ use javelin::{
 use crate::{ProtocolError, limits::*};
 
 mod checks;
+mod disclosure;
 mod hosting;
 mod wire;
 
+pub use disclosure::{Disclosure, Embargoed};
 pub use hosting::{
     CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, PublishOutcome, RequestId,
     RequestStatus, ReviewOutcome, Role, Visibility,
@@ -56,6 +59,11 @@ const ATTRIBUTION: u8 = 0x44;
 const ATTRIBUTED: u8 = 0x45;
 const OPEN: u8 = 0x46;
 const OPENED: u8 = 0x47;
+const READ_DISCLOSURE: u8 = 0x48;
+const DISCLOSURE: u8 = 0x49;
+const SET_DELAY: u8 = 0x4a;
+const EMBARGO: u8 = 0x4b;
+const RELEASE: u8 = 0x4c;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -284,6 +292,31 @@ pub enum Message {
     /// does not say whether it exists. The audience is not sent: the caller holds it in
     /// the committed entry. Each opening is checked against its commitment on decode.
     Opened(Vec<(ObjectId, Opening)>),
+    /// Ask how the repository discloses its versions to readers outside it. Any reader
+    /// may ask. Reply: `Disclosure`.
+    ReadDisclosure,
+    /// The delay, the public frontier and the unreleased embargoes, as the caller may
+    /// know them (`Disclosure`).
+    Disclosure(Disclosure),
+    /// Set the disclosure delay, in seconds; zero shows readers outside the repository the
+    /// head. Maintain only. Reply: `Disclosure`.
+    SetDelay {
+        delay: u64,
+    },
+    /// Embargo the Publish whose operation ID is `operation`. Sent before that Publish,
+    /// which then holds readers outside the repository below the version it makes until
+    /// Unix time `until`, or, when `until` is `None`, until a maintainer sends `Release`.
+    /// Repeating it is safe until the Publish is decided; after that it is refused unless
+    /// it is identical. Maintain only. Reply: `Disclosure`.
+    Embargo {
+        operation: OperationId,
+        until: Option<u64>,
+    },
+    /// Release the embargo on `version` now. Releasing a released embargo changes
+    /// nothing. Maintain only. Reply: `Disclosure`.
+    Release {
+        version: VersionNumber,
+    },
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
         operation: OperationId,
@@ -579,6 +612,24 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                 put_id(&mut out, &opening.content);
             }
         }
+        Message::ReadDisclosure => out.push(READ_DISCLOSURE),
+        Message::Disclosure(disclosure) => {
+            out.push(DISCLOSURE);
+            disclosure::put_disclosure(&mut out, disclosure);
+        }
+        Message::SetDelay { delay } => {
+            out.push(SET_DELAY);
+            out.extend_from_slice(&delay.to_be_bytes());
+        }
+        Message::Embargo { operation, until } => {
+            out.push(EMBARGO);
+            put_short(&mut out, operation.as_str());
+            disclosure::put_optional_u64(&mut out, *until);
+        }
+        Message::Release { version } => {
+            out.push(RELEASE);
+            out.extend_from_slice(&version.get().to_be_bytes());
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -818,6 +869,11 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         Message::RequestState { request, .. } => 1 + short(request.as_str())? + 1 + 4,
         Message::CheckReport(report) => checks::report_len(report)?,
         Message::CheckOutcome(outcome) => checks::outcome_len(outcome)?,
+        Message::ReadDisclosure => 1,
+        Message::Disclosure(disclosure) => disclosure::disclosure_len(disclosure)?,
+        Message::SetDelay { .. } => 9,
+        Message::Embargo { operation, .. } => 1 + short(operation.as_str())? + 9,
+        Message::Release { .. } => 9,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -1088,6 +1144,16 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
         },
         CHECK_REPORT => Message::CheckReport(checks::read_report(&mut r)?),
         CHECK_OUTCOME => Message::CheckOutcome(checks::read_outcome(&mut r)?),
+        READ_DISCLOSURE => Message::ReadDisclosure,
+        DISCLOSURE => Message::Disclosure(disclosure::read_disclosure(&mut r)?),
+        SET_DELAY => Message::SetDelay { delay: r.u64()? },
+        EMBARGO => Message::Embargo {
+            operation: r.operation()?,
+            until: disclosure::read_optional_u64(&mut r)?,
+        },
+        RELEASE => Message::Release {
+            version: r.version()?,
+        },
         ERROR => {
             let code = r.short_str()?.to_owned();
             let len = r.u16()? as usize;

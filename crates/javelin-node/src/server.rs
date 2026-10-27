@@ -11,8 +11,13 @@
 //! caller can only read a public repository. Refusals are `Error` replies with status 200.
 //! The transport has no TLS, so the server binds loopback addresses only.
 //!
+//! A caller outside the repository reads at the public frontier (`disclosure.rs`): every
+//! read is served as if the frontier were the head, and it holds no Layer or Publish
+//! Request it could see. Time comes from the log's clock (`FileWorldLog::now`).
+//!
 //! Browsers may read: `OPTIONS` answers a CORS preflight, and replies to the read
-//! messages (`Resolve`, `Get`, `Changeset`, `Attribution`) allow any origin. Any other
+//! messages (`Resolve`, `Get`, `Changeset`, `Attribution`, `ReadDisclosure`) allow any
+//! origin. Any other
 //! message that arrives with an `Origin` header is refused with `forbidden` before it
 //! is served, so a web page can never write through a visitor's browser.
 
@@ -175,6 +180,7 @@ fn is_read(message: &Message) -> bool {
             | Message::Get(_)
             | Message::Changeset { .. }
             | Message::Attribution { .. }
+            | Message::ReadDisclosure
     )
 }
 
@@ -244,9 +250,7 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = log.now();
     let mut cors = false;
     let reply = match decode(&body).and_then(|message| {
         cors = is_read(&message);
@@ -258,7 +262,13 @@ fn read_request(
                 "a browser origin may only send read messages",
             ));
         }
-        serve_one(log, gate, token.as_deref(), now, message)
+        // Every version is stamped, and every decided embargo tied to its version, before
+        // anything is read, and again after a Publish, so the version's time is this request.
+        crate::disclosure::stamp(log.records(), log.repo(), now)?;
+        let reply = serve_one(log, gate, token.as_deref(), now, message);
+        // A failure here leaves the stamp to the next request, which only delays disclosure.
+        let _ = crate::disclosure::stamp(log.records(), log.repo(), now);
+        reply
     }) {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
@@ -291,6 +301,10 @@ fn serve_one(
         Message::CheckReport(report) => {
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
+        Message::ReadDisclosure
+        | Message::SetDelay { .. }
+        | Message::Embargo { .. }
+        | Message::Release { .. } => return disclose(log, gate, token, now, &message),
         _ => {}
     }
     // Version negotiation reveals nothing about the repository, so it needs no grant.
@@ -302,11 +316,18 @@ fn serve_one(
     let reader = grant
         .as_ref()
         .map_or_else(javelin::Reader::outsider, |grant| gate.reader(grant));
+    // Outside the repository, the World ends at the public frontier.
+    let reader = crate::disclosure::hold(log.records(), log.repo(), now, reader)?;
     if grant.is_some() {
         check_writes(log, &reader, &message)?;
     }
     log.traces().refuse_wire_fetch(&message)?;
     match message {
+        // A Layer is work above every version, and its base would name one: a reader held
+        // at the frontier is told no Layer exists.
+        Message::LayerHead { layer } if reader.frontier().is_some() => {
+            Err(crate::layer::unknown_layer(&layer))
+        }
         Message::LayerStack {
             operation,
             target,
@@ -325,6 +346,38 @@ fn serve_one(
         }
         message => handle_request_as(log, message, &reader),
     }
+}
+
+/// The disclosure messages. Anyone who may read the repository reads its disclosure, as
+/// far as its role allows; only Maintain changes it.
+fn disclose(
+    log: &mut FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: &Message,
+) -> Result<Message, ProtocolError> {
+    let grant = gate.check(token, now, need(message))?;
+    let reader = gate.reader(&grant);
+    let records = log.records();
+    let repo = log.repo();
+    if !matches!(message, Message::ReadDisclosure) && !reader.reads_all() {
+        return Err(ProtocolError::new(
+            code::FORBIDDEN,
+            "only Maintain changes the disclosure delay and embargoes",
+        ));
+    }
+    match message {
+        Message::SetDelay { delay } => crate::disclosure::set_delay(records, *delay)?,
+        Message::Embargo { operation, until } => {
+            crate::disclosure::embargo(records, repo, operation, *until)?
+        }
+        Message::Release { version } => crate::disclosure::release(records, *version, now)?,
+        _ => {}
+    }
+    Ok(Message::Disclosure(crate::disclosure::state(
+        records, repo, now, &reader,
+    )?))
 }
 
 /// Refuses a write that would change a path outside the caller's audiences, before it
@@ -403,7 +456,10 @@ fn need(message: &Message) -> Need<'_> {
         Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
-        Message::Publish { .. } => (Scope::Publish, None),
+        Message::Publish { .. }
+        | Message::SetDelay { .. }
+        | Message::Embargo { .. }
+        | Message::Release { .. } => (Scope::Publish, None),
         Message::Want(_) | Message::Objects(_) => (Scope::LayerWrite, None),
         Message::LayerHead { layer } => (Scope::Read, Some(layer)),
         _ => (Scope::Read, None),

@@ -632,3 +632,54 @@ fn attribution_messages_round_trip_canonically() {
     extra.push(0);
     assert_eq!(refused(&extra), code::MALFORMED);
 }
+
+#[test]
+fn disclosure_messages_round_trip_and_match_the_browser_codec() {
+    use javelin_protocol::codec::{Disclosure, Embargoed};
+    roundtrip(Message::ReadDisclosure);
+    roundtrip(Message::SetDelay { delay: 604_800 });
+    roundtrip(Message::Embargo {
+        operation: op("publish-fix"),
+        until: None,
+    });
+    roundtrip(Message::Embargo {
+        operation: op("publish-fix"),
+        until: Some(1_900_000_000),
+    });
+    roundtrip(Message::Release {
+        version: version(3),
+    });
+    roundtrip(Message::Disclosure(Disclosure {
+        delayed: true,
+        delay: Some(604_800),
+        frontier: version(2),
+        embargoes: vec![
+            Embargoed {
+                version: version(3),
+                until: None,
+            },
+            Embargoed {
+                version: version(5),
+                until: Some(1_900_000_000),
+            },
+        ],
+    }));
+    // The bytes `apps/forge/test/codec.test.ts` decodes: an outsider's view, delayed, with
+    // no delay, frontier 2 and no embargoes.
+    let outsider = Message::Disclosure(Disclosure {
+        delayed: true,
+        delay: None,
+        frontier: version(2),
+        embargoes: Vec::new(),
+    });
+    let mut expected = vec![0x49, 1, 0];
+    expected.extend_from_slice(&0u64.to_be_bytes());
+    expected.extend_from_slice(&2u64.to_be_bytes());
+    expected.extend_from_slice(&0u32.to_be_bytes());
+    assert_eq!(encode(&outsider).unwrap(), expected);
+    assert_eq!(encode(&Message::ReadDisclosure).unwrap(), vec![0x48]);
+    // An absent number must be zero, so one message has one encoding.
+    let mut absent = expected.clone();
+    absent[3 + 7] = 1;
+    assert_eq!(refused(&absent), code::MALFORMED);
+}

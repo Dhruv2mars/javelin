@@ -23,6 +23,12 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{checks, review::is_review_layer, trace::Traces};
 
+fn system_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
 
@@ -31,10 +37,14 @@ const LOCK: &str = "node.lock";
 /// Decided `PublishLayer` requests and their outcomes, keyed by operation ID.
 const RECORDS: &str = "node.db";
 
+/// The node's clock: Unix time in seconds.
+type Clock = Box<dyn Fn() -> u64 + Send>;
+
 pub struct FileWorldLog {
     repo: Repository,
     records: Connection,
     traces: Traces,
+    clock: Clock,
     _lock: File,
 }
 
@@ -71,13 +81,38 @@ impl FileWorldLog {
         records.execute_batch(crate::fork::SCHEMA)?;
         records.execute_batch(crate::layer::SCHEMA)?;
         records.execute_batch(crate::checks::SCHEMA)?;
+        records.execute_batch(crate::disclosure::SCHEMA)?;
         let traces = Traces::open(&dir.join(RECORDS))?;
         Ok(Self {
             repo,
             records,
             traces,
+            clock: Box::new(system_now),
             _lock: lock,
         })
+    }
+
+    /// Replaces the node's clock, which decides token expiry and the public frontier. Tests
+    /// move time this way instead of sleeping.
+    pub fn set_clock(&mut self, clock: impl Fn() -> u64 + Send + 'static) {
+        self.clock = Box::new(clock);
+    }
+
+    /// Unix time now, in seconds, by the node's clock.
+    pub fn now(&self) -> u64 {
+        (self.clock)()
+    }
+
+    /// Stamps versions the node has not seen and ties decided embargoes to their versions
+    /// (`disclosure::stamp`), at the node's time.
+    pub fn stamp(&self) -> std::result::Result<(), ProtocolError> {
+        crate::disclosure::stamp(&self.records, &self.repo, self.now())
+    }
+
+    /// The public frontier now: the newest version a reader outside the repository sees.
+    pub fn frontier(&self) -> std::result::Result<VersionNumber, ProtocolError> {
+        self.stamp()?;
+        crate::disclosure::frontier(&self.records, &self.repo, self.now())
     }
 
     /// Read access to the repository, for checks and inspection.

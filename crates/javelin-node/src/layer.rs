@@ -147,14 +147,17 @@ pub(crate) fn append(
 }
 
 /// `LayerHead`: the Layer's base, head sequence, head and status.
+/// The refusal for a Layer this node does not hold.
+pub(crate) fn unknown_layer(layer: &LayerId) -> ProtocolError {
+    ProtocolError::new(
+        refusal::UNKNOWN_LAYER,
+        format!("Layer {} does not exist", layer.as_str()),
+    )
+}
+
 pub(crate) fn layer_head(repo: &Repository, layer: &LayerId) -> Result<Message, ProtocolError> {
     let state = match repo.layer_state(layer) {
-        Err(Error::InvalidInput(_)) => {
-            return Err(ProtocolError::new(
-                refusal::UNKNOWN_LAYER,
-                format!("Layer {} does not exist", layer.as_str()),
-            ));
-        }
+        Err(Error::InvalidInput(_)) => return Err(unknown_layer(layer)),
         state => state?,
     };
     let (seq, head, status) = match &state {

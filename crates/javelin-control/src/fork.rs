@@ -60,10 +60,12 @@ impl ControlPlane {
                     "the source repository is still provisioning".into(),
                 ));
             }
+            // The plane knows one role, the creator's: anyone else forks a public repository
+            // from outside it.
             let reader = if source.creator == caller.principal {
-                Role::Maintain
+                Some(Role::Maintain)
             } else if source.public {
-                Role::Read
+                None
             } else {
                 return Err(ControlError::Forbidden(
                     "caller has no role in this repository",
@@ -71,12 +73,23 @@ impl ControlPlane {
             };
             let source_id = RepositoryId::parse(&request.source)
                 .map_err(|error| ControlError::Storage(error.to_string()))?;
-            let head = self.node.head(&source_id)?;
-            if request.at > head.get() {
-                return Err(ControlError::InvalidInput(format!(
-                    "fork point {} is past the source's head {head}",
-                    request.at
-                )));
+            if reader.is_some() {
+                let head = self.node.head(&source_id)?;
+                if request.at > head.get() {
+                    return Err(ControlError::InvalidInput(format!(
+                        "fork point {} is past the source's head {head}",
+                        request.at
+                    )));
+                }
+            } else {
+                // Named by the frontier only, so the refusal says nothing above it.
+                let frontier = self.node.frontier(&source_id)?;
+                if request.at > frontier.get() {
+                    return Err(ControlError::InvalidInput(format!(
+                        "fork point {} is past the source's public frontier {frontier}",
+                        request.at
+                    )));
+                }
             }
             let fork = ForkOf {
                 source: request.source.clone(),

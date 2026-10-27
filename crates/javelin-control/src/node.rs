@@ -99,6 +99,15 @@ impl NodeLink for LocalNode {
         Ok(head.number)
     }
 
+    /// Opens the repository with its node lock, so it reads the same frontier the node
+    /// serves.
+    fn frontier(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        FileWorldLog::open(self.repository_dir(repository))
+            .map_err(|error| ControlError::Node(error.to_string()))?
+            .frontier()
+            .map_err(ControlError::Refused)
+    }
+
     /// Opens each repository with its own node lock, which `FileWorldLog` takes. No lock from
     /// `locked` is held here, because the two would conflict on the same file.
     fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
@@ -110,7 +119,7 @@ impl NodeLink for LocalNode {
         let mut target = open(&plan.target)?;
         let at = VersionNumber::new(plan.at)
             .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
-        javelin_node::fork::fork(&source, plan.source.as_str(), &mut target, at, plan.reader)
+        javelin_node::fork::fork_for(&source, plan.source.as_str(), &mut target, at, plan.reader)
             .map_err(ControlError::Refused)
     }
 
