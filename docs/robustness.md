@@ -14,7 +14,9 @@ version. A process that cannot get the write lock within the 5 second busy timeo
 **Crash recovery.** A process stopped at any named point during Layer create, capture,
 discard, Publish, or workspace open and discard leaves a repository that passes `check()`.
 Each operation is either fully recorded or not recorded at all. A stopped workspace open leaves
-no directory behind. A stopped workspace discard is finished by recovery. A Publish that
+no directory behind. A stopped workspace discard, or a Publish stopped after its commit, is
+finished by the next command that names the Layer: it moves the directory into trash, so no
+command reports a live directory for a discarded or published Layer. A Publish that
 commits is reported as published even if its directory reclaim then hits lock contention;
 a replay of the same operation retries the bounded reclaim, and a later recovery finishes
 what it leaves.
@@ -61,7 +63,8 @@ is refused as `operation_id_reused`.
 | Publish crash | `publish_crash_before_commit_publishes_once_on_retry` | Failpoint before commit; retry publishes once |
 | Lost reply | `publish_lost_reply_retry_returns_the_same_version_and_never_applies_twice` | Failpoint after commit; the retry returns the same receipt |
 | Workspace open crash | `workspace_open_crash_before_rename_leaves_no_directory_and_retry_opens` | Failpoint before the rename |
-| Workspace discard crash | `workspace_discard_crash_before_trash_is_finished_by_recovery_and_retry_is_idempotent` | Failpoint before the trash move; recovery finishes it |
+| Workspace discard crash | `workspace_discard_crash_before_trash_is_finished_by_the_next_command_and_retry_is_idempotent` | Failpoint before the trash move; the next `layer state` or `workspace path` finishes it |
+| Publish crash before reclaim | `publish_crash_after_commit_leaves_no_live_directory_after_the_next_command` | Failpoint after commit; the next `workspace path` reports no directory |
 | Racing and retry in-process | `process_tests` in `src/repository.rs` | The library harness: concurrent initializers, publishers, retries and kill points |
 | Blob, manifest and tree byte flips | `every_flipped_*_byte_is_detected_as_corrupt_object` (`tests/corruption.rs`) | Every byte of every stored object of each kind |
 | Substituted blob | `a_blob_whose_bytes_are_replaced_by_another_valid_blob_is_detected` | A valid but wrong blob for an ID |

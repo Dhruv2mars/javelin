@@ -36,6 +36,15 @@ CI left open. Work from it, in roughly this order:
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
 - [ ] CI design (waiting on the user).
+- [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
+  the first was a product gap. A Layer discarded or published, then killed before the
+  trash move, kept a live directory until a reclaiming command ran. The next command
+  naming the Layer now finishes the move. The second was a probe timing assumption. The
+  concurrent-rewrite check now waits for 4 distinct checkpoints, not a fixed 3 s window.
+- [ ] Gate 2 `crash/interrupted-create-recovers` assumes timing too. Its kill points come
+  from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
+  ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
+  capture fix. Kill on observable progress instead of measured time.
 
 ## Working rules
 

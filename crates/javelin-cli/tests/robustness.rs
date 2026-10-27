@@ -352,24 +352,61 @@ fn layer_discard_crash_points_are_atomic_and_retries_end_discarded_once() {
 
 #[cfg(debug_assertions)]
 #[test]
-fn workspace_discard_crash_before_trash_is_finished_by_recovery_and_retry_is_idempotent() {
+fn workspace_discard_crash_before_trash_is_finished_by_the_next_command_and_retry_is_idempotent() {
+    for next in [
+        &["layer", "state", "a", "--json"][..],
+        &["workspace", "path", "a", "--json"],
+    ] {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        layer_with(root, "a", "x.txt", b"x");
+        let discard = ["workspace", "discard", "a", "--operation", "d1", "--json"];
+        crash_at(root, "workspace_discard_before_trash", &discard);
+        assert!(
+            layer_dir(root, "a").exists(),
+            "the crash left the directory"
+        );
+        // Any command naming the Layer finishes the discard: no live directory remains.
+        let reply = ok(&javelin(root, next));
+        assert!(
+            !layer_dir(root, "a").exists(),
+            "{next:?} left the directory"
+        );
+        if next[0] == "workspace" {
+            assert_eq!(reply["workspace"]["exists"], false, "{reply}");
+        }
+        let state = ok(&javelin(root, &["layer", "state", "a", "--json"]));
+        assert_eq!(state["state"]["state"], "discarded");
+        let recovered = ok(&javelin(root, &["workspace", "recover", "--json"]));
+        assert_eq!(recovered["recovery"]["trashed"], 0);
+        assert_eq!(recovered["recovery"]["remaining"], 0);
+        assert!(recovered["recovery"]["reclaimed"].as_u64().unwrap() > 0);
+        let retry = ok(&javelin(root, &discard));
+        assert_eq!(retry["update"]["outcome"], "applied");
+        assert_eq!(retry["trashed"], false);
+        valid(root);
+    }
+}
+
+/// A Publish stopped after its commit leaves the directory of a published Layer; the
+/// next command naming the Layer moves it into trash instead of reporting it live.
+#[cfg(debug_assertions)]
+#[test]
+fn publish_crash_after_commit_leaves_no_live_directory_after_the_next_command() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     layer_with(root, "a", "x.txt", b"x");
-    let discard = ["workspace", "discard", "a", "--operation", "d1", "--json"];
-    crash_at(root, "workspace_discard_before_trash", &discard);
-    let state = ok(&javelin(root, &["layer", "state", "a", "--json"]));
-    assert_eq!(state["state"]["state"], "discarded");
+    crash_at(root, "publish_after_commit", &args(&publish("a", "p1")));
     assert!(
         layer_dir(root, "a").exists(),
-        "the directory waits for recovery"
+        "the crash left the directory"
     );
-    let recovered = ok(&javelin(root, &["workspace", "recover", "--json"]));
-    assert_eq!(recovered["recovery"]["trashed"], 1);
+    let path = ok(&javelin(root, &["workspace", "path", "a", "--json"]));
+    assert_eq!(path["workspace"]["exists"], false, "{path}");
     assert!(!layer_dir(root, "a").exists());
-    let retry = ok(&javelin(root, &discard));
-    assert_eq!(retry["update"]["outcome"], "applied");
-    assert_eq!(retry["trashed"], false);
+    let recovered = ok(&javelin(root, &["workspace", "recover", "--json"]));
+    assert_eq!(recovered["recovery"]["remaining"], 0);
+    assert_eq!(versions(root), vec![0, 1]);
     valid(root);
 }
 

@@ -114,6 +114,12 @@ materialized exactly), shared data measured by free-space deltas against a
 byte-copy control, the copy fallback reporting itself, and interrupted create,
 checkpoint and discard recovering on the next command.
 
+No check depends on how fast a command runs. Concurrent rewrites run until the probe
+has taken at least 3 s of captures and 4 distinct checkpoints (90 s at most), and
+captures start once the writer reports both files written. Kill points are spread over each
+operation's own measured duration. After an interrupted discard, `workspace path` must
+not report a directory for a Layer that ended up discarded.
+
 ```sh
 rustc --edition 2021 -o /tmp/shim tools/workspace-probe/shim.rs
 mkdir -p /tmp/g2shims && for t in git sudo mount umount; do cp /tmp/shim /tmp/g2shims/$t; done

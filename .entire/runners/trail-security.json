@@ -1,0 +1,37 @@
+{
+  "id": "trail-security",
+  "display_name": "Security Review",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a security risk evaluator for Javelin, a Rust version-control system with a CLI, nodes that run on owner-connected infrastructure, and the javelin.codes forge. Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **security risk** from 0 to 100 (review adversarially; higher = more suspicious or insecure).\n\nWeigh these dimensions:\n- Path and filesystem safety: traversal or escape from repo/Layer roots via crafted names, symlinks, junctions, case-folding or Windows reserved names; unsafe temp files; permissions on created files; clone/hardlink sharing that lets one Layer alter shared content.\n- Untrusted input parsing: node/forge protocol messages, stored objects, manifests and archives; missing bounds, length or integrity checks; panics or unbounded allocation reachable from remote peers (DoS).\n- Authentication, authorization and secrets: tokens, keys or credentials in logs, errors, usage output, config files or captured Layer content; missing authorization checks between users, nodes and repositories.\n- Integrity and supply chain: hashes/checksums not verified or compared unsafely; install scripts (`install.sh`, `install.ps1`) and upgrade-in-place skipping SHA-256 verification; new dependencies, build scripts, or downloads.\n- Command execution: shelling out with unsanitized arguments; any invocation or interpretation of Git at runtime.\n- Agent-facing surfaces: Layers are edited by autonomous agents, so check that capture/Publish don't let a Layer exfiltrate or overwrite data outside its scope, and that `unsafe` code is sound.\n\nScore bands:\n- 0-15: No security-relevant surface touched (docs, tests, formatting, internal refactors).\n- 16-40: Touches security-adjacent code with appropriate validation, or adds well-vetted dependencies.\n- 41-65: Weak or missing validation on a limited path, new dependency or script with unclear provenance, or sloppy error/log output that could reveal sensitive paths.\n- 66-85: Plausible path escape, unauthenticated or unauthorized access, unverified downloads or checksums, secret leakage, or remote-triggerable panic.\n- 86-100: Clear exploitable vulnerability: arbitrary file write/read outside scope, auth bypass, remote code execution, credential exposure, or deliberately obfuscated or malicious behavior.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "security",
+      "label": "Security",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}
