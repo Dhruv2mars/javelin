@@ -269,6 +269,19 @@ writes at a time. `crates/javelin-node/src/lease.rs` keeps a lease per Layer in 
 **First slice (U5).** Sequential `LayerAppend` over loopback, inline upload, no outbox replay
 yet.
 
+**CLI call site (built).** `crates/javelin-cli/src/cli_stream.rs` is the attached repository's
+`CheckpointSink`: each capture that advances a Layer journals the upload records and a
+`LayerAppend` naming the node's expected head, then delivers the queue within the 2 s budget
+(D16; `JAVELIN_UPLOAD_BUDGET_MS`), stopping at a queued Publish or revision so the commands
+that report those deliver them. `.javelin/uploads.json` keeps, per Layer, the node's head as the
+queued appends will leave it and the journal position it was learned at; an append the node
+did not accept after that position makes the head unknown, and it is read again from the node
+together with the writer lease, so a device without the lease queues nothing (`layer_stale`).
+An upload or append answered `forbidden` (a path outside the writer's audiences) is
+acknowledged with that reply instead of staying queued. `javelin sync` uploads what no capture
+queued, and `javelin status` reports each Layer as uploaded, queued, or held. Tests:
+`crates/javelin-cli/tests/capture_upload.rs`.
+
 **Tests.**
 - Three captures in order produce `seq` 1 to 3, and the node's head equals the local head.
 - Kill after objects are uploaded and before `LayerAppend`: a retry appends once; the node

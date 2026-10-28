@@ -150,6 +150,8 @@ impl Control for ControlPlane {
 pub struct RemoteControl {
     endpoint: Endpoint,
     agent: ureq::Agent,
+    /// No call runs past this instant.
+    deadline: Option<std::time::Instant>,
 }
 
 impl RemoteControl {
@@ -159,7 +161,19 @@ impl RemoteControl {
         let endpoint = Endpoint::parse(url)
             .map_err(|detail| ControlError::InvalidInput(format!("control plane URL: {detail}")))?;
         let agent = endpoint.agent(TIMEOUT);
-        Ok(Self { endpoint, agent })
+        Ok(Self {
+            endpoint,
+            agent,
+            deadline: None,
+        })
+    }
+
+    /// As [`RemoteControl::new`], with every call giving up at `deadline`.
+    pub fn until(url: &str, deadline: std::time::Instant) -> Result<Self, ControlError> {
+        Ok(Self {
+            deadline: Some(deadline),
+            ..Self::new(url)?
+        })
     }
 
     /// One call: a JSON body, an optional bearer, and the JSON reply.
@@ -171,6 +185,16 @@ impl RemoteControl {
             .header("content-type", "application/json");
         if let Some(bearer) = bearer {
             request = request.header("authorization", &format!("Bearer {bearer}"));
+        }
+        if let Some(deadline) = self.deadline {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(unavailable(
+                    origin,
+                    "was not asked: the time budget is spent",
+                ));
+            }
+            request = request.config().timeout_global(Some(left)).build();
         }
         let mut reply = request
             .send(body.to_string())
