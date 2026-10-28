@@ -250,12 +250,26 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
     )?;
     let visibility = if created.public { "public" } else { "private" };
     let text = if created.created {
-        format!(
+        let mut text = format!(
             "Repository {owner}/{name} ready: {} ({visibility}, publish {}, epoch {}, empty World 0).",
             created.repository,
             created.publish.as_str(),
             created.epoch
-        )
+        );
+        // A self-hosted repository lives in the control plane's directory until it is served.
+        if !cloudflare {
+            let id = &created.repository;
+            let dir = if remote {
+                format!("CONTROL_DIR/nodes/{id}")
+            } else {
+                control_dir()?.join("nodes").join(id).display().to_string()
+            };
+            text.push_str(&format!(
+                "\nServe it on the control plane's machine with\n  javelin-node serve {dir} {id} \
+                 127.0.0.1:PORT\nthen attach with `javelin attach http://127.0.0.1:PORT/{id} DIR`."
+            ));
+        }
+        text
     } else {
         format!(
             "Operation {operation} already created {owner}/{name}: {} (epoch {}).",

@@ -581,8 +581,11 @@ fn publish(args: Vec<OsString>) -> Outcome {
             let names: Vec<_> = paths.iter().map(|path| path.as_str()).collect();
             let text = format!(
                 "Conflict: the World changed these paths since the revision's base: {}. The \
-                 author revises the request over them.",
-                names.join(", ")
+                 author runs `javelin sync`, redoes the change in a Layer over the new head \
+                 (`javelin workspace create NEW`), and runs `javelin request revise {} \
+                 --revision {revision} --layer NEW`.",
+                names.join(", "),
+                request.as_str()
             );
             Ok((value, text, 3))
         }

@@ -30,10 +30,10 @@ workspaces.
 ## Commands
 
 ```text
-javelin init [project-directory] [--json]
+javelin init [project-directory | --repo DIR] [--json]
 javelin adopt [project-directory] --operation ID [--json]
-javelin history [project-directory] [--json]
-javelin check [project-directory] [--json]
+javelin history [project-directory | --repo DIR] [--json]
+javelin check [project-directory | --repo DIR] [--json]
 javelin blame PATH [--world N] [--lines]
 
 javelin checkpoint ID [--path DIR] [--actor human|agent] [--agent NAME]
@@ -71,7 +71,8 @@ javelin request publish ID --revision N --operation OP [--base WORLD]
 ```
 
 All `checkpoint`, `layer`, `workspace`, `request` and `sync` commands accept `--repo DIR`
-and `--json`. The default
+and `--json`; `init`, `history` and `check` take the directory as an argument or as
+`--repo DIR`. The default
 repository is the current directory, with no ancestor search.
 `--allow-missing-trace` is a flag. Other options take separate values
 and may appear before or after positional arguments. Unknown, repeated, and
@@ -459,7 +460,8 @@ library callers as `javelin::IgnoreRules`.
 ## Hosted repositories: sync and Publish Requests
 
 `javelin attach` fetches a hosted repository's head into an empty repository and records
-it in `.javelin/attach.json`. From then on the node is the World's authority. Local World
+it in `.javelin/attach.json`. Like a clone, it makes the project directory when it is missing,
+once the node has answered. From then on the node is the World's authority. Local World
 numbers are not the node's: each World that attach or sync brings here is recorded under
 `attach-<number>-<id>` or `sync-<number>-<id>`, naming the remote version it holds, and
 JSON output reports remote numbers. A Layer created over one of those Worlds can be
@@ -589,6 +591,39 @@ javelin sync
 If the node is down when Ada revises, the revision is queued and the command exits 0 with
 `queued: true`; her next `javelin sync` delivers it. Ben's approval and comment, by
 contrast, wait until he can reach the node.
+
+When a Publish conflicts, the World changed the same paths after the revision's base. The
+author syncs, redoes the change in a new Layer over the new head, and submits it with
+`javelin request revise ID --revision N --layer NEW`. A revise from a device whose Layer was
+taken by another one (`javelin layer take`) is refused with `layer_stale`, and the message
+names the `javelin layer clone NEW --checkpoint HASH` that keeps that device's work.
+
+### The whole day, end to end
+
+[`tools/acceptance/daily-workflow.sh`](../tools/acceptance/daily-workflow.sh) runs the daily
+loop against any node URL and prints each command with its output: two people, two clones,
+an import, a request reviewed and revised (the old approval stops counting), a node restart
+with a queued Publish, a conflict and its recovery, `layer take` to a second device, and every
+clone synced to the same World with identical files. Its header lists the credentials and
+restart hooks it takes. `crates/javelin-cli/tests/daily_workflow.rs` runs the same loop,
+and the script itself, with the real `javelin` and `javelin-node` binaries.
+
+A self-hosted setup from nothing:
+
+```sh
+export JAVELIN_CONTROL_DIR=~/javelin-control
+javelin control init                       # prints the admin token once
+javelin control serve 127.0.0.1:7979 &     # the approval page and the control plane's API
+export JAVELIN_CONTROL_URL=http://127.0.0.1:7979
+javelin login                              # approve: JAVELIN_ADMIN_TOKEN=... javelin control approve CODE
+javelin repo create acme/app --operation create-app --visibility private --publish requests
+javelin-node serve ~/javelin-control/nodes/REPOSITORY REPOSITORY 127.0.0.1:7878 &
+javelin attach http://127.0.0.1:7878/REPOSITORY ~/app
+```
+
+`repo create` prints the `javelin-node serve` line with the repository's ID. The control plane
+has no membership API yet, so a second person cannot be given a role from the CLI; TASKS.md
+tracks it.
 
 ## Output and exit status
 

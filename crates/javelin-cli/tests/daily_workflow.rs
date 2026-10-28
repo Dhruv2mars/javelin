@@ -425,9 +425,9 @@ fn paths(changes: &Value) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
-    step("owner: control plane, sign-in, repository, node");
+/// `javelin control init|serve`, the owner's `javelin login`, `javelin repo create` for a
+/// private repository that takes Publish Requests, and `javelin-node serve` for it.
+fn owner_site() -> (Site, Person) {
     let mut site = Site::start();
     let owner = Person {
         home: site.dir("owner-home"),
@@ -435,7 +435,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         control_url: site.control_url.clone(),
     };
     owner.login(&site);
-    let created = ok(owner.run(&[
+    let create = [
         "repo",
         "create",
         "acme/app",
@@ -445,9 +445,28 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         "private",
         "--publish",
         "requests",
-    ]));
+    ];
+    // The text says how to serve the new repository; a retry returns the same one.
+    let text = owner.command().args(create).output().unwrap();
+    assert!(text.status.success(), "{}", describe(&text));
+    let text = String::from_utf8_lossy(&text.stdout).to_string();
+    let created = ok(owner.run(&create));
     site.repository = created["repository"].as_str().unwrap().to_string();
+    assert!(
+        text.contains(&format!(
+            "javelin-node serve CONTROL_DIR/nodes/{0} {0}",
+            site.repository
+        )),
+        "{text}"
+    );
     site.start_node();
+    (site, owner)
+}
+
+#[test]
+fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
+    step("owner: control plane, sign-in, repository, node");
+    let (mut site, owner) = owner_site();
 
     step("owner: attach, import the project, publish World 1");
     let ours = owner.attach(&site, "owner");
@@ -800,6 +819,25 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         3,
         "a conflict publishes nothing"
     );
+    // The text names the way out; a retry with the same operation replays the conflict.
+    let text = owner
+        .command()
+        .args(["request", "publish", "cora-tweak", "--revision", "1"])
+        .args([
+            "--operation",
+            "o-publish-c",
+            "--repo",
+            ours.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(text.status.code(), Some(3), "{}", describe(&text));
+    assert!(
+        String::from_utf8_lossy(&text.stdout)
+            .contains("`javelin request revise cora-tweak --revision 1 --layer NEW`"),
+        "{}",
+        describe(&text)
+    );
 
     step("cora: see the conflict coming, redo the change over World 3, revise");
     cora.sync(&theirs);
@@ -996,6 +1034,14 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     );
     assert_eq!(world["docs/usage.md"], b"Run `app` to greet the world.\n");
     assert!(!world.contains_key("target/debug/app"));
+    // History reads the clone like every other command, with --repo.
+    let history = ok(owner.at(&ours, &["history"]));
+    assert!(
+        history
+            .to_string()
+            .contains(&site.node_head().tree.to_string()),
+        "{history}"
+    );
 }
 
 /// Every clone is attached at the node's head and holds its tree, and a Layer opened over it
@@ -1035,4 +1081,45 @@ fn same_world(
 /// A control-plane URL with nothing behind it: these people never need one.
 fn closed_control_url() -> String {
     format!("http://127.0.0.1:{}", free_port())
+}
+
+/// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it
+/// through `NODE_SERVE`, with a second device for `layer take`. It never runs Git either.
+#[cfg(unix)]
+#[test]
+fn the_shell_version_runs_the_same_loop_against_a_node() {
+    let (mut site, owner) = owner_site();
+    site.invite("cora", Role::Review, 1);
+    // The script starts and restarts the node itself.
+    site.stop_node();
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/acceptance/daily-workflow.sh");
+    let serve = format!(
+        "{} serve {} {} 127.0.0.1:{}",
+        node_binary().display(),
+        site.node_dir().display(),
+        site.repository,
+        site.node_port
+    );
+    let output = Command::new("bash")
+        .arg(script)
+        .arg(site.attach_url())
+        .env("JAVELIN", JAVELIN)
+        .env("WORKDIR", site.dir("script"))
+        .env("OWNER_HOME", &owner.home)
+        .env("JAVELIN_CONTROL_URL", &site.control_url)
+        .env("COLLAB_TOKEN", site.token("cora", "cora-laptop"))
+        .env("DESKTOP_TOKEN", site.token("cora", "cora-desktop"))
+        .env("NODE_SERVE", serve)
+        .env_remove("JAVELIN_TOKEN")
+        .env_remove("JAVELIN_ADMIN_TOKEN")
+        .env_remove("JAVELIN_CONTROL_DIR")
+        .output()
+        .unwrap();
+    let printed = describe(&output);
+    eprintln!("{printed}");
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("== PASS"), "{printed}");
+    assert!(!stdout.contains("SKIP"), "{printed}");
 }

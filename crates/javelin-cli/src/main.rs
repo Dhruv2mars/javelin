@@ -167,14 +167,21 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
             command
         )));
     }
+    let usage = "expected one optional project directory, or --repo DIR, and --json";
+    // `--repo DIR` names the directory as every other command does.
     let root = match args.next() {
+        Some(flag) if flag == "--repo" => PathBuf::from(
+            args.next()
+                .ok_or_else(|| Error::InvalidInput(usage.into()))?,
+        ),
+        Some(path) if path.to_string_lossy().starts_with('-') => {
+            return Err(Error::InvalidInput(usage.into()));
+        }
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir()?,
     };
-    if root.as_os_str().to_string_lossy().starts_with('-') || args.next().is_some() {
-        return Err(Error::InvalidInput(
-            "expected one optional project directory and --json".into(),
-        ));
+    if args.next().is_some() {
+        return Err(Error::InvalidInput(usage.into()));
     }
     if command == "init" {
         let repo = Repository::init(&root)?;
