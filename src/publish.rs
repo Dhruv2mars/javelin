@@ -102,6 +102,15 @@ impl PublicationReceipt {
     }
 }
 
+/// What a Publish is about to write: the bytes of its new tree and view chunks, how many
+/// objects and openings it inserts, and how many paths its changeset touches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublishWrite {
+    pub bytes: u64,
+    pub objects: u64,
+    pub paths: u64,
+}
+
 impl Repository {
     /// Accepts the whole exact latest Active captured checkpoint. Compatible World
     /// advances compose without changing its immutable base. Work is O(change),
@@ -125,7 +134,27 @@ impl Repository {
     where
         F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
     {
+        self.publish_layer_bounded(operation, expected, attribution, guard, |_| Ok(()))
+    }
+
+    /// [`Repository::publish_layer`], with `bound` told what the new version will write
+    /// right after the guard, before any new writes. Refusing aborts the Publish as the
+    /// guard does: nothing is written and the operation stays free. A node holds the write
+    /// to its budget this way.
+    pub fn publish_layer_bounded<F, B>(
+        &mut self,
+        operation: &OperationId,
+        expected: &LayerHead,
+        attribution: &PublishAttribution,
+        guard: F,
+        bound: B,
+    ) -> Result<PublicationReceipt>
+    where
+        F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
+        B: FnOnce(&PublishWrite) -> Result<()>,
+    {
         let mut guard = Some(guard);
+        let mut bound = Some(bound);
         #[cfg(test)]
         let mut first = true;
         loop {
@@ -176,6 +205,16 @@ impl Repository {
                 })) => {
                     let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &plain)?;
+                    let bound = bound.take().expect("bound runs at most once");
+                    bound(&PublishWrite {
+                        bytes: chunks
+                            .iter()
+                            .chain(&view_chunks)
+                            .map(|(_, bytes)| bytes.len() as u64)
+                            .sum(),
+                        objects: (chunks.len() + view_chunks.len() + openings.len()) as u64,
+                        paths: plain.entries().len() as u64,
+                    })?;
                     let number = crate::repository::next_number(against.number)?;
                     tx.execute(
                         "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",

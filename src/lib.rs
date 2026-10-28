@@ -45,7 +45,9 @@ pub use ignore::IgnoreRules;
 pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate, PathDiff,
 };
-pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
+pub use publish::{
+    PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning, PublishWrite,
+};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
 pub use repository::{
     AdvanceOutcome, CheckpointSink, DatabaseUse, IntegrityReport, Repository, WorldVersion,

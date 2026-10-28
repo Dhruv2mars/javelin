@@ -53,6 +53,11 @@ pub fn handle(
     now: u64,
     message: &Message,
 ) -> Result<Message, ProtocolError> {
+    // What the budget leaves for a Publish, read before the partition's writes start.
+    let room = match message {
+        Message::PublishRequest { .. } => Some(crate::budget::Room::now(log, now)?),
+        _ => None,
+    };
     let (repo, records) = log.parts();
     ensure_schema(records)?;
     match message {
@@ -223,7 +228,8 @@ pub fn handle(
                     {
                         return Ok(publish_refused(refusal));
                     }
-                    let reply = publish_checkpoint(repo, operation, &id, *revision, &pinned)?;
+                    let room = room.as_ref().expect("read for PublishRequest");
+                    let reply = publish_checkpoint(repo, room, operation, &id, *revision, &pinned)?;
                     if matches!(reply, PublishOutcome::Published { .. }) {
                         let message = Message::PublishOutcome(reply.clone());
                         persist(records, &id, &command, permissions.epoch, &message, None)?;
@@ -496,6 +502,7 @@ fn settled(repo: &Repository, review: Review) -> Result<Review, ProtocolError> {
 /// finds the receipt by operation and answers with the same version.
 fn publish_checkpoint(
     repo: &mut Repository,
+    room: &crate::budget::Room,
     operation: &OperationId,
     id: &RequestId,
     index: u32,
@@ -524,7 +531,19 @@ fn publish_checkpoint(
         }
         Err(error) => return Err(error.into()),
     };
-    match repo.publish_layer(operation, &head, &PublishAttribution::Human, |_, _| Ok(())) {
+    // A Publish the budget refuses leaves the revision's Layer, which a retry publishes.
+    let mut crossed = None;
+    let published = repo.publish_layer_bounded(
+        operation,
+        &head,
+        &PublishAttribution::Human,
+        |_, _| Ok(()),
+        |write| crate::budget::hold(room, write, &mut crossed),
+    );
+    if let Some(refusal) = crossed {
+        return Err(refusal);
+    }
+    match published {
         Ok(receipt) => outcome(receipt.outcome),
         Err(error) => match error.code() {
             "operation_id_reused"

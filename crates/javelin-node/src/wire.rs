@@ -80,6 +80,25 @@ pub fn handle(
         reply
     }) {
         Ok(reply) => reply,
+        Err(ProtocolError { code, detail }) if code == code::QUOTA_EXCEEDED => {
+            // The use and the limit describe the whole repository: only Maintain reads them.
+            let maintains = gate
+                .check(
+                    token,
+                    now,
+                    Need {
+                        scope: Scope::Read,
+                        layer: None,
+                    },
+                )
+                .is_ok_and(|grant| gate.reader(&grant).reads_all());
+            let detail = if maintains {
+                detail
+            } else {
+                crate::budget::redact(&detail)
+            };
+            Message::Error { code, detail }
+        }
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
     let body = match encode(&reply) {

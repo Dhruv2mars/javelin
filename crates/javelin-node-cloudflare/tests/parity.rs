@@ -730,4 +730,118 @@ fn the_rows_counted_are_the_rows_the_object_writes() {
         written <= counted && counted <= written + written / 4,
         "counted {counted} rows for {written} written"
     );
+    // One large upload on its own: each page that grows the file writes its size row too.
+    let before = (pages.rows.get(), counted);
+    let large = vec![9u8; 8 << 20];
+    let blob = (Kind::Blob, ObjectId::for_blob(&large), large);
+    s.send(Some("owner"), &Message::Objects(vec![blob]));
+    let written = pages.rows.get() - before.0;
+    let counted = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY) - before.1;
+    assert!(
+        written <= counted && counted <= written + 8,
+        "counted {counted} rows for {written} written"
+    );
+}
+
+/// Files at `count` paths in nested directories, for a Publish that composes many trees.
+fn many_files(name: &str, count: usize) -> Vec<(String, Vec<u8>)> {
+    (0..count)
+        .map(|i| {
+            (
+                format!("d{}/e{}/{name}{i}.txt", i % 10, i % 7),
+                format!("{name} {i}\n").into_bytes(),
+            )
+        })
+        .collect()
+}
+
+fn as_refs(files: &[(String, Vec<u8>)]) -> Vec<(&str, &[u8])> {
+    files
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect()
+}
+
+/// A write the budget admits never ends past it: raising each limit from the use in growing
+/// steps, the first limit that admits a many-object upload or a many-file Publish holds what it wrote.
+/// A Publish replays its decided outcome however little budget is left.
+fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    for meter in [STORAGE_BYTES, ROWS_WRITTEN_PER_DAY] {
+        // Fresh writes for each meter, prepared under the default budget.
+        set(storage, &mut s, Budget::default());
+        let name = format!("wide-{}", meter.len());
+        let files = many_files(&name, 200);
+        let wide = s.layer_with(&name, 0, &as_refs(&files));
+        let blobs: Vec<_> = (0..100)
+            .map(|i| {
+                let bytes = format!("small {meter} {i}\n").into_bytes();
+                (Kind::Blob, ObjectId::for_blob(&bytes), bytes)
+            })
+            .collect();
+        let writes = [
+            Message::Objects(blobs),
+            publish(&name, &format!("publish-{name}"), wide, 0),
+        ];
+        let step = if meter == STORAGE_BYTES { 16 << 10 } else { 8 };
+        for write in writes {
+            let mut headroom = 0;
+            loop {
+                let limit = used(&usage_of(&mut s), meter) + headroom;
+                let mut budget = Budget::default();
+                if meter == STORAGE_BYTES {
+                    budget.storage_bytes = limit;
+                } else {
+                    budget.rows_written_per_day = limit;
+                }
+                set(storage, &mut s, budget);
+                let reply = s.send(Some("owner"), &write);
+                if matches!(&reply, Message::Error { code, .. } if code == "quota_exceeded") {
+                    headroom = (headroom + step).max(headroom * 5 / 4);
+                    continue;
+                }
+                assert!(!matches!(reply, Message::Error { .. }), "{reply:?}");
+                let after = used(&usage_of(&mut s), meter);
+                assert!(
+                    after <= limit,
+                    "{meter}: admitted at {limit}, ended at {after}"
+                );
+                break;
+            }
+        }
+        // The Publish replays with no budget left at all.
+        set(
+            storage,
+            &mut s,
+            Budget {
+                rows_written_per_day: 0,
+                storage_bytes: 0,
+                ..Budget::default()
+            },
+        );
+        let replay = s.send(
+            Some("owner"),
+            &publish(&name, &format!("publish-{name}"), wide, 0),
+        );
+        assert!(
+            matches!(
+                &replay,
+                Message::PublishOutcome(PublishOutcome::Published { .. })
+            ),
+            "{replay:?}"
+        );
+    }
+}
+
+#[test]
+fn an_admitted_write_ends_within_the_budget_and_a_publish_replays_past_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    bounds_scenario(&native, &mut open(&native, &clock(now())));
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    bounds_scenario(&object, &mut open(&object, &clock(now())));
 }

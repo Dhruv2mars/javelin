@@ -51,5 +51,8 @@ fn local_node_conforms() {
     common::run_budget(&wire, &|value| {
         let budget = budget::parse(value.to_string().as_bytes()).expect("budget");
         budget::store(&Directory::new(&dir), &budget).expect("store budget.json");
+        // The node may have reread the budget before this write and be waiting for its next
+        // connection: one read cycles it, so the request after this one sees the new budget.
+        wire.reply(None, &javelin_protocol::Message::Resolve { version: None });
     });
 }

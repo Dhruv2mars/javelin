@@ -48,6 +48,9 @@ pub struct FileWorldLog {
     clock: Clock,
     /// The owner's budget (`budget.rs`), read from storage when the node opens.
     budget: Budget,
+    /// The bytes of the repository and the records when the budget last counted rows, so
+    /// it can count the size rows a database's growth writes.
+    metered: [u64; 2],
     _guard: Box<dyn Any + Send>,
 }
 
@@ -88,11 +91,16 @@ impl FileWorldLog {
         // Opening writes only on a store being provisioned, which the budget does not count.
         repo.take_pages_written()?;
         javelin::take_pages_written(&records)?;
+        let metered = [
+            repo.database_use()?.bytes,
+            javelin::database_use(&records)?.bytes,
+        ];
         Ok(Self {
             repo,
             records,
             clock,
             budget,
+            metered,
             _guard: guard,
         })
     }
@@ -112,6 +120,20 @@ impl FileWorldLog {
     /// (`budget::store`).
     pub fn set_budget(&mut self, budget: Budget) {
         self.budget = budget;
+    }
+
+    /// The bytes of the two databases when the budget last counted (`budget::meter`).
+    pub(crate) fn metered_sizes(&self) -> [u64; 2] {
+        self.metered
+    }
+
+    /// Records the bytes the two databases take now, for the next count.
+    pub(crate) fn set_metered_sizes(&mut self) -> Result<()> {
+        self.metered = [
+            self.repo.database_use()?.bytes,
+            javelin::database_use(&self.records)?.bytes,
+        ];
+        Ok(())
     }
 
     /// Unix time now, in seconds, by the node's clock.
@@ -269,10 +291,19 @@ impl FileWorldLog {
         if let Some(refusal) = checks::gate(records, repo, head.checkpoint(), None)? {
             return Ok(refused(refusal));
         }
-        match self
-            .repo
-            .publish_layer(operation, &head, attribution, |_, _| Ok(()))
-        {
+        let room = crate::budget::Room::now(self, self.now())?;
+        let mut crossed = None;
+        let published = self.repo.publish_layer_bounded(
+            operation,
+            &head,
+            attribution,
+            |_, _| Ok(()),
+            |write| crate::budget::hold(&room, write, &mut crossed),
+        );
+        if let Some(refusal) = crossed {
+            return Err(refusal);
+        }
+        match published {
             Ok(receipt) => outcome(receipt.outcome),
             Err(error) => match error.code() {
                 "operation_id_reused"

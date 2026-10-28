@@ -162,7 +162,9 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
   both stores to a budget a few KB above their use: the crossing upload and Publish are
   refused with `quota_exceeded`, nothing is stored, and the same writes succeed once the budget
   is raised; a spent day's rows are accepted again the next UTC day. The rows the node counts
-  are checked against the page rows the object writes. Every reply matches, object IDs masked (hidden entries are
+  are checked against the page rows the object writes (an 8 MiB upload included), and an
+  upload of many objects and a Publish of many files, admitted at the lowest limit that
+  admits them, end within it; a decided Publish replays with no budget left. Every reply matches, object IDs masked (hidden entries are
   salted per store). It also checks that a reopened node keeps what it committed and that a
   second connection to an open database is refused.
 - The conformance suite in `crates/javelin-node-worker/tests/common` runs against the
