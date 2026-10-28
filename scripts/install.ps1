@@ -1,31 +1,39 @@
-# Install the Javelin CLI from a release archive on Windows x86_64.
+# Install javelin and javelin-node on Windows x86_64.
 #
-# The archive's SHA-256 is checked against SHA256SUMS before anything is extracted or
-# written. The binary is copied beside its destination and renamed into place, so
-# re-running with a newer release upgrades in place. Nothing else is changed: no PATH
-# edits and no privileges. Run it with Windows PowerShell 5.1 or PowerShell 7.
+#   irm https://javelin-codes.vercel.app/install.ps1 | iex
+#   $env:JAVELIN_VERSION = 'v0.1.0'; irm https://javelin-codes.vercel.app/install.ps1 | iex
 #
-#   powershell -File install.ps1                      latest release
-#   powershell -File install.ps1 -Version v0.1.0      pinned release
-#   powershell -File install.ps1 -Archive A -Sums S   a local archive and its SHA256SUMS
-[CmdletBinding()]
+# The installer reads the release host's `latest` file (or uses -Version), downloads that
+# version's SHA256SUMS and the archive for Windows, and checks the archive's SHA-256 before
+# it extracts or writes anything. Each binary is copied beside its destination and swapped
+# into place. It changes nothing else: no PATH edits and no elevation. Windows PowerShell
+# 5.1 or PowerShell 7.
+#
+# Release layout (docs/releases.md): BASE/latest holds a version such as v0.1.0, and
+# BASE/VERSION/ holds SHA256SUMS, manifest.json and javelin-VERSION-TARGET.zip.
+
 param(
-    [string]$Version = 'latest',
-    [string]$BinDir = (Join-Path $env:LOCALAPPDATA 'Programs\Javelin\bin'),
-    [string]$ReleaseBase = 'https://github.com/Dhruv2mars/javelin/releases',
+    [string]$Version = $(if ($env:JAVELIN_VERSION) { $env:JAVELIN_VERSION } else { 'latest' }),
+    [string]$InstallDir = $(if ($env:JAVELIN_INSTALL_DIR) { $env:JAVELIN_INSTALL_DIR } else { Join-Path $HOME '.javelin\bin' }),
+    [string]$ReleaseBase = $env:JAVELIN_RELEASE_BASE,
     [string]$Archive,
     [string]$Sums
 )
+
+# The release host. tools/release/release.ts stamps it when it stages a release;
+# JAVELIN_RELEASE_BASE or -ReleaseBase overrides it.
+$DefaultReleaseBase = ''
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 function Fail([string]$Message) { throw "install.ps1: $Message" }
 
+if (-not $ReleaseBase) { $ReleaseBase = $DefaultReleaseBase }
 if (([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) -ne 'X64') {
-    Fail 'unsupported architecture; see docs/install.md'
+    Fail 'no Javelin build for this architecture (Windows x86_64 only)'
 }
-$triple = 'x86_64-pc-windows-msvc'
+$target = 'x86_64-pc-windows-gnu'
 
 if (($Archive -and -not $Sums) -or ($Sums -and -not $Archive)) {
     Fail '-Archive and -Sums must be given together'
@@ -34,15 +42,15 @@ if (($Archive -and -not $Sums) -or ($Sums -and -not $Archive)) {
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('javelin-install-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-    # Copy or download one release file into $tmp. $ReleaseBase is a URL or a local directory
-    # laid out like GitHub's: BASE/download/TAG/FILE and BASE/latest/download/FILE.
-    function Get-ReleaseFile([string]$Name) {
-        if ($Version -eq 'latest') { $source = "$ReleaseBase/latest/download/$Name" }
-        else { $source = "$ReleaseBase/download/$Version/$Name" }
+    # Copy BASE/$Path to $tmp/$Name. Plain http is accepted only for a loopback host.
+    function Get-ReleaseFile([string]$Path, [string]$Name) {
+        $source = $ReleaseBase.TrimEnd('/') + '/' + $Path
         $dest = Join-Path $tmp $Name
-        if ($ReleaseBase -match '^https?://') {
+        if ($ReleaseBase -match '^https://' -or $ReleaseBase -match '^http://(127\.0\.0\.1|localhost)([:/]|$)') {
             try { Invoke-WebRequest -UseBasicParsing -Uri $source -OutFile $dest }
             catch { Fail "could not download $source" }
+        } elseif ($ReleaseBase -match '^http://') {
+            Fail "refusing plain http for $ReleaseBase; use https"
         } else {
             if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { Fail "could not read $source" }
             Copy-Item -LiteralPath $source -Destination $dest
@@ -60,14 +68,15 @@ try {
         Copy-Item -LiteralPath $Archive -Destination $archivePath
         Copy-Item -LiteralPath $Sums -Destination $sumsPath
     } else {
-        $sumsPath = Get-ReleaseFile 'SHA256SUMS'
-        # Exactly one archive per platform is listed in a release's SHA256SUMS.
-        $names = @(Get-Content -LiteralPath $sumsPath | ForEach-Object {
-            if ($_ -match '^[0-9a-fA-F]{64}\s+\*?(javelin-.+-' + [regex]::Escape($triple) + '\.zip)$') { $Matches[1] }
-        })
-        if ($names.Count -ne 1) { Fail "release has no single archive for $triple" }
-        $name = $names[0]
-        $archivePath = Get-ReleaseFile $name
+        if (-not $ReleaseBase) { Fail 'no release host is set yet; pass -ReleaseBase or set JAVELIN_RELEASE_BASE' }
+        if ($Version -eq 'latest') {
+            $Version = (Get-Content -LiteralPath (Get-ReleaseFile 'latest' 'latest') -Raw).Trim()
+        }
+        # A version names a directory on the host: v, then letters, digits, dots, dashes, pluses.
+        if ($Version -notmatch '^v[0-9A-Za-z.+-]+$') { Fail "not a release version: $Version" }
+        $name = "javelin-$Version-$target.zip"
+        $sumsPath = Get-ReleaseFile "$Version/SHA256SUMS" 'SHA256SUMS'
+        $archivePath = Get-ReleaseFile "$Version/$name" $name
     }
 
     $expected = @(Get-Content -LiteralPath $sumsPath | ForEach-Object {
@@ -81,25 +90,36 @@ try {
 
     $extract = Join-Path $tmp 'extract'
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extract
-    $binary = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter 'javelin.exe' |
-        Where-Object { $_.Directory.Name -eq 'bin' } | Select-Object -First 1
-    if (-not $binary) { Fail "archive $name has no bin\javelin.exe" }
-
-    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-    $BinDir = (Resolve-Path -LiteralPath $BinDir).Path
-    $dest = Join-Path $BinDir 'javelin.exe'
-    $staged = Join-Path $BinDir ('javelin.exe.' + [guid]::NewGuid().ToString('N') + '.new')
-    Copy-Item -LiteralPath $binary.FullName -Destination $staged
-    # Move-Item -Force deletes the old file before moving; File.Replace swaps it in one step.
-    if (Test-Path -LiteralPath $dest -PathType Leaf) {
-        [System.IO.File]::Replace($staged, $dest, [NullString]::Value)
-    } else {
-        Move-Item -LiteralPath $staged -Destination $dest
+    $binaries = @{}
+    foreach ($bin in @('javelin.exe', 'javelin-node.exe')) {
+        $found = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter $bin |
+            Where-Object { $_.Directory.Name -eq 'bin' } | Select-Object -First 1
+        if (-not $found) { Fail "archive $name has no bin\$bin" }
+        $binaries[$bin] = $found.FullName
     }
 
-    Write-Output "Installed javelin ($name) to $(Join-Path $BinDir 'javelin.exe')"
-    if (-not (($env:Path -split ';') -contains $BinDir)) {
-        Write-Output "Add $BinDir to your PATH to run javelin."
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
+    foreach ($bin in @('javelin.exe', 'javelin-node.exe')) {
+        $dest = Join-Path $InstallDir $bin
+        $staged = Join-Path $InstallDir ($bin + '.' + [guid]::NewGuid().ToString('N') + '.new')
+        Copy-Item -LiteralPath $binaries[$bin] -Destination $staged
+        # Move-Item -Force deletes the old file before moving; File.Replace swaps it in one step.
+        if (Test-Path -LiteralPath $dest -PathType Leaf) {
+            [System.IO.File]::Replace($staged, $dest, [NullString]::Value)
+        } else {
+            Move-Item -LiteralPath $staged -Destination $dest
+        }
+    }
+
+    Write-Output "Installed javelin and javelin-node ($name) to $InstallDir"
+    if (($env:Path -split ';') -contains $InstallDir) {
+        Write-Output 'Run: javelin --version'
+    } else {
+        Write-Output ''
+        Write-Output "$InstallDir is not on your PATH. To add it for your user:"
+        Write-Output "  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ';$InstallDir', 'User')"
+        Write-Output 'then open a new terminal and run: javelin --version'
     }
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

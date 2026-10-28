@@ -1,33 +1,42 @@
 #!/bin/sh
-# Install the Javelin CLI from a release archive on macOS or Linux.
+# Install javelin and javelin-node on macOS or Linux.
 #
-# The archive's SHA-256 is checked against SHA256SUMS before anything is extracted or
-# written. The binary lands in --bin-dir through a temporary file and an atomic rename,
-# so re-running with a newer release upgrades in place and never leaves a partial file.
-# Nothing else is changed: no PATH edits, no shell profiles, no privileges.
+#   curl -fsSL https://javelin-codes.vercel.app/install.sh | sh
+#   curl -fsSL https://javelin-codes.vercel.app/install.sh | sh -s -- --version v0.1.0
 #
-#   sh install.sh                          latest release
-#   sh install.sh --version v0.1.0         pinned release
-#   sh install.sh --archive A --sums S     a local archive and its SHA256SUMS
+# The installer reads the release host's `latest` file (or uses --version), downloads that
+# version's SHA256SUMS and the archive for this platform, and checks the archive's SHA-256
+# before it extracts or writes anything. Each binary is copied beside its destination and
+# renamed into place, so running it again upgrades in place and never leaves a partial
+# file. It changes nothing else: no PATH or shell profile edits, no sudo.
+#
+# Release layout (docs/releases.md): BASE/latest holds a version such as v0.1.0, and
+# BASE/VERSION/ holds SHA256SUMS, manifest.json and javelin-VERSION-TARGET.tar.gz.
 set -eu
 
-RELEASE_BASE=https://github.com/Dhruv2mars/javelin/releases
-VERSION=latest
-BIN_DIR=${JAVELIN_BIN_DIR:-$HOME/.local/bin}
+# The release host. tools/release/release.ts stamps it when it stages a release;
+# JAVELIN_RELEASE_BASE or --release-base overrides it.
+DEFAULT_RELEASE_BASE=
+
+RELEASE_BASE=${JAVELIN_RELEASE_BASE:-$DEFAULT_RELEASE_BASE}
+VERSION=${JAVELIN_VERSION:-latest}
+INSTALL_DIR=${JAVELIN_INSTALL_DIR:-$HOME/.javelin/bin}
 ARCHIVE=
 SUMS=
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--version TAG] [--bin-dir DIR] [--release-base URL-OR-DIR]
-       install.sh --archive FILE --sums FILE [--bin-dir DIR]
+Usage: install.sh [--version VERSION] [--install-dir DIR] [--release-base URL-OR-DIR]
+       install.sh --archive FILE --sums FILE [--install-dir DIR]
 
-  --version TAG          Release tag to install (default: latest)
-  --bin-dir DIR          Directory for the javelin binary (default: $HOME/.local/bin)
-  --release-base BASE    Release location: a GitHub-style URL, or a local directory laid
-                         out as BASE/download/TAG/FILE and BASE/latest/download/FILE
+  --version VERSION      Version to install, such as v0.1.0 (default: latest)
+  --install-dir DIR      Where javelin and javelin-node go (default: ~/.javelin/bin)
+  --release-base BASE    Release host URL, or a local directory with the same layout
   --archive FILE         Install this local archive instead of downloading
   --sums FILE            SHA256SUMS file that lists the archive (with --archive)
+
+The same settings can come from JAVELIN_VERSION, JAVELIN_INSTALL_DIR and
+JAVELIN_RELEASE_BASE.
 EOF
 }
 
@@ -39,7 +48,7 @@ die() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || die "--version needs a value"; VERSION=$2; shift 2 ;;
-    --bin-dir) [ $# -ge 2 ] || die "--bin-dir needs a value"; BIN_DIR=$2; shift 2 ;;
+    --install-dir) [ $# -ge 2 ] || die "--install-dir needs a value"; INSTALL_DIR=$2; shift 2 ;;
     --release-base) [ $# -ge 2 ] || die "--release-base needs a value"; RELEASE_BASE=$2; shift 2 ;;
     --archive) [ $# -ge 2 ] || die "--archive needs a value"; ARCHIVE=$2; shift 2 ;;
     --sums) [ $# -ge 2 ] || die "--sums needs a value"; SUMS=$2; shift 2 ;;
@@ -48,37 +57,46 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -n "$ARCHIVE" ] && [ -z "$SUMS" ] || [ -z "$ARCHIVE" ] && [ -n "$SUMS" ]; then
+if { [ -n "$ARCHIVE" ] && [ -z "$SUMS" ]; } || { [ -z "$ARCHIVE" ] && [ -n "$SUMS" ]; }; then
   die "--archive and --sums must be given together"
 fi
 
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) TRIPLE=aarch64-apple-darwin ;;
-  Darwin-x86_64) TRIPLE=x86_64-apple-darwin ;;
-  Linux-x86_64) TRIPLE=x86_64-unknown-linux-gnu ;;
-  Linux-aarch64|Linux-arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
-  *) die "unsupported platform $(uname -s) $(uname -m); see docs/install.md" ;;
+os=$(uname -s)
+arch=$(uname -m)
+# A shell under Rosetta reports x86_64 on Apple silicon; install the native build there.
+if [ "$os" = Darwin ] && [ "$arch" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then
+  arch=arm64
+fi
+case "$os-$arch" in
+  Darwin-arm64) TARGET=aarch64-apple-darwin ;;
+  Darwin-x86_64) TARGET=x86_64-apple-darwin ;;
+  Linux-x86_64|Linux-amd64) TARGET=x86_64-unknown-linux-gnu ;;
+  Linux-aarch64|Linux-arm64) TARGET=aarch64-unknown-linux-gnu ;;
+  *) die "no Javelin build for $os $arch (macOS and Linux on x86_64 or arm64 only)" ;;
 esac
+if [ "$os" = Linux ] && ldd --version 2>&1 | grep -qi musl; then
+  die "the Linux builds need glibc 2.28 or newer; this system uses musl"
+fi
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_of() { sha256sum "$1" | awk '{print $1}'; }
-else
+elif command -v shasum >/dev/null 2>&1; then
   sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  die "need sha256sum or shasum to check the download"
 fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/javelin-install.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# Fetch $1 (a file name in the release) into $TMP, from the URL base or the local directory.
+# Copy BASE/$1 to $TMP/$2. Plain http is accepted only for a loopback host.
 fetch() {
-  if [ "$VERSION" = latest ]; then
-    source=$RELEASE_BASE/latest/download/$1
-  else
-    source=$RELEASE_BASE/download/$VERSION/$1
-  fi
+  source=${RELEASE_BASE%/}/$1
   case "$RELEASE_BASE" in
-    http://*|https://*) curl -fsSL -o "$TMP/$1" "$source" || die "could not download $source" ;;
-    *) cp "$source" "$TMP/$1" 2>/dev/null || die "could not read $source" ;;
+    https://*|file://*|http://127.0.0.1:*|http://127.0.0.1/*|http://localhost:*|http://localhost/*)
+      curl -fsSL --proto '=https,http,file' -o "$TMP/$2" "$source" || die "could not download $source" ;;
+    http://*) die "refusing plain http for $RELEASE_BASE; use https" ;;
+    *) cp "$source" "$TMP/$2" 2>/dev/null || die "could not read $source" ;;
   esac
 }
 
@@ -89,11 +107,16 @@ if [ -n "$ARCHIVE" ]; then
   cp "$ARCHIVE" "$TMP/$name"
   cp "$SUMS" "$TMP/SHA256SUMS"
 else
-  fetch SHA256SUMS
-  # Exactly one archive per platform is listed in a release's SHA256SUMS.
-  name=$(awk -v suffix="-$TRIPLE.tar.gz" 'length($2) > 0 && index($2, "javelin-") == 1 && substr($2, length($2) - length(suffix) + 1) == suffix {print $2}' "$TMP/SHA256SUMS")
-  [ "$(printf '%s\n' "$name" | grep -c .)" -eq 1 ] || die "release has no single archive for $TRIPLE"
-  fetch "$name"
+  [ -n "$RELEASE_BASE" ] || die "no release host is set yet; pass --release-base or set JAVELIN_RELEASE_BASE"
+  if [ "$VERSION" = latest ]; then
+    fetch latest latest
+    VERSION=$(tr -d ' \r\n' < "$TMP/latest")
+  fi
+  # A version names a directory on the host: v, then letters, digits, dots, dashes, pluses.
+  printf '%s\n' "$VERSION" | grep -Eq '^v[0-9A-Za-z.+-]+$' || die "not a release version: $VERSION"
+  name=javelin-$VERSION-$TARGET.tar.gz
+  fetch "$VERSION/SHA256SUMS" SHA256SUMS
+  fetch "$VERSION/$name" "$name"
 fi
 
 expected=$(awk -v name="$name" '$2 == name || $2 == "*" name {print $1}' "$TMP/SHA256SUMS")
@@ -105,17 +128,36 @@ fi
 
 mkdir "$TMP/extract"
 tar -xzf "$TMP/$name" -C "$TMP/extract"
-binary=$(find "$TMP/extract" -mindepth 3 -maxdepth 3 -type f -path '*/bin/javelin' | head -n 1)
-[ -n "$binary" ] || die "archive $name has no bin/javelin"
+for bin in javelin javelin-node; do
+  found=$(find "$TMP/extract" -mindepth 3 -maxdepth 3 -type f -path "*/bin/$bin" | head -n 1)
+  [ -n "$found" ] || die "archive $name has no bin/$bin"
+done
 
-mkdir -p "$BIN_DIR"
-staged=$BIN_DIR/.javelin.$$.new
-cp "$binary" "$staged"
-chmod 755 "$staged"
-mv -f "$staged" "$BIN_DIR/javelin"
+mkdir -p "$INSTALL_DIR"
+for bin in javelin javelin-node; do
+  found=$(find "$TMP/extract" -mindepth 3 -maxdepth 3 -type f -path "*/bin/$bin" | head -n 1)
+  staged=$INSTALL_DIR/.$bin.$$.new
+  cp "$found" "$staged"
+  chmod 755 "$staged"
+  mv -f "$staged" "$INSTALL_DIR/$bin"
+done
 
-printf 'Installed javelin (%s) to %s/javelin\n' "$name" "$BIN_DIR"
+printf 'Installed javelin and javelin-node (%s) to %s\n' "$name" "$INSTALL_DIR"
 case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) printf 'Add %s to your PATH to run javelin.\n' "$BIN_DIR" ;;
+  *":$INSTALL_DIR:"*)
+    printf 'Run: javelin --version\n' ;;
+  *)
+    case "$(basename "${SHELL:-sh}")" in
+      zsh) profile='~/.zshrc' ;;
+      bash) if [ "$os" = Darwin ]; then profile='~/.bash_profile'; else profile='~/.bashrc'; fi ;;
+      fish) profile= ;;
+      *) profile='~/.profile' ;;
+    esac
+    printf '\n%s is not on your PATH. To add it:\n' "$INSTALL_DIR"
+    if [ -n "$profile" ]; then
+      printf "  echo 'export PATH=\"%s:\$PATH\"' >> %s\n" "$INSTALL_DIR" "$profile"
+    else
+      printf '  fish_add_path %s\n' "$INSTALL_DIR"
+    fi
+    printf 'then open a new terminal and run: javelin --version\n' ;;
 esac

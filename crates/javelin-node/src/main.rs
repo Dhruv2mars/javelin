@@ -1,6 +1,7 @@
 //! `javelin-node serve <dir> <name> <addr>` hosts the World log in `dir` as repository
 //! `name` on a loopback address such as `127.0.0.1:7878`. Requests are authorized against
 //! the keys and permissions the control plane stored in `dir` (`auth.rs`).
+//! `javelin-node --version` prints the package version, as `javelin --version` does.
 
 use std::{error::Error, process::ExitCode};
 
@@ -14,6 +15,10 @@ fn main() -> ExitCode {
         .collect::<Vec<_>>()
         .as_slice()
     {
+        ["--version" | "-V"] => {
+            println!("javelin-node {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
         ["serve", dir, name, addr] => run(dir, name, addr),
         _ => Err("usage: javelin-node serve <dir> <name> <loopback addr>".into()),
     };
