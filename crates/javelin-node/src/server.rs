@@ -24,13 +24,19 @@
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
     net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream},
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
 
 use javelin_protocol::limits::MAX_FRAME;
 
-use crate::{FileWorldLog, auth::Gate, wire};
+use crate::{
+    FileWorldLog,
+    auth::{Gate, LiveGate},
+    storage::Directory,
+    wire,
+};
 
 /// Longest request line or header line, in bytes.
 const MAX_LINE: usize = 8 << 10;
@@ -78,6 +84,49 @@ pub fn serve(
     gate: &Gate,
     connections: Option<usize>,
 ) -> io::Result<()> {
+    serve_with(listener, name, log, &mut Gates::Fixed(gate), connections)
+}
+
+/// `serve`, deciding each message with the permissions and keys stored in `dir` when the
+/// message arrives (`LiveGate`). A role change or key rotation the control plane stores while
+/// the node serves applies from the next request. `javelin-node serve` runs this.
+pub fn serve_live(
+    listener: &TcpListener,
+    name: &str,
+    log: &mut FileWorldLog,
+    dir: &Path,
+    connections: Option<usize>,
+) -> io::Result<()> {
+    let mut gates = Gates::Live(Box::new((LiveGate::new(name), Directory::new(dir))));
+    serve_with(listener, name, log, &mut gates, connections)
+}
+
+/// Where each message's gate comes from: one fixed for the node's life, or the storage's
+/// current documents.
+enum Gates<'a> {
+    Fixed(&'a Gate),
+    Live(Box<(LiveGate, Directory)>),
+}
+
+impl Gates<'_> {
+    fn current(&mut self) -> io::Result<&Gate> {
+        match self {
+            Self::Fixed(gate) => Ok(gate),
+            Self::Live(live) => {
+                let (gate, storage) = &mut **live;
+                gate.current(storage)
+            }
+        }
+    }
+}
+
+fn serve_with(
+    listener: &TcpListener,
+    name: &str,
+    log: &mut FileWorldLog,
+    gates: &mut Gates<'_>,
+    connections: Option<usize>,
+) -> io::Result<()> {
     let mut served = 0;
     for stream in listener.incoming() {
         let stream = match stream {
@@ -88,7 +137,7 @@ pub fn serve(
             }
             Err(error) => return Err(error),
         };
-        if let Err(error) = handle_connection(stream, name, log, gate) {
+        if let Err(error) = handle_connection(stream, name, log, gates) {
             eprintln!("javelin-node: connection dropped: {error}");
         }
         served += 1;
@@ -126,14 +175,14 @@ fn handle_connection(
     stream: TcpStream,
     name: &str,
     log: &mut FileWorldLog,
-    gate: &Gate,
+    gates: &mut Gates<'_>,
 ) -> io::Result<()> {
     // Nonblocking, so every read and write returns to `Deadline`, which checks the clock.
     // Socket timeouts are not used: they do not bound a call that keeps making progress.
     // One handle reads and writes: a cloned handle is a second socket descriptor on Windows.
     stream.set_nonblocking(true)?;
     let mut reader = BufReader::new(Deadline::new(stream, REQUEST_DEADLINE));
-    let (status, extra, body) = match read_request(&mut reader, name, log, gate) {
+    let (status, extra, body) = match read_request(&mut reader, name, log, gates) {
         Ok(Reply::Message { body, cors }) => (200, if cors { ALLOW_ORIGIN } else { "" }, body),
         Ok(Reply::Preflight) => (204, PREFLIGHT, Vec::new()),
         Err(Fault::Status(status)) => (status, "", Vec::new()),
@@ -166,7 +215,7 @@ fn read_request(
     reader: &mut impl BufRead,
     name: &str,
     log: &mut FileWorldLog,
-    gate: &Gate,
+    gates: &mut Gates<'_>,
 ) -> Result<Reply, Fault> {
     let request = read_line(reader)?;
     let mut parts = request.split(' ');
@@ -221,6 +270,8 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
+    // The gate is read after the whole request, so a push stored meanwhile decides it.
+    let gate = gates.current()?;
     let now = log.now();
     let answer = wire::handle(log, gate, token.as_deref(), origin, now, &body)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.detail))?;

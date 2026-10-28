@@ -18,6 +18,9 @@ pub enum ControlError {
     /// A device code was already exchanged for a session.
     Redeemed,
     NameTaken,
+    /// The request conflicts with the control plane's state, such as an invite for an
+    /// account that already exists.
+    Conflict(String),
     /// The operation ID was used for a different request.
     OperationReused,
     /// The node could not be provisioned or reached.
@@ -39,7 +42,7 @@ impl ControlError {
     pub fn code(&self) -> &str {
         match self {
             Self::NotInitialized => "not_initialized",
-            Self::AlreadyInitialized | Self::NameTaken => code::CONFLICT,
+            Self::AlreadyInitialized | Self::NameTaken | Self::Conflict(_) => code::CONFLICT,
             Self::Unauthorized(_) => code::UNAUTHORIZED,
             Self::Forbidden(_) => code::FORBIDDEN,
             Self::InvalidInput(_) => code::INVALID_INPUT,
@@ -69,7 +72,7 @@ impl fmt::Display for ControlError {
                 f.write_str(reason)
             }
             Self::Expired(reason) => f.write_str(reason),
-            Self::InvalidInput(reason) => f.write_str(reason),
+            Self::InvalidInput(reason) | Self::Conflict(reason) => f.write_str(reason),
             Self::Redeemed => f.write_str("this device code was already used to sign in"),
             Self::NameTaken => f.write_str("a repository with this name already exists"),
             Self::OperationReused => {

@@ -1,6 +1,6 @@
-//! `javelin login`, `javelin control` and `javelin repo create`: the first slice of the
-//! control plane's commands. With `JAVELIN_CONTROL_URL` set, `login`, `control approve` and
-//! `repo create` call the control plane's HTTP API there, which `javelin control serve`
+//! `javelin login`, `javelin control` and `javelin repo create|settings`: the first slice of
+//! the control plane's commands (`javelin member` is `cli_member.rs`). With
+//! `JAVELIN_CONTROL_URL` set, they call the control plane's HTTP API there, which `javelin control serve`
 //! provides; otherwise they open its state in process under `JAVELIN_CONTROL_DIR` (default
 //! `$JAVELIN_HOME/control`). A control plane that cannot be reached either way is
 //! `control_plane_unavailable`. This device's sign-in lives in `$JAVELIN_HOME/credentials`.
@@ -23,7 +23,7 @@ use serde_json::json;
 
 use crate::cli::Output;
 
-const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin https://HOST]   (non-loopback IP only behind TLS)\n  javelin control approve USER-CODE   (needs JAVELIN_ADMIN_TOKEN)\n  javelin login\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]";
+const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin https://HOST]   (non-loopback IP only behind TLS)\n  javelin control approve USER-CODE   (JAVELIN_ADMIN_TOKEN, or this device's sign-in)\n  javelin login [--invite CODE]\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]\n  javelin repo settings REPOSITORY --required-approvals N";
 
 pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args = args
@@ -37,11 +37,19 @@ pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["login"] => login(),
+        ["login", "--invite", code] => login_invite(code),
         ["control", "init"] => control_init(),
         ["control", "serve", addr] => control_serve(addr, None),
         ["control", "serve", addr, "--origin", origin] => control_serve(addr, Some(origin)),
         ["control", "approve", code] => control_approve(code),
         ["repo", "create", slug, flags @ ..] => repo_create(slug, flags),
+        [
+            "repo",
+            "settings",
+            repository,
+            "--required-approvals",
+            count,
+        ] => crate::cli_member::settings(repository, count),
         _ => Err(ControlError::InvalidInput(USAGE.into())),
     }
 }
@@ -99,8 +107,20 @@ fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlErro
     ))
 }
 
+/// Approves a device code with the admin token, or, without one, as the account this device
+/// is signed in to, so a person signs in their own second device.
 fn control_approve(code: &str) -> Result<Output, ControlError> {
-    control()?.device_approve_as(&admin_token()?, code, now()?)?;
+    let plane = control()?;
+    let now = now()?;
+    let bearer = match env::var("JAVELIN_ADMIN_TOKEN") {
+        Ok(token) => token,
+        Err(_) => signed_in_token(plane.as_ref(), now).map_err(|_| {
+            ControlError::Unauthorized(
+                "set JAVELIN_ADMIN_TOKEN to the admin token from `javelin control init`, or sign this device in first",
+            )
+        })?,
+    };
+    plane.device_approve_as(&bearer, code, now)?;
     let text = format!("Approved {code}. The waiting `javelin login` will finish.");
     Ok((
         json!({"ok": true, "command": "control approve", "user_code": code}),
@@ -113,7 +133,7 @@ fn login() -> Result<Output, ControlError> {
     let plane = control()?;
     let start = plane.device_start(now()?)?;
     eprintln!(
-        "To sign in, approve this code with the admin token:\n  JAVELIN_ADMIN_TOKEN=... javelin control approve {}\nCode expires in 15 minutes. Waiting for approval...",
+        "To sign in, approve this code from a device already signed in to your account, or with the admin token:\n  javelin control approve {}\nCode expires in 15 minutes. Waiting for approval...",
         start.user_code
     );
     let session = loop {
@@ -122,16 +142,7 @@ fn login() -> Result<Output, ControlError> {
             Poll::Pending => thread::sleep(Duration::from_secs(start.interval)),
         }
     };
-    let credentials = Credentials {
-        principal: session.principal.clone(),
-        device: session.device.clone(),
-        refresh_token: session.refresh_token,
-    };
-    let path = credentials_path()?;
-    credentials.save(&path)?;
-    // The new sign-in caches its tokens in its own directory, so the previous sign-in's tokens
-    // are never sent for it. Tidying old directories is best effort.
-    let _ = crate::cli_auth::remove_stale_sign_ins(&credentials);
+    let path = save_session(&session)?;
     let text = format!(
         "Signed in as {} on device {}. Credentials saved to {}.",
         session.principal,
@@ -143,6 +154,70 @@ fn login() -> Result<Output, ControlError> {
         text,
         0,
     ))
+}
+
+/// `javelin login --invite CODE`: redeems an invite, which makes its account, grants its role
+/// and signs this device in as that account.
+fn login_invite(code: &str) -> Result<Output, ControlError> {
+    let redeemed = control()?.redeem_invite(code, now()?)?;
+    let session = &redeemed.session;
+    let path = save_session(session)?;
+    let mut text = format!(
+        "Signed in as {} on device {}, with role {} in {}. Credentials saved to {}.",
+        session.principal,
+        session.device,
+        redeemed.role.name(),
+        redeemed.repository,
+        path.display()
+    );
+    if let Some(error) = &redeemed.node_error {
+        text.push_str(&format!(
+            "\nThe repository's node has not applied the role yet: {error}"
+        ));
+    }
+    Ok((
+        json!({
+            "ok": true,
+            "command": "login",
+            "principal": session.principal,
+            "device": session.device,
+            "repository": redeemed.repository,
+            "role": redeemed.role.name(),
+            "node_error": redeemed.node_error,
+        }),
+        text,
+        0,
+    ))
+}
+
+/// Saves a new sign-in as this device's credentials and returns where.
+fn save_session(session: &javelin_control::Session) -> Result<PathBuf, ControlError> {
+    let credentials = Credentials {
+        principal: session.principal.clone(),
+        device: session.device.clone(),
+        refresh_token: session.refresh_token.clone(),
+    };
+    let path = credentials_path()?;
+    credentials.save(&path)?;
+    // The new sign-in caches its tokens in its own directory, so the previous sign-in's tokens
+    // are never sent for it. Tidying old directories is best effort.
+    let _ = crate::cli_auth::remove_stale_sign_ins(&credentials);
+    Ok(path)
+}
+
+/// A sign-in access token for this device, bought with its refresh token.
+pub(crate) fn signed_in_token(plane: &dyn Control, now: u64) -> Result<String, ControlError> {
+    let credentials = Credentials::load(&credentials_path()?)?;
+    Ok(plane.refresh(&credentials.refresh_token, now)?.access_token)
+}
+
+/// The caller's credential for the control plane: `JAVELIN_ADMIN_TOKEN` when set, else this
+/// device's sign-in.
+pub(crate) fn bearer(plane: &dyn Control, now: u64) -> Result<String, ControlError> {
+    match env::var("JAVELIN_ADMIN_TOKEN") {
+        Ok(token) => Ok(token),
+        Err(_) => signed_in_token(plane, now),
+    }
 }
 
 fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
@@ -230,13 +305,7 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
         control()?
     };
     let now = now()?;
-    let bearer = match env::var("JAVELIN_ADMIN_TOKEN") {
-        Ok(token) => token,
-        Err(_) => {
-            let credentials = Credentials::load(&credentials_path()?)?;
-            plane.refresh(&credentials.refresh_token, now)?.access_token
-        }
-    };
+    let bearer = bearer(plane.as_ref(), now)?;
     let created = plane.create_repository(
         &bearer,
         &CreateRequest {
@@ -302,15 +371,7 @@ pub(crate) fn control() -> Result<Box<dyn Control>, ControlError> {
     }
 }
 
-fn admin_token() -> Result<String, ControlError> {
-    env::var("JAVELIN_ADMIN_TOKEN").map_err(|_| {
-        ControlError::Unauthorized(
-            "set JAVELIN_ADMIN_TOKEN to the admin token from `javelin control init`",
-        )
-    })
-}
-
-fn now() -> Result<u64, ControlError> {
+pub(crate) fn now() -> Result<u64, ControlError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
@@ -327,7 +388,7 @@ pub(crate) fn javelin_home() -> Result<PathBuf, ControlError> {
     Ok(PathBuf::from(home).join(".javelin"))
 }
 
-fn control_dir() -> Result<PathBuf, ControlError> {
+pub(crate) fn control_dir() -> Result<PathBuf, ControlError> {
     match env::var_os("JAVELIN_CONTROL_DIR") {
         Some(dir) => Ok(dir.into()),
         None => Ok(javelin_home()?.join("control")),

@@ -139,6 +139,27 @@ pub enum Role {
     Maintain,
 }
 
+impl Role {
+    /// The role's name as stored and typed: `read`, `review` or `maintain`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Review => "review",
+            Self::Maintain => "maintain",
+        }
+    }
+
+    /// The role [`Role::name`] names.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "read" => Some(Self::Read),
+            "review" => Some(Self::Review),
+            "maintain" => Some(Self::Maintain),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Visibility {
     /// Anyone may read, comment, and author Publish Requests.

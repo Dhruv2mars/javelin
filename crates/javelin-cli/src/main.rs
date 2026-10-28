@@ -8,6 +8,7 @@ mod cli_auth;
 mod cli_check;
 mod cli_control;
 mod cli_disclosure;
+mod cli_member;
 mod cli_remote;
 mod cli_request;
 mod cli_sync;
@@ -148,6 +149,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         .is_some_and(|a| a == "login" || a == "control" || a == "repo")
     {
         return cli_control::run(args).map_err(CliError::Control);
+    }
+    if args.first().is_some_and(|a| a == "member") {
+        return cli_member::run(args.into_iter().skip(1).collect()).map_err(CliError::Control);
     }
     if args.first().is_some_and(|a| a == "check") && args.get(1).is_some_and(|a| a == "report") {
         return cli_check::report(args.into_iter().skip(2).collect()).map_err(Into::into);

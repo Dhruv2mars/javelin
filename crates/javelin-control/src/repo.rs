@@ -4,14 +4,14 @@
 
 use std::collections::BTreeMap;
 
-use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
+use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role};
 use javelin_identity::Scope;
 
 use crate::{
     ControlError, ControlPlane,
     control::{NodeTarget, authenticate, issue},
     device::{ACCESS_TTL, AccessToken},
-    secret,
+    members, secret,
     state::{ForkOf, Phase, RepositoryRecord, State},
 };
 
@@ -65,8 +65,8 @@ pub struct Created {
 }
 
 impl ControlPlane {
-    /// Issues an access token for `repository`, which a node accepts. Only the creator and the
-    /// admin may ask for one until membership exists; the node still applies the role.
+    /// Issues an access token for `repository`, which a node accepts. Only its members and the
+    /// admin may ask for one; the node still applies the role.
     pub fn repository_token(
         &self,
         bearer: &str,
@@ -82,7 +82,7 @@ impl ControlPlane {
                 .repositories
                 .get(repository)
                 .ok_or(ControlError::NotFound("no such repository"))?;
-            if !caller.admin && caller.principal != record.creator {
+            if !caller.admin && members::role_of(record, &caller.principal).is_none() {
                 return Err(ControlError::Forbidden(
                     "caller has no role in this repository",
                 ));
@@ -192,6 +192,8 @@ pub(crate) fn reserve(
         provider: node.provider.clone(),
         node_url: node.url.clone(),
         fork,
+        members: BTreeMap::from([(creator.to_string(), Role::Maintain.name().to_string())]),
+        required_approvals: 0,
     };
     state.repositories.insert(id.clone(), record.clone());
     state
@@ -205,23 +207,7 @@ pub(crate) fn initial_permissions(
     repository: &RepositoryId,
     record: &RepositoryRecord,
 ) -> Result<AppliedPermissions, ControlError> {
-    Ok(AppliedPermissions {
-        repository: repository.clone(),
-        epoch: 1,
-        visibility: if record.public {
-            Visibility::Public
-        } else {
-            Visibility::Private
-        },
-        roles: creator_roles(&record.creator)?,
-        required_approvals: 0,
-    })
-}
-
-fn creator_roles(creator: &str) -> Result<BTreeMap<PrincipalId, Role>, ControlError> {
-    let principal =
-        PrincipalId::parse(creator).map_err(|error| ControlError::Storage(error.to_string()))?;
-    Ok(BTreeMap::from([(principal, Role::Maintain)]))
+    members::permissions(repository, record, 1)
 }
 
 pub(crate) fn created(repository: &str, record: &RepositoryRecord, inserted: bool) -> Created {

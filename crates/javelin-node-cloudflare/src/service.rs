@@ -20,7 +20,7 @@ use javelin_identity::KeySet;
 use javelin_node::{
     FileWorldLog,
     admin::{self, ApplyError},
-    auth::{self, Gate},
+    auth::{self, Gate, LiveGate},
     storage::{Coordination, Storage},
     wire,
 };
@@ -66,24 +66,25 @@ impl Response {
 }
 
 /// The node for repository `name` on `storage`, keeping time by `clock` (Unix seconds),
-/// which decides token expiry and the public frontier. The World log and the gate are opened
-/// on first use and kept, so their caches outlive one request.
+/// which decides token expiry and the public frontier. The World log is opened on first use
+/// and kept, so its caches outlive one request. The gate follows the stored permissions and
+/// keys (`LiveGate`), as on the self-hosted node, so a push applies from the next request.
 pub struct Node<S> {
     name: RepositoryId,
     storage: S,
     clock: fn() -> u64,
     log: Option<FileWorldLog>,
-    gate: Option<Gate>,
+    gate: LiveGate,
 }
 
 impl<S: Storage + Coordination> Node<S> {
     pub fn new(name: RepositoryId, storage: S, clock: fn() -> u64) -> Self {
         Self {
+            gate: LiveGate::new(name.as_str()),
             name,
             storage,
             clock,
             log: None,
-            gate: None,
         }
     }
 
@@ -138,12 +139,10 @@ impl<S: Storage + Coordination> Node<S> {
             let clock = Box::new(self.clock);
             self.log = Some(FileWorldLog::on(&self.storage, &self.storage, clock)?);
         }
-        if self.gate.is_none() {
-            self.gate = Some(Gate::load_from(&self.storage, self.name.as_str())?);
-        }
-        match (&mut self.log, &self.gate) {
-            (Some(log), Some(gate)) => Ok((log, gate)),
-            _ => unreachable!("opened above"),
+        let gate = self.gate.current(&self.storage)?;
+        match &mut self.log {
+            Some(log) => Ok((log, gate)),
+            None => unreachable!("opened above"),
         }
     }
 
@@ -187,13 +186,10 @@ impl<S: Storage + Coordination> Node<S> {
         }
         let seen = auth::stored_permissions(&self.storage)?.map(|stored| stored.epoch);
         match admin::apply(&self.storage, &permissions) {
-            Ok(applied) => {
-                self.gate = None;
-                Ok(Response::json(
-                    200,
-                    json!({ "applied": applied, "epoch": permissions.epoch }),
-                ))
-            }
+            Ok(applied) => Ok(Response::json(
+                200,
+                json!({ "applied": applied, "epoch": permissions.epoch }),
+            )),
             Err(ApplyError::Refused(refusal)) => Ok(Response::json(
                 409,
                 json!({ "error": refusal.code, "seen": seen }),
@@ -207,7 +203,6 @@ impl<S: Storage + Coordination> Node<S> {
             return Ok(Response::error(400, "invalid_input", "malformed keys"));
         };
         admin::trust(&self.storage, &keys)?;
-        self.gate = None;
         Ok(Response::json(200, json!({ "trusted": true })))
     }
 

@@ -49,13 +49,31 @@ impl Gate {
 
     /// `load` for a node on any storage.
     pub fn load_from(storage: &dyn Storage, name: &str) -> io::Result<Self> {
-        let permissions = stored_permissions(storage)?;
+        Self::from_documents(
+            storage.read(PERMISSIONS_FILE)?.as_deref(),
+            storage.read(KEYS_FILE)?.as_deref(),
+            name,
+        )
+    }
+
+    /// The gate the stored documents describe: `permissions.json` and `keys.json`, each
+    /// `None` when it was never written.
+    fn from_documents(
+        permissions: Option<&[u8]>,
+        keys: Option<&[u8]>,
+        name: &str,
+    ) -> io::Result<Self> {
+        let permissions = permissions.map(parse_permissions).transpose()?;
+        let keys = match keys {
+            Some(bytes) => KeySet::from_json(bytes).map_err(|error| corrupt(&error))?,
+            None => KeySet::new(),
+        };
         let repository = match &permissions {
             Some(permissions) => permissions.repository.clone(),
             None => RepositoryId::parse(name)
                 .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error.to_string()))?,
         };
-        let mut gate = Self::new(repository, stored_keys(storage)?);
+        let mut gate = Self::new(repository, keys);
         if let Some(permissions) = permissions {
             gate.apply(permissions)
                 .map_err(|error| io::Error::new(ErrorKind::InvalidData, error.detail))?;
@@ -91,6 +109,56 @@ impl Gate {
         need: Need<'_>,
     ) -> Result<Grant, ProtocolError> {
         self.access.authorize(token, now, need).map_err(refused)
+    }
+}
+
+/// The gate a serving node decides each request with. It follows the node's storage: a
+/// permissions push or a key change that the control plane stores while the node serves
+/// applies from the next request, with no restart. The stored documents are read on every
+/// request and the gate is rebuilt only when they changed. Pushes go through
+/// `admin::apply`, which keeps their epochs moving forward, so a reload never steps back.
+pub struct LiveGate {
+    name: String,
+    loaded: Option<Loaded>,
+}
+
+struct Loaded {
+    permissions: Option<Vec<u8>>,
+    keys: Option<Vec<u8>>,
+    gate: Gate,
+}
+
+impl LiveGate {
+    /// A gate for repository `name`, loaded from storage on first use.
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            loaded: None,
+        }
+    }
+
+    /// The gate for the documents `storage` holds now. A document that does not parse fails
+    /// the request instead of falling back to an older gate.
+    pub fn current(&mut self, storage: &dyn Storage) -> io::Result<&Gate> {
+        let permissions = storage.read(PERMISSIONS_FILE)?;
+        let keys = storage.read(KEYS_FILE)?;
+        let stale = self
+            .loaded
+            .as_ref()
+            .is_none_or(|loaded| loaded.permissions != permissions || loaded.keys != keys);
+        if stale {
+            self.loaded = None;
+            let gate = Gate::from_documents(permissions.as_deref(), keys.as_deref(), &self.name)?;
+            self.loaded = Some(Loaded {
+                permissions,
+                keys,
+                gate,
+            });
+        }
+        match &self.loaded {
+            Some(loaded) => Ok(&loaded.gate),
+            None => unreachable!("loaded above"),
+        }
     }
 }
 
@@ -254,7 +322,7 @@ impl From<&AppliedPermissions> for Stored {
             roles: permissions
                 .roles
                 .iter()
-                .map(|(principal, role)| (principal.as_str().into(), role_name(*role).into()))
+                .map(|(principal, role)| (principal.as_str().into(), role.name().into()))
                 .collect(),
             required_approvals: permissions.required_approvals,
         }
@@ -276,7 +344,7 @@ impl Stored {
             .iter()
             .map(|(principal, role)| {
                 let principal = PrincipalId::parse(principal).map_err(|_| corrupt("principal"))?;
-                let role = parse_role(role).ok_or_else(|| corrupt("role"))?;
+                let role = Role::parse(role).ok_or_else(|| corrupt("role"))?;
                 Ok((principal, role))
             })
             .collect::<io::Result<_>>()?;
@@ -291,22 +359,5 @@ impl Stored {
             roles,
             required_approvals: self.required_approvals,
         })
-    }
-}
-
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::Read => "read",
-        Role::Review => "review",
-        Role::Maintain => "maintain",
-    }
-}
-
-fn parse_role(value: &str) -> Option<Role> {
-    match value {
-        "read" => Some(Role::Read),
-        "review" => Some(Role::Review),
-        "maintain" => Some(Role::Maintain),
-        _ => None,
     }
 }
