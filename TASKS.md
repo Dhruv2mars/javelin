@@ -60,8 +60,15 @@ CI left open. Work from it, in roughly this order:
   revision's checkpoint only when the caller may read it. Evidence: `requests_sync.rs`
   `sync_and_request_show_follow_the_callers_audiences`,
   `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
-- [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
-  and `revise` upload a Layer to the node.
+- [x] Checkpoint upload on capture (U5's CLI call site): every capture on an attached Layer
+  queues its checkpoint in the outbox and delivers it within the 2 s budget; outages queue and
+  replay on the next capture or `javelin sync`; only the lease holder uploads (`layer_stale`
+  otherwise); `forbidden` uploads are decided, not queued forever; `javelin status` reports
+  each Layer. Evidence: `crates/javelin-cli/tests/capture_upload.rs` against the node's server
+  with real tokens.
+  - [ ] The bytes of a path outside the writer's audiences reach the node before the append is
+    refused (served to nobody outside the audience). A client-side check would need the
+    caller's audiences.
 - [x] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker
   (`feat/node-core-wasm`). `javelin` without `fs` and `javelin-node` without `native` build
   for wasm32; `Storage`/`Coordination` in `crates/javelin-node/src/storage.rs`; the Durable
@@ -81,7 +88,9 @@ CI left open. Work from it, in roughly this order:
   `bun run deploy` in `apps/forge` from `main`): landing page at `/` with install status
   (installers coming) and open-by-node-URL, SPA fallback and security headers. Proved
   against a tunneled `javelin-node serve`.
-- [ ] CI design (waiting on the user).
+- [x] CI for building Javelin: Buildkite (free `linux-small` queue) runs fmt, clippy and tests
+  on every push and reports to the trail as a gate. Decided 2026-10-28.
+- [ ] CI inside Javelin for its users: not decided yet (the user's call). No work planned.
 - [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
   the first was a product gap. A Layer discarded or published, then killed before the
   trash move, kept a live directory until a reclaiming command ran. The next command
@@ -117,8 +126,13 @@ every push (`.buildkite/pipeline.yml`).
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
-- [ ] Release binaries: GitHub releases are gone. Decide where `javelin` binaries are
-  published.
+- [ ] Release binaries on npm (decided 2026-10-28; GitHub Releases is gone and Entire hosts no
+  release files): wrapper `@dhruv2mars/javelin` plus one package per platform, `npm i -g` or
+  `bun add -g`, and a curl installer that reads the same tarballs from `registry.npmjs.org`
+  (trail 23, `feat/release-install`). The first real publish waits for the user's go-ahead
+  and their npm login.
+- [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
+  runner exists. Decided 2026-10-28.
 - [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
   of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
@@ -127,6 +141,13 @@ every push (`.buildkite/pipeline.yml`).
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
 - [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
   drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+
+## Merge rule for flaky tests (2026-10-28)
+
+A trail may merge when its Buildkite build is green and every local macOS failure also
+reproduces on main. Known flakes (`fix/flaky-tests`): node server connection resets under load
+(`loopback.rs`, `wire_auth.rs`, `wire_hidden.rs`), duplicate sends in `outbox_replay.rs`, and
+`attach.rs`'s fake node.
 
 ## Daily workflow acceptance (2026-10-28)
 

@@ -62,6 +62,7 @@ javelin workspace recover
 
 javelin attach https://HOST[:PORT]/REPOSITORY [project-directory]
 javelin sync
+javelin status
 javelin request open ID --layer LAYER --operation OP
 javelin request revise ID --revision N --operation OP [--layer LAYER]
 javelin request comment ID --body TEXT --operation OP [--revision N]
@@ -71,9 +72,9 @@ javelin request list
 javelin request publish ID --revision N --operation OP [--base WORLD]
 ```
 
-All `checkpoint`, `layer`, `workspace`, `request` and `sync` commands accept `--repo DIR`
-and `--json`; `init`, `history` and `check` take the directory as an argument or as
-`--repo DIR`. The default
+All `checkpoint`, `layer`, `workspace`, `request`, `sync` and `status` commands accept
+`--repo DIR` and `--json`; `init`, `history` and `check` take the directory as an argument or
+as `--repo DIR`. The default
 repository is the current directory, with no ancestor search.
 `--allow-missing-trace` is a flag. Other options take separate values
 and may appear before or after positional arguments. Unknown, repeated, and
@@ -423,6 +424,43 @@ that outcome: `outbox replay` exits 1 with `code: layer_stale` and lists them un
 (Layer, operation, the node's head, and the local head), and `outbox status` lists them too.
 Keep their work with `javelin layer clone NEW --checkpoint LOCAL_HEAD`.
 
+### Streaming checkpoints
+
+In an attached repository every capture that records a checkpoint, from `checkpoint` or from
+a `layer` or `workspace` command, uploads it to the node: the blobs and changes object the
+node lacks, then a `LayerAppend` after the node's head. The records go into the outbox first,
+then the queue is delivered in journal order within a budget of 2 seconds
+(`JAVELIN_UPLOAD_BUDGET_MS` changes it). A node that is down, slow or unreachable leaves them
+queued; the capture still succeeds with its usual exit code, and the next capture,
+`javelin sync` or `javelin outbox replay` delivers them. A queued Publish or revision stops
+that delivery, since `sync`, `outbox replay` and `request` report their outcomes. JSON adds
+`capture.upload`: `{"status": "uploaded"}`, or `status` `queued`, `layer_stale`,
+`not_queued`, `local` or a node refusal such as `forbidden`, with a `detail` saying what to
+do; text output adds an `Upload` line. A repository with no `attach.json` adds nothing.
+
+The clone keeps what it knows of each Layer on the node in `.javelin/uploads.json`: the
+node's head once the queued appends land, which `Repository::foreign_capture` names before
+the node answers, and the journal position it was learned at. The head is read from the node
+the first time a Layer uploads, after `layer take`, `layer refresh`, `request open` and
+`revise`, and again after an append the node did not accept. Only then is the writer lease
+read: a device that does not hold it queues nothing and reports `layer_stale`, and its
+checkpoints stay local until `javelin layer take` moves the lease back or `layer clone`
+keeps them. A Layer that is new to the node and captured while the node is down cannot name
+its parent yet, so its upload is not queued (`not_queued`); `javelin sync` and the next
+capture upload it. A Layer whose base is not a World fetched from the node stays local.
+
+Uploads follow the path audiences (#99). A Layer never holds a hidden entry, so an upload names
+plain content only. The node refuses an append that changes a path outside the writer's
+audiences with `forbidden`; that refusal decides the record, so it does not hold up the
+queue, the checkpoint stays local, and the next capture tries again from the node's head.
+The bytes of such a path may already have reached the node as the writer's own upload; the
+node serves them to nobody outside the path's audience.
+
+`javelin status` reads, without contacting the node, where each active Layer's checkpoints
+are: `uploaded` (the node holds the latest), `queued` with a count, `not_uploaded`,
+`layer_stale`, a refusal code, or `local`. JSON lists them under `layers` with the Layer's
+`revision` and `checkpoint`, beside the `attachment` and the outbox's `pending` count.
+
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
 2 seconds of the scan. When the directory differs from the latest checkpoint, the
@@ -509,6 +547,8 @@ a role in the repository.
 
 1. It replays the outbox first, so a queued revision or Publish reaches the node before the
    fetch.
+   When nothing is left stalled, it then uploads every active Layer whose latest checkpoint
+   the node lacks and no capture queued, as a capture would (see Streaming checkpoints).
 2. It fetches the versions after the attached head, verified from that head's ID (the trust
    anchor), so the work follows the number of new versions, not the length of history. A
    node whose chain does not pass through the attached head is refused with
@@ -523,7 +563,8 @@ Layers keep their bases, and Publish composes them onto the node's head. Sync th
 node's requests: it keeps each current revision's base for a Publish queued later (see
 `request publish`), and retires every active Layer here that proposed a request the node has
 published (see "Retired Layers" below). JSON reports `from` and `head` (remote heads),
-`advanced`, `local_head`, `base`, `outbox` (`delivered`, `stalled`, `pending`) and `retired`. A record that still cannot be delivered
+`advanced`, `local_head`, `base`, `outbox` (`delivered`, `stalled`, `pending`), `uploads`, one
+entry per Layer it uploaded (`layer`, `status`, `detail`), and `retired`. A record that still cannot be delivered
 returns exit 1 with its `code`, after the fetch. A node that cannot be reached is
 `node_unavailable`, and nothing changes.
 
