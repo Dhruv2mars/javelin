@@ -102,8 +102,8 @@ table below.
 | Worker CPU per request | max 1.2 ms on 2026-10-28 UTC, 2.07 ms on 2026-10-27 (analytics `max.cpuTime`); p50 0 ms in the tail | 10 ms | 4.8x |
 | Object CPU per request | max 44 ms (provisioning: wasm instantiation, SQLite schema, World 0), next highest 25 ms; p50 1 ms over 27 sampled requests of the run that publishes, reviews and embargoes. The first deploy's first request took 102 ms | 30 s | 290x |
 | Object storage per repository | 4,120,576 bytes for a provisioned, empty repository (63 pages of 64 KiB, one B-tree or more each); 4,460,544 bytes after the suite's three publishes, a request and an embargo | 1 GB documented per object, 5 GB per account | about 1,200 empty repositories per account |
-| Rows per provision | about 71 written and 69 read (one provision and one state read, analytics delta) | 100,000 written and 5,000,000 read per day | about 1,400 provisions a day |
-| The account's whole day (2026-10-27 UTC): both deploys, two conformance runs' repositories, the migrated repository | 416 rows written, 519 read, 60 Worker requests, 55 object requests | as above | under 0.5% of a day |
+| Rows per provision | about 71 written and 69 read (one provision and one state read, analytics delta on the first deploy) | 100,000 written and 5,000,000 read per day | about 1,400 provisions a day |
+| The whole deployed conformance run (2026-10-28 02:36 to 02:37 UTC, per-minute analytics): two repositories, one provisioned with permissions pushed, one taken through uploads, three publishes, a Publish Request with its reads, an embargo and its release | 504 rows written, 426 read, 347 ms object CPU in total | as above | 0.5% of a day's writes |
 
 The page size trades storage for rows: smaller pages would shrink an empty repository
 (an estimated 0.8 MB at 16 KiB, not measured) but write more rows for every large object, and rows written per day
