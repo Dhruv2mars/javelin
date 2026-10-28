@@ -141,15 +141,22 @@ import=$owner/.javelin/layers/import-$run
 mkdir -p "$import/$dir/src"
 printf '# app\n\nGreets people.\n' >"$import/$dir/README.md"
 lib 'format!("hello {name}")' >"$import/$dir/src/lib.rs"
-must owner request open "$dir-import" --layer "import-$run" --operation "$run-import-open" --repo "$owner"
-must owner request show "$dir-import" --repo "$owner"
-need=$(required)
-echo "Publish needs ${need:-?} approval(s) on this repository."
-if [ "${need:-0}" -gt 0 ]; then
+# Maintain publishes directly when the repository requires no approvals; otherwise the node
+# says to open a request, and the import goes through one.
+as owner --json workspace publish "import-$run" --operation "$run-import" --repo "$owner"
+if [ "$status" -eq 0 ]; then
+  echo "Published directly: Maintain, and this repository requires no approvals."
+else
+  printf '%s' "$err" | grep -q '"code":"review_required"' ||
+    fail "a direct Publish exited $status without review_required"
+  must owner request open "$dir-import" --layer "import-$run" --operation "$run-import-open" --repo "$owner"
+  must owner request show "$dir-import" --repo "$owner"
+  need=$(required)
+  echo "Publish needs ${need:-?} approval(s) on this repository."
   must collab attach "$url" "$collab"
   must collab request approve "$dir-import" --revision 1 --operation "$run-import-approve" --repo "$collab"
+  must owner request publish "$dir-import" --revision 1 --operation "$run-import-publish" --repo "$owner"
 fi
-must owner request publish "$dir-import" --revision 1 --operation "$run-import-publish" --repo "$owner"
 must owner sync --repo "$owner"
 
 bold "2. collaborator: attach a second clone, edit a Layer as a plain directory, open a request"

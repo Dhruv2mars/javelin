@@ -3,13 +3,17 @@ use std::ffi::OsString;
 
 use javelin::{
     CloneReport, CloneStrategy, Error, LayerHead, LayerId, LayerState, LayerUpdate, Repository,
-    Result, VersionNumber, WorkspaceRefresh, WorkspaceReport,
+    Result, WorkspaceRefresh, WorkspaceReport,
 };
 use serde_json::json;
 
 use super::{Args, AttributionInput, BEHIND, Output, captured, publication, success};
+use crate::cli_worlds::Worlds;
 
-pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
+pub(super) fn run(
+    action: &str,
+    args: Vec<OsString>,
+) -> std::result::Result<Output, crate::CliError> {
     let (allowed, count): (&[&str], usize) = match action {
         "create" => (&["--repo", "--world"], 1),
         "open" | "path" => (&["--repo"], 1),
@@ -31,14 +35,12 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
             return Err(Error::InvalidInput(format!(
                 "unknown workspace command {action}; clone-backed workspaces support \
                  create, open, path, refresh, discard, publish and recover"
-            )));
+            ))
+            .into());
         }
     };
     let args = Args::parse(args, allowed, count)?;
-    let world = args
-        .number("--world")?
-        .map(VersionNumber::new)
-        .transpose()?;
+    let world = args.number("--world")?;
     let operation = matches!(action, "discard" | "publish")
         .then(|| args.operation())
         .transpose()?;
@@ -75,25 +77,37 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         }
         "create" | "open" => {
             if action == "create" {
+                // `--world N` is the node's number in an attached repository.
                 let version = match world {
-                    Some(version) => version,
+                    Some(number) => Worlds::of(&repo)?.local(number)?,
                     None => repo.head()?.number,
                 };
                 let base = repo.layer_base(version)?;
                 repo.create_layer(&layer, &base)?;
             }
             let report = repo.open_workspace(&layer)?;
-            let text = report_text(&report);
+            let worlds = Worlds::of(&repo)?;
+            let text = report_text(&report, &worlds)?;
+            let mut value = json!(report);
+            if let Some(base) = &report.base {
+                value["base"]["version"] = worlds.number(base.version)?;
+                value["base"]["local"] = json!(base.version);
+                if let Some(from) = base.derived_from {
+                    value["base"]["derived_from"] = worlds.number(from)?;
+                }
+            }
             success(
-                json!({"ok": true, "command": command, "workspace": report}),
+                json!({"ok": true, "command": command, "workspace": value}),
                 text,
             )
         }
         "path" => {
             let workspace = repo.layer_workspace(&layer)?;
             let text = workspace.root.display().to_string();
+            let mut value = json!(workspace);
+            value["base_version"] = Worlds::of(&repo)?.number(workspace.base_version)?;
             success(
-                json!({"ok": true, "command": command, "workspace": workspace}),
+                json!({"ok": true, "command": command, "workspace": value}),
                 text,
             )
         }
@@ -110,11 +124,20 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         "publish" => {
             let operation = operation.expect("required operation");
             let attribution = attribution.store(&mut repo)?;
+            // In an attached repository the node's World is the World: Publish goes there.
+            if repo.attachment()?.is_some() {
+                if let Some(capture) = &capture {
+                    refuse_partial(&mut repo, &layer, capture)?;
+                }
+                let output =
+                    crate::cli_publish::workspace(&args.root()?, &layer, &operation, &attribution)?;
+                return Ok(captured(capture, output));
+            }
             match repo.publication(&operation)? {
                 Some(receipt)
                     if receipt.expected.layer() != &layer || receipt.attribution != attribution =>
                 {
-                    return Err(Error::OperationIdReused(operation));
+                    return Err(Error::OperationIdReused(operation).into());
                 }
                 // A replay returns the stored receipt and still finishes an interrupted reclaim.
                 Some(receipt) => {
@@ -127,23 +150,8 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
                     publication(&command, receipt)
                 }
                 None => {
-                    // Publish only what the directory holds, so no edit is silently left out.
                     if let Some(capture) = &capture {
-                        if capture.behind {
-                            // Unresolved conflicts with the head are the owner's to resolve, so
-                            // they are reported as such before the generic BEHIND refusal.
-                            return match repo.refresh_preview(&layer) {
-                                Err(conflict @ Error::RefreshConflict(_)) => Err(conflict),
-                                _ => Err(Error::InvalidInput(BEHIND.into())),
-                            };
-                        }
-                        if matches!(capture.update, Some(LayerUpdate::Stale { .. }))
-                            || !capture.uncertain.is_empty()
-                        {
-                            return Err(Error::Busy(
-                                "files changed while being captured; nothing was published".into(),
-                            ));
-                        }
+                        refuse_partial(&mut repo, &layer, capture)?;
                     }
                     let expected = latest_active(&repo, &layer)?;
                     let receipt =
@@ -155,6 +163,28 @@ pub(super) fn run(action: &str, args: Vec<OsString>) -> Result<Output> {
         _ => unreachable!(),
     };
     Ok(captured(capture, output))
+}
+
+/// Publish only what the directory holds, so no edit is silently left out.
+fn refuse_partial(
+    repo: &mut Repository,
+    layer: &LayerId,
+    capture: &javelin::Capture,
+) -> Result<()> {
+    if capture.behind {
+        // Unresolved conflicts with the head are the owner's to resolve, so they are reported
+        // as such before the generic BEHIND refusal.
+        return match repo.refresh_preview(layer) {
+            Err(conflict @ Error::RefreshConflict(_)) => Err(conflict),
+            _ => Err(Error::InvalidInput(BEHIND.into())),
+        };
+    }
+    if matches!(capture.update, Some(LayerUpdate::Stale { .. })) || !capture.uncertain.is_empty() {
+        return Err(Error::Busy(
+            "files changed while being captured; nothing was published".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The newest Active head, the CAS token for terminal discard and Publish. A Layer that
@@ -183,7 +213,7 @@ fn refresh_text(report: &WorkspaceRefresh) -> String {
     )
 }
 
-fn report_text(report: &WorkspaceReport) -> String {
+fn report_text(report: &WorkspaceReport, worlds: &Worlds) -> Result<String> {
     let mut lines = vec![format!(
         "Layer {} {} at {}",
         report.layer.as_str(),
@@ -196,14 +226,16 @@ fn report_text(report: &WorkspaceReport) -> String {
     )];
     if let Some(base) = &report.base {
         lines.push(format!(
-            "Base World {}: {:?} in {} ms",
-            base.version, base.source, base.elapsed_ms
+            "Base {}: {:?} in {} ms",
+            worlds.label(base.version)?,
+            base.source,
+            base.elapsed_ms
         ));
     }
     if let Some(clone) = &report.clone {
         lines.push(clone_text(clone, report.elapsed_ms));
     }
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 fn clone_text(clone: &CloneReport, elapsed: u64) -> String {

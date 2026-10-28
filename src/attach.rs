@@ -239,6 +239,21 @@ impl Repository {
         Ok(None)
     }
 
+    /// The local World that holds remote World `remote`, as attach and sync recorded it, or
+    /// `None` when this store does not hold it. Attached stores keep one local World per
+    /// attach or sync, so this reads that short history.
+    pub fn local_world(&self, remote: u64) -> Result<Option<VersionNumber>> {
+        for version in self.history()?.into_iter().rev() {
+            if self
+                .remote_world(version.number)?
+                .is_some_and(|head| head.number == remote)
+            {
+                return Ok(Some(version.number));
+            }
+        }
+        Ok(None)
+    }
+
     /// Moves the local World from `local`, a head [`Repository::follows_attachment`] accepted,
     /// to `head`, a verified remote head newer than the attached one whose tree is stored,
     /// then records it in `attach.json`. The advance is a compare-and-swap on `local`, so a

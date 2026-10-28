@@ -161,14 +161,25 @@ Open:
   change needs a node restart.
 - [ ] `javelin login` approved with the admin token signs the device in as principal `admin`; a
   second person needs the browser passkey page, and then still has no role (above).
-- [ ] No direct Publish to the node from the CLI. Importing a project means opening a request
-  of your own and publishing it, which on a repository that requires approvals needs someone
-  else's approval first. `workspace publish` in an attached clone publishes locally and then
-  `sync` refuses `local_world_diverged`.
-- [ ] No import into an attached repository: `adopt` makes a new local repository only.
-- [ ] Local World numbers and IDs differ between clones of the same repository (one remote World
-  5 was local World 4, 5 and 2 in three clones). `history` and `workspace create` ("Base World
-  N") print local numbers; only `sync`, `attach` and request output show the node's.
+- [x] No direct Publish to the node from the CLI. `workspace publish` in an attached clone now
+  publishes on the node (`PublishLayer` through the outbox, D7) when the caller is Maintain and
+  the repository requires no approvals; otherwise the node answers `insufficient_role` or
+  `review_required` (recorded outcomes, so a queued one never stalls) and the message names
+  `request open`. The clone then follows the node and closes the Layer, so the local World
+  never diverges. Evidence: `daily_workflow.rs`. Windows: not run.
+  - [ ] A Layer the node has not seen from this clone cannot queue its direct Publish while the
+    node is down (`node_unavailable`); capture upload (trail 24) would let it name its parent.
+  - [ ] A closed Layer's local state reads `discarded`: the library has no "published on the
+    node" state.
+- [x] Import into an attached repository: `javelin adopt PROJECT --repo DIR --operation OP`
+  arrives as one Publish under the same rules, into a World with no files yet.
+- [x] Local World numbers and IDs differ between clones: every command in an attached clone
+  (`history`, `workspace create|path`, `layer radar`, `checkpoint`, `sync`, Publish, requests)
+  shows the node's numbers and IDs, and `--world N` takes the node's number. The map is each
+  local World's own `attach-`/`sync-<number>-<id>` operation, written with the advance.
+  `daily_workflow.rs` asserts two and three clones print the same numbers and IDs.
+  - [ ] `history` lists only the Worlds a clone holds (one per attach or sync), not the node's
+    whole history; `blame` in an attached clone still has no origins from the node.
 - [ ] `request show` marks every changed path `M`, added files included: the node's sparse
   changes do not say whether the base had the path.
 - [ ] A Layer whose request was published on the node stays active in the clone that opened it,

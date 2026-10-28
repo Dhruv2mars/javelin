@@ -93,6 +93,17 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     }
     // A queued record the node refused was delivered, but did not do what it asked.
     let mut refused = None;
+    // Direct Publishes the node accepted: their Layers close here once the World follows.
+    let published: Vec<_> = replay
+        .iter()
+        .flat_map(|replay| &replay.delivered)
+        .filter_map(|delivered| {
+            let entry = outbox.entry(delivered.seq)?;
+            let (layer, node) =
+                crate::cli_publish::published_layer(&entry.payload, &delivered.outcome)?;
+            Some((layer, entry.operation.clone(), node))
+        })
+        .collect();
     let delivered: Vec<Value> = replay
         .iter()
         .flat_map(|replay| &replay.delivered)
@@ -119,17 +130,29 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     let advanced = head.number != attachment.head.number;
     let base = advanced.then(|| repo.warm_base()).transpose()?;
     let local = repo.head()?;
+    let mut closed = Vec::new();
+    for (layer, operation, node) in &published {
+        if crate::cli_publish::close(&link, &mut repo, layer, operation, *node)? {
+            closed.push(layer.clone());
+        }
+    }
     let mut text = if advanced {
         format!(
-            "Synced {} from remote World {} to {} (local World {}).",
-            attachment.repository, attachment.head.number, head.number, local.number
+            "Synced {} from World {} to World {}.",
+            attachment.repository, attachment.head.number, head.number
         )
     } else {
         format!(
-            "{} is current at remote World {} (local World {}).",
-            attachment.repository, head.number, local.number
+            "{} is current at World {}.",
+            attachment.repository, head.number
         )
     };
+    for layer in &closed {
+        text.push_str(&format!(
+            "\nLayer {} was published on the node; its directory was reclaimed.",
+            layer.as_str()
+        ));
+    }
     if replay.is_some() {
         text.push_str(&format!(
             "\nDelivered {} queued records; {pending} pending.",
@@ -171,6 +194,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         "local_head": local,
         "base": base,
         "outbox": {"delivered": delivered, "stalled": stall, "pending": pending},
+        "closed": closed,
         "code": code,
     });
     Ok((value, text, exit))

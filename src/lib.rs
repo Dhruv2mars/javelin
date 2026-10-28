@@ -30,7 +30,7 @@ pub mod tree;
 mod workspace;
 
 #[cfg(feature = "fs")]
-pub use adopt::Adoption;
+pub use adopt::{Adoption, adoption_layer};
 #[cfg(feature = "fs")]
 pub use attach::{Attachment, RemoteHead};
 pub use audience::{Audience, MAX_POLICY_BYTES, MAX_RULES, POLICY_PATH, Policy, Reader};

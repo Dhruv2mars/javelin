@@ -8,10 +8,12 @@ mod cli_auth;
 mod cli_check;
 mod cli_control;
 mod cli_disclosure;
+mod cli_publish;
 mod cli_remote;
 mod cli_request;
 mod cli_sync;
 mod cli_upload;
+mod cli_worlds;
 
 const HELP: &str = cli::HELP;
 
@@ -140,6 +142,11 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "outbox") && args.get(1).is_some_and(|a| a == "status") {
         return cli::outbox_status(args.into_iter().skip(2).collect()).map_err(Into::into);
     }
+    // `adopt PROJECT --repo DIR` imports into an attached repository; without --repo, adopt
+    // makes a new repository of the project directory.
+    if args.first().is_some_and(|a| a == "adopt") && args.iter().any(|a| a == "--repo") {
+        return cli_publish::adopt(args.into_iter().skip(1).collect());
+    }
     if args.first().is_some_and(|a| a == "adopt") {
         return cli::adopt(args.into_iter().skip(1).collect()).map_err(Into::into);
     }
@@ -159,7 +166,7 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         .first()
         .is_some_and(|a| a == "layer" || a == "workspace")
     {
-        return cli::run(args).map_err(Into::into);
+        return cli::run(args);
     }
     run_repository(args)
         .map(|(value, text)| (value, text, 0))
@@ -206,12 +213,20 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
     }
     let repo = Repository::open(&root)?;
     if command == "history" {
-        let versions = repo.history()?;
-        let text = versions
-            .iter()
-            .map(|v| format!("World {}  {}", v.number, v.id))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // An attached repository lists the node's numbers and IDs for the Worlds it holds.
+        let worlds = cli_worlds::Worlds::of(&repo)?;
+        let mut versions = Vec::new();
+        let mut lines = Vec::new();
+        for version in repo.history()? {
+            let shown = worlds.version(&version)?;
+            lines.push(format!(
+                "{}  {}",
+                worlds.label(version.number)?,
+                shown["id"].as_str().unwrap_or_default()
+            ));
+            versions.push(shown);
+        }
+        let text = lines.join("\n");
         Ok((
             json!({"ok": true, "command": "history", "versions": versions}),
             text,
