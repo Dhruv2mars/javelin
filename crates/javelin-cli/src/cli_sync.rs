@@ -132,7 +132,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     let local = repo.head()?;
     let mut closed = Vec::new();
     for (layer, operation, node) in &published {
-        if crate::cli_publish::close(&link, &mut repo, layer, operation, *node)? {
+        if crate::cli_publish::close(&link, &mut repo, layer, operation, *node).unwrap_or(false) {
             closed.push(layer.clone());
         }
     }

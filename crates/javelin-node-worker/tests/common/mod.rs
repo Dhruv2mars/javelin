@@ -316,7 +316,7 @@ pub fn run_wire(repository: &RepositoryId, wire: &Wire, absent: &Wire) {
     assert_eq!(answer.message.as_ref().and_then(code), Some("unauthorized"));
     assert_eq!(
         code(&wire.reply(Some("reviewer"), &publish)),
-        Some("forbidden")
+        Some("insufficient_role")
     );
     let token = format!("Bearer {}", token_for("admin", repository.as_str()));
     let answer = wire.post_raw(Some(&token), true, &encode(&publish).expect("encode"));

@@ -231,10 +231,10 @@ fn publish(
     if let PublishOutcome::Published { number, id, tree } = &outcome {
         value["ok"] = json!(true);
         value["published"] = json!({"number": number, "id": id, "tree": tree});
-        let closed = match node {
-            Some(node) => close(&link, &mut attached.repo, layer, operation, node)?,
-            None => false,
-        };
+        // The Publish stands whatever happens here; `javelin sync` closes the Layer later.
+        let closed = node.is_some_and(|node| {
+            close(&link, &mut attached.repo, layer, operation, node).unwrap_or(false)
+        });
         value["closed"] = json!(closed);
         let followed = follow(&link, &mut attached);
         value["head"] = followed.as_ref().map_or(Value::Null, |head| json!(head));

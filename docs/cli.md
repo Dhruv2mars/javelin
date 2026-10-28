@@ -357,8 +357,9 @@ Maintain, on a repository that requires no approvals. Otherwise nothing is publi
 the command exits 1 with `insufficient_role` (Read or Review) or `review_required` (approvals
 required), naming `javelin request open ID --layer LAYER --operation OP`. The Layer keeps
 its directory, so it can be proposed as it is. A token without the Publish scope gets
-`forbidden`. These refusals are recorded outcomes, so a queued Publish they answer leaves the
-outbox, and the same operation may publish once the rules allow it.
+`forbidden`. These refusals are outcomes, so a queued Publish they answer leaves the outbox
+instead of waiting there. Retrying the same operation replays the refusal; once the rules
+allow it, publish with a new operation.
 
 `javelin adopt PROJECT --repo DIR --operation ID` imports the project directory into the
 attached repository DIR as one Publish under the same rules, through the reserved

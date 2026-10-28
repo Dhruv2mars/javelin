@@ -256,7 +256,7 @@ fn refuse_outsider_work(
 /// other member's `PublishLayer` is answered with a refusal outcome that says to open a Publish
 /// Request: `insufficient_role` for a role below Maintain, `review_required` when approvals
 /// are required, and `forbidden` for a token without the Publish scope. An outcome, not an error, so a queued Publish is decided rather than retried
-/// forever. Nothing is recorded, so the same operation may publish once the rules allow it. A
+/// forever. The node records nothing, so the operation is not used up. A
 /// token limited to another Layer is refused by the gate, as before.
 fn refuse_direct_publish(
     gate: &Gate,

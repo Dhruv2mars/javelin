@@ -150,10 +150,13 @@ fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
         "unauthorized",
         "an anonymous write"
     );
+    // A Read member's direct Publish is decided, not an error: it says to open a request.
     let reader = token_for("reader", REPO);
     assert_eq!(
-        error_code(send(addr, &bearer(&reader), &publish(head)).1),
-        "forbidden",
+        send(addr, &bearer(&reader), &publish(head)).1,
+        Some(Message::PublishOutcome(PublishOutcome::Refused {
+            code: "insufficient_role".into()
+        })),
         "the Read role cannot Publish"
     );
     let (_, published) = send(addr, &bearer(&token(REPO)), &publish(head));
