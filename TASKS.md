@@ -139,9 +139,23 @@ every push (`.buildkite/pipeline.yml`).
   the fake "other writer" never ran. Attach deleted nothing. The fake node now handles each
   connection on its own thread and drops one that is not a request; the test sends both
   probes itself (`fix/flaky-tests`).
-- [ ] Other tests still stop a node after `Some(n)` connections or dial a `closed_url()`
-  (`wire_frontier`, `wire_hidden`, `wire_auth`, `stack`, `traces`, `attach`, `layer_refresh`,
-  `hosted_acceptance`): a stray local connection can break them the same way.
+- [x] On a loaded Mac, `loopback.rs` `publish_layer_over_loopback_replays_the_recorded_outcome`,
+  `wire_auth.rs` `a_layer_limited_token_uploads_objects_but_writes_only_its_own_layer` and
+  `wire_hidden.rs` `an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back`
+  reset, and `outbox_replay.rs` counted 2 forwards for 1. Not a server reset and not a
+  duplicate send: every one of 14 failures under load had T3 Code's port probe (`GET /` or a
+  TLS hello) in it. The probe used one of `serve`'s `Some(n)` connections, so the listener
+  closed under the test's last request; at the outbox proxy it was counted as a forward.
+  Load only widens the window. The server reads and drains every request, and an outbox
+  write is never resent on a reset (`retry_reset: false`); a record left queued is resent
+  under the same operation ID, whose outcome the node replays. These tests now serve with
+  `wire_support::serve_until_joined`, which stops on a flag between connections like the
+  `checkpoints` and `stack` nodes, and the proxy forwards only requests for the node
+  (`fix/flaky-tests`).
+- [ ] Tests that dial `closed_url()` (`attach`, `wire_support`, `daily_support`) bind a port,
+  drop it and dial it, so another test's listener can get that port and the connection. A
+  stray `POST /v2/r/demo` from one of them still counts against a `Some(n)` node serving
+  `demo`. Dial a port no test can be handed instead.
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
