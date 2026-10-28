@@ -36,7 +36,7 @@ use crate::{
     CliError,
     cli_remote::{LOCAL_WORLD_DIVERGED, Link, RemoteError, parse_target, recover_attachment},
     cli_request::{Options, Outcome},
-    cli_store::{read_json, write_json},
+    cli_store::{read_json, read_records, write_json},
     cli_sync::follow,
 };
 
@@ -574,7 +574,7 @@ pub(crate) fn retire_published(
     root: &Path,
     requests: &[RequestSummary],
 ) -> Result<Vec<Value>, CliError> {
-    let records = read_json(root, "requests.json")?;
+    let records = read_records(root)?;
     let mut retired = Vec::new();
     for request in requests
         .iter()

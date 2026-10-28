@@ -14,15 +14,10 @@
 //! saw for the Layer, kept in `.javelin/requests.json`. `open`, `approve` and `comment` need a
 //! live answer and refuse with `node_unavailable`.
 
-use std::{
-    cell::RefCell,
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+use std::{cell::RefCell, ffi::OsString, path::PathBuf};
 
 use javelin::{
-    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository,
-    VersionNumber,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, Repository, VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
 };
 use javelin_protocol::{
@@ -40,16 +35,13 @@ use crate::{
     cli_changes::change_kinds,
     cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, stale_appends, unexpected},
     cli_store::{
-        queued_base, read_json, remember_bases, remember_listed, remembered_base, write_json,
+        load_record, queued_base, remember_bases, remember_listed, remembered_base, save_record,
     },
     cli_update::{latest, retire_published, retired_lines, unresolved, unresolved_error},
     cli_upload::{
         create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
 };
-
-/// Where this clone keeps what it last saw of the requests it authored.
-const REQUESTS: &str = "requests.json";
 
 pub(crate) type Outcome = std::result::Result<Output, CliError>;
 
@@ -1000,59 +992,4 @@ fn state(status: RequestStatus) -> &'static str {
 
 pub(crate) fn remote_error(error: javelin_protocol::ProtocolError) -> CliError {
     CliError::Remote(error.into())
-}
-
-/// What this clone last saw of a request it authored: its Layer, the remote World the
-/// Layer's base holds, and the bytes of the node's head checkpoint for that Layer, which name
-/// the node's next checkpoint for a queued revision.
-struct RequestRecord {
-    layer: LayerId,
-    base: RemoteHead,
-    head: Vec<u8>,
-}
-
-fn read_records(root: &Path) -> Result<serde_json::Map<String, Value>, CliError> {
-    read_json(root, REQUESTS)
-}
-
-fn load_record(root: &Path, request: &RequestId) -> Result<Option<RequestRecord>, CliError> {
-    let records = read_records(root)?;
-    let Some(record) = records.get(request.as_str()) else {
-        return Ok(None);
-    };
-    let corrupt = || Error::CorruptRepository(format!("{REQUESTS}: bad record"));
-    let layer = LayerId::parse(record["layer"].as_str().ok_or_else(corrupt)?)?;
-    let base = serde_json::from_value(record["base"].clone()).map_err(|_| corrupt())?;
-    let head = record["head"]
-        .as_str()
-        .ok_or_else(corrupt)?
-        .as_bytes()
-        .to_vec();
-    Ok(Some(RequestRecord { layer, base, head }))
-}
-
-/// Records the request atomically: a temporary file, synced, then renamed.
-fn save_record(
-    root: &Path,
-    request: &RequestId,
-    layer: &LayerId,
-    base: &RemoteHead,
-    head: &[u8],
-) -> Result<(), CliError> {
-    let mut records = read_records(root)?;
-    let head = std::str::from_utf8(head)
-        .map_err(|_| Error::CorruptRepository("a node checkpoint is not UTF-8 JSON".into()))?;
-    // Every Layer the request was proposed from here, so each is retired once it publishes.
-    let mut layers: Vec<Value> = records
-        .get(request.as_str())
-        .and_then(|record| record["layers"].as_array().cloned())
-        .unwrap_or_default();
-    if !layers.contains(&json!(layer)) {
-        layers.push(json!(layer));
-    }
-    records.insert(
-        request.as_str().into(),
-        json!({"layer": layer, "layers": layers, "base": base, "head": head}),
-    );
-    write_json(root, REQUESTS, records)
 }
