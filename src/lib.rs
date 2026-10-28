@@ -47,7 +47,10 @@ pub use layer::{
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
-pub use repository::{AdvanceOutcome, CheckpointSink, IntegrityReport, Repository, WorldVersion};
+pub use repository::{
+    AdvanceOutcome, CheckpointSink, DatabaseUse, IntegrityReport, Repository, WorldVersion,
+    database_use, take_pages_written,
+};
 pub use seal::{Opening, SALT_BYTES, SealedKind};
 #[cfg(feature = "fs")]
 pub use workspace::{

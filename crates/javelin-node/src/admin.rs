@@ -72,3 +72,13 @@ pub fn apply(storage: &dyn Storage, permissions: &AppliedPermissions) -> Result<
 pub fn trust(storage: &dyn Storage, keys: &KeySet) -> Result<(), ProtocolError> {
     Ok(auth::store_keys(storage, keys)?)
 }
+
+/// Replaces the budget the node holds writes to (`budget.rs`). Only the node's owner calls
+/// this: the control plane's admin token on Cloudflare, or whoever runs a self-hosted node,
+/// which reads `budget.json` from its data directory when it starts.
+pub fn set_budget(
+    storage: &dyn Storage,
+    budget: &crate::budget::Budget,
+) -> Result<(), ProtocolError> {
+    Ok(crate::budget::store(storage, budget)?)
+}

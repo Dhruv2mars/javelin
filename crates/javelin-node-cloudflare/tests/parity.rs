@@ -24,15 +24,16 @@ use javelin::{
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
 use javelin_node::{
-    FileWorldLog,
+    FileWorldLog, admin,
     auth::Gate,
+    budget::{Budget, LARGEST_OBJECT, ROWS_WRITTEN_PER_DAY, STORAGE_BYTES},
     storage::{Coordination, Directory, Storage},
     wire,
 };
 use javelin_node_cloudflare::{pages::MemPages, vfs::PageStorage};
 use javelin_protocol::{
     Message,
-    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, decode, encode},
+    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, Usage, decode, encode},
 };
 
 const REPO: &str = "acme-app";
@@ -74,8 +75,8 @@ fn gate() -> Gate {
     gate
 }
 
-fn token(sub: &str) -> String {
-    let now = now();
+/// A ten-minute token for `sub`, issued at `now` by the node's clock.
+fn token(sub: &str, now: u64) -> String {
     let scopes = [
         Scope::Read,
         Scope::LayerWrite,
@@ -124,14 +125,14 @@ struct Session<'a> {
 impl Session<'_> {
     /// Sends `message` as `caller` (`None` is anonymous), from a browser when `origin`.
     fn send_from(&mut self, caller: Option<&str>, origin: bool, message: &Message) -> Message {
-        let token = caller.map(token);
-        let body = encode(message).unwrap();
         let now = self.log.now();
+        let token = caller.map(|sub| token(sub, now));
+        let body = encode(message).unwrap();
         let answer =
             wire::handle(self.log, &self.gate, token.as_deref(), origin, now, &body).unwrap();
         let reply = decode(&answer.body).unwrap();
         self.seen
-            .push(format!("cors={} {}", answer.cors, masked(&reply)));
+            .push(format!("cors={} {}", answer.cors, masked_use(&reply)));
         reply
     }
 
@@ -461,5 +462,272 @@ fn a_second_connection_to_an_open_database_is_refused() {
         error.sqlite_error_code(),
         Some(rusqlite::ErrorCode::DatabaseBusy),
         "{error}"
+    );
+}
+
+/// The reply with the digits of a budget's numbers masked: each store counts its own pages,
+/// so the use differs between stores while the decision must not.
+fn masked_use(reply: &Message) -> String {
+    let text = masked(reply);
+    let counted = match reply {
+        Message::Usage(_) => true,
+        Message::Error { code, .. } => code == "quota_exceeded",
+        _ => false,
+    };
+    if !counted {
+        return text;
+    }
+    let mut out = String::new();
+    let mut digits = false;
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            if !digits {
+                out.push('#');
+            }
+            digits = true;
+        } else {
+            digits = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn usage_of(s: &mut Session<'_>) -> Usage {
+    match s.send(Some("owner"), &Message::ReadUsage) {
+        Message::Usage(usage) => usage,
+        other => panic!("usage refused: {other:?}"),
+    }
+}
+
+fn used(usage: &Usage, budget: &str) -> u64 {
+    usage
+        .meters
+        .iter()
+        .find(|meter| meter.budget == budget)
+        .and_then(|meter| meter.used)
+        .unwrap_or_else(|| panic!("no use for {budget}: {usage:?}"))
+}
+
+/// The owner replaces the budget, as the admin route does: stored, then applied.
+fn set(storage: &dyn Storage, s: &mut Session<'_>, budget: Budget) {
+    admin::set_budget(storage, &budget).unwrap();
+    s.log.set_budget(budget);
+}
+
+fn quota(reply: &Message) -> &str {
+    match reply {
+        Message::Error { code, detail } if code == "quota_exceeded" => detail,
+        other => panic!("expected quota_exceeded, got {other:?}"),
+    }
+}
+
+/// A budget a few KB above what the node holds refuses the crossing upload and Publish,
+/// changes nothing, names the budget to members and gives maintainers the numbers, and
+/// accepts the same writes once the owner raises it. A day's rows reset at midnight UTC.
+fn budget_scenario(
+    storage: &dyn Storage,
+    log: &mut FileWorldLog,
+    clock: &AtomicU64,
+) -> Vec<String> {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let seeded = s.layer_with("seed", 0, &[("src/a", b"a\n")]);
+    s.send(Some("owner"), &publish("seed", "publish-seed", seeded, 0));
+    let ready = s.layer_with("ready", 1, &[("src/b", b"b\n")]);
+
+    // Only Maintain reads the node's use.
+    let usage = usage_of(&mut s);
+    for caller in [Some("member"), Some("stranger"), None] {
+        let reply = s.send(caller, &Message::ReadUsage);
+        assert!(matches!(&reply, Message::Error { .. }), "{reply:?}");
+    }
+
+    // A few KB of storage left: the upload and the Publish are refused, and nothing changes.
+    let stored = used(&usage, STORAGE_BYTES);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            storage_bytes: stored + 4096,
+            ..Budget::default()
+        },
+    );
+    let big = vec![7u8; 16 << 10];
+    let blob = (Kind::Blob, ObjectId::for_blob(&big), big.clone());
+    let refused = s.send(Some("owner"), &Message::Objects(vec![blob.clone()]));
+    assert!(
+        quota(&refused).starts_with("storage_bytes: "),
+        "{refused:?}"
+    );
+    let refused = s.send(Some("member"), &Message::Objects(vec![blob.clone()]));
+    assert_eq!(quota(&refused), STORAGE_BYTES);
+    let anonymous = s.send(None, &Message::Objects(vec![blob.clone()]));
+    assert!(
+        matches!(&anonymous, Message::Error { code, .. } if code == "unauthorized"),
+        "{anonymous:?}"
+    );
+    let missing = s.send(Some("owner"), &Message::Want(vec![(blob.0, blob.1)]));
+    assert_eq!(missing, Message::Missing(vec![(blob.0, blob.1)]));
+    let refused = s.send(Some("owner"), &publish("ready", "publish-ready", ready, 1));
+    quota(&refused);
+    let head = s.send(Some("owner"), &Message::Resolve { version: None });
+    assert!(
+        format!("{head:?}").contains("number: VersionNumber(1)"),
+        "{head:?}"
+    );
+    assert_eq!(s.log.head().unwrap().number, v(1));
+    assert!(
+        s.log.publication(&op("publish-ready")).unwrap().is_none(),
+        "a refused Publish leaves no record"
+    );
+
+    // Raised: the same writes are accepted, the Publish under its first operation ID.
+    set(storage, &mut s, Budget::default());
+    let stored = s.send(Some("owner"), &Message::Objects(vec![blob.clone()]));
+    assert!(matches!(&stored, Message::Stored { .. }), "{stored:?}");
+    let published = s.send(Some("owner"), &publish("ready", "publish-ready", ready, 1));
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { number, .. }) if *number == v(2)
+        ),
+        "{published:?}"
+    );
+
+    // An object larger than the owner allows is refused whatever storage is left.
+    set(
+        storage,
+        &mut s,
+        Budget {
+            largest_object: 4096,
+            ..Budget::default()
+        },
+    );
+    let other = vec![8u8; 16 << 10];
+    let large = (Kind::Blob, ObjectId::for_blob(&other), other);
+    let refused = s.send(Some("owner"), &Message::Objects(vec![large.clone()]));
+    assert_eq!(
+        quota(&refused),
+        "largest_object: an object of 16384 bytes is larger than the 4096 allowed"
+    );
+    let refused = s.send(Some("member"), &Message::Objects(vec![large.clone()]));
+    assert_eq!(quota(&refused), LARGEST_OBJECT);
+
+    // Today's rows are spent: refused until midnight UTC, accepted the next day.
+    let rows = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY);
+    assert!(rows > 0, "the writes above were counted");
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: rows + 16,
+            ..Budget::default()
+        },
+    );
+    let create = Message::LayerCreate {
+        layer: layer("tomorrow"),
+        base: v(2),
+    };
+    let refused = s.send(Some("owner"), &create);
+    assert!(
+        quota(&refused).starts_with("rows_written_per_day: "),
+        "{refused:?}"
+    );
+    clock.fetch_add(86_400, Ordering::SeqCst);
+    let created = s.send(Some("owner"), &create);
+    assert!(
+        matches!(
+            &created,
+            Message::LayerOutcome(LayerOutcome::Accepted { .. })
+        ),
+        "{created:?}"
+    );
+    let usage = usage_of(&mut s);
+    assert!(used(&usage, ROWS_WRITTEN_PER_DAY) < rows, "{usage:?}");
+    s.seen
+}
+
+fn budget_on(storage: &(impl Storage + Coordination), start: u64) -> Vec<String> {
+    let clock = clock(start);
+    let mut log = open(storage, &clock);
+    budget_scenario(storage, &mut log, &clock)
+}
+
+#[test]
+fn both_nodes_refuse_a_write_that_crosses_the_budget_and_accept_it_once_raised() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = now();
+    let native: Vec<_> = budget_on(&Directory::new(dir.path()), start);
+    let object: Vec<_> = budget_on(&PageStorage::new(Rc::new(MemPages::default())), start);
+    assert_eq!(native.len(), object.len());
+    for (step, (a, b)) in native.iter().zip(&object).enumerate() {
+        assert_eq!(a, b, "reply {step} differs");
+    }
+}
+
+/// Page rows as a Durable Object writes them: every `put` and `set_size` is one row.
+#[derive(Default)]
+struct CountingPages {
+    pages: MemPages,
+    rows: std::cell::Cell<u64>,
+}
+
+impl javelin_node_cloudflare::pages::Pages for CountingPages {
+    fn size(&self, file: &str) -> javelin_node_cloudflare::pages::Result<Option<u64>> {
+        self.pages.size(file)
+    }
+    fn set_size(&self, file: &str, size: u64) -> javelin_node_cloudflare::pages::Result<()> {
+        self.rows.set(self.rows.get() + 1);
+        self.pages.set_size(file, size)
+    }
+    fn get(
+        &self,
+        file: &str,
+        index: u64,
+    ) -> javelin_node_cloudflare::pages::Result<Option<Vec<u8>>> {
+        self.pages.get(file, index)
+    }
+    fn put(
+        &self,
+        file: &str,
+        index: u64,
+        bytes: &[u8],
+    ) -> javelin_node_cloudflare::pages::Result<()> {
+        self.rows.set(self.rows.get() + 1);
+        self.pages.put(file, index, bytes)
+    }
+    fn remove(&self, file: &str) -> javelin_node_cloudflare::pages::Result<()> {
+        self.pages.remove(file)
+    }
+}
+
+/// The rows the node counts against its daily budget are the page rows the Durable Object
+/// writes, with at most a few more: never fewer, so the budget never lets the quota through.
+#[test]
+fn the_rows_counted_are_the_rows_the_object_writes() {
+    let pages = Rc::new(CountingPages::default());
+    let storage = PageStorage::new(pages.clone());
+    let clock = clock(now());
+    let mut log = open(&storage, &clock);
+    let mut s = Session {
+        log: &mut log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let before = pages.rows.get();
+    let seeded = s.layer_with("seed", 0, &[("src/a", b"a\n")]);
+    s.send(Some("owner"), &publish("seed", "publish-seed", seeded, 0));
+    let big = vec![7u8; 600 << 10];
+    let blob = (Kind::Blob, ObjectId::for_blob(&big), big);
+    s.send(Some("owner"), &Message::Objects(vec![blob]));
+    let written = pages.rows.get() - before;
+    let counted = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY);
+    assert!(
+        written <= counted && counted <= written + written / 4,
+        "counted {counted} rows for {written} written"
     );
 }

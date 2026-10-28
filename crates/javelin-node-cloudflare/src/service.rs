@@ -12,6 +12,9 @@
 //!   `409 not_provisioned` before provisioning.
 //! - `keys` (a `KeySet` as JSON): replaces the keys the node verifies tokens with.
 //! - `state`: `{"provisioned","genesis","permissions"}`.
+//! - `budget`: an empty body reads, a `budget.json` body (fields absent keep their default)
+//!   replaces the owner's budget. `{"budget":{...},"usage":{"day",<budget>:{"used","limit"}}}`;
+//!   `409 not_provisioned` before provisioning.
 //!
 //! A malformed body is `400 invalid_input`.
 
@@ -21,6 +24,7 @@ use javelin_node::{
     FileWorldLog,
     admin::{self, ApplyError},
     auth::{self, Gate},
+    budget,
     storage::{Coordination, Storage},
     wire,
 };
@@ -94,6 +98,7 @@ impl<S: Storage + Coordination> Node<S> {
             "permissions" => self.permissions(body),
             "keys" => self.keys(body),
             "state" => self.state(),
+            "budget" => self.budget(body),
             _ => return Response::error(404, "not_found", action),
         };
         answer.unwrap_or_else(|error| Response::error(500, "storage_error", error))
@@ -209,6 +214,49 @@ impl<S: Storage + Coordination> Node<S> {
         admin::trust(&self.storage, &keys)?;
         self.gate = None;
         Ok(Response::json(200, json!({ "trusted": true })))
+    }
+
+    fn budget(&mut self, body: &[u8]) -> Result<Response, ProtocolError> {
+        let replace = if body.is_empty() {
+            None
+        } else {
+            match budget::parse(body) {
+                Ok(budget) => Some(budget),
+                Err(error) => return Ok(Response::error(400, "invalid_input", error)),
+            }
+        };
+        if !self.storage.provisioned()? {
+            return Ok(Response::error(
+                409,
+                "not_provisioned",
+                "provision the repository first",
+            ));
+        }
+        if let Some(budget) = &replace {
+            admin::set_budget(&self.storage, budget)?;
+        }
+        let (log, _) = self.open()?;
+        if let Some(budget) = replace {
+            log.set_budget(budget);
+        }
+        let now = log.now();
+        let usage = budget::usage(log, now)?;
+        let meters: serde_json::Map<String, Value> = usage
+            .meters
+            .iter()
+            .map(|meter| {
+                (
+                    meter.budget.clone(),
+                    json!({ "used": meter.used, "limit": meter.limit }),
+                )
+            })
+            .collect();
+        let mut usage_json = Value::Object(meters);
+        usage_json["day"] = json!(usage.day);
+        Ok(Response::json(
+            200,
+            json!({ "budget": log.budget(), "usage": usage_json }),
+        ))
     }
 
     fn state(&mut self) -> Result<Response, ProtocolError> {

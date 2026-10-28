@@ -19,6 +19,7 @@ use javelin_protocol::{
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
+    budget::Budget,
     checks,
     review::is_review_layer,
     storage::{Coordination, Storage},
@@ -45,6 +46,8 @@ pub struct FileWorldLog {
     /// other partitions' rows (`node.db`).
     records: Connection,
     clock: Clock,
+    /// The owner's budget (`budget.rs`), read from storage when the node opens.
+    budget: Budget,
     _guard: Box<dyn Any + Send>,
 }
 
@@ -66,6 +69,7 @@ impl FileWorldLog {
     ) -> Result<Self> {
         let repo = storage.repository()?;
         let guard = coordination.acquire()?;
+        let budget = crate::budget::stored(storage)?;
         let records = storage.records()?;
         records.execute_batch(
             "CREATE TABLE IF NOT EXISTS decided (
@@ -80,10 +84,15 @@ impl FileWorldLog {
         records.execute_batch(crate::checks::SCHEMA)?;
         records.execute_batch(crate::trace::SCHEMA)?;
         records.execute_batch(crate::disclosure::SCHEMA)?;
+        records.execute_batch(crate::budget::SCHEMA)?;
+        // Opening writes only on a store being provisioned, which the budget does not count.
+        repo.take_pages_written()?;
+        javelin::take_pages_written(&records)?;
         Ok(Self {
             repo,
             records,
             clock,
+            budget,
             _guard: guard,
         })
     }
@@ -92,6 +101,17 @@ impl FileWorldLog {
     /// move time this way instead of sleeping.
     pub fn set_clock(&mut self, clock: impl Fn() -> u64 + Send + 'static) {
         self.clock = Box::new(clock);
+    }
+
+    /// The budget writes are held to.
+    pub fn budget(&self) -> Budget {
+        self.budget
+    }
+
+    /// Replaces the budget writes are held to, after the owner stored a new one
+    /// (`budget::store`).
+    pub fn set_budget(&mut self, budget: Budget) {
+        self.budget = budget;
     }
 
     /// Unix time now, in seconds, by the node's clock.
