@@ -88,7 +88,9 @@ CI left open. Work from it, in roughly this order:
   `bun run deploy` in `apps/forge` from `main`): landing page at `/` with install status
   (installers coming) and open-by-node-URL, SPA fallback and security headers. Proved
   against a tunneled `javelin-node serve`.
-- [ ] CI design (waiting on the user).
+- [x] CI for building Javelin: Buildkite (free `linux-small` queue) runs fmt, clippy and tests
+  on every push and reports to the trail as a gate. Decided 2026-10-28.
+- [ ] CI inside Javelin for its users: not decided yet (the user's call). No work planned.
 - [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
   the first was a product gap. A Layer discarded or published, then killed before the
   trash move, kept a live directory until a reclaiming command ran. The next command
@@ -124,18 +126,21 @@ every push (`.buildkite/pipeline.yml`).
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
-- [x] Release binaries: GitHub releases are gone. Decided with the user: npm is the only
-  host (`docs/releases.md`). `@dhruv2mars/javelin` wraps five platform packages through
-  `optionalDependencies` (esbuild pattern; npm's postinstall links the native binary over the
-  `sh` bin shim, bun uses the shim, no Node at runtime). `tools/release/release.ts` builds them
-  on the Mac (Linux and Windows through cargo-zigbuild, glibc 2.28), packs, serves a loopback
-  registry, and publishes with `npm publish` (`--dry-run`). `scripts/install.sh` and
-  `install.ps1` fetch the platform tarball from the registry and check `dist.integrity`.
-  `npm i -g`, `bun add -g` and curl proved from a loopback registry on macOS arm64 and, on
-  Buildkite, Linux amd64 and arm64 (`tools/release/proof.sh`). GA platforms are macOS and
-  Linux; macOS x86_64 is built, never run; Windows is experimental and never run.
-  - [ ] First publish, with the owner's go-ahead and npm login: `publish --tag latest`,
-    `INSTALLERS_PUBLISHED = true`, deploy the forge, rerun the proofs against npm.
+- [ ] Release binaries on npm (decided 2026-10-28; GitHub Releases is gone and Entire hosts no
+  release files): wrapper `@dhruv2mars/javelin` plus one package per platform, `npm i -g` or
+  `bun add -g`, and a curl installer that reads the same tarballs from `registry.npmjs.org`
+  (trail 23, `feat/release-install`). The first real publish waits for the user's go-ahead
+  and their npm login.
+  - [x] Built and proved on trail 23: npm's postinstall links the native binary over the
+    `sh` bin shim, bun uses the shim (no Node at runtime); `tools/release/release.ts` builds,
+    packs, serves a loopback registry and runs `npm publish` (`--dry-run`); `install.sh`
+    checks the registry's `dist.integrity`. `npm i -g`, `bun add -g` and curl proved on macOS
+    arm64 and, on Buildkite, Linux amd64 and arm64 (`tools/release/proof.sh`). macOS x86_64
+    built, never run.
+  - [ ] First publish: `publish --tag latest`, `INSTALLERS_PUBLISHED = true`, deploy the
+    forge, rerun the proofs against npm.
+- [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
+  runner exists. Decided 2026-10-28.
 - [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
   of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
@@ -144,6 +149,13 @@ every push (`.buildkite/pipeline.yml`).
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
 - [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
   drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+
+## Merge rule for flaky tests (2026-10-28)
+
+A trail may merge when its Buildkite build is green and every local macOS failure also
+reproduces on main. Known flakes (`fix/flaky-tests`): node server connection resets under load
+(`loopback.rs`, `wire_auth.rs`, `wire_hidden.rs`), duplicate sends in `outbox_replay.rs`, and
+`attach.rs`'s fake node.
 
 ## Daily workflow acceptance (2026-10-28)
 
