@@ -53,6 +53,10 @@ CI left open. Work from it, in roughly this order:
     account; each repository counts only its own), and admin pushes.
   - [ ] A CLI for the owner to change the budget (today: the admin route, or `budget.json`
     and a restart on a self-hosted node).
+  - [x] Deployed as version `c17e6ce3` on Workers Free; conformance 3 passed against it.
+- [ ] The deployed `repo_conformance_20261026` (provisioned at repository format 10) no longer
+  opens: format 11 shipped without a migration, so its `state` is `unsupported repository format
+  10`. Migrate format 10 stores, or retire that test repository.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
   list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,

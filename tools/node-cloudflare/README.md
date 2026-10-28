@@ -76,8 +76,9 @@ same token.
     https://javelin-node.dhruv-sharma10102005.workers.dev
 
 The Rust node replaced the TypeScript node there on 2026-10-28 (first version
-`3ffe1098-5392-44b7-8cec-91bafda4d764`, current `d0499fbb-bf29-4d2f-866a-68d659115c60`, which
-carries requests and sync and the public frontier), on
+`3ffe1098-5392-44b7-8cec-91bafda4d764`, then `d0499fbb-bf29-4d2f-866a-68d659115c60`, which
+carries requests and sync and the public frontier, current `c17e6ce3-a852-4273-933c-5eff3400455a`,
+which adds the budget, deployed 2026-10-29 from feat/node-budget at 3,509 KiB, 1,268 KiB gzip), on
 Workers Free. The admin token is a 32-byte
 random hex string set with `wrangler secret put` and kept on the owner's machine in
 `~/.config/javelin/cloudflare-node-admin-token`; it is not in this repository or any log.
@@ -88,6 +89,8 @@ Checks run against it on 2026-10-28:
 | --- | --- | --- |
 | Conformance suite, admin and protocol version 2 (commit path, request loop, embargo) | `JAVELIN_NODE_URL=<url> JAVELIN_NODE_ADMIN_TOKEN=... JAVELIN_NODE_REPOSITORY=repo_conformance_20261028e cargo test -p javelin-node-worker --test workerd -- --ignored --test-threads=1` | 3 passed |
 | A repository the TypeScript node provisioned | `GET /admin/r/repo_conformance_20261026/state` before and after the deploy | identical genesis and epoch-2 permissions |
+| Conformance with the budget (version `c17e6ce3`, 2026-10-29) | the same command with `JAVELIN_NODE_REPOSITORY=repo_conformance_20261029budget` | 3 passed; `GET /admin/r/repo_conformance_20261029budget_wire/budget` after the run: 4,456,448 bytes stored and 260 rows written that day, against the Free-plan defaults |
+| The TypeScript-era repository on 2026-10-29 | `GET /admin/r/repo_conformance_20261026/state` | `500 storage_error`, `unsupported repository format 10`: it was provisioned at format 10, and format 11 (2026-10-28) shipped without a migration, before `d0499fbb` |
 
 ## Measured on Workers Free
 
