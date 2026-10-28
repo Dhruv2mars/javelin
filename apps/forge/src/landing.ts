@@ -126,8 +126,8 @@ function repositoryList(config: Config, storage: Storage | null) {
 }
 
 /**
- * Whether a release is published on the release host (docs/releases.md). Until it is, the
- * section says installers are coming; the installers the forge serves would find nothing.
+ * Whether a release is published on npm (docs/releases.md). Until it is, the section says
+ * installers are coming; the commands would find no package.
  */
 export const INSTALLERS_PUBLISHED = false;
 const SITE = "https://javelin-codes.vercel.app";
@@ -153,11 +153,13 @@ export function installSection(published = INSTALLERS_PUBLISHED): string {
           <p>One command installs <code>javelin</code> and <code>javelin-node</code>.</p>
         </div>
         <div class="band-body prose-block">
-          <p>macOS and Linux (x86_64 or arm64, glibc 2.28 or newer):</p>
+          <p>With npm or bun, on macOS or Linux:</p>
+          <pre class="install-command"><code>npm i -g @dhruv2mars/javelin</code></pre>
+          <pre class="install-command"><code>bun add -g @dhruv2mars/javelin</code></pre>
+          <p>Without either (macOS and Linux, x86_64 or arm64, glibc 2.28 or newer):</p>
           <pre class="install-command"><code>curl -fsSL ${SITE}/install.sh | sh</code></pre>
-          <p>Windows x86_64, in PowerShell:</p>
-          <pre class="install-command"><code>irm ${SITE}/install.ps1 | iex</code></pre>
-          <p>The installer checks the download's SHA-256 before it writes anything, puts both programs in <code>~/.javelin/bin</code>, and tells you how to add that to your <code>PATH</code>. It never edits your shell profile. Then run <code>javelin --version</code> and <code>javelin init</code> in a project. Javelin is pre-release; read <a href="${SOURCE}">the source on Entire</a>.</p>
+          <p>The installer fetches the same package from the npm registry, checks it against the registry's SHA-512 before it writes anything, and puts both programs in <code>~/.javelin/bin</code>. It tells you how to add that to your <code>PATH</code> and never edits your shell profile. Then run <code>javelin --version</code> and <code>javelin init</code> in a project.</p>
+          <p class="coming">Windows is experimental and untested: <code>irm ${SITE}/install.ps1 | iex</code>. Javelin is pre-release; read <a href="${SOURCE}">the source on Entire</a>.</p>
         </div>
       </section>`;
 }

@@ -51,7 +51,7 @@ steps:
       AR_wasm32_unknown_unknown=llvm-ar cargo build --locked --release --target wasm32-unknown-unknown -p javelin-node-cloudflare
 
   # The release script's Linux targets (tools/release, docs/releases.md), cross-compiled with
-  # zig against glibc 2.28 as the macOS release machine does, staged for a loopback host.
+  # zig against glibc 2.28 as the macOS release machine does, packed as npm packages.
   - label: ":package: release build (Linux)"
     key: release-linux
     agents: { queue: linux-small }
@@ -71,27 +71,36 @@ steps:
       cargo install --locked cargo-zigbuild --version 0.24.0
       rustup target add aarch64-unknown-linux-gnu
       git config --global --add safe.directory '*'
-      bun tools/release/release.ts build --version v0.1.0-ci --targets x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu --base-url http://127.0.0.1:4873
-      tar -cf release-linux.tar dist/release
+      bun tools/release/release.ts build --version 0.1.0-ci --targets x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      tar -cf release-linux.tar dist/npm
 
-  # A new developer on a plain distro: the one-line install from a loopback server, then
-  # javelin init and a first publish, as a non-root user with a fresh HOME
-  # (tools/release/proof.sh). arm64 runs under qemu user emulation.
+  # A new developer on Linux, three ways, each from a loopback npm registry serving those
+  # packages (`release.ts serve`): `npm i -g` in node:24-slim, `bun add -g` in
+  # oven/bun:1-slim (no Node), and the curl installer in ubuntu:24.04. Each runs
+  # tools/release/proof.sh as a non-root user with a fresh HOME and a git stand-in.
+  # arm64 runs under qemu user emulation.
   - label: ":penguin: release install proof (Linux)"
     key: release-linux-proof
     depends_on: release-linux
     agents: { queue: linux-small }
-    timeout_in_minutes: 20
+    timeout_in_minutes: 30
     command: |
       buildkite-agent artifact download release-linux.tar . && tar -xf release-linux.tar
       docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
+      docker run -d --name registry --network host -v "$$PWD:/w:ro" -w /w oven/bun:1-slim bun tools/release/release.ts serve
+      trap 'docker rm -f registry > /dev/null' EXIT
+      for i in $$(seq 30); do docker logs registry 2>&1 | grep -q "npm registry" && break; sleep 1; done
+      docker logs registry
+      proof='sh /w/tools/release/proof.sh'
       for platform in linux/amd64 linux/arm64; do
-        echo "--- proof on ubuntu:24.04 $$platform"
-        docker run --rm --platform "$$platform" -v "$$PWD:/w:ro" ubuntu:24.04 sh -c '
-          set -e
-          apt-get update -qq && apt-get install -y -qq curl ca-certificates python3-minimal > /dev/null
-          (python3 -m http.server 4873 --bind 127.0.0.1 --directory /w/dist/release > /tmp/serve.log 2>&1 &)
-          sleep 1
-          useradd -m stranger
-          su stranger -c "sh /w/tools/release/proof.sh http://127.0.0.1:4873 0.1.0"'
+        echo "--- npm i -g on node:24-slim $$platform"
+        docker run --rm --network host --platform "$$platform" --user node -v "$$PWD:/w:ro" node:24-slim \
+          $$proof npm http://127.0.0.1:4873 0.1.0
+        echo "--- bun add -g on oven/bun:1-slim $$platform"
+        docker run --rm --network host --platform "$$platform" --user bun -v "$$PWD:/w:ro" oven/bun:1-slim \
+          $$proof bun http://127.0.0.1:4873 0.1.0
+        echo "--- curl installer on ubuntu:24.04 $$platform"
+        docker run --rm --network host --platform "$$platform" -v "$$PWD:/w:ro" ubuntu:24.04 sh -c "
+          apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null &&
+          su ubuntu -c '$$proof curl http://127.0.0.1:4873 0.1.0'"
       done

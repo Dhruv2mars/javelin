@@ -1,37 +1,49 @@
 # Install and upgrade Javelin
 
 Javelin is pre-GA, and **no release is published yet**: the commands below work once the
-first release is on the release host ([releases.md](releases.md)). Until then, build from
-source as the [quickstart](quickstart.md) describes. There are no package-manager installs
-(Homebrew, crates.io, npm).
+first release is on npm ([releases.md](releases.md)). Until then, build from source as the
+[quickstart](quickstart.md) describes.
 
-## Install on macOS or Linux
+Every install method below installs two commands: `javelin`, the CLI, and `javelin-node`,
+which hosts repositories.
+
+## With npm or bun
+
+```sh
+npm i -g @dhruv2mars/javelin
+# or
+bun add -g @dhruv2mars/javelin
+
+javelin --version
+javelin init
+```
+
+The package `@dhruv2mars/javelin` pulls in one platform package with the native binaries
+for your machine. The commands run those binaries, not Node. Do not install with
+`--omit=optional` or `--no-optional`, because that leaves out the binaries.
+
+## Without npm (macOS and Linux)
 
 ```sh
 curl -fsSL https://javelin-codes.vercel.app/install.sh | sh
 ```
 
-This installs `javelin` and `javelin-node` into `~/.javelin/bin`. If that directory is not
-on your `PATH`, the installer prints the line to add to your shell profile; it never edits
-the profile itself. Then:
-
-```sh
-javelin --version
-javelin init
-```
+This downloads the same platform package from the npm registry, checks it against the
+registry's SHA-512 integrity, and installs both binaries into `~/.javelin/bin`. If that
+directory is not on your `PATH`, the installer prints the line to add to your shell profile;
+it never edits the profile itself. It needs `curl`, `tar` and `shasum` or `sha512sum`, and no
+Node.
 
 Options, after `sh -s --` (or as environment variables):
 
-- `--version v0.1.0` (`JAVELIN_VERSION`) installs that version instead of the latest.
+- `--version 0.1.0` (`JAVELIN_VERSION`) installs that version or dist-tag instead of `latest`.
 - `--install-dir DIR` (`JAVELIN_INSTALL_DIR`) installs elsewhere.
-- `--release-base URL-OR-DIR` (`JAVELIN_RELEASE_BASE`) reads releases from another host or a
-  local directory with the same layout.
-- `--archive FILE --sums FILE` installs an archive you downloaded, after checking it against
-  its `SHA256SUMS`.
+- `--registry URL` (`JAVELIN_NPM_REGISTRY`) reads another npm registry, such as a mirror.
 
-## Install on Windows
+## Windows (experimental)
 
-In Windows PowerShell 5.1 or PowerShell 7:
+Windows builds are published but have never run: there is no Windows test machine. In
+Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
 irm https://javelin-codes.vercel.app/install.ps1 | iex
@@ -39,56 +51,53 @@ javelin --version
 ```
 
 This installs `javelin.exe` and `javelin-node.exe` into `%USERPROFILE%\.javelin\bin` and
-prints how to add it to your user `PATH`. Set `$env:JAVELIN_VERSION`,
-`$env:JAVELIN_INSTALL_DIR` or `$env:JAVELIN_RELEASE_BASE` first to change what it does. The
-Windows build and this installer have not run on Windows yet: there is no Windows runner.
+prints how to add it to your user `PATH`. `npm i -g` on Windows installs the binaries too,
+but its commands go through a `sh` shim, so they need a `sh` on `PATH`.
 
 ## Platforms
 
-| Platform | Target | Needs |
-| --- | --- | --- |
-| macOS, Apple silicon | `aarch64-apple-darwin` | macOS 11 or newer |
-| macOS, Intel | `x86_64-apple-darwin` | macOS 11 or newer (untested) |
-| Linux, x86_64 | `x86_64-unknown-linux-gnu` | glibc 2.28 or newer |
-| Linux, arm64 | `aarch64-unknown-linux-gnu` | glibc 2.28 or newer |
-| Windows, x86_64 | `x86_64-pc-windows-gnu` | Windows 10 or newer (untested) |
+| Platform | Package | Needs | Status |
+| --- | --- | --- | --- |
+| macOS, Apple silicon | `@dhruv2mars/javelin-darwin-arm64` | macOS 11 or newer | GA |
+| macOS, Intel | `@dhruv2mars/javelin-darwin-x64` | macOS 11 or newer | GA, untested |
+| Linux, x86_64 | `@dhruv2mars/javelin-linux-x64` | glibc 2.28 or newer | GA |
+| Linux, arm64 | `@dhruv2mars/javelin-linux-arm64` | glibc 2.28 or newer | GA |
+| Windows, x86_64 | `@dhruv2mars/javelin-win32-x64` | Windows 10 or newer | experimental, untested |
 
-musl systems such as Alpine are refused. [releases.md](releases.md) says where each build
+musl systems such as Alpine have no build. [releases.md](releases.md) says where each build
 runs and what has been tested on it.
 
-## What the installer checks
+## What the curl installer checks
 
-- The archive's SHA-256 must match its line in that version's `SHA256SUMS` before anything
-  is extracted or written. On a mismatch the installer stops and installed binaries stay
-  as they were.
-- Each binary is written to a temporary file beside its destination and renamed into
-  place, so an interrupted install never leaves a partial `javelin`.
+- The tarball's SHA-512 must match the registry's `dist.integrity` for that version before
+  anything is extracted or written. On a mismatch the installer stops and installed binaries
+  stay as they were.
+- Each binary is written to a temporary file beside its destination and renamed into place,
+  so an interrupted install never leaves a partial `javelin`.
 - Downloads use HTTPS; plain HTTP is accepted only from `127.0.0.1` or `localhost`.
 - Nothing runs with elevated privileges, and nothing outside the install directory changes.
 
-To check the files yourself, download `SHA256SUMS` and the archive from
-`RELEASE_BASE/VERSION/` and run `shasum -a 256 -c SHA256SUMS --ignore-missing` (macOS) or
-`sha256sum -c SHA256SUMS --ignore-missing` (Linux).
-
 ## Upgrade
 
-Run the installer again. It replaces both binaries in place. Your repositories are not
-touched: a repository is a `.javelin` directory inside the project, and installing does
-not rewrite it.
+Run the same install again (`npm i -g @dhruv2mars/javelin@latest`, `bun add -g
+@dhruv2mars/javelin@latest`, or the curl line). Your repositories are not touched: a
+repository is a `.javelin` directory inside the project, and installing does not rewrite it.
 
 ## Uninstall
 
 ```sh
-rm -r ~/.javelin/bin                                  # macOS and Linux
+npm rm -g @dhruv2mars/javelin        # or: bun rm -g @dhruv2mars/javelin
+rm -r ~/.javelin/bin                 # after the curl installer
 ```
 
 ```powershell
-Remove-Item "$HOME\.javelin\bin" -Recurse              # Windows
+Remove-Item "$HOME\.javelin\bin" -Recurse
 ```
 
 ## Known limits
 
 - Binaries are not code-signed or notarized on macOS or Windows.
-- `SHA256SUMS` is served from the same host as the archives and is not signed.
+- The packages carry no npm provenance, and the curl installer trusts the registry's
+  integrity over HTTPS, as npm does.
 - See [cli.md](cli.md) for the commands the CLI has, and the
   [build checklist](../TASKS.md) for what is not built yet.

@@ -82,6 +82,10 @@ if [ "$method" = curl ]; then
   grep -q "is not on your PATH" "$work/install.log" || fail "installer did not say how to put javelin on PATH"
 fi
 export PATH="$bin:$PATH"
+# npm runs the postinstall that puts the native binary where the bin shim was.
+if [ "$(head -c 2 "$bin/javelin")" = '#!' ]; then kind="the bin shim"; else kind="the native binary"; fi
+echo "javelin on PATH is $kind"
+[ "$method" != npm ] || [ "$kind" = "the native binary" ] || fail "npm left the bin shim in place"
 
 step "javelin --version and javelin-node --version, from PATH"
 got=$(javelin --version)
