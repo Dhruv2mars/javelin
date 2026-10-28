@@ -452,6 +452,8 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     // Nothing local is written until the node has answered.
     let link = Link::new(target);
     let head = resolve(&link).map_err(CliError::Remote)?;
+    // Like a clone, attach makes its project directory when it is missing.
+    std::fs::create_dir_all(&root).map_err(Error::from)?;
 
     let opened = match Repository::open(&root) {
         Ok(repo) => Some(repo),
