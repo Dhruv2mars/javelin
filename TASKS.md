@@ -167,6 +167,10 @@ Open:
 - [ ] An invited account has no passkey: a device signs in through an invite or another of its
   devices only. Enrolling a passkey still needs the admin token or a passkey sign-in.
 - [ ] The forge shows no members; showing them read-only waits for a members page.
+- [ ] On macOS the loopback wire tests (`wire_frontier`, `wire_hidden`, `outbox_replay`) fail
+  now and then with `ConnectionReset` / a duplicated forward, on main too (wire_frontier 1 in
+  4 runs, outbox_replay 1 in 3, 2026-10-28), more often under load. The node logs `Broken pipe`
+  on the same connection, so something resets it from outside the node; not diagnosed.
 - [ ] No direct Publish to the node from the CLI. Importing a project means opening a request
   of your own and publishing it, which on a repository that requires approvals needs someone
   else's approval first. `workspace publish` in an attached clone publishes locally and then
