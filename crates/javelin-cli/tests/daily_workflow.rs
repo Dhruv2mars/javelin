@@ -111,31 +111,34 @@ fn wait_listening(port: u16, what: &str) {
     }
 }
 
-/// The `javelin-node` binary beside `javelin`. A workspace test run builds it for the node's
-/// own tests; a run of this package alone builds it here.
+/// The `javelin-node` binary beside `javelin`, built once per test run. Cargo builds only this
+/// package's binaries for its tests, so a node left over from an older build would serve an
+/// older storage format; the build is a no-op when it is current.
 fn node_binary() -> PathBuf {
-    let path =
-        Path::new(JAVELIN).with_file_name(format!("javelin-node{}", std::env::consts::EXE_SUFFIX));
-    if !path.exists() {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut build = Command::new(cargo);
-        build.args([
-            "build",
-            "--locked",
-            "-p",
-            "javelin-node",
-            "--bin",
-            "javelin-node",
-        ]);
-        if path.parent().and_then(Path::file_name) == Some("release".as_ref()) {
-            build.arg("--release");
-        }
-        assert!(
-            build.status().unwrap().success(),
-            "cargo build javelin-node"
-        );
-    }
-    path
+    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let path = Path::new(JAVELIN)
+                .with_file_name(format!("javelin-node{}", std::env::consts::EXE_SUFFIX));
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+            let mut build = Command::new(cargo);
+            build.args([
+                "build",
+                "--locked",
+                "-p",
+                "javelin-node",
+                "--bin",
+                "javelin-node",
+            ]);
+            if path.parent().and_then(Path::file_name) == Some("release".as_ref()) {
+                build.arg("--release");
+            }
+            let built = build.output().unwrap();
+            assert!(built.status.success(), "{}", describe(&built));
+            assert!(path.exists(), "no {}", path.display());
+            path
+        })
+        .clone()
 }
 
 /// Every file under `dir`, except `.javelin`, with its bytes.
