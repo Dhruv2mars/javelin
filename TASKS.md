@@ -104,16 +104,27 @@ locally on macOS. Since 2026-10-27 Buildkite runs fmt, clippy and tests on Linux
 every push (`.buildkite/pipeline.yml`).
 
 - [x] Point `AGENTS.md` and the contract at trails and local checks.
-- [ ] Land the open work as trails, in order: #99 superposition (merged, trail 7), #101 Layer lease, CLI
-  requests and sync (after #101), #103 forge on Vercel, Gate 2 create probe.
-- [ ] Forge deploys to Vercel from the CLI, since Vercel's Git integration cannot follow
-  Entire. Install instructions stop pointing at GitHub releases.
+- [x] Land the open work as trails. All merged on 2026-10-28 after a green Buildkite build,
+  local macOS checks on the merge result and a Sol approval: #99 superposition (trail 7),
+  #101 Layer lease (trail 5), forge on Vercel (trail 6), Gate 2 create probe (trail 14), CLI
+  requests and sync (trail 3), public frontier (trail 19), node core on wasm (trail 18).
+- [ ] End-to-end daily-workflow acceptance: two clones, Layers, request, review, publish and
+  sync against a self-hosted node (`test/daily-workflow-acceptance`, in progress).
+- [ ] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
+  flaked once on Linux (Buildkite build 25 on main `686a470`: `repo.has_blob(id).is_ok()`
+  failed); the rebuild (32) and the same commit's branch build (22) passed. Find what
+  `has_object` returns there.
+- [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
+  since Vercel's Git integration cannot follow Entire. The landing page says installers are
+  coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
 - [ ] Release binaries: GitHub releases are gone. Decide where `javelin` binaries are
   published.
-- [ ] Windows has no runner, and Gate 2 and the workspace probes are not in Buildkite yet. The Windows `database is locked` flake under
+- [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
+  of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
-- [ ] Delete the temporary `diag/windows-layer-busy` branch from origin.
+- [ ] Delete the temporary `diag/windows-layer-busy` branch from origin once the parked
+  Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
 - [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
   drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
 
