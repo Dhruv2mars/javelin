@@ -62,6 +62,19 @@ fn project(dir: &Path) {
     write(dir, "target/debug/app", "binary");
 }
 
+/// Each changed path with its change: `added`, `modified` or `deleted`.
+fn kinds(changes: &Value) -> Vec<(String, String)> {
+    changes["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let field = |name: &str| p[name].as_str().unwrap().to_string();
+            (field("path"), field("change"))
+        })
+        .collect()
+}
+
 fn paths(changes: &Value) -> Vec<String> {
     changes["paths"]
         .as_array()
@@ -126,18 +139,19 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "import-open",
         ],
     ));
-    let mut imported = paths(&ok(owner.at(&ours, &["request", "show", "import"]))["changes"]);
+    let mut imported = kinds(&ok(owner.at(&ours, &["request", "show", "import"]))["changes"]);
     imported.sort();
+    let added = |path: &str| (path.to_string(), "added".to_string());
     assert_eq!(
         imported,
         [
-            ".javelinignore",
-            "Cargo.toml",
-            "README.md",
-            "src/lib.rs",
-            "src/main.rs"
+            added(".javelinignore"),
+            added("Cargo.toml"),
+            added("README.md"),
+            added("src/lib.rs"),
+            added("src/main.rs")
         ],
-        "build output is ignored"
+        "build output is ignored, and every path is new"
     );
     let published = ok(owner.at(
         &ours,
@@ -152,6 +166,11 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         ],
     ));
     assert_eq!(published["published"]["number"], 1, "{opened} {published}");
+    // The owner's import Layer is published, so it is retired here: its directory is gone,
+    // its history stays.
+    assert_eq!(published["retired"][0]["layer"], "import", "{published}");
+    assert!(!import.exists());
+    ok(owner.at(&ours, &["layer", "history", "import"]));
     assert_eq!(owner.sync(&ours)["head"]["number"], 1);
 
     step("owner: invite cora as a reviewer; Publish now needs one approval");
@@ -200,7 +219,31 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert_eq!(open.len(), 1, "{listed}");
     assert_eq!(open[0]["author"], "cora");
     let shown = ok(owner.at(&ours, &["request", "show", "greeting"]));
-    assert_eq!(paths(&shown["changes"]), ["docs/usage.md", "src/lib.rs"]);
+    let change = |path: &str, change: &str| (path.to_string(), change.to_string());
+    assert_eq!(
+        kinds(&shown["changes"]),
+        [
+            change("docs/usage.md", "added"),
+            change("src/lib.rs", "modified")
+        ]
+    );
+    // The text marks them the same way.
+    let text = owner
+        .command()
+        .args([
+            "request",
+            "show",
+            "greeting",
+            "--repo",
+            ours.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(
+        text.contains("  A \"docs/usage.md\"") && text.contains("  M \"src/lib.rs\""),
+        "{text}"
+    );
     assert_eq!(shown["required_approvals"], 1);
     ok(owner.at(
         &ours,
@@ -311,7 +354,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
 
     step("the node restarts mid-loop: the owner's Publish queues, then replays");
     site.stop_node();
-    let base = shown["revisions"][1]["base"].as_u64().unwrap().to_string();
+    // The owner's clone saw revision 2's base in `request show`, so no --base is needed.
     let queued = ok(owner.at(
         &ours,
         &[
@@ -320,8 +363,6 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "greeting",
             "--revision",
             "2",
-            "--base",
-            &base,
             "--operation",
             "owner-publish-2",
         ],
@@ -354,8 +395,6 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "greeting",
             "--revision",
             "2",
-            "--base",
-            &base,
             "--operation",
             "owner-publish-2",
         ],
@@ -363,7 +402,12 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert_eq!(replayed["published"]["number"], 2, "{replayed}");
 
     step("both clones sync to World 2, byte for byte");
-    assert_eq!(cora.sync(&theirs)["head"]["number"], 2);
+    let synced = cora.sync(&theirs);
+    assert_eq!(synced["head"]["number"], 2);
+    // Cora's sync saw the publish: her greeting Layer is retired in her clone too.
+    assert_eq!(synced["retired"][0]["layer"], "greeting", "{synced}");
+    assert!(!feature.exists());
+    ok(cora.at(&theirs, &["layer", "history", "greeting"]));
     let world = same_world(
         &site,
         &[(&owner, &ours), (&cora, &theirs)],
@@ -471,14 +515,14 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         .unwrap();
     assert_eq!(text.status.code(), Some(3), "{}", describe(&text));
     assert!(
-        String::from_utf8_lossy(&text.stdout).contains(
-            "`javelin request revise cora-tweak --revision 1 --layer NEW --operation OP`"
-        ),
+        String::from_utf8_lossy(&text.stdout).contains("`javelin layer update LAYER`")
+            && String::from_utf8_lossy(&text.stdout)
+                .contains("`javelin request revise cora-tweak --revision 1 --operation OP`"),
         "{}",
         describe(&text)
     );
 
-    step("cora: see the conflict coming, redo the change over World 3, revise");
+    step("cora: see the conflict coming, move the Layer onto World 3, resolve, revise");
     cora.sync(&theirs);
     let radar = ok(cora.at(&theirs, &["layer", "radar", "cora-tweak"]));
     assert_eq!(radar["clear"], false);
@@ -486,11 +530,46 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         radar["radar"]["world"]["paths"],
         serde_json::json!(["src/lib.rs"])
     );
-    let redo = cora.layer(&theirs, "cora-tweak-2");
+    // Published Layers are retired, so none is listed as a live Layer that would conflict.
+    assert_eq!(radar["radar"]["layers"], serde_json::json!([]), "{radar}");
+    let updated = exit3(cora.at(&theirs, &["layer", "update", "cora-tweak"]));
+    assert_eq!(updated["code"], "conflict");
+    assert_eq!(updated["successor"], "cora-tweak.2", "{updated}");
+    assert_eq!(updated["base"]["number"], 3);
     assert_eq!(
-        fs::read_to_string(redo.join("src/lib.rs")).unwrap(),
-        line("format!(\"Hello, {name}!\")")
+        updated["conflicts"],
+        serde_json::json!([{"path": "src/lib.rs", "kind": "content", "written": "markers"}])
     );
+    // The old Layer is retired; its work is in the successor's directory, both sides of the
+    // conflict between markers.
+    assert!(!yours.exists());
+    let redo = PathBuf::from(updated["root"].as_str().unwrap());
+    let marked = fs::read_to_string(redo.join("src/lib.rs")).unwrap();
+    assert_eq!(
+        marked,
+        "pub fn greet(name: &str) -> String {\n<<<<<<< Layer cora-tweak\n    \
+         format!(\"hi {name}\")\n||||||| remote World 2\n    format!(\"hello, {name}!\")\n\
+         =======\n    format!(\"Hello, {name}!\")\n>>>>>>> remote World 3\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(redo.join("docs/usage.md")).unwrap(),
+        "Run `app` to greet the world.\n",
+        "the World's other changes are in the successor"
+    );
+    // A revise follows the request's Layer to the successor, and refuses while markers remain.
+    let code = refused(cora.at(
+        &theirs,
+        &[
+            "request",
+            "revise",
+            "cora-tweak",
+            "--revision",
+            "1",
+            "--operation",
+            "c-revise",
+        ],
+    ));
+    assert_eq!(code, "unresolved_conflict");
     write(
         &redo,
         "src/lib.rs",
@@ -504,13 +583,14 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "cora-tweak",
             "--revision",
             "1",
-            "--layer",
-            "cora-tweak-2",
             "--operation",
             "c-revise",
         ],
     ));
     assert_eq!(revised["revision"], 2, "{revised}");
+    let shown = ok(owner.at(&ours, &["request", "show", "cora-tweak"]));
+    assert_eq!(shown["revisions"][1]["base"], 3, "{shown}");
+    assert_eq!(kinds(&shown["changes"]), [change("src/lib.rs", "modified")]);
     ok(owner.at(
         &ours,
         &[
@@ -659,9 +739,21 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
 
     step("every clone syncs and holds the node's World, byte for byte");
     let clones = [(&owner, &ours), (&cora, &theirs), (&desktop, &other)];
+    let mut retired = Vec::new();
     for (person, clone) in clones {
-        assert_eq!(person.sync(clone)["head"]["number"], 5);
+        let synced = person.sync(clone);
+        assert_eq!(synced["head"]["number"], 5);
+        retired.push(synced["retired"].clone());
     }
+    // The notes Layer is retired on both of cora's devices. The laptop's copy held its late
+    // edit, which stays in its history (and in notes-laptop).
+    assert_eq!(retired[1][0]["layer"], "notes", "{}", retired[1]);
+    assert_eq!(retired[1][0]["later_work"], true);
+    assert_eq!(retired[2][0]["layer"], "notes", "{}", retired[2]);
+    assert_eq!(retired[2][0]["later_work"], false);
+    assert!(!notes.exists() && !moved.exists());
+    let radar = ok(cora.at(&theirs, &["layer", "radar", "notes-laptop"]));
+    assert_eq!(radar["radar"]["layers"], serde_json::json!([]), "{radar}");
     let world = same_world(&site, &clones, "final");
     assert_eq!(
         world["NOTES.md"],
@@ -712,6 +804,117 @@ fn same_world(
         assert_eq!(tree, &trees[0]);
     }
     trees.remove(0)
+}
+
+/// `javelin layer update` killed between making the successor and retiring the old Layer
+/// loses nothing: the old Layer keeps its directory and work, and running it again finishes
+/// the same update.
+#[test]
+fn a_crash_mid_update_loses_nothing() {
+    let (site, owner) = owner_site();
+    let ours = owner.attach(&site, "owner");
+    let import = owner.layer(&ours, "import");
+    project(&import);
+    let publish = |request: &str| {
+        let open = format!("{request}-open");
+        ok(owner.at(
+            &ours,
+            &[
+                "request",
+                "open",
+                request,
+                "--layer",
+                request,
+                "--operation",
+                &open,
+            ],
+        ));
+        let publish = format!("{request}-publish");
+        let published = ok(owner.at(
+            &ours,
+            &[
+                "request",
+                "publish",
+                request,
+                "--revision",
+                "1",
+                "--operation",
+                &publish,
+            ],
+        ));
+        assert_eq!(published["queued"], false, "{published}");
+    };
+    publish("import");
+    owner.sync(&ours);
+    // Two Layers over World 1 edit the README's last line; one also adds a file.
+    let mine = owner.layer(&ours, "mine");
+    let theirs = owner.layer(&ours, "theirs");
+    write(&mine, "README.md", "# app\n\nGreets everyone.\n");
+    write(&mine, "src/extra.rs", "// mine\n");
+    write(&theirs, "README.md", "# app\n\nGreets the world.\n");
+    write(&theirs, "CHANGELOG.md", "- greet the world\n");
+    publish("theirs");
+
+    let crashed = owner
+        .command()
+        .args(["--json", "layer", "update", "mine", "--repo"])
+        .arg(&ours)
+        .env("JAVELIN_FAILPOINT", "update_after_successor")
+        .output()
+        .unwrap();
+    assert_eq!(crashed.status.code(), Some(86), "{}", describe(&crashed));
+    // The old Layer is untouched: active, with its directory and its edits.
+    let state = ok(owner.at(&ours, &["layer", "state", "mine"]));
+    assert_eq!(state["state"]["state"], "active", "{state}");
+    assert_eq!(
+        fs::read_to_string(mine.join("src/extra.rs")).unwrap(),
+        "// mine\n"
+    );
+
+    let updated = exit3(owner.at(&ours, &["layer", "update", "mine"]));
+    assert_eq!(updated["successor"], "mine.2", "{updated}");
+    assert_eq!(updated["retired"], true);
+    assert_eq!(updated["base"]["number"], 2);
+    assert!(!mine.exists());
+    let moved = PathBuf::from(updated["root"].as_str().unwrap());
+    assert_eq!(
+        fs::read_to_string(moved.join("src/extra.rs")).unwrap(),
+        "// mine\n"
+    );
+    assert_eq!(
+        fs::read_to_string(moved.join("CHANGELOG.md")).unwrap(),
+        "- greet the world\n"
+    );
+    let readme = fs::read_to_string(moved.join("README.md")).unwrap();
+    assert!(
+        readme.contains("<<<<<<< Layer mine\nGreets everyone.\n")
+            && readme.contains("=======\nGreets the world.\n>>>>>>> remote World 2\n"),
+        "{readme}"
+    );
+    // Another run replays the finished update.
+    let again = exit3(owner.at(&ours, &["layer", "update", "mine"]));
+    assert_eq!(again["successor"], "mine.2");
+    assert_eq!(again["head"], updated["head"]);
+    // Resolved, the successor's request opens over World 3.
+    write(
+        &moved,
+        "README.md",
+        "# app\n\nGreets everyone in the world.\n",
+    );
+    let opened = ok(owner.at(
+        &ours,
+        &[
+            "request",
+            "open",
+            "mine",
+            "--layer",
+            "mine.2",
+            "--operation",
+            "mine-open",
+        ],
+    ));
+    assert_eq!(opened["base"]["number"], 2, "{opened}");
+    site.assert_no_git();
 }
 
 /// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it

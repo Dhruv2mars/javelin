@@ -181,7 +181,6 @@ bold "5. owner: the approval of revision 1 no longer counts; approve revision 2"
 must owner request show "$dir-feature" --repo "$owner"
 printf '%s' "$out" | grep -q "revision 2 over remote World [0-9]*: checkpoint [0-9a-f]*, no approvals" ||
   fail "revision 2 should start with no approvals"
-base=$(printf '%s' "$out" | sed -n 's/.*revision 2 over remote World \([0-9]*\):.*/\1/p')
 if [ "${need:-0}" -gt 0 ]; then
   refuses not_enough_approvals 1 owner request publish "$dir-feature" --revision 2 --operation "$run-early" --repo "$owner"
 fi
@@ -191,7 +190,8 @@ must owner request approve "$dir-feature" --revision 2 --operation "$run-approve
 bold "6. the node restarts mid-loop: the owner's Publish queues, then replays"
 if [ "$restart" = yes ]; then
   node_stop
-  must owner request publish "$dir-feature" --revision 2 --base "$base" --operation "$run-publish" --repo "$owner"
+  # The owner's clone saw revision 2's base in `request show`, so no --base is needed.
+  must owner request publish "$dir-feature" --revision 2 --operation "$run-publish" --repo "$owner"
   has "queued"
   refuses node_unavailable 1 collab request show "$dir-feature" --repo "$collab"
   node_start
@@ -232,13 +232,19 @@ must owner request publish "$dir-o-tweak" --revision 1 --operation "$run-o-publi
 refuses conflict 3 owner request publish "$dir-c-tweak" --revision 1 --operation "$run-c-publish" --repo "$owner"
 has "$dir/src/lib.rs"
 
-bold "9. collaborator: see the conflict, redo the change over the new World, revise"
+bold "9. collaborator: move the Layer onto the new World, resolve the markers, revise"
 must collab sync --repo "$collab"
 must collab layer radar "c-tweak-$run" --repo "$collab"
 has "$dir/src/lib.rs"
-must collab workspace create "c-tweak-2-$run" --repo "$collab"
-lib 'format!("Hello, {name}! hi!")' >"$collab/.javelin/layers/c-tweak-2-$run/$dir/src/lib.rs"
-must collab request revise "$dir-c-tweak" --revision 1 --layer "c-tweak-2-$run" --operation "$run-c-revise" --repo "$collab"
+as collab layer update "c-tweak-$run" --repo "$collab"
+[ "$status" -eq 3 ] || fail "layer update should report the conflict (exit 3), got $status"
+has "c-tweak-$run.2"
+updated=$collab/.javelin/layers/c-tweak-$run.2
+grep -q '^<<<<<<< Layer c-tweak' "$updated/$dir/src/lib.rs" || fail "the conflict was not marked"
+[ ! -e "$collab/.javelin/layers/c-tweak-$run" ] || fail "the old Layer's directory is still there"
+refuses unresolved_conflict 1 collab request revise "$dir-c-tweak" --revision 1 --operation "$run-c-revise" --repo "$collab"
+lib 'format!("Hello, {name}! hi!")' >"$updated/$dir/src/lib.rs"
+must collab request revise "$dir-c-tweak" --revision 1 --operation "$run-c-revise" --repo "$collab"
 must owner request approve "$dir-c-tweak" --revision 2 --operation "$run-o-approve-2" --repo "$owner"
 must owner request publish "$dir-c-tweak" --revision 2 --operation "$run-c-publish-2" --repo "$owner"
 

@@ -28,12 +28,15 @@ use javelin::{
     RemoteHead, RepoPath, Repository, SparseChanges, VersionNumber,
 };
 use javelin_merge::{ConflictKind, Labels, Merged, Resource};
-use javelin_protocol::{codec::LayerStatus, sender};
+use javelin_protocol::{
+    Message,
+    codec::{RequestId, RequestStatus, RequestSummary},
+};
 use serde_json::{Value, json};
 
 use crate::{
     CliError,
-    cli_remote::{LOCAL_WORLD_DIVERGED, Link, RemoteError, Session, parse_target, recover_attachment},
+    cli_remote::{LOCAL_WORLD_DIVERGED, Link, RemoteError, parse_target, recover_attachment},
     cli_request::{Options, Outcome},
     cli_sync::follow,
 };
@@ -80,7 +83,10 @@ pub fn layer_update(args: Vec<OsString>) -> Outcome {
     repo.set_provenance(crate::cli::provenance(None)?);
     let mut updates = read_json(&root, UPDATES)?;
     if let Some(update) = updates.get(old.as_str()).map(decode_update).transpose()? {
-        if named.as_ref().is_some_and(|named| *named != update.successor) {
+        if named
+            .as_ref()
+            .is_some_and(|named| *named != update.successor)
+        {
             return Err(Error::InvalidInput(format!(
                 "Layer {} was already updated as Layer {}",
                 old.as_str(),
@@ -100,7 +106,7 @@ pub fn layer_update(args: Vec<OsString>) -> Outcome {
         ))
         .into());
     }
-    let head = active(&repo, &old)?;
+    let head = active_head(&repo, &old)?;
     let unresolved = unresolved(&repo, &root, &old)?;
     if !unresolved.is_empty() {
         return Err(unresolved_error(&old, &unresolved));
@@ -191,7 +197,7 @@ fn finish(
     let retire = match repo.layer_state(old)? {
         LayerState::Active { .. } => {
             repo.capture_workspace(old)?;
-            let head = active(repo, old)?;
+            let head = active_head(repo, old)?;
             if head.checkpoint().object() != update.from {
                 return Err(Error::InvalidInput(format!(
                     "Layer {} changed after its update to Layer {} began; that update holds \
@@ -242,7 +248,7 @@ fn finish(
             .discard_workspace(&discard, &head)
             .map(|discarded| matches!(discarded.update, LayerUpdate::Applied { .. }))?;
     }
-    let head = active(repo, successor)?;
+    let head = active_head(repo, successor)?;
     let clean = conflicts.is_empty();
     let listed: Vec<Value> = conflicts
         .iter()
@@ -328,7 +334,8 @@ fn merge(
         base: &labels.1,
         theirs: &labels.2,
     };
-    let load = |repo: &Repository, id| repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize);
+    let load =
+        |repo: &Repository, id| repo.read_blob_bounded(id, Resource::BlobBytes.limit() as usize);
     let first = javelin_merge::merge_resolved(
         &base,
         &ours,
@@ -448,7 +455,7 @@ fn kind(kind: ConflictKind) -> &'static str {
     }
 }
 
-fn active(repo: &Repository, layer: &LayerId) -> Result<javelin::LayerHead, CliError> {
+fn active_head(repo: &Repository, layer: &LayerId) -> Result<javelin::LayerHead, CliError> {
     match repo.layer_state(layer)? {
         LayerState::Active { head } => Ok(head),
         _ => Err(Error::InvalidInput(format!("Layer {} is not active", layer.as_str())).into()),
@@ -494,7 +501,11 @@ pub(crate) fn latest(root: &Path, layer: &LayerId) -> Result<LayerId, CliError> 
     let updates = read_json(root, UPDATES)?;
     let mut current = layer.clone();
     for _ in 0..=updates.len() {
-        match updates.get(current.as_str()).map(decode_update).transpose()? {
+        match updates
+            .get(current.as_str())
+            .map(decode_update)
+            .transpose()?
+        {
             Some(update) => current = update.successor,
             None => return Ok(current),
         }
@@ -551,45 +562,101 @@ pub(crate) fn unresolved_error(layer: &LayerId, paths: &[RepoPath]) -> CliError 
     ))
 }
 
-/// Retires each of `layers` that is active here and published on the node: its workspace is
-/// captured, so later edits stay in its history, then it is discarded and its directory
-/// trashed and reclaimed, as `workspace discard` does. A Layer the node does not report is
-/// left alone, so this is safe to run on any list. Returns what was retired.
+/// Retires the Layers here that proposed `requests` the node has published: each request's
+/// own Layer, the Layer this clone last revised it from (`requests.json`), and the successors
+/// `layer update` moved their work to. The node publishes a copy of the revision, not the
+/// author's Layer, so the request's state is what says the work is in the World. Each active
+/// Layer's workspace is captured first, so later edits stay in its history, then it is
+/// discarded and its directory trashed and reclaimed, as `workspace discard` does. Returns
+/// what was retired; a request still open, or a Layer not active here, changes nothing.
 pub(crate) fn retire_published(
     link: &std::cell::RefCell<Link>,
     repo: &mut Repository,
-    layers: BTreeSet<LayerId>,
+    root: &Path,
+    requests: &[RequestSummary],
 ) -> Result<Vec<Value>, CliError> {
+    let records = read_json(root, "requests.json")?;
     let mut retired = Vec::new();
-    for layer in layers {
-        if !matches!(repo.layer_state(&layer), Ok(LayerState::Active { .. })) {
+    for request in requests
+        .iter()
+        .filter(|r| r.state == RequestStatus::Published)
+    {
+        let mut layers = BTreeSet::from([request.layer.clone()]);
+        if let Some(layer) = records
+            .get(request.request.as_str())
+            .and_then(|record| LayerId::parse(record["layer"].as_str()?).ok())
+        {
+            layers.insert(layer);
+        }
+        let layers: BTreeSet<LayerId> = layers
+            .iter()
+            .flat_map(|layer| [Ok(layer.clone()), latest(root, layer)])
+            .collect::<Result<_, _>>()?;
+        let active: Vec<LayerId> = layers
+            .into_iter()
+            .filter(|layer| matches!(repo.layer_state(layer), Ok(LayerState::Active { .. })))
+            .collect();
+        if active.is_empty() {
             continue;
         }
-        let Ok(node) = sender::layer_head(&mut Session(link), &layer) else {
-            continue;
-        };
-        if node.status != LayerStatus::Published {
-            continue;
+        // Layer IDs are not unique across people, so a Layer counts only when its history
+        // holds one of the request's revisions.
+        let revisions = revision_changes(link, &request.request)?;
+        for layer in active {
+            repo.capture_workspace(&layer)?;
+            let head = active_head(repo, &layer)?;
+            let mut proposed = false;
+            for state in repo.layer_history(&layer)? {
+                if let LayerState::Active { head } = state {
+                    let changes = repo.read_checkpoint(head.checkpoint())?;
+                    proposed |= revisions.contains(changes.changes());
+                }
+            }
+            if !proposed {
+                continue;
+            }
+            let later = repo.read_checkpoint(head.checkpoint())?.changes()
+                != revisions.last().expect("a proposed revision");
+            let operation = derived("retire", &layer, head.checkpoint().object());
+            let discarded = repo.discard_workspace(&operation, &head)?;
+            if !matches!(discarded.update, LayerUpdate::Applied { .. }) {
+                continue;
+            }
+            retired.push(json!({
+                "layer": layer,
+                "request": request.request.as_str(),
+                "head": head.checkpoint(),
+                "later_work": later,
+                "trashed": discarded.trashed,
+            }));
         }
-        repo.capture_workspace(&layer)?;
-        let head = active(repo, &layer)?;
-        let published = crate::cli_upload::node_checkpoint(link, node.head)?;
-        let later = repo.read_checkpoint(head.checkpoint())?.changes()
-            != &Repository::foreign_checkpoint_changes(&published)?;
-        let operation = derived("retire", &layer, head.checkpoint().object());
-        let discarded = repo.discard_workspace(&operation, &head)?;
-        if !matches!(discarded.update, LayerUpdate::Applied { .. }) {
-            continue;
-        }
-        retired.push(json!({
-            "layer": layer,
-            "published": node.head,
-            "head": head.checkpoint(),
-            "later_work": later,
-            "trashed": discarded.trashed,
-        }));
     }
     Ok(retired)
+}
+
+/// The changes of each of `request`'s revisions this token may read, in revision order.
+fn revision_changes(
+    link: &std::cell::RefCell<Link>,
+    request: &RequestId,
+) -> Result<Vec<SparseChanges>, CliError> {
+    let detail = match crate::cli_remote::call(
+        link,
+        &Message::ReadReview {
+            request: request.clone(),
+            comments_from: u32::MAX,
+        },
+    )
+    .map_err(CliError::Remote)?
+    {
+        Message::ReviewDetail(detail) => detail,
+        _ => return Err(CliError::Remote(crate::cli_remote::unexpected())),
+    };
+    let mut changes = Vec::new();
+    for checkpoint in detail.revisions.iter().filter_map(|r| r.checkpoint) {
+        let bytes = crate::cli_upload::node_checkpoint(link, checkpoint)?;
+        changes.push(Repository::foreign_checkpoint_changes(&bytes)?);
+    }
+    Ok(changes)
 }
 
 /// Text lines for `retire_published`.
@@ -638,7 +705,10 @@ fn decode_update(value: &Value) -> Result<Update, CliError> {
 }
 
 /// A JSON object kept under `.javelin/`, empty when the file is missing.
-pub(crate) fn read_json(root: &Path, name: &str) -> Result<serde_json::Map<String, Value>, CliError> {
+pub(crate) fn read_json(
+    root: &Path,
+    name: &str,
+) -> Result<serde_json::Map<String, Value>, CliError> {
     match fs::read(store(root).join(name)) {
         Ok(bytes) => match serde_json::from_slice(&bytes) {
             Ok(Value::Object(map)) => Ok(map),

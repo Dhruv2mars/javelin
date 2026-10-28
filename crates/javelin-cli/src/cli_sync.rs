@@ -3,7 +3,8 @@
 //! follows the number of new versions. It stores what is missing, advances the local World
 //! and the rolling base, and rewrites `attach.json`. A local World that moved away from the
 //! attachment is refused with `local_world_diverged`: sync never replaces local history. See
-//! `docs/online-design.md` sections 4.1 and 4.4, and `docs/cli.md`.
+//! `docs/online-design.md` sections 4.1 and 4.4, and `docs/cli.md`. It then retires the
+//! Layers the node published (`cli_update::retire_published`).
 
 use std::{cell::RefCell, ffi::OsString, path::Path};
 
@@ -26,7 +27,8 @@ use crate::{
         Down, LOCAL_WORLD_DIVERGED, Link, RemoteError, RepoBlobs, Up, parse_target,
         recover_attachment, remote, summary,
     },
-    cli_request::{Attached, Options, Outcome},
+    cli_request::{Attached, Options, Outcome, list_requests, remember_listed},
+    cli_update::{retire_published, retired_lines},
 };
 
 /// `javelin sync [--repo DIR]`
@@ -118,6 +120,12 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     let head = follow(&link, &root, &mut repo, &attachment, &checked, None)?;
     let advanced = head.number != attachment.head.number;
     let base = advanced.then(|| repo.warm_base()).transpose()?;
+    // What the node now says about requests: each current revision's base, kept for a Publish
+    // queued later, and the Layers it published, retired here. A reader without a role cannot
+    // list requests, and has no Layers on the node to retire.
+    let listed = list_requests(&link).unwrap_or_default();
+    remember_listed(&root, &listed)?;
+    let retired = retire_published(&link, &mut repo, &root, &listed)?;
     let local = repo.head()?;
     let mut text = if advanced {
         format!(
@@ -130,6 +138,10 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
             attachment.repository, head.number, local.number
         )
     };
+    for line in retired_lines(&retired) {
+        text.push('\n');
+        text.push_str(&line);
+    }
     if replay.is_some() {
         text.push_str(&format!(
             "\nDelivered {} queued records; {pending} pending.",
@@ -171,6 +183,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         "local_head": local,
         "base": base,
         "outbox": {"delivered": delivered, "stalled": stall, "pending": pending},
+        "retired": retired,
         "code": code,
     });
     Ok((value, text, exit))
