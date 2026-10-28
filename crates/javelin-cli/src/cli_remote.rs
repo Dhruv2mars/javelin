@@ -21,8 +21,8 @@ use std::{
 };
 
 use javelin::{
-    AdvanceOutcome, Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead,
-    Repository, Result, VersionNumber,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository, Result,
+    VersionNumber,
     outbox::{Entry, Fault, Outbox, Transport},
     tree::MemoryStore,
 };
@@ -33,7 +33,7 @@ use javelin_protocol::{
         LayerOutcome, LeaseHolder, PublishOutcome, VERSION, code, decode, encode, read_frame,
         write_frame,
     },
-    fetch::{Anchor, Blobs, fetch_opened},
+    fetch::{Blobs, fetch_opened},
     sender,
 };
 use javelin_stack::remote::{self as stack_remote, Refresh};
@@ -58,7 +58,7 @@ pub struct RemoteError {
 }
 
 impl RemoteError {
-    fn new(code: &str, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &str, detail: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             detail: detail.into(),
@@ -75,14 +75,14 @@ impl From<ProtocolError> for RemoteError {
     }
 }
 
-struct Target {
+pub(crate) struct Target {
     /// `https://HOST[:PORT]` (plain `http` only for this machine), as stored in `attach.json`.
     node: String,
     repository: String,
     agent: ureq::Agent,
 }
 
-fn parse_target(text: &str) -> Result<Target> {
+pub(crate) fn parse_target(text: &str) -> Result<Target> {
     let usage =
         "expected a node URL https://HOST[:PORT]/REPOSITORY (plain http only for localhost)";
     let (scheme, rest) = text
@@ -108,7 +108,7 @@ fn parse_target(text: &str) -> Result<Target> {
 }
 
 /// The transport state shared by both halves of one protocol session.
-struct Link {
+pub(crate) struct Link {
     target: Target,
     credential: Credential,
     /// Whether a request may go out without a token. Reads may, so a public repository stays
@@ -125,12 +125,12 @@ struct Link {
 
 impl Link {
     /// A session for reads, which go out anonymously when no token can be had.
-    fn new(target: Target) -> RefCell<Self> {
+    pub(crate) fn new(target: Target) -> RefCell<Self> {
         Self::with(target, true)
     }
 
     /// A session for writes, which are refused before sending when no token can be had.
-    fn writing(target: Target) -> RefCell<Self> {
+    pub(crate) fn writing(target: Target) -> RefCell<Self> {
         Self::with(target, false)
     }
 
@@ -301,7 +301,7 @@ fn framed(body: &[u8]) -> Vec<u8> {
 }
 
 /// The write half of a protocol session.
-struct Up<'a>(&'a RefCell<Link>);
+pub(crate) struct Up<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Write for Up<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -315,7 +315,7 @@ impl Write for Up<'_> {
 
 /// The read half of a protocol session. A read with no reply left sends the buffered
 /// frame first, so a reply is never read before its request has gone out.
-struct Down<'a>(&'a RefCell<Link>);
+pub(crate) struct Down<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Read for Down<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -333,7 +333,7 @@ impl Read for Down<'_> {
 
 /// The transport's own failure, when there was one, is more specific than the protocol
 /// error it caused.
-fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
+pub(crate) fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
     link.borrow()
         .failure
         .clone()
@@ -341,7 +341,10 @@ fn remote(link: &RefCell<Link>, error: ProtocolError) -> RemoteError {
 }
 
 /// One request and its reply. A node's `Error` reply becomes the returned error.
-fn call(link: &RefCell<Link>, message: &Message) -> std::result::Result<Message, RemoteError> {
+pub(crate) fn call(
+    link: &RefCell<Link>,
+    message: &Message,
+) -> std::result::Result<Message, RemoteError> {
     write_frame(&mut Up(link), message).map_err(|e| remote(link, e))?;
     match read_frame(&mut Down(link)) {
         Ok(Some(Message::Error { code, detail })) => Err(RemoteError { code, detail }),
@@ -354,7 +357,7 @@ fn call(link: &RefCell<Link>, message: &Message) -> std::result::Result<Message,
     }
 }
 
-fn unexpected() -> RemoteError {
+pub(crate) fn unexpected() -> RemoteError {
     RemoteError::new("unexpected_message", "unexpected reply from the node")
 }
 
@@ -391,7 +394,7 @@ fn resolve(link: &RefCell<Link>) -> std::result::Result<RemoteHead, RemoteError>
 }
 
 /// Blobs go straight into the local store, which keys them by content.
-struct RepoBlobs<'a>(&'a mut Repository);
+pub(crate) struct RepoBlobs<'a>(pub(crate) &'a mut Repository);
 
 impl Blobs for RepoBlobs<'_> {
     fn has(&self, id: ObjectId) -> bool {
@@ -762,7 +765,7 @@ fn already_attached(attached: &Attachment, head: &RemoteHead) -> Output {
 }
 
 /// Both halves of one session, for protocol code that reads and writes one link.
-struct Session<'a>(&'a RefCell<Link>);
+pub(crate) struct Session<'a>(pub(crate) &'a RefCell<Link>);
 
 impl Write for Session<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -918,7 +921,7 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         Ok(_) => None,
         Err(Error::InvalidInput(_)) => {
             let node = sender::layer_head(&mut Session(&link), &layer).map_err(read)?;
-            Some(local_world(&link, &mut repo, &attached, node.base)?)
+            Some(local_world(&link, &root, &mut repo, &attached, node.base)?)
         }
         Err(error) => return Err(error.into()),
     };
@@ -1040,7 +1043,7 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
 /// named the new head. The local head counts only when a sync made it and the node holds
 /// that remote version with the same chain ID and tree; then it is recorded and returned.
 /// Any other head is left alone, and the attachment returned unchanged.
-fn recover_attachment(
+pub(crate) fn recover_attachment(
     link: &RefCell<Link>,
     repo: &mut Repository,
     attached: Attachment,
@@ -1071,31 +1074,20 @@ fn recover_attachment(
     }
 }
 
-/// Exits at the named point when `JAVELIN_FAILPOINT` names it, for crash tests. Debug
-/// builds only, like the library's failpoints.
-#[cfg(debug_assertions)]
-fn failpoint(name: &str) {
-    if std::env::var_os("JAVELIN_FAILPOINT").is_some_and(|set| set == name) {
-        std::process::exit(86);
-    }
-}
-
-#[cfg(not(debug_assertions))]
-fn failpoint(_: &str) {}
-
 /// Refusal for following the node when the local World has versions the node lacks.
 pub const LOCAL_WORLD_DIVERGED: &str = "local_world_diverged";
 
 /// The local World holding remote World `base`'s tree. Remote and local numbers differ, so
-/// the World is matched by its tree. One this repository lacks is fetched as attach does,
-/// with the hidden entries the node opens for this caller, verified from the attached head,
-/// and the local World advances to it; a remote World older than the attached one cannot be
-/// fetched that way and is refused. The node is the
+/// the World is matched by its tree. One this repository lacks is fetched as `javelin sync`
+/// fetches ([`crate::cli_sync::follow`]): verified from the attached head, with the hidden
+/// entries the node opens for this caller, and the local World advances to it; a remote
+/// World older than the attached one cannot be fetched that way and is refused. The node is the
 /// World's authority, so the advance never overwrites local divergence: a local head that
 /// is not the attachment's own World, such as a local Publish, is refused with
 /// `local_world_diverged` before anything is fetched.
 fn local_world(
     link: &RefCell<Link>,
+    root: &Path,
     repo: &mut Repository,
     attached: &Attachment,
     base: VersionNumber,
@@ -1141,55 +1133,11 @@ fn local_world(
             ),
         )));
     }
-    let anchor = Anchor {
-        number: VersionNumber::new(attached.head.number)?,
-        id: attached.head.id,
-        tree: attached.head.tree,
-    };
-    let trees = MemoryStore::default();
-    let fetched = {
-        let mut blobs = RepoBlobs(repo);
-        fetch_opened(
-            Down(link),
-            Up(link),
-            &trees,
-            &mut blobs,
-            Some(&anchor),
-            Some(base),
-            None,
-        )
-        .map_err(|e| CliError::Remote(remote(link, e)))?
-    };
-    // As in attach: the openings the node gave this caller go in before the World that uses
-    // them, and hidden entries it did not open stay commitments.
-    for (opening, audience) in fetched.openings.values() {
-        if opening.file().is_none() {
-            repo.import_tree(&trees, opening.content)?;
-        }
-        repo.put_opening(opening, audience)?;
-    }
-    repo.import_tree(&trees, fetched.tree)?;
     let local = repo.head()?;
-    let target = RemoteHead {
-        number: fetched.number.get(),
-        id: fetched.id,
-        tree: fetched.tree,
-    };
-    let operation = Repository::sync_operation(&target)?;
-    let version = match repo.advance_to_tree(&operation, local.number, fetched.tree)? {
-        AdvanceOutcome::Accepted { version } => version,
-        AdvanceOutcome::Stale { .. } => {
-            return Err(Error::InvalidInput("the local World moved; retry".into()).into());
-        }
-    };
-    // A stop here leaves a sync World that `attach.json` does not name yet;
-    // `recover_attachment` finishes it on the next take.
-    failpoint("take_after_sync_advance");
-    repo.write_attachment(&Attachment {
-        head: target,
-        ..attached.clone()
-    })?;
-    Ok(version.number)
+    crate::cli_sync::follow(link, root, repo, attached, &local, Some(base))?;
+    // A stop between the advance and `attach.json` leaves a sync World that
+    // `recover_attachment` finishes on the next take or sync.
+    Ok(repo.head()?.number)
 }
 
 /// An operation ID no earlier command used, for a step that is safe to repeat under a new one.
@@ -1434,7 +1382,7 @@ pub(crate) fn stale_lines(stale: &[Value]) -> Vec<String> {
 }
 
 /// A short view of a node's reply, for output.
-fn summary(outcome: &[u8]) -> Value {
+pub(crate) fn summary(outcome: &[u8]) -> Value {
     match decode(outcome) {
         Ok(Message::LayerOutcome(LayerOutcome::Stale { head })) => {
             json!({"stale": head})

@@ -8,24 +8,20 @@
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{TcpListener, TcpStream},
     path::PathBuf,
-    process::{Command, Output, Stdio},
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::SystemTime,
 };
 
 use javelin::{
-    Attachment, FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RemoteHead,
-    RepoPath, Repository, SparseChanges, VersionNumber, outbox::Outbox,
+    Attachment, FileEntry, ObjectId, PublishAttribution, RemoteHead, RepoPath, Repository,
+    SparseChanges, VersionNumber, outbox::Outbox,
 };
-use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
-use javelin_control::{
-    ControlPlane, CreateRequest, Credentials, LocalNode, NodeLink, Poll, Publish, RelyingParty,
-};
+use javelin_collaboration::Role;
 use javelin_identity::{Scope, test_keys};
-use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, serve};
 use javelin_protocol::{
     Message,
     codec::{PublishOutcome, encode},
@@ -34,178 +30,41 @@ use javelin_protocol::{
 use serde_json::Value;
 use tempfile::TempDir;
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
+mod wire_support;
 
-fn op(s: &str) -> OperationId {
-    OperationId::parse(s).unwrap()
-}
-
-fn layer(s: &str) -> LayerId {
-    LayerId::parse(s).unwrap()
-}
-
-/// A URL with nothing listening behind it: an unreachable control plane or node.
-fn closed_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}")
-}
-
-struct Deployment {
-    temp: TempDir,
-    admin: String,
-    repository: String,
-    /// The control plane's HTTP API.
-    control_url: String,
-    node_url: String,
-    /// Layers on the node, each with one checkpoint over World 0: (name, head).
-    heads: Vec<(String, ObjectId)>,
-}
+use wire_support::{Deployment, closed_url, error_code, layer, now, op, stdout};
 
 impl Deployment {
-    /// Bootstraps the control plane, signs a device in, creates private `acme/vault`, writes
-    /// two Layers on its node, then serves the control plane and the node on loopback. The
-    /// node also trusts the public test key, for a CI reporter, and `ci-bot` reads.
+    /// The deployment with three Layers on the node, each with one checkpoint over World 0.
+    /// `ci-bot` reads, for a CI reporter.
     fn start() -> Self {
-        let temp = TempDir::new().unwrap();
-        let control = temp.path().join("control");
-        let plane = ControlPlane::open(&control).unwrap();
-        let admin = plane.bootstrap().unwrap();
-        let start = plane.device_start(now()).unwrap();
-        plane
-            .device_approve(&admin, &start.user_code, now())
-            .unwrap();
-        let Poll::Approved(session) = plane.device_poll(&start.device_code, now()).unwrap() else {
-            panic!("the approved code is still pending");
-        };
-        Credentials {
-            principal: session.principal.clone(),
-            device: session.device.clone(),
-            refresh_token: session.refresh_token.clone(),
-        }
-        .save(&temp.path().join("home").join("credentials"))
-        .unwrap();
-        let created = plane
-            .create_repository(
-                &session.access_token,
-                &CreateRequest {
-                    owner: "acme".into(),
-                    name: "vault".into(),
-                    public: false,
-                    publish: Publish::Direct,
-                    operation: "create-vault".into(),
-                },
-                now(),
-            )
-            .unwrap();
-        let repository = created.repository.clone();
-        let id = RepositoryId::parse(&repository).unwrap();
-        let nodes = LocalNode::new(control.join("nodes"));
-        let mut keys = plane.node_keys().unwrap();
-        keys.trust(test_keys::KID, test_keys::signing_key(1).verifying_key())
-            .unwrap();
-        nodes.trust_keys(&id, &keys).unwrap();
-        nodes
-            .apply(&AppliedPermissions {
-                repository: id.clone(),
-                epoch: 2,
-                visibility: Visibility::Private,
-                roles: [
-                    (
-                        PrincipalId::parse(&session.principal).unwrap(),
-                        Role::Maintain,
-                    ),
-                    (PrincipalId::parse("ci-bot").unwrap(), Role::Read),
-                ]
-                .into_iter()
-                .collect(),
-                required_approvals: 0,
-            })
-            .unwrap();
-        drop(plane);
-
-        let node_dir = nodes.repository_dir(&id);
-        let mut log = FileWorldLog::open(&node_dir).unwrap();
-        let mut heads = Vec::new();
-        for name in ["p", "q", "r"] {
-            log.create_layer(&layer(name), VersionNumber::new(0).unwrap())
+        Deployment::start_with(&[("ci-bot", Role::Read)], 0, |log| {
+            let mut heads = Vec::new();
+            for name in ["p", "q", "r"] {
+                log.create_layer(&layer(name), VersionNumber::new(0).unwrap())
+                    .unwrap();
+                let content = log.repository().put_blob(name.as_bytes()).unwrap();
+                let changes = SparseChanges::new([(
+                    RepoPath::parse(&format!("{name}.txt")).unwrap(),
+                    Some(FileEntry::Regular {
+                        content,
+                        executable: false,
+                    }),
+                )])
                 .unwrap();
-            let content = log.repository().put_blob(name.as_bytes()).unwrap();
-            let changes = SparseChanges::new([(
-                RepoPath::parse(&format!("{name}.txt")).unwrap(),
-                Some(FileEntry::Regular {
-                    content,
-                    executable: false,
-                }),
-            )])
-            .unwrap();
-            let head = log
-                .append(&op(&format!("write-{name}")), &layer(name), &changes)
-                .unwrap();
-            heads.push((name.to_string(), head.checkpoint().object()));
-        }
-        let gate = Gate::load(&node_dir, &repository).unwrap();
-        let node = bind_loopback("127.0.0.1:0").unwrap();
-        let node_url = format!("http://{}", node.local_addr().unwrap());
-        let name = repository.clone();
-        thread::spawn(move || {
-            let mut log = log;
-            let _ = serve(&node, &name, &mut log, &gate, None);
-        });
-
-        let api = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr: SocketAddr = api.local_addr().unwrap();
-        let control_url = format!("http://{addr}");
-        thread::spawn(move || {
-            // The control plane is not Send, so its server thread opens its own.
-            let plane = ControlPlane::open(&control).unwrap();
-            let rp = RelyingParty::new(&format!("http://localhost:{}", addr.port())).unwrap();
-            let _ = javelin_control::serve(&plane, &rp, &api);
-        });
-        Self {
-            temp,
-            admin,
-            repository,
-            control_url,
-            node_url,
-            heads,
-        }
-    }
-
-    fn home(&self) -> PathBuf {
-        self.temp.path().join("home")
+                let head = log
+                    .append(&op(&format!("write-{name}")), &layer(name), &changes)
+                    .unwrap();
+                heads.push((name.to_string(), head.checkpoint().object()));
+            }
+            heads
+        })
     }
 
     fn project(&self) -> PathBuf {
         let project = self.temp.path().join("project");
         fs::create_dir_all(&project).unwrap();
         project
-    }
-
-    fn node_head(&self) -> u64 {
-        let dir = LocalNode::new(self.temp.path().join("control").join("nodes"))
-            .repository_dir(&RepositoryId::parse(&self.repository).unwrap());
-        Repository::open(dir).unwrap().head().unwrap().number.get()
-    }
-
-    /// Runs the CLI with this device's home and the control plane at `control_url`.
-    fn javelin(&self, control_url: &str, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_javelin"))
-            .current_dir(self.temp.path())
-            .env("JAVELIN_HOME", self.home())
-            .env("JAVELIN_CONTROL_URL", control_url)
-            .env_remove("JAVELIN_TOKEN")
-            .env_remove("JAVELIN_ADMIN_TOKEN")
-            .arg("--json")
-            .args(args)
-            .output()
-            .unwrap()
     }
 
     fn queue_publish(&self, name: &str) {
@@ -277,26 +136,6 @@ impl Deployment {
         cache["expires_at"] = 0.into();
         self.write_cache(&cache);
     }
-}
-
-fn stdout(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
-        panic!(
-            "stdout is not JSON: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    })
-}
-
-fn error_code(output: &Output) -> String {
-    let value: Value = serde_json::from_slice(&output.stderr).unwrap_or_else(|_| {
-        panic!(
-            "stderr is not JSON: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-    });
-    value["error"]["code"].as_str().unwrap().to_string()
 }
 
 #[test]

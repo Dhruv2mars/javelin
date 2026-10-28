@@ -25,8 +25,8 @@ use javelin_node::{
 use javelin_protocol::{
     Message,
     codec::{
-        CheckReport, Conclusion, Disclosure, Embargoed, Kind, PublishOutcome, RequestId, decode,
-        encode,
+        CheckReport, Conclusion, Disclosure, Embargoed, Kind, PublishOutcome, RequestId,
+        ReviewOutcome, decode, encode,
     },
     receiver::WorldLog,
 };
@@ -307,6 +307,15 @@ fn battery(probe: &Probe) -> Vec<Message> {
             operation: op("take-probe"),
             layer: layer("fix"),
         },
+        Message::LayerCreate {
+            layer: layer("probe"),
+            base: v(2),
+        },
+        Message::ListRequests { after: None },
+        Message::ReadReview {
+            request: RequestId::parse("request-fix").unwrap(),
+            comments_from: 0,
+        },
         Message::OpenRequest {
             operation: op("open-probe"),
             request: RequestId::parse("request-fix").unwrap(),
@@ -361,6 +370,25 @@ fn outsider_view(node: &mut Node, probe: &Probe) -> Vec<Vec<u8>> {
 /// `held` holds World 2 above the frontier; `plain` never had it. An outsider's replies are
 /// the same, byte for byte, and they say World 1 is the newest version.
 fn assert_indistinguishable(held: &mut Node, plain: &mut Node) {
+    // A member's Publish Request over World 2: its list entry and review would name it.
+    let draft = held.append("draft", &[("src/draft", b"draft\n")]);
+    let opened = held.ask(
+        Who::Owner,
+        Message::OpenRequest {
+            operation: op("open-draft"),
+            request: RequestId::parse("request-fix").unwrap(),
+            layer: layer("draft"),
+            checkpoint: draft,
+            base: v(2),
+        },
+    );
+    assert!(
+        matches!(
+            opened,
+            Message::ReviewOutcome(ReviewOutcome::Accepted { .. })
+        ),
+        "{opened:?}"
+    );
     let tree = held.log().repo().version(v(2)).unwrap().tree;
     let probe = Probe {
         tree,

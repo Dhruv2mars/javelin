@@ -600,7 +600,7 @@ fn a_take_stopped_between_the_sync_and_attach_json_is_finished_by_the_next_take(
     let stopped = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .env("JAVELIN_HOME", &desktop.home)
         .env("JAVELIN_TOKEN", &desktop.token)
-        .env("JAVELIN_FAILPOINT", "take_after_sync_advance")
+        .env("JAVELIN_FAILPOINT", "sync_after_advance")
         .args(["--json", "layer", "take", "newer", "--repo", desktop.repo()])
         .output()
         .unwrap();

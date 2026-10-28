@@ -216,6 +216,26 @@ fn a_maintainer_delays_embargoes_and_releases_and_outsiders_see_the_frontier() {
         json(&javelin(&home, None, &with(&["frontier"])))["frontier"],
         1
     );
+    // Signed out, attach brings the frontier, World 1, not the embargoed head.
+    let clone = TempDir::new().unwrap();
+    let url = format!("{node}/{REPO}");
+    let attached = json(&javelin(
+        &home,
+        None,
+        &["attach", url.as_str(), clone.path().to_str().unwrap()],
+    ));
+    assert_eq!(attached["head"]["number"], 1);
+    let repo = clone.path().to_str().unwrap();
+    let synced = json(&javelin(&home, None, &["sync", "--repo", repo]));
+    assert_eq!(synced["head"]["number"], 1);
+    assert_eq!(synced["advanced"], false);
+    // Request list and show are Layer work: a caller without a role is refused.
+    let listed = javelin(&home, None, &["request", "list", "--repo", repo]);
+    assert_eq!(listed.status.code(), Some(1), "{listed:?}");
+    assert!(
+        String::from_utf8_lossy(&listed.stderr).contains("\"forbidden\""),
+        "{listed:?}"
+    );
     let member = json(&javelin(&home, Some(&owner), &with(&["frontier"])));
     assert_eq!(member["embargoes"][0]["version"], 2);
     assert_eq!(member["embargoes"][0]["until"], Value::Null);
@@ -230,4 +250,8 @@ fn a_maintainer_delays_embargoes_and_releases_and_outsiders_see_the_frontier() {
         json(&javelin(&home, None, &with(&["frontier"])))["frontier"],
         2
     );
+    // Released, the signed-out clone syncs to World 2 from its attached head.
+    let synced = json(&javelin(&home, None, &["sync", "--repo", repo]));
+    assert_eq!(synced["from"]["number"], 1);
+    assert_eq!(synced["head"]["number"], 2);
 }

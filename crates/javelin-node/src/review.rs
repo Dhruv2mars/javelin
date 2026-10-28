@@ -21,7 +21,11 @@ use javelin_collaboration::{
 use javelin_identity::{Grant, Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{PublishOutcome, RequestStatus, ReviewOutcome, code, decode, encode},
+    codec::{
+        CommentDetail, MAX_REQUESTS, PublishOutcome, RequestStatus, RequestSummary, ReviewDetail,
+        ReviewOutcome, RevisionDetail, code, decode, encode,
+    },
+    limits::{MAX_FRAME, MAX_WANT},
     receiver::refusal,
 };
 use rusqlite::{Connection, OptionalExtension, params};
@@ -39,7 +43,7 @@ const OPERATION_ID_REUSED: &str = "operation_id_reused";
 type Recorded = (Vec<u8>, Vec<u8>);
 
 /// Answers one review message: `OpenRequest`, `Revise`, `Approve`, `Comment`,
-/// `PublishRequest` or `ReadRequest`. `token` is the caller's bearer token, if any, and
+/// `PublishRequest`, `ReadRequest`, `ListRequests` or `ReadReview`. `token` is the caller's bearer token, if any, and
 /// `now` is Unix time in seconds. A refused command comes back as the reply's `Refused`
 /// code. Authorization failures and unknown requests are protocol errors.
 pub fn handle(
@@ -242,8 +246,134 @@ pub fn handle(
                 revision: review.current().map_or(0, |current| current.index),
             })
         }
+        Message::ListRequests { after } => {
+            let (_, permissions) = authorize(gate, token, now, Scope::Read, None)?;
+            list(repo, records, permissions, after.as_ref())
+        }
+        Message::ReadReview {
+            request,
+            comments_from,
+        } => {
+            let id = review_id(request)?;
+            let layer = request_layer(records, &id)?;
+            let (grant, permissions) = authorize(gate, token, now, Scope::Read, layer.as_deref())?;
+            let Some(layer) = layer else {
+                return Err(unknown_request());
+            };
+            let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
+            Ok(Message::ReviewDetail(detail(
+                repo,
+                &gate.reader(&grant),
+                request,
+                &layer,
+                &review,
+                permissions.required_approvals,
+                *comments_from,
+            )?))
+        }
         _ => Err(ProtocolError::new("malformed", "not a review message")),
     }
+}
+
+/// Most comment bytes in one `ReviewDetail`, so a reply always fits a frame.
+const COMMENT_BUDGET: usize = MAX_FRAME / 2;
+
+/// `ListRequests`: up to `MAX_REQUESTS` requests in ID order after `after`.
+fn list(
+    repo: &Repository,
+    records: &Connection,
+    permissions: &AppliedPermissions,
+    after: Option<&javelin_protocol::codec::RequestId>,
+) -> Result<Message, ProtocolError> {
+    let mut statement = records
+        .prepare(
+            "SELECT request, layer FROM review_requests WHERE request > ?1 ORDER BY request LIMIT ?2",
+        )
+        .map_err(storage)?;
+    let rows = statement
+        .query_map(
+            params![
+                after.map_or("", |after| after.as_str()),
+                MAX_REQUESTS as i64 + 1
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(storage)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(storage)?;
+    let more = rows.len() > MAX_REQUESTS;
+    let mut requests = Vec::new();
+    for (request, layer) in rows.into_iter().take(MAX_REQUESTS) {
+        let id = RequestId::parse(&request).map_err(|_| malformed_record())?;
+        let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
+        let request = javelin_protocol::codec::RequestId::parse(&request)?;
+        requests.push(summary(&request, &layer, &review)?);
+    }
+    Ok(Message::RequestList { requests, more })
+}
+
+fn summary(
+    request: &javelin_protocol::codec::RequestId,
+    layer: &str,
+    review: &Review,
+) -> Result<RequestSummary, ProtocolError> {
+    Ok(RequestSummary {
+        request: request.clone(),
+        layer: LayerId::parse(layer).map_err(|_| malformed_record())?,
+        author: review.author().map_or("", PrincipalId::as_str).to_owned(),
+        state: status(review.state()),
+        revision: review.current().map_or(0, |current| current.index),
+    })
+}
+
+/// `ReadReview`: every revision with its approvals, and the comments from `from` that
+/// fit the budget. A revision's checkpoint `reader` may not read is left out, as `Get`
+/// treats it: never stored.
+fn detail(
+    repo: &Repository,
+    reader: &javelin::Reader,
+    request: &javelin_protocol::codec::RequestId,
+    layer: &str,
+    review: &Review,
+    required_approvals: u32,
+    from: u32,
+) -> Result<ReviewDetail, ProtocolError> {
+    let mut revisions = Vec::new();
+    for revision in review.revisions() {
+        let checkpoint = revision.revision.checkpoint();
+        let id = CheckpointId::parse(&checkpoint.to_string())?;
+        let readable = matches!(repo.checkpoint_visible(id, reader), Ok(true));
+        revisions.push(RevisionDetail {
+            index: revision.index,
+            base: revision.revision.base(),
+            checkpoint: readable.then_some(checkpoint),
+            approvals: revision
+                .approvals
+                .iter()
+                .map(|approver| approver.as_str().to_owned())
+                .collect(),
+        });
+    }
+    let mut comments = Vec::new();
+    let mut size = 0;
+    for comment in review.comments().iter().skip(from as usize) {
+        size += comment.body.as_str().len();
+        if comments.len() == MAX_WANT || (!comments.is_empty() && size > COMMENT_BUDGET) {
+            break;
+        }
+        comments.push(CommentDetail {
+            author: comment.author.as_str().to_owned(),
+            revision: comment.index,
+            body: comment.body.as_str().to_owned(),
+        });
+    }
+    Ok(ReviewDetail {
+        summary: summary(request, layer, review)?,
+        required_approvals,
+        revisions,
+        comments,
+        comments_total: review.comments().len() as u32,
+    })
 }
 
 /// The outcome of applying one command against the stored state.

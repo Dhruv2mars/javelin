@@ -185,15 +185,15 @@ pub struct PathDiff {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EncodedCheckpoint {
+pub(crate) struct EncodedCheckpoint {
     repository: ObjectId,
     version: u64,
     world: ObjectId,
-    changes: BTreeMap<String, Option<FileEntry>>,
+    pub(crate) changes: BTreeMap<String, Option<FileEntry>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sources: Vec<CheckpointId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    provenance: Option<ObjectId>,
+    pub(crate) provenance: Option<ObjectId>,
 }
 
 impl Repository {

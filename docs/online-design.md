@@ -123,6 +123,9 @@ Additions, all in `codec.rs`:
 | 0x4a | `SetDelay` | `{ delay: u64 }` (seconds; Maintain) | `Disclosure` |
 | 0x4b | `Embargo` | `{ operation, until: Option<u64> }` (before the Publish with that operation; Maintain) | `Disclosure` |
 | 0x4c | `Release` | `{ version }` (Maintain) | `Disclosure` |
+| 0x3c | `LayerCreate` | `{ layer, base }` | `LayerOutcome` (`Accepted { seq: 0, checkpoint }`; a retry with the same base replays) |
+| 0x57 | `ListRequests` | `{ after: Option<RequestId> }` | `RequestList` 0x58: `{ requests: [{ request, layer, author, state, revision }], more }` |
+| 0x59 | `ReadReview` | `{ request, comments_from }` | `ReviewDetail` 0x5a: `{ summary, required_approvals, revisions: [{ index, base, checkpoint?, approvals }], comments, comments_total }` |
 
 Outcome shapes:
 
@@ -135,6 +138,13 @@ Outcome shapes:
 - `attribution` in `PublishLayer`: `Human`, or `Agent { context: Option<ObjectId>,
   allow_missing_trace: bool }`. A missing trace without the override refuses with
   `missing_agent_trace` (`A§Publish`).
+
+`LayerCreate`, `ListRequests` and `ReadReview` serve `javelin request`: a client creates its
+Layer on the node before the first `LayerAppend`, and lists and shows requests with their
+revisions, approvals and comments (`docs/cli.md`, Publish Requests). `ReviewDetail` follows the
+caller's audiences: a revision's checkpoint ID is sent only when `Repository::checkpoint_visible`
+lets the caller `Get` it, and a revision's snapshot tree is never sent, since it names hidden
+content in plain form. Request IDs, Layer IDs, authors, approvals and comments carry no path.
 
 `Attribution` serves the forge's history: the Layer and declared attribution of the Publish
 that made a version, absent for World 0 and for versions advanced without a Layer.

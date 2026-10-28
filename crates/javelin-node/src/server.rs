@@ -299,7 +299,9 @@ fn serve_one(
         | Message::Approve { .. }
         | Message::Comment { .. }
         | Message::PublishRequest { .. }
-        | Message::ReadRequest { .. } => return review::handle(log, gate, token, now, &message),
+        | Message::ReadRequest { .. }
+        | Message::ListRequests { .. }
+        | Message::ReadReview { .. } => return review::handle(log, gate, token, now, &message),
         Message::CheckReport(report) => {
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
@@ -374,6 +376,11 @@ fn serve_one(
             &operation,
             &layer,
         )?)),
+        Message::LayerCreate { layer, base } => Ok(Message::LayerOutcome(crate::layer::create(
+            log.parts().0,
+            &layer,
+            base,
+        )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
             crate::stack::get_checkpoints(log.repo(), items, &reader)
         }
@@ -395,10 +402,14 @@ fn refuse_outsider_work(
     message: &Message,
 ) -> Result<(), ProtocolError> {
     let scope = match message {
-        Message::LayerHead { .. } | Message::ReadRequest { .. } => Scope::Read,
-        Message::LayerAppend { .. } | Message::LayerStack { .. } | Message::LayerTake { .. } => {
-            Scope::LayerWrite
-        }
+        Message::LayerHead { .. }
+        | Message::ReadRequest { .. }
+        | Message::ListRequests { .. }
+        | Message::ReadReview { .. } => Scope::Read,
+        Message::LayerAppend { .. }
+        | Message::LayerStack { .. }
+        | Message::LayerTake { .. }
+        | Message::LayerCreate { .. } => Scope::LayerWrite,
         Message::OpenRequest { .. } | Message::Revise { .. } | Message::Comment { .. } => {
             Scope::ReviewWrite
         }
@@ -523,7 +534,9 @@ fn check_writes(
 /// by content. Everything else, replies sent as requests included, needs `read`.
 fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
-        Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
+        Message::LayerAppend { layer, .. } | Message::LayerCreate { layer, .. } => {
+            (Scope::LayerWrite, Some(layer))
+        }
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
         Message::LayerTake { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),

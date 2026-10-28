@@ -34,28 +34,55 @@ CI left open. Work from it, in roughly this order:
     format 11 `object_access.since`), CLI (`javelin frontier`, `delay`, `embargo`) and forge
     (frontier as the head, "delayed" notice). Tests: `crates/javelin-node/tests/wire_frontier.rs`,
     `apps/forge/test/frontier.test.ts`. macOS only; Linux and Windows unverified.
-  - [ ] When `ListRequests`/`ReadReview` (trail 3) land, answer callers outside the repository
-    as for no request, as `ReadRequest` does, so review state cannot name a held version.
+  - [x] Trail 3's `ListRequests`, `ReadReview` and `LayerCreate` refuse callers without a
+    role before any lookup; signed-out `attach` and `sync` stop at the frontier
+    (`wire_frontier.rs`, `crates/javelin-cli/tests/frontier.rs`).
   - [ ] Outside contributors (signed in, no role) are refused every Layer, Publish Request and
-    check message so none can name a held version. When Layers gain owners (trail 3's
-    `LayerCreate`), let them reach their own Layers based at or below the frontier.
-  - [ ] `--embargo` on the hosted Publish commands once trail 3's CLI Publish lands; until
-    then `javelin embargo --operation ID` precedes the Publish.
+    check message so none can name a held version. Let them reach their own Layers, based
+    at or below the frontier, once a Layer records who created it.
+  - [ ] `--embargo` on `javelin request publish`; until then `javelin embargo --operation ID`
+    precedes the Publish.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
+- [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
+  list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,
+  open, approve and comment refuse). New wire messages `LayerCreate`, `ListRequests` and
+  `ReadReview`; `open` and `revise` upload the Layer's changes to the node. Evidence:
+  `crates/javelin-cli/tests/requests_sync.rs` against the node's server with real tokens.
+- [x] `javelin sync`: replays the outbox, fetches from the attached head as trust anchor,
+  advances the local World and rolling base, rewrites `attach.json`; refuses
+  `local_world_diverged` and a chain that misses the anchor (`chain_mismatch`).
+- [x] Requests and sync under #99's audiences, and #101's guard shared: `javelin sync` and
+  `layer take` follow the node through one path (`cli_sync::follow`: `fetch_opened` from the
+  attached head, openings stored as attach stores them, `follows_attachment` widened to any
+  attach or sync World with the attached tree and no Publish receipt, node-confirmed
+  recovery of an interrupted sync). `ReviewDetail` drops the plain snapshot tree and sends a
+  revision's checkpoint only when the caller may read it. Evidence: `requests_sync.rs`
+  `sync_and_request_show_follow_the_callers_audiences`,
+  `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
+- [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
+  and `revise` upload a Layer to the node.
 - [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
+- [x] Forge live on Vercel at https://javelin-codes.vercel.app (Hobby, CLI deploys with
+  `bun run deploy` in `apps/forge` from `main`): landing page at `/` with install status
+  (installers coming) and open-by-node-URL, SPA fallback and security headers. Proved
+  against a tunneled `javelin-node serve`.
 - [ ] CI design (waiting on the user).
 - [x] Gate 2 failures of 2026-10-26 (#96 xfs discard, #98 apfs concurrent capture):
   the first was a product gap. A Layer discarded or published, then killed before the
   trash move, kept a live directory until a reclaiming command ran. The next command
   naming the Layer now finishes the move. The second was a probe timing assumption. The
   concurrent-rewrite check now waits for 4 distinct checkpoints, not a fixed 3 s window.
-- [ ] Gate 2 `crash/interrupted-create-recovers` assumes timing too. Its kill points come
+- [x] Gate 2 `crash/interrupted-create-recovers` assumes timing too. Its kill points came
   from the fastest of 3 timed creates. One of 6 local APFS runs timed a 2.8 s create (usual
-  ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Same class as the
-  capture fix. Kill on observable progress instead of measured time.
+  ~50 ms), so all 7 kills landed after exit: "only 0 kills landed". Now it kills at observed
+  states: held at the store lock with its Layer recorded (`gate2_seed --hold-store`), and
+  after its directory appears but before exit. Trail https://entire.com/et/dhruv2mars/-/trails/14.
+  APFS: 9 of 9 runs VERIFIED, including slowed creates; the old check reproduced "only 0
+  kills landed" with slow timing creates. Linux: Buildkite runs the crash clause. Windows:
+  not run.
 
 ## Move to Entire (2026-10-27)
 
