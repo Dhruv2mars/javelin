@@ -564,7 +564,8 @@ fn refused_append(outbox: &Outbox, layer: &LayerId, since: u64) -> Option<String
             Ok(Message::LayerOutcome(LayerOutcome::Stale { .. })) => {
                 Some(code::LAYER_STALE.to_owned())
             }
-            Ok(Message::LayerOutcome(LayerOutcome::Refused { code })) => Some(code),
+            Ok(Message::LayerOutcome(LayerOutcome::Refused { code }))
+            | Ok(Message::Error { code, .. }) => Some(code),
             _ => None,
         })
 }

@@ -212,9 +212,15 @@ pub(crate) fn uploads(
         .collect();
     let bytes = changes.canonical_bytes();
     let changes_id = Kind::Checkpoint.id(&bytes);
-    // A node that stops answering here still gets the whole revision queued.
-    let lacking = |kind, ids: &[ObjectId]| match link.map(|link| missing(link, kind, ids)) {
+    // A node that stops answering here still gets the whole revision queued, and is not
+    // asked again.
+    let down = std::cell::Cell::new(false);
+    let lacking = |kind, ids: &[ObjectId]| match link
+        .filter(|_| !down.get())
+        .map(|link| missing(link, kind, ids))
+    {
         Some(Err(CliError::Remote(error))) if error.code == code::NODE_UNAVAILABLE => {
+            down.set(true);
             Ok(ids.to_vec())
         }
         Some(found) => found,

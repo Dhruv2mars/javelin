@@ -270,7 +270,8 @@ fn refusal_of(outcome: &[u8]) -> Option<String> {
     match decode(outcome).ok()? {
         Message::ReviewOutcome(ReviewOutcome::Refused { code })
         | Message::PublishOutcome(PublishOutcome::Refused { code })
-        | Message::LayerOutcome(LayerOutcome::Refused { code }) => Some(code),
+        | Message::LayerOutcome(LayerOutcome::Refused { code })
+        | Message::Error { code, .. } => Some(code),
         Message::PublishOutcome(PublishOutcome::Conflict { .. }) => Some(code::CONFLICT.into()),
         Message::PublishOutcome(PublishOutcome::LayerStale { .. })
         | Message::LayerOutcome(LayerOutcome::Stale { .. }) => Some(code::LAYER_STALE.into()),

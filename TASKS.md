@@ -60,8 +60,15 @@ CI left open. Work from it, in roughly this order:
   revision's checkpoint only when the caller may read it. Evidence: `requests_sync.rs`
   `sync_and_request_show_follow_the_callers_audiences`,
   `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
-- [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
-  and `revise` upload a Layer to the node.
+- [x] Checkpoint upload on capture (U5's CLI call site): every capture on an attached Layer
+  queues its checkpoint in the outbox and delivers it within the 2 s budget; outages queue and
+  replay on the next capture or `javelin sync`; only the lease holder uploads (`layer_stale`
+  otherwise); `forbidden` uploads are decided, not queued forever; `javelin status` reports
+  each Layer. Evidence: `crates/javelin-cli/tests/capture_upload.rs` against the node's server
+  with real tokens.
+  - [ ] The bytes of a path outside the writer's audiences reach the node before the append is
+    refused (served to nobody outside the audience). A client-side check would need the
+    caller's audiences.
 - [x] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker
   (`feat/node-core-wasm`). `javelin` without `fs` and `javelin-node` without `native` build
   for wasm32; `Storage`/`Coordination` in `crates/javelin-node/src/storage.rs`; the Durable

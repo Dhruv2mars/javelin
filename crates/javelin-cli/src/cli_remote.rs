@@ -23,7 +23,7 @@ use std::{
 use javelin::{
     Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository, Result,
     VersionNumber,
-    outbox::{Entry, Fault, Outbox, Transport},
+    outbox::{Entry, Fault, Kind, Outbox, Transport},
     tree::MemoryStore,
 };
 use javelin_control::Endpoint;
@@ -1221,11 +1221,19 @@ impl Transport for NodeTransport {
                 )));
             }
         }
+        // An upload or append touching a path outside the writer's audiences is refused
+        // every time it is sent, so the refusal decides it: the checkpoint stays local, and a
+        // later capture uploads the Layer's changes again.
+        if matches!(entry.kind, Kind::Upload | Kind::Append)
+            && matches!(decode(&reply), Ok(Message::Error { code, .. }) if code == code::FORBIDDEN)
+        {
+            return Ok(reply);
+        }
         recorded(reply)
     }
 }
 
-/// Only an outcome the node recorded acknowledges a record. An `Error` reply, such as a
+/// Only an outcome the node recorded acknowledges a record, or a `forbidden` upload. An `Error` reply, such as a
 /// storage failure or `busy`, recorded nothing, so the record stays queued under its
 /// operation ID; so does a reply that does not decode.
 fn recorded(reply: Vec<u8>) -> std::result::Result<Vec<u8>, Fault> {
