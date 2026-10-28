@@ -3,11 +3,19 @@
 
 #![allow(dead_code)] // each test binary uses a different subset
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    net::{SocketAddr, TcpListener, TcpStream},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
-use javelin_node::auth::Gate;
+use javelin_node::{FileWorldLog, auth::Gate, serve};
 
 pub const OWNER: &str = "owner";
 const ALL: [Scope; 5] = [
@@ -83,4 +91,43 @@ pub fn device_token(sub: &str, repository: &str, dev: &str, layer: Option<&str>)
     claims.dev = dev.to_string();
     claims.layer = layer.map(str::to_string);
     test_keys::issuer().issue(&claims).unwrap()
+}
+
+/// A node serving `name` from `log` on `listener` until `join`. It checks for the stop
+/// between connections instead of counting them: other local processes probe any new
+/// loopback listener, and a probe counted as one of the test's connections would close the
+/// listener under the test's last request.
+pub struct Served {
+    addr: SocketAddr,
+    stop: Arc<AtomicBool>,
+    thread: thread::JoinHandle<FileWorldLog>,
+}
+
+pub fn serve_until_joined(
+    listener: TcpListener,
+    name: &str,
+    log: FileWorldLog,
+    gate: Gate,
+) -> Served {
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let name = name.to_string();
+    let thread = thread::spawn(move || {
+        let mut log = log;
+        while !flag.load(Ordering::SeqCst) {
+            serve(&listener, &name, &mut log, &gate, Some(1)).unwrap();
+        }
+        log
+    });
+    Served { addr, stop, thread }
+}
+
+impl Served {
+    /// Stops the node and returns its log. A bare connection wakes the accept loop.
+    pub fn join(self) -> thread::Result<FileWorldLog> {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.addr);
+        self.thread.join()
+    }
 }

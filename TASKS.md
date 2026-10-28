@@ -133,10 +133,43 @@ every push (`.buildkite/pipeline.yml`).
   requests and sync (trail 3), public frontier (trail 19), node core on wasm (trail 18).
 - [ ] End-to-end daily-workflow acceptance: two clones, Layers, request, review, publish and
   sync against a self-hosted node (`test/daily-workflow-acceptance`, in progress).
-- [ ] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
+- [x] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
   flaked once on Linux (Buildkite build 25 on main `686a470`: `repo.has_blob(id).is_ok()`
   failed); the rebuild (32) and the same commit's branch build (22) passed. Find what
-  `has_object` returns there.
+  `has_object` returns there. It was `Busy`, not a torn read: the suite took 7.60s against
+  1.2-1.5s in passing builds, the 5s busy timeout, and a reader held off that long gets
+  `Busy("database is locked")`. The read transaction holds its shared lock from the row
+  lookup through the blob reads, so a writer cannot commit between them. The test now
+  accepts `Busy` and still fails on any other error (`fix/flaky-tests`).
+- [x] `crates/javelin-node/tests/loopback.rs::browsers_may_read_but_never_write` reset 2 of 8
+  runs on macOS. A stray local connection to the reused ephemeral port (another worktree's
+  `javelin attach` retrying a dead node, or T3 Code's port probe) used one of the server's
+  `Some(7)` connections, so it closed the listener under the test's last request. The server
+  read and drained every body; the test now serves until the process exits
+  (`fix/flaky-tests`).
+- [x] `crates/javelin-cli/tests/attach.rs::attach_leaves_a_store_another_writer_created_alone`
+  failed about 1 run in 6 on macOS. T3 Code probes every new loopback listener (`GET /`, a TLS
+  hello); the probe panicked the fake node's thread, attach's next request was refused, and
+  the fake "other writer" never ran. Attach deleted nothing. The fake node now handles each
+  connection on its own thread and drops one that is not a request; the test sends both
+  probes itself (`fix/flaky-tests`).
+- [x] On a loaded Mac, `loopback.rs` `publish_layer_over_loopback_replays_the_recorded_outcome`,
+  `wire_auth.rs` `a_layer_limited_token_uploads_objects_but_writes_only_its_own_layer` and
+  `wire_hidden.rs` `an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back`
+  reset, and `outbox_replay.rs` counted 2 forwards for 1. Not a server reset and not a
+  duplicate send: every one of 14 failures under load had T3 Code's port probe (`GET /` or a
+  TLS hello) in it. The probe used one of `serve`'s `Some(n)` connections, so the listener
+  closed under the test's last request; at the outbox proxy it was counted as a forward.
+  Load only widens the window. The server reads and drains every request, and an outbox
+  write is never resent on a reset (`retry_reset: false`); a record left queued is resent
+  under the same operation ID, whose outcome the node replays. These tests now serve with
+  `wire_support::serve_until_joined`, which stops on a flag between connections like the
+  `checkpoints` and `stack` nodes, and the proxy forwards only requests for the node
+  (`fix/flaky-tests`).
+- [ ] Tests that dial `closed_url()` (`attach`, `wire_support`, `daily_support`) bind a port,
+  drop it and dial it, so another test's listener can get that port and the connection. A
+  stray `POST /v2/r/demo` from one of them still counts against a `Some(n)` node serving
+  `demo`. Dial a port no test can be handed instead.
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.

@@ -153,6 +153,17 @@ impl Proxy {
         thread::spawn(move || {
             for client in listener.incoming() {
                 let Ok(mut client) = client else { continue };
+                if shared.lock().unwrap().mode == Mode::Reset {
+                    continue;
+                }
+                let Ok(request) = read_request(&mut client) else {
+                    continue;
+                };
+                // Other local processes probe any new loopback listener (`GET /`, a TLS
+                // hello). Only a request for the node is forwarded, counted, or takes a mode.
+                if !request.starts_with(format!("POST /v2/r/{REPO} ").as_bytes()) {
+                    continue;
+                }
                 let mode = {
                     let mut state = shared.lock().unwrap();
                     let mode = state.mode;
@@ -164,9 +175,6 @@ impl Proxy {
                 if mode == Mode::Reset {
                     continue;
                 }
-                let Ok(request) = read_request(&mut client) else {
-                    continue;
-                };
                 if let Mode::DelayOnce(wait) = mode {
                     thread::sleep(wait);
                 }
@@ -421,6 +429,11 @@ fn a_slow_node_delays_delivery_without_duplicating_it() {
     queue_publish(&mut outbox, "l0", heads[0]);
 
     proxy.set(Mode::DelayOnce(Duration::from_millis(200)));
+    // A port probe from another local process neither counts nor takes the delay.
+    TcpStream::connect(proxy.addr)
+        .unwrap()
+        .write_all(b"GET / HTTP/1.1\r\n\r\n")
+        .unwrap();
     let started = Instant::now();
     let report = outbox
         .replay(&mut Loopback::new(proxy.addr, &token))
