@@ -15,9 +15,10 @@ use javelin::{
 use javelin_collaboration::{PrincipalId, Role, Visibility};
 use javelin_identity::test_keys;
 use javelin_node::{
-    FileWorldLog,
+    FileWorldLog, admin,
     auth::{self, Gate},
-    bind_loopback, serve,
+    bind_loopback, serve, serve_live,
+    storage::Directory,
 };
 use javelin_protocol::{
     Message,
@@ -127,6 +128,37 @@ fn start(
         log
     });
     (addr, server)
+}
+
+/// `start`, serving as `javelin-node serve` does: the stored permissions decide each request,
+/// so a push between requests applies to the next one.
+fn start_live(
+    dir: &TempDir,
+    log: FileWorldLog,
+    connections: usize,
+) -> (SocketAddr, thread::JoinHandle<FileWorldLog>) {
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let path = dir.path().to_path_buf();
+    let server = thread::spawn(move || {
+        let mut log = log;
+        serve_live(&listener, REPO, &mut log, &path, Some(connections)).unwrap();
+        log
+    });
+    (addr, server)
+}
+
+/// Pushes the repository's permissions at `epoch` with `member` holding `role`, as the control
+/// plane does while the node serves.
+fn push(dir: &TempDir, epoch: u64, role: Option<Role>) {
+    let mut permissions = permissions(REPO, Visibility::Public);
+    permissions.epoch = epoch;
+    if let Some(role) = role {
+        permissions
+            .roles
+            .insert(PrincipalId::parse("member").unwrap(), role);
+    }
+    admin::apply(&Directory::new(dir.path()), &permissions).unwrap();
 }
 
 /// One message with an optional bearer token; returns the decoded reply.
@@ -704,4 +736,88 @@ fn an_append_cannot_drop_an_edit_the_writer_cannot_see() {
         panic!("the Layer moved")
     };
     assert_eq!(head.checkpoint().object(), shared);
+}
+
+#[test]
+fn a_role_change_moves_the_audiences_from_the_next_request_and_never_an_id() {
+    let dir = TempDir::new().unwrap();
+    let log = node(&dir);
+    let (env, internal) = (commitment(&log, ".env"), commitment(&log, "internal"));
+    let (secret, notes) = (ObjectId::for_blob(SECRET), ObjectId::for_blob(NOTES));
+    let member = token_for("member", REPO);
+    let (addr, server) = start_live(&dir, log, 16);
+    let open = Message::Open(vec![env, internal]);
+    let opened = |reply: Message| match reply {
+        Message::Opened(openings) => openings.into_iter().map(|(c, _)| c).collect::<Vec<_>>(),
+        other => panic!("{other:?}"),
+    };
+    let get = |id: ObjectId| Message::Get(vec![(Kind::Blob, id)]);
+    let served = |reply: Message| matches!(reply, Message::Objects(objects) if objects.len() == 1);
+    let resolve = Message::Resolve { version: None };
+    let head = send(addr, Some(&member), &resolve);
+
+    // Read: the members' audience only.
+    assert_eq!(opened(send(addr, Some(&member), &open)), vec![internal]);
+    assert_eq!(
+        error(send(addr, Some(&member), &get(secret))).0,
+        "missing_object"
+    );
+
+    // Maintain, pushed while the node serves: the maintainers' content opens on the next
+    // request, and the version it reads is the same version, with the same ID and tree.
+    push(&dir, 2, Some(Role::Maintain));
+    assert_eq!(
+        opened(send(addr, Some(&member), &open)),
+        vec![env, internal]
+    );
+    assert!(served(send(addr, Some(&member), &get(secret))));
+    assert_eq!(send(addr, Some(&member), &resolve), head);
+
+    // Removed from this public repository: an outsider at once, commitments only.
+    push(&dir, 3, None);
+    assert!(opened(send(addr, Some(&member), &open)).is_empty());
+    for blob in [secret, notes] {
+        assert_eq!(
+            error(send(addr, Some(&member), &get(blob))).0,
+            "missing_object"
+        );
+    }
+    assert_eq!(send(addr, Some(&member), &resolve), head);
+    // An outsider reaches no Layer either.
+    assert_eq!(
+        error(send(
+            addr,
+            Some(&member),
+            &Message::LayerHead {
+                layer: layer("seed")
+            }
+        ))
+        .0,
+        "forbidden"
+    );
+
+    // A stale push is refused when stored, so the node keeps deciding with epoch 3.
+    let mut stale = permissions(REPO, Visibility::Public);
+    stale.epoch = 2;
+    stale
+        .roles
+        .insert(PrincipalId::parse("member").unwrap(), Role::Maintain);
+    assert!(admin::apply(&Directory::new(dir.path()), &stale).is_err());
+    assert!(opened(send(addr, Some(&member), &open)).is_empty());
+
+    // Read again: back to the members' audience, same IDs.
+    push(&dir, 4, Some(Role::Read));
+    assert_eq!(opened(send(addr, Some(&member), &open)), vec![internal]);
+    assert!(served(send(addr, Some(&member), &get(notes))));
+    assert_eq!(
+        error(send(addr, Some(&member), &get(secret))).0,
+        "missing_object"
+    );
+    assert_eq!(send(addr, Some(&member), &resolve), head);
+    let log = server.join().unwrap();
+    assert_eq!(
+        commitment(&log, ".env"),
+        env,
+        "a role change rewrites nothing"
+    );
 }

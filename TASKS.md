@@ -153,14 +153,20 @@ Rough edges hit on the way. Fixed in this trail:
 
 Open:
 
-- [ ] No membership: the control plane serves repository tokens only to the creator and admin,
-  and nothing grants a second person a role. The test invites by writing `permissions.json`
-  and `keys.json` into the stopped node's directory and signing the collaborator's tokens with
-  the test key. Belongs with the forge's accounts and members.
-- [ ] A serving `javelin-node` reads permissions and trusted keys only at start, so a role
-  change needs a node restart.
-- [ ] `javelin login` approved with the admin token signs the device in as principal `admin`; a
-  second person needs the browser passkey page, and then still has no role (above).
+- [x] No membership: the control plane serves repository tokens only to the creator and admin,
+  and nothing grants a second person a role. Now `javelin member list|add|role|remove|invite`
+  and `repo settings --required-approvals`; the daily test and script invite the collaborator
+  with `member invite` and `login --invite`, with no file written by hand.
+- [x] A serving `javelin-node` reads permissions and trusted keys only at start, so a role
+  change needs a node restart. The node and the Durable Object now read them per request
+  (`LiveGate`); a change decides the next request.
+- [x] `javelin login` approved with the admin token signs the device in as principal `admin`; a
+  second person needs the browser passkey page, and then still has no role (above). An invite
+  makes the second person's account, and `control approve` from a signed-in device signs in
+  their other devices.
+- [ ] An invited account has no passkey: a device signs in through an invite or another of its
+  devices only. Enrolling a passkey still needs the admin token or a passkey sign-in.
+- [ ] The forge shows no members; showing them read-only waits for a members page.
 - [ ] No direct Publish to the node from the CLI. Importing a project means opening a request
   of your own and publishing it, which on a repository that requires approvals needs someone
   else's approval first. `workspace publish` in an attached clone publishes locally and then

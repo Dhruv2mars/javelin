@@ -7,6 +7,8 @@
 //! A node keeps what the gate starts from in its storage: the applied permissions
 //! (`permissions.json`) and the public keys it trusts (`keys.json`), files in a self-hosted
 //! node's data directory. The control plane writes both; the node never holds a signing key.
+//! A serving node reads them again for every request (`LiveGate`), so a push applies from the
+//! next request without a restart.
 
 #[cfg(feature = "native")]
 use std::path::Path;

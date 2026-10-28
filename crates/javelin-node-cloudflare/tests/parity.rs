@@ -6,7 +6,9 @@
 //! follow the caller's audiences (#99), a write refused for a hidden path, a Publish Request
 //! with its list, review and comment, a version held by an embargo until it is released, and
 //! the browser, anonymous and outsider refusals. Every reply must match, with object IDs masked:
-//! hidden entries are salted per store, so IDs over them differ between any two stores.
+//! hidden entries are salted per store, so IDs over them differ between any two stores. A
+//! second scenario pushes role changes while each node serves, through the Durable Object's
+//! own admin route, and the next request must be decided the same way on both.
 
 use std::{
     rc::Rc,
@@ -24,12 +26,12 @@ use javelin::{
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
 use javelin_node::{
-    FileWorldLog,
-    auth::Gate,
+    FileWorldLog, admin,
+    auth::{Gate, LiveGate},
     storage::{Coordination, Directory, Storage},
     wire,
 };
-use javelin_node_cloudflare::{pages::MemPages, vfs::PageStorage};
+use javelin_node_cloudflare::{pages::MemPages, service, vfs::PageStorage};
 use javelin_protocol::{
     Message,
     codec::{Kind, LayerOutcome, PublishOutcome, RequestId, decode, encode},
@@ -462,4 +464,175 @@ fn a_second_connection_to_an_open_database_is_refused() {
         Some(rusqlite::ErrorCode::DatabaseBusy),
         "{error}"
     );
+}
+
+/// The permissions of private repository `REPO` at `epoch`: `owner` holds Maintain and
+/// `member` holds `member`, in the JSON layout the control plane pushes.
+fn private(epoch: u64, member: Option<Role>) -> AppliedPermissions {
+    let mut roles = vec![(PrincipalId::parse("owner").unwrap(), Role::Maintain)];
+    if let Some(role) = member {
+        roles.push((PrincipalId::parse("member").unwrap(), role));
+    }
+    AppliedPermissions {
+        repository: RepositoryId::parse(REPO).unwrap(),
+        epoch,
+        visibility: Visibility::Private,
+        roles: roles.into_iter().collect(),
+        required_approvals: 0,
+    }
+}
+
+fn permissions_json(permissions: &AppliedPermissions) -> Vec<u8> {
+    let roles: serde_json::Map<String, serde_json::Value> = permissions
+        .roles
+        .iter()
+        .map(|(principal, role)| (principal.as_str().to_string(), role.name().into()))
+        .collect();
+    serde_json::json!({
+        "repository": permissions.repository.as_str(),
+        "epoch": permissions.epoch,
+        "public": permissions.visibility == Visibility::Public,
+        "roles": roles,
+        "required_approvals": permissions.required_approvals,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// A node that serves while permissions are pushed to it.
+trait Serving {
+    /// The push's outcome: `applied`, or the refusal's code.
+    fn push(&mut self, permissions: &AppliedPermissions) -> String;
+    fn send(&mut self, caller: &str, message: &Message) -> String;
+}
+
+/// The self-hosted node: its data directory, read by `LiveGate` for each request, as
+/// `javelin-node serve` reads it, and pushed to with `admin::apply`, as `LocalNode` pushes.
+struct SelfHosted {
+    storage: Directory,
+    log: FileWorldLog,
+    gate: LiveGate,
+}
+
+impl Serving for SelfHosted {
+    fn push(&mut self, permissions: &AppliedPermissions) -> String {
+        match admin::apply(&self.storage, permissions) {
+            Ok(_) => "applied".into(),
+            Err(admin::ApplyError::Refused(refusal)) => refusal.code,
+            Err(admin::ApplyError::Storage(error)) => panic!("{error}"),
+        }
+    }
+
+    fn send(&mut self, caller: &str, message: &Message) -> String {
+        let gate = self.gate.current(&self.storage).unwrap();
+        let now = self.log.now();
+        let token = token(caller);
+        let answer = wire::handle(
+            &mut self.log,
+            gate,
+            Some(&token),
+            false,
+            now,
+            &encode(message).unwrap(),
+        )
+        .unwrap();
+        masked(&decode(&answer.body).unwrap())
+    }
+}
+
+/// The Durable Object's service, reached only through its admin routes and protocol
+/// version 2, as the Worker reaches it.
+struct DurableObject(service::Node<PageStorage>);
+
+impl Serving for DurableObject {
+    fn push(&mut self, permissions: &AppliedPermissions) -> String {
+        let answer = self.0.admin("permissions", &permissions_json(permissions));
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        match answer.status {
+            200 => "applied".into(),
+            _ => body["error"].as_str().unwrap().into(),
+        }
+    }
+
+    fn send(&mut self, caller: &str, message: &Message) -> String {
+        let authorization = format!("Bearer {}", token(caller));
+        let answer = self
+            .0
+            .v2(Some(&authorization), false, &encode(message).unwrap());
+        assert_eq!(answer.status, 200, "{answer:?}");
+        masked(&decode(&answer.body).unwrap())
+    }
+}
+
+/// Requests and pushes, interleaved; the replies and push outcomes in order.
+fn role_changes(node: &mut dyn Serving) -> Vec<String> {
+    let mut seen = Vec::new();
+    let create = |name: &str| Message::LayerCreate {
+        layer: layer(name),
+        base: v(0),
+    };
+    let list = Message::ListRequests { after: None };
+    // Only Maintain sets the disclosure delay.
+    let maintain = Message::SetDelay { delay: 0 };
+    seen.push(node.push(&private(1, Some(Role::Read))));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &list));
+    seen.push(node.send("member", &create("member-a")));
+    // Removed while serving: refused from the next request on.
+    seen.push(node.push(&private(2, None)));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &list));
+    seen.push(node.send("member", &create("member-b")));
+    // A stale push is refused and changes nothing.
+    seen.push(node.push(&private(2, Some(Role::Maintain))));
+    seen.push(node.send("member", &list));
+    // Granted Maintain: the next request holds it.
+    seen.push(node.push(&private(3, Some(Role::Maintain))));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &create("member-c")));
+    seen.push(node.send("owner", &maintain));
+    seen
+}
+
+#[test]
+fn a_role_change_applies_from_the_next_request_on_both_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Directory::new(dir.path());
+    javelin_node::auth::store_keys(&storage, &test_keys::keys()).unwrap();
+    let log = FileWorldLog::on(&storage, &storage, Box::new(now)).unwrap();
+    let native = role_changes(&mut SelfHosted {
+        storage,
+        log,
+        gate: LiveGate::new(REPO),
+    });
+
+    let mut object = service::Node::new(
+        RepositoryId::parse(REPO).unwrap(),
+        PageStorage::new(Rc::new(MemPages::default())),
+        now,
+    );
+    let (id, tree) = admin::genesis();
+    let provision =
+        serde_json::json!({"genesis": {"id": id.to_string(), "tree": tree.to_string()}});
+    assert_eq!(
+        object
+            .admin("provision", provision.to_string().as_bytes())
+            .status,
+        200
+    );
+    assert_eq!(
+        object.admin("keys", &test_keys::keys().to_json()).status,
+        200
+    );
+    let durable = role_changes(&mut DurableObject(object));
+
+    assert_eq!(native[5], durable[5]);
+    assert!(native[5].contains("forbidden"), "{native:#?}");
+    assert_eq!(native[8], "stale_permissions");
+    assert!(native[1].contains("forbidden"), "{native:#?}");
+    assert!(native[11].contains("Disclosure"), "{native:#?}");
+    for (step, (a, b)) in native.iter().zip(&durable).enumerate() {
+        assert_eq!(a, b, "step {step} differs");
+    }
+    assert_eq!(native.len(), durable.len());
 }

@@ -1,12 +1,13 @@
 //! GA's promise in one test: a developer does their daily work with the `javelin` CLI and a
 //! self-hosted node instead of Git and GitHub. Everything a user would type runs through the
-//! real binaries: `javelin control init|serve|approve`, `javelin login`, `javelin repo create`,
+//! real binaries: `javelin control init|serve|approve`, `javelin login`, `javelin repo
+//! create|settings`, `javelin member invite`,
 //! `javelin-node serve` as its own process, and the `javelin` commands of the daily loop.
 //!
-//! Two people, each with their own clone. The owner is signed in through the control plane.
-//! The collaborator holds a token signed with a key the node trusts, because the control plane
-//! has no membership API yet: inviting them is the one step done here as an operator, by
-//! pushing permissions into the node's directory while it is stopped (TASKS.md lists it).
+//! Two people, each with their own clone, both signed in through the control plane. The owner
+//! invites the collaborator with `javelin member invite`; the collaborator signs in with
+//! `javelin login --invite CODE` and works at once, with the node still serving. Their second
+//! device signs in with `javelin login`, approved from the first.
 //!
 //! The loop: the owner creates the repository, imports a project and publishes World 1. The
 //! collaborator attaches, edits a Layer as a plain directory and opens a Publish Request. The
@@ -26,13 +27,12 @@ use std::{
 };
 
 use javelin::Repository;
-use javelin_collaboration::Role;
 use serde_json::Value;
 
 mod daily_support;
 
 use daily_support::{
-    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, refused, step,
+    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, owner_site, refused, step,
 };
 
 fn write(dir: &Path, path: &str, text: &str) {
@@ -69,40 +69,6 @@ fn paths(changes: &Value) -> Vec<String> {
         .iter()
         .map(|p| p["path"].as_str().unwrap().to_string())
         .collect()
-}
-
-/// `javelin control init|serve`, the owner's `javelin login`, `javelin repo create` for a
-/// private repository that takes Publish Requests, and `javelin-node serve` for it.
-fn owner_site() -> (Site, Person) {
-    let mut site = Site::start();
-    let owner = site.owner();
-    owner.login(&site);
-    let create = [
-        "repo",
-        "create",
-        "acme/app",
-        "--operation",
-        "create-app",
-        "--visibility",
-        "private",
-        "--publish",
-        "requests",
-    ];
-    // The text says how to serve the new repository; a retry returns the same one.
-    let text = owner.command().args(create).output().unwrap();
-    assert!(text.status.success(), "{}", describe(&text));
-    let text = String::from_utf8_lossy(&text.stdout).to_string();
-    let created = ok(owner.run(&create));
-    site.repository = created["repository"].as_str().unwrap().to_string();
-    assert!(
-        text.contains(&format!(
-            "javelin-node serve CONTROL_DIR/nodes/{0} {0}",
-            site.repository
-        )),
-        "{text}"
-    );
-    site.start_node();
-    (site, owner)
 }
 
 #[test]
@@ -155,8 +121,20 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert_eq!(owner.sync(&ours)["head"]["number"], 1);
 
     step("owner: invite cora as a reviewer; Publish now needs one approval");
-    site.invite("cora", Role::Review, 1);
-    let cora = site.member("cora", "cora-laptop");
+    let code = owner.invite("acme/app", "cora", "review");
+    let settings = ok(owner.run(&["repo", "settings", "acme/app", "--required-approvals", "1"]));
+    assert_eq!(settings["required_approvals"], 1, "{settings}");
+    let cora = site.person("cora-laptop-home");
+    let accepted = cora.accept(&code);
+    assert_eq!(
+        (&accepted["principal"], &accepted["role"]),
+        (&"cora".into(), &"review".into()),
+        "{accepted}"
+    );
+    assert_eq!(accepted["node_error"], Value::Null, "{accepted}");
+    let members = ok(owner.run(&["member", "list", "acme/app"]));
+    assert_eq!(members["members"].as_array().unwrap().len(), 2, "{members}");
+    assert_eq!(members["epoch"], 3, "{members}");
 
     step("cora: attach a second clone, edit a Layer as a plain directory, open a request");
     let theirs = cora.attach(&site, "cora");
@@ -553,7 +531,9 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "notes-open",
         ],
     ));
-    let desktop = site.member("cora", "cora-desktop");
+    // Cora's second device signs in as cora, approved from the first.
+    let desktop = site.person("cora-desktop-home");
+    desktop.login_from(&cora);
     let other = desktop.attach(&site, "cora-desktop");
     // Only the Layer's owner can take it.
     let code = refused(owner.at(&ours, &["layer", "take", "notes", "--operation", "o-take"]));
@@ -715,12 +695,13 @@ fn same_world(
 }
 
 /// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it
-/// through `NODE_SERVE`, with a second device for `layer take`. It never runs Git either.
+/// through `NODE_SERVE`: it invites the collaborator itself (`INVITE`), signs in their second
+/// device for `layer take`, and never runs Git either.
 #[cfg(unix)]
 #[test]
 fn the_shell_version_runs_the_same_loop_against_a_node() {
     let (mut site, owner) = owner_site();
-    site.invite("cora", Role::Review, 1);
+    ok(owner.run(&["repo", "settings", "acme/app", "--required-approvals", "1"]));
     // The script starts and restarts the node itself.
     site.stop_node();
     let script =
@@ -740,8 +721,9 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
         .env("WORKDIR", site.dir("script"))
         .env("OWNER_HOME", &owner.home)
         .env("JAVELIN_CONTROL_URL", &site.control_url)
-        .env("COLLAB_TOKEN", site.token("cora", "cora-laptop"))
-        .env("DESKTOP_TOKEN", site.token("cora", "cora-desktop"))
+        .env("INVITE", "cora")
+        .env("COLLAB_HOME", site.dir("script-cora-laptop"))
+        .env("DESKTOP_HOME", site.dir("script-cora-desktop"))
         .env("NODE_SERVE", serve)
         .env_remove("JAVELIN_TOKEN")
         .env_remove("JAVELIN_ADMIN_TOKEN")
@@ -753,6 +735,7 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
     assert_eq!(output.status.code(), Some(0), "{printed}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("== PASS"), "{printed}");
+    assert!(stdout.contains("== 0. owner: invite"), "{printed}");
     assert!(!stdout.contains("SKIP"), "{printed}");
     site.assert_no_git();
 }
