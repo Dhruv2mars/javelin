@@ -8,7 +8,7 @@ use javelin::{
 use super::code;
 use crate::{Kind, ProtocolError};
 
-use super::hosting::{LayerStatus, RequestId, RequestStatus, Role, Visibility};
+use super::hosting::{LayerStatus, LeaseHolder, RequestId, RequestStatus, Role, Visibility};
 
 pub(super) struct Reader<'a>(pub(super) &'a [u8]);
 
@@ -117,6 +117,14 @@ impl<'a> Reader<'a> {
             1 => Ok(LayerStatus::Published),
             2 => Ok(LayerStatus::Discarded),
             _ => Err(malformed("unknown Layer state")),
+        }
+    }
+    pub(super) fn lease_holder(&mut self) -> Result<LeaseHolder, ProtocolError> {
+        match self.u8()? {
+            0 => Ok(LeaseHolder::Free),
+            1 => Ok(LeaseHolder::Caller),
+            2 => Ok(LeaseHolder::Other),
+            _ => Err(malformed("unknown lease holder")),
         }
     }
     pub(super) fn request_status(&mut self) -> Result<RequestStatus, ProtocolError> {

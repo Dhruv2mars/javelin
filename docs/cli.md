@@ -382,6 +382,32 @@ captured first, so uncaptured edits are kept. JSON reports `status` (`current` o
 report. A local Layer that holds captures the node lacks is refused with
 `layer_diverged`, and a repository with no `attach.json` with `invalid_input`.
 
+A Layer follows its owner across devices. The node keeps a writer lease per Layer: the first
+device to write to it holds it, and writes from any other device are answered `layer_stale`
+without changing anything. `javelin layer take ID [--operation OP]` moves the lease to this
+device, then brings the Layer here: it is created over the node's base if this repository
+lacks it, moved to the node's head as `layer refresh` does, and its directory is opened, or
+refreshed when it exists. The base is found by its tree, not its number, since this
+repository numbers its Worlds from its attach; a newer base is fetched first, and an older one
+this repository lacks is refused with `invalid_input`. The node is the World's authority, so
+the fetch never overwrites local divergence: when this repository's World head is not the
+attached head (for example after a local `workspace publish`), the take is refused with
+`local_world_diverged`, naming both heads; take the Layer from a fresh `javelin attach`
+directory. A take that stopped after the World followed the node but before
+`attach.json` recorded it is finished by the next take: a head made by `sync-<number>-<id>`
+that the node confirms (same chain ID and tree) is written to `attach.json` first. Those checks, and the refresh of an
+existing local Layer, run before the lease moves. A retried `--operation OP` replays the
+recorded take; JSON `holds_lease` and `lease` (`this_device`, `another_device`) say who holds
+it now, and the text says plainly when another device does. Only the Layer's owner can take the lease (`forbidden` otherwise),
+and a token limited to another Layer cannot. Without `--operation` a fresh ID is used, which
+is safe: taking a lease this device holds changes nothing. JSON reports the node's `seq` and
+`head`, whether the Layer was `created`, the refresh `status`, and the directory `root`.
+
+The old device's queued appends then replay into `layer_stale`. They stay in the outbox with
+that outcome: `outbox replay` exits 1 with `code: layer_stale` and lists them under `stale`
+(Layer, operation, the node's head, and the local head), and `outbox status` lists them too.
+Keep their work with `javelin layer clone NEW --checkpoint LOCAL_HEAD`.
+
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
 2 seconds of the scan. When the directory differs from the latest checkpoint, the

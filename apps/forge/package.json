@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "deploy": "bun run scripts/deploy.ts",
     "dev": "bun run scripts/dev.ts",
     "test": "bun test",
     "typecheck": "tsc -p ."

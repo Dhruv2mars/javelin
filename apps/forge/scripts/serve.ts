@@ -1,5 +1,5 @@
 // Serves the built forge locally: files from `dist/`, `forge.config.json` from memory, and
-// index.html for every other path, as the Worker will.
+// index.html for every other path, as `vercel.json` does.
 import { join, normalize } from "node:path";
 import type { Config } from "../src/routes";
 import { dist } from "./build";

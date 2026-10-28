@@ -272,6 +272,11 @@ impl Outbox {
         self.entries.get(&seq)
     }
 
+    /// Every record, acknowledged or not, in journal order.
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> {
+        self.entries.values()
+    }
+
     /// Records not yet acknowledged, in journal order.
     pub fn pending(&self) -> impl Iterator<Item = &Entry> {
         self.entries

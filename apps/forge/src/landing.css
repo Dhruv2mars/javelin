@@ -1,0 +1,324 @@
+/* Landing page at `/`. The World line in the hero is the only flourish. */
+.landing {
+  padding-top: clamp(40px, 7vw, 88px);
+}
+
+.hero h1 {
+  margin: 0;
+  max-width: 21ch;
+  font-size: clamp(2.25rem, 5.2vw, 4.25rem);
+  line-height: 1.04;
+  font-weight: 300;
+  letter-spacing: -0.035em;
+}
+
+.lede {
+  margin: 28px 0 0;
+  max-width: 60ch;
+  font-size: 1.1875rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.world-line-figure {
+  margin: clamp(32px, 5vw, 56px) 0 0;
+}
+
+.wl-scroll {
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 0 var(--gutter);
+}
+
+.wl {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  max-width: 1000px;
+  height: auto;
+  font-family: var(--sans);
+}
+
+.wl text {
+  text-anchor: middle;
+}
+
+.wl .wl-note,
+.wl .wl-publish {
+  text-anchor: start;
+}
+
+.wl .wl-end {
+  text-anchor: end;
+}
+
+.wl-past {
+  stroke: var(--rule);
+  stroke-width: 3;
+  stroke-dasharray: 2 8;
+  stroke-linecap: round;
+}
+
+.wl-world,
+.wl-next {
+  stroke: var(--cobalt);
+  stroke-width: 3;
+  fill: none;
+}
+
+.wl-version circle {
+  fill: var(--paper);
+  stroke: var(--cobalt);
+  stroke-width: 2.5;
+}
+
+.wl-version text,
+.wl-head text {
+  fill: var(--cobalt);
+  font-size: 40px;
+  font-weight: 200;
+  letter-spacing: -0.04em;
+}
+
+.wl-head circle {
+  fill: var(--cobalt);
+}
+
+.wl-head text {
+  font-size: 52px;
+  font-weight: 300;
+}
+
+.wl-frontier {
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 6;
+}
+
+.wl-note {
+  fill: var(--muted);
+  font-size: 15px;
+}
+
+.wl-publish {
+  fill: var(--cobalt);
+  font-weight: 650;
+}
+
+.wl-layer {
+  fill: none;
+  stroke: var(--verdigris);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.wl-checkpoint {
+  fill: var(--verdigris);
+}
+
+.wl-layer-label {
+  fill: var(--verdigris);
+  font-size: 15px;
+  font-weight: 550;
+}
+
+/* One load sequence: the Layer draws, checkpoints land, then Publish makes World 13. */
+@media (prefers-reduced-motion: no-preference) {
+  .wl-layer {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: wl-draw 1.4s 0.3s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+  }
+
+  .wl-next {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: wl-draw 0.4s 1.7s ease-out forwards;
+  }
+
+  .wl-checkpoint,
+  .wl-head,
+  .wl-publish {
+    opacity: 0;
+    animation: wl-show 0.25s ease-out forwards;
+  }
+
+  .wl-checkpoint:nth-of-type(1) {
+    animation-delay: 0.8s;
+  }
+
+  .wl-checkpoint:nth-of-type(2) {
+    animation-delay: 1s;
+  }
+
+  .wl-checkpoint:nth-of-type(3) {
+    animation-delay: 1.2s;
+  }
+
+  .wl-head,
+  .wl-publish {
+    animation-delay: 1.9s;
+  }
+}
+
+@keyframes wl-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes wl-show {
+  to {
+    opacity: 1;
+  }
+}
+
+.band {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 24px 56px;
+  margin-top: clamp(56px, 8vw, 96px);
+  padding-top: 28px;
+  border-top: 1px solid var(--rule);
+}
+
+.band h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.band-head p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  max-width: 44ch;
+}
+
+.band-body {
+  min-width: 0;
+  max-width: var(--measure);
+}
+
+.band-body h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+
+.prose-block {
+  margin: 0;
+}
+
+.prose-block p {
+  margin: 0 0 14px;
+}
+
+.terms {
+  margin: 0;
+}
+
+.terms dt {
+  font-weight: 650;
+}
+
+.terms dd {
+  margin: 4px 0 22px;
+}
+
+.prose-block + .terms {
+  margin-top: 22px;
+}
+
+.coming {
+  margin: 0;
+  padding-left: 14px;
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+}
+
+.open-band {
+  margin-top: clamp(40px, 6vw, 72px);
+}
+
+.open-form {
+  display: grid;
+  gap: 6px;
+  max-width: 34rem;
+}
+
+.open-form label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.open-form label ~ label {
+  margin-top: 10px;
+}
+
+.optional {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.open-form input {
+  font: 1rem/1.4 var(--mono);
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.open-form input:focus-visible {
+  border-color: var(--cobalt);
+  outline-offset: 0;
+}
+
+.field-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.form-error {
+  margin: 8px 0 0;
+  color: var(--del-ink);
+}
+
+.open-form button {
+  justify-self: start;
+  margin-top: 16px;
+  padding: 11px 20px;
+  font: 600 1rem/1 var(--sans);
+  color: var(--sheet);
+  background: var(--cobalt);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.open-form button:hover {
+  background: var(--ink);
+}
+
+.known {
+  margin-top: 36px;
+}
+
+
+
+.landing-foot {
+  margin-top: 96px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+}
+
+@media (max-width: 860px) {
+  .band {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
