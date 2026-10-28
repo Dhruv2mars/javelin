@@ -206,6 +206,7 @@ async function build(flags: Map<string, string>): Promise<void> {
   }
   await cp(license, join(wrapper, "LICENSE"));
   await cp(join(import.meta.dir, "npm/README.md"), join(wrapper, "README.md"));
+  await cp(join(import.meta.dir, "npm/install.js"), join(wrapper, "install.js"));
   await writeFile(
     join(wrapper, "package.json"),
     JSON.stringify(
@@ -214,7 +215,9 @@ async function build(flags: Map<string, string>): Promise<void> {
         ...common(version),
         description: "Javelin: version control for code that people and agents write together",
         bin: Object.fromEntries(BINARIES.map((b) => [b, `bin/${b}`])),
-        files: ["bin", "README.md", "LICENSE"],
+        // Swaps the bin shims for the native binaries where scripts run (npm); see install.js.
+        scripts: { postinstall: "node install.js" },
+        files: ["bin", "install.js", "README.md", "LICENSE"],
         optionalDependencies: Object.fromEntries(packages.map((p) => [p.name, version])),
       },
       null,

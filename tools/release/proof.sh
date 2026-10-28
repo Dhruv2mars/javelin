@@ -123,7 +123,8 @@ if [ "$method" = curl ]; then
   mirror="$work/mirror"
   mkdir -p "$mirror/$name/-"
   curl -fsSL -o "$mirror/$name/latest" "$registry/$name/latest"
-  tarball=javelin-$platform-$expected.tgz
+  version=$(tr -d '\n' < "$mirror/$name/latest" | grep -o '"version" *: *"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+  tarball=javelin-$platform-$version.tgz
   curl -fsSL -o "$mirror/$name/-/$tarball" "$registry/$name/-/$tarball"
   printf 'x' >> "$mirror/$name/-/$tarball"
   before=$(sha256_of "$bin/javelin")
