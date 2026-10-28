@@ -247,8 +247,9 @@ async function publish(flags: Map<string, string>): Promise<void> {
     if (!name || (await sha256(join(vdir, name))) !== hex) throw new Fail(`${name} does not match SHA256SUMS`);
   }
   if (files.length !== sums.length + 1) throw new Fail(`${vdir} holds files SHA256SUMS does not list`);
-  for (const f of ["install.sh", "install.ps1"]) {
-    if (!(await readFile(join(vdir, f), "utf8")).includes(publicUrl)) {
+  const stamps = { "install.sh": `\nDEFAULT_RELEASE_BASE=${publicUrl}\n`, "install.ps1": `\n$DefaultReleaseBase = '${publicUrl}'\n` };
+  for (const [f, line] of Object.entries(stamps)) {
+    if (!(await readFile(join(vdir, f), "utf8")).includes(line)) {
       throw new Fail(`${f} is not stamped with ${publicUrl}; rebuild with --base-url ${publicUrl}`);
     }
   }
@@ -278,7 +279,8 @@ async function publish(flags: Map<string, string>): Promise<void> {
     await writeFile(latest, version + "\n");
     await put("latest", latest, typeOf("latest"), "public, max-age=60");
   }
-  console.log(`${dry ? "dry run: nothing uploaded" : `published ${version} to ${bucket}`}${flags.has("latest") ? "; latest points at it" : ""}`);
+  const note = flags.has("latest") ? (dry ? "; latest would point at it" : "; latest points at it") : "";
+  console.log(`${dry ? "dry run: nothing uploaded" : `published ${version} to ${bucket}`}${note}`);
 }
 
 const [command, ...rest] = Bun.argv.slice(2);
