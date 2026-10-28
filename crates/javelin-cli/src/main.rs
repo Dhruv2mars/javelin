@@ -7,7 +7,11 @@ mod cli;
 mod cli_auth;
 mod cli_check;
 mod cli_control;
+mod cli_disclosure;
 mod cli_remote;
+mod cli_request;
+mod cli_sync;
+mod cli_upload;
 
 const HELP: &str = cli::HELP;
 
@@ -64,6 +68,11 @@ impl From<Error> for CliError {
         Self::Native(error)
     }
 }
+impl From<cli_remote::RemoteError> for CliError {
+    fn from(error: cli_remote::RemoteError) -> Self {
+        Self::Remote(error)
+    }
+}
 impl From<javelin_stack::StackError> for CliError {
     fn from(error: javelin_stack::StackError) -> Self {
         match error {
@@ -110,6 +119,21 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "attach") {
         return cli_remote::attach(args.into_iter().skip(1).collect());
     }
+    if args.first().is_some_and(|a| a == "frontier") {
+        return cli_disclosure::frontier(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "delay") {
+        return cli_disclosure::delay(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "embargo") {
+        return cli_disclosure::embargo(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "request") {
+        return cli_request::request(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "sync") {
+        return cli_sync::sync(args.into_iter().skip(1).collect());
+    }
     if args.first().is_some_and(|a| a == "outbox") && args.get(1).is_some_and(|a| a == "replay") {
         return cli_remote::outbox_replay(args.into_iter().skip(2).collect());
     }
@@ -149,7 +173,7 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
         .ok_or_else(|| Error::InvalidInput(HELP.into()))?;
     if command != "init" && command != "history" && command != "check" {
         return Err(Error::InvalidInput(format!(
-            "unknown command {:?}; expected init, adopt, history, check, blame, checkpoint, layer, or workspace",
+            "unknown command {:?}; expected init, adopt, attach, sync, request, history, check, blame, checkpoint, layer, or workspace",
             command
         )));
     }

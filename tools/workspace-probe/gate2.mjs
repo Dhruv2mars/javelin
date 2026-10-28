@@ -89,12 +89,15 @@ async function ok(args, cwd) {
   if (r.code !== 0 || r.json?.ok === false) throw new Error(`javelin ${r.args.join(' ')} exited ${r.code}: ${(r.stderr || r.stdout).trim().slice(0, 400)}`);
   return r;
 }
+// Processes the probe keeps alive on purpose (a create held at the store lock, a lock holder).
+const deliberate = new Set();
 function javelinProcesses() {
   let lines;
   if (win && !script) lines = spawnSync('tasklist', ['/FO', 'CSV', '/NH', '/FI', `IMAGENAME eq ${basename(javelin)}`], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.toLowerCase().includes(basename(javelin).toLowerCase()));
   else if (win) lines = spawnSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | % { "$($_.ProcessId) $($_.CommandLine)" }'], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.includes(javelin) && !l.includes('gate2.mjs'));
   else lines = spawnSync('ps', ['-axww', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n').filter(l => l.includes(javelin) && !l.includes('gate2.mjs') && !l.trim().startsWith(`${process.pid} `));
-  return lines.map(l => l.trim()).filter(Boolean);
+  const pid = l => Number(l.startsWith('"') ? l.split('","')[1] : l.split(/\s+/)[0]);
+  return lines.map(l => l.trim()).filter(l => l && !deliberate.has(pid(l)));
 }
 
 // ---- the command surface (the only place that knows command names and JSON shape) ---
@@ -146,6 +149,21 @@ const S = {
   capture: async (repo, id) => hexUnder((await ok(S.checkpointArgs(repo, id), S.checkpointCwd(repo, id))).json, /checkpoint/i),
   discardArgs: (repo, id, op = `discard-${id}`) => ['workspace', 'discard', id, '--operation', op, '--repo', repo],
   discard: (repo, id, op) => ok(S.discardArgs(repo, id, op)),
+  // Takes the workspace store lock that create, open, discard and recover serialize on, and
+  // resolves with its release. The fixture tool holds it (gate2_seed --hold-store).
+  holdStore: async repo => {
+    const argv = seeder.endsWith('.mjs') ? [process.execPath, seeder, 'hold-store', repo] : [seeder, '--hold-store', repo];
+    const child = spawn(argv[0], argv.slice(1), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    deliberate.add(child.pid);
+    let out = '', exited = false;
+    child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { out += d; });
+    const done = new Promise(r => child.on('exit', () => { exited = true; deliberate.delete(child.pid); r(); }));
+    for (const deadline = Date.now() + 30000; !out.includes('"held"');) {
+      if (exited || Date.now() > deadline) { child.kill(); throw new Error(`could not hold the store lock: ${out.trim().slice(0, 300) || 'no reply within 30 s'}`); }
+      await sleep(5);
+    }
+    return async () => { child.stdin.end(); await done; };
+  },
 };
 
 // ---- trees and fixtures -------------------------------------------------------------
@@ -277,63 +295,67 @@ try {
     const worldTree = tree(warm.path);
     // Reclaim all trash now, so no deferred reclaim frees space inside a measured create.
     await ok(['workspace', 'recover', '--repo', bulkRepo]);
-    // No deletions between readings: ReFS frees deleted space lazily, and a free landing
-    // inside a measured step would hide a copy. The byte-copy control therefore runs last.
-    // A one-off free (an earlier deletion or truncation settling) spoils one attempt: free
-    // space rises in a step, or the two identical creates disagree. Repeat with fresh
-    // Layers, deleting nothing, until an attempt is clean.
-    const mb = n => Math.round(n / 1048576);
-    const spoiled = d => Object.entries(d).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * d.bulkMB).map(([k, v]) => `${k} ${v}`)
-      .concat(Math.abs(d.createMB - d.secondCreateMB) > 0.25 * d.bulkMB ? [`identical creates used ${d.createMB} and ${d.secondCreateMB} MB`] : []);
     const attempts = [];
-    let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      f0 = await stableFree();
-      l1 = await S.create(bulkRepo, `bulk-1-${attempt}`);
-      f1 = await stableFree();
-      const textArgv = argvFor(S.createArgs(bulkRepo, `bulk-2-${attempt}`));
-      textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
-      f2 = await stableFree();
-      fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
-      fe = await stableFree();
-      await S.capture(bulkRepo, `bulk-1-${attempt}`);
-      fc = await stableFree();
-      const control = join(root, `control-copy-${attempt}`);
-      fs.mkdirSync(control);
-      for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
-      fk = await stableFree();
-      deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
-      attempts.push(deltas);
-      if (!spoiled(deltas).length) break;
+    // The crash checks need only the bulk Layer, not these minutes of measurements.
+    if (want('sharing')) {
+      // No deletions between readings: ReFS frees deleted space lazily, and a free landing
+      // inside a measured step would hide a copy. The byte-copy control therefore runs last.
+      // A one-off free (an earlier deletion or truncation settling) spoils one attempt: free
+      // space rises in a step, or the two identical creates disagree. Repeat with fresh
+      // Layers, deleting nothing, until an attempt is clean.
+      const mb = n => Math.round(n / 1048576);
+      const spoiled = d => Object.entries(d).filter(([k, v]) => k !== 'bulkMB' && v < -0.05 * d.bulkMB).map(([k, v]) => `${k} ${v}`)
+        .concat(Math.abs(d.createMB - d.secondCreateMB) > 0.25 * d.bulkMB ? [`identical creates used ${d.createMB} and ${d.secondCreateMB} MB`] : []);
+      let l1, textCreate, f0, f1, f2, fe, fc, fk, deltas;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        f0 = await stableFree();
+        l1 = await S.create(bulkRepo, `bulk-1-${attempt}`);
+        f1 = await stableFree();
+        const textArgv = argvFor(S.createArgs(bulkRepo, `bulk-2-${attempt}`));
+        textCreate = spawnSync(textArgv[0], textArgv.slice(1), { env, encoding: 'utf8' });
+        f2 = await stableFree();
+        fs.writeFileSync(join(l1.path, 'bulk', 'blob-0.bin'), randomBytes(2 << 20));
+        fe = await stableFree();
+        await S.capture(bulkRepo, `bulk-1-${attempt}`);
+        fc = await stableFree();
+        const control = join(root, `control-copy-${attempt}`);
+        fs.mkdirSync(control);
+        for (const name of fs.readdirSync(join(l1.path, 'bulk'))) fs.writeFileSync(join(control, name), fs.readFileSync(join(l1.path, 'bulk', name)));
+        fk = await stableFree();
+        deltas = { bulkMB: mb(bulkBytes), createMB: mb(f0 - f1), secondCreateMB: mb(f1 - f2), editOneFileMB: mb(f2 - fe), captureMB: mb(fe - fc), controlCopyMB: mb(fc - fk) };
+        attempts.push(deltas);
+        if (!spoiled(deltas).length) break;
+      }
+      report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
+      await check('sharing', 'byte-copy-control-is-measurable', () => {
+        assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
+        const why = spoiled(deltas);
+        assert(why.length === 0, `every one of ${attempts.length} attempts was spoiled by a concurrent free (last: ${why.join(', ')}); it could hide a copy`);
+        return { deltas, attempts: attempts.length };
+      });
+      await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
+        if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
+        else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
+        return deltas;
+      });
+      await check('sharing', 'edit-and-capture-stay-sparse', () => {
+        assert(f2 - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(f2 - fe)} MB`);
+        assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
+        return deltas;
+      });
+      await check('sharing', 'strategy-reported', () => {
+        assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
+        const copy = /copy/i.test(l1.strategy);
+        assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
+        const text = `${textCreate.stdout}${textCreate.stderr}`;
+        assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
+        if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
+        return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
+      });
     }
-    report.disk = { strategy: l1.strategy, deltas, attempts, base: find(warm.r.json, k => k === 'base', () => true) };
-    await check('sharing', 'byte-copy-control-is-measurable', () => {
-      assert(fc - fk >= 0.8 * bulkBytes, `a ${mb(bulkBytes)} MB byte copy used only ${mb(fc - fk)} MB; free-space deltas are not trustworthy here`);
-      const why = spoiled(deltas);
-      assert(why.length === 0, `every one of ${attempts.length} attempts was spoiled by a concurrent free (last: ${why.join(', ')}); it could hide a copy`);
-      return { deltas, attempts: attempts.length };
-    });
-    await check('sharing', opts.expect === 'shared' ? 'unchanged-data-shared-with-base' : 'copy-fallback-duplicates-data', () => {
-      if (opts.expect === 'shared') assert(f0 - f1 <= 0.2 * bulkBytes && f1 - f2 <= 0.2 * bulkBytes, `Layer creation used ${mb(f0 - f1)} and ${mb(f1 - f2)} MB for ${mb(bulkBytes)} MB of unchanged data`);
-      else assert(f0 - f1 >= 0.8 * bulkBytes, `copy fallback used only ${mb(f0 - f1)} MB for ${mb(bulkBytes)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'edit-and-capture-stay-sparse', () => {
-      assert(f2 - fe <= 0.2 * bulkBytes, `rewriting one 2 MB file used ${mb(f2 - fe)} MB`);
-      assert(fe - fc <= 0.2 * bulkBytes, `capturing one changed file used ${mb(fe - fc)} MB`);
-      return deltas;
-    });
-    await check('sharing', 'strategy-reported', () => {
-      assert(typeof l1.strategy === 'string' && l1.strategy, `no strategy in ${JSON.stringify(l1.r.json).slice(0, 300)}`);
-      const copy = /copy/i.test(l1.strategy);
-      assert(copy === (opts.expect === 'copy'), `strategy ${l1.strategy} on ${opts.fs}, expected ${opts.expect}`);
-      const text = `${textCreate.stdout}${textCreate.stderr}`;
-      assert(textCreate.status === 0, `plain create failed: ${text.slice(0, 300)}`);
-      if (copy) assert(/warning/i.test(text) && /duplicat/i.test(text), `plain output does not warn that the copy duplicated data: ${text.slice(0, 300)}`);
-      return { strategy: l1.strategy, text: text.trim().slice(0, 300) };
-    });
 
-    // Crash safety: kill each operation at spread points across its own measured duration.
+    // Crash safety. Checkpoint and discard are killed at spread points across their own
+    // measured duration; create is killed at states the probe observes.
     async function killed(args, delay, cwd) {
       const run = launch(args, cwd);
       let exited = false; run.exited.then(() => { exited = true; });
@@ -348,21 +370,60 @@ try {
     const timed = async (args, cwd) => { const r = await ok(args, cwd); return r.ms; };
     const bulkWorld = await S.head(bulkRepo);
     await check('crash', 'interrupted-create-recovers', async () => {
-      // The fastest of three runs, so the kill points fall inside a typical create.
-      let duration = Infinity;
-      for (let t = 0; t < 3; t++) { duration = Math.min(duration, await timed(S.createArgs(bulkRepo, `time-create-${t}`, bulkWorld))); await S.discard(bulkRepo, `time-create-${t}`); }
-      let landed = 0;
-      for (const [i, delay] of points(duration).entries()) {
-        const id = `kill-create-${i}`;
-        if (await killed(S.createArgs(bulkRepo, id, bulkWorld), delay)) landed++;
-        // The next command sees either no Layer, or one whose directory is complete or absent.
+      // Each kill lands at a state the probe saw, never after a guessed delay: a slow or
+      // fast machine changes how long each wait takes, not where the create stops.
+      // A create held at the store lock, observed once its Layer is recorded.
+      async function held(id) {
+        const release = await S.holdStore(bulkRepo);
+        const run = launch(S.createArgs(bulkRepo, id, bulkWorld));
+        deliberate.add(run.child.pid);
+        let exited = false; run.exited.then(() => { exited = true; });
+        for (const deadline = Date.now() + 60000; ; await sleep(10)) {
+          const p = await S.path(bulkRepo, id);
+          if (p.r.code === 0 && p.path) return { run, root: p.path, dirBeforeKill: p.exists, release, exited: () => exited };
+          if (exited || Date.now() > deadline) { run.child.kill('SIGKILL'); await release(); throw new Error(`create ${id} ${exited ? `exited ${run.result.code}` : 'recorded no Layer within 60 s'} while the store lock was held: ${run.result.stderr.slice(0, 300)}`); }
+        }
+      }
+      const kills = [];
+      async function finish(id, run, phase) {
+        await run.exited; await Promise.race([run.closed, sleep(2000)]);
+        deliberate.delete(run.child.pid);
+        // Landed only if the kill ended it; any other exit must be a success.
+        const landed = phase !== null && run.result.signal === 'SIGKILL';
+        assert(landed || run.result.code === 0, `create ${id} exited ${run.result.code}: ${run.result.stderr.slice(0, 300)}`);
+        report.commands.push({ args: run.result.args, killedAt: phase, landed, code: run.result.code, signal: run.result.signal });
+        // The next command sees the Layer with a complete directory or none; a retry completes it.
         const p = await S.path(bulkRepo, id);
-        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after an interrupted create`);
+        if (p.r.code === 0 && p.exists) sameTree(worldTree, tree(p.path), `Layer ${id} directory after a create killed ${phase}`);
         sameTree(worldTree, tree((await S.create(bulkRepo, id, bulkWorld)).path), `retried create ${id}`);
         await S.discard(bulkRepo, id);
+        if (landed) kills.push(phase);
+        return landed;
       }
-      assert(landed >= 2, `only ${landed} kills landed inside a ${duration} ms create`);
-      return { durationMs: duration, landed };
+      // Recorded, before its directory: the create waits on the held lock until killed.
+      {
+        const h = await held('kill-create-recorded');
+        h.run.child.kill('SIGKILL');
+        await h.release();
+        assert(!h.dirBeforeKill, 'the Layer directory existed while the store lock was held');
+        assert(await finish('kill-create-recorded', h.run, 'recorded'), 'a create held at the store lock exited before its kill');
+      }
+      // Directory in place, before the command exits: spin rather than sleep, since the
+      // window can be shorter than a timer tick. A create that exits first is retried.
+      let attempts = 0;
+      while (!kills.includes('placed') && attempts < 20) {
+        const id = `kill-create-placed-${attempts++}`;
+        const h = await held(id);
+        await h.release();
+        let seen = false;
+        while (!seen && !h.exited()) {
+          for (const until = performance.now() + 5; !seen && performance.now() < until;) if (fs.existsSync(h.root)) { h.run.child.kill('SIGKILL'); seen = true; }
+          if (!seen) await new Promise(r => setImmediate(r));
+        }
+        await finish(id, h.run, seen ? 'placed' : null);
+      }
+      assert(kills.includes('placed'), `no kill landed between the directory appearing and the create exiting in ${attempts} creates`);
+      return { kills, placedAttempts: attempts };
     });
     await check('crash', 'interrupted-checkpoint-recovers', async () => {
       const k = await S.create(bulkRepo, 'kill-checkpoint');

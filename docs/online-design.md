@@ -119,6 +119,13 @@ Additions, all in `codec.rs`:
 | 0x54 | `Comment` | `{ operation, request, revision: Option<u32>, body }` | `ReviewOutcome` |
 | 0x55 | `ReadRequest` | `{ request }` | `RequestState` 0x56 |
 | 0x44 | `Attribution` | `{ version }` | `Attributed` 0x45: `{ number, publication: Option<(layer, attribution)> }` |
+| 0x48 | `ReadDisclosure` | none | `Disclosure` 0x49: `{ delayed, delay: Option<u64>, frontier, embargoes: [(version, until: Option<u64>)] }` |
+| 0x4a | `SetDelay` | `{ delay: u64 }` (seconds; Maintain) | `Disclosure` |
+| 0x4b | `Embargo` | `{ operation, until: Option<u64> }` (before the Publish with that operation; Maintain) | `Disclosure` |
+| 0x4c | `Release` | `{ version }` (Maintain) | `Disclosure` |
+| 0x3c | `LayerCreate` | `{ layer, base }` | `LayerOutcome` (`Accepted { seq: 0, checkpoint }`; a retry with the same base replays) |
+| 0x57 | `ListRequests` | `{ after: Option<RequestId> }` | `RequestList` 0x58: `{ requests: [{ request, layer, author, state, revision }], more }` |
+| 0x59 | `ReadReview` | `{ request, comments_from }` | `ReviewDetail` 0x5a: `{ summary, required_approvals, revisions: [{ index, base, checkpoint?, approvals }], comments, comments_total }` |
 
 Outcome shapes:
 
@@ -132,12 +139,19 @@ Outcome shapes:
   allow_missing_trace: bool }`. A missing trace without the override refuses with
   `missing_agent_trace` (`A§Publish`).
 
+`LayerCreate`, `ListRequests` and `ReadReview` serve `javelin request`: a client creates its
+Layer on the node before the first `LayerAppend`, and lists and shows requests with their
+revisions, approvals and comments (`docs/cli.md`, Publish Requests). `ReviewDetail` follows the
+caller's audiences: a revision's checkpoint ID is sent only when `Repository::checkpoint_visible`
+lets the caller `Get` it, and a revision's snapshot tree is never sent, since it names hidden
+content in plain form. Request IDs, Layer IDs, authors, approvals and comments carry no path.
+
 `Attribution` serves the forge's history: the Layer and declared attribution of the Publish
 that made a version, absent for World 0 and for versions advanced without a Layer.
 
 Browsers read the node directly (`C§Hosting ownership`). The self-hosted node answers a CORS
 preflight and allows any origin on the read messages (`Resolve`, `Get`, `Changeset`,
-`Attribution`). Any other message that carries an `Origin` header is refused with `forbidden`
+`Attribution`, `ReadDisclosure`). Any other message that carries an `Origin` header is refused with `forbidden`
 before it is served.
 
 Unchanged: `Want`/`Missing` for push, `Get`/`Objects` for fetch, `Resolve`/`Resolved` for the
@@ -583,6 +597,8 @@ and policies do not transfer. Restricted traces never gain broader access.
   omitted and a marker `trace_omitted { trace id }` is recorded. An omitted trace is not in
   the chain, so the version IDs do not change.
 - Roles on the fork: the creator is Maintain; source roles are not copied.
+- A forker outside the source forks at or below its public frontier (`A§Public frontier`);
+  a point above it is refused like one past the head, naming only the frontier.
 
 **Stores.** Fork state `{ state: Creating | Ready, source, N, progress }` in the control plane
 record and the fork node.

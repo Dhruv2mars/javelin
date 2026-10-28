@@ -1,11 +1,13 @@
 # Forge (read-only pages)
 
-The first pages of javelin.codes. The browser reads a repository's node directly over
+The first pages of javelin.codes, live at https://javelin-codes.vercel.app until the domain is
+connected. The browser reads a repository's node directly over
 protocol v2 (`POST {node}/v2/r/{repository}`), with no Javelin-run server in between
 (`docs/build-contract.md`, Hosting ownership). Public repositories need no account (D24).
 
 | Page | URL |
 | --- | --- |
+| Landing: what Javelin is, install status, open a repository by node URL and ID | `/` |
 | Repository home: files at the head, README rendered | `/OWNER/REPO` |
 | Directory at a version | `/OWNER/REPO/tree/N/PATH` |
 | File at a version (highlighted text, notice for binary) | `/OWNER/REPO/file/N/PATH` |
@@ -24,7 +26,12 @@ There is no control-plane lookup yet. The forge finds a repository's node from, 
    `{"repositories": {"owner/repo": {"node": "http://127.0.0.1:7878", "repository": "ID"}}}`.
 
 The self-hosted node allows any origin on read messages (`Resolve`, `Get`, `Changeset`,
-`Attribution`) and refuses every other message that carries an `Origin` header.
+`Attribution`, `ReadDisclosure`) and refuses every other message that carries an `Origin` header.
+
+The forge reads signed out, so the node shows it a repository at its public frontier
+(`docs/direction.md`, Superposition): versions held by the disclosure delay or an embargo
+do not exist for it. When the repository has a delay, its home page says the public view is
+delayed, never by how much any one change waits.
 
 ## Commands
 
@@ -41,9 +48,24 @@ directory instead of the demo). Tests and `dev` build the binaries with cargo un
 the repository is public, so a directory with no `permissions.json` gets a public one, which
 the forge reads without a token.
 
+## Deploy
+
+Vercel serves the static build from the `javelin-codes` project on the Hobby plan. Nothing
+deploys on push. From a clean `main` checkout, logged in to the `dhruv2mars` Vercel account,
+run:
+
+    bun run deploy
+
+`scripts/deploy.ts` runs `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt
+--prod`, so the build runs locally and only its output is uploaded. `vercel.json` holds the
+settings: bun install and build, `dist/` as output, index.html for every page route so direct
+loads and refreshes work, and the security headers. The CSP lets the page fetch any `https:`
+node, plus `http://localhost` and `http://127.0.0.1` nodes for local work.
+
 ## Layout
 
 - `src/data.ts`: page data loaders, no DOM. `src/app.ts`: routing and rendering.
+- `src/landing.ts` and `src/landing.css`: the page at `/` and its open-a-repository form.
 - `src/diff.ts` (Myers line diff), `src/highlight.ts`, `src/markdown.ts` (raw HTML escaped,
   unsafe link schemes dropped), `src/routes.ts`.
 - `scripts/node.ts`: seeds a repository with the `javelin` CLI and runs `javelin-node serve`.

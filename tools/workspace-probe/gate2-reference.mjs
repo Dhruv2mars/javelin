@@ -211,8 +211,28 @@ function newLayer(s, id, world, m) {
   writeJson(layerFile(s, id), l);
   return l;
 }
-// Clone the World base, apply the checkpoint, and refuse a tree this volume cannot hold.
+// One directory change at a time, like javelin's workspace.lock. The lock is a directory
+// naming its holder, renamed into place whole; a holder that died no longer holds it.
+// Candidates stay out of tmp, which every command's recover() empties.
+function lockStore(s) {
+  const lock = join(s.dir, 'workspace.lock'), pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    const mine = join(s.dir, `lock-${process.pid}-${randomBytes(4).toString('hex')}`);
+    fs.mkdirSync(mine); fs.writeFileSync(join(mine, 'pid'), String(process.pid));
+    try { fs.renameSync(mine, lock); return () => fs.rmSync(lock, { recursive: true, force: true }); } catch { fs.rmSync(mine, { recursive: true, force: true }); }
+    let holder = 0; try { holder = Number(fs.readFileSync(join(lock, 'pid'), 'utf8')); } catch {}
+    let alive = true; try { process.kill(holder, 0); } catch (e) { alive = e.code === 'EPERM'; }
+    if (holder && !alive) { try { fs.renameSync(lock, join(s.dir, 'trash', `lock-${randomBytes(4).toString('hex')}`)); } catch {} continue; }
+    Atomics.wait(pause, 0, 0, 5);
+  }
+}
 function open(s, l) {
+  if (fs.existsSync(l.path)) return { layer: l.id, root: l.path, created: false, clone: { strategy: l.strategy } };
+  const unlock = lockStore(s);
+  try { return build(s, readJson(layerFile(s, l.id))); } finally { unlock(); }
+}
+// Clone the World base, apply the checkpoint, and refuse a tree this volume cannot hold.
+function build(s, l) {
   if (fs.existsSync(l.path)) return { layer: l.id, root: l.path, created: false, clone: { strategy: l.strategy } };
   const staging = join(s.dir, 'tmp', `${l.id}-${randomBytes(4).toString('hex')}`);
   const strategy = cloneTree(join(s.dir, 'bases', String(l.world)), staging);
@@ -255,7 +275,12 @@ function discard(s, id, operation) {
   return out;
 }
 
-if (argv[0] === '__linger') { setTimeout(() => {}, 30000); } else {
+if (argv[0] === '__linger') { setTimeout(() => {}, 30000); } else if (argv[0] === 'hold-store') {
+  // gate2_seed --hold-store: hold the lock until stdin closes.
+  const unlock = lockStore(store(argv[1]));
+  console.log(JSON.stringify({ ok: true, held: true }));
+  process.stdin.on('data', () => {}).on('end', () => { unlock(); process.exit(0); }).resume();
+} else {
   try { const out = main(argv); console.log(JSON.stringify({ ok: true, ...out })); }
   catch (e) {
     console.error(JSON.stringify({ ok: false, error: { code: e.code || 'internal', message: e.message, path: e.path } }));

@@ -65,20 +65,23 @@ impl Response {
     }
 }
 
-/// The node for repository `name` on `storage`. The World log and the gate are opened on
-/// first use and kept, so their caches outlive one request.
+/// The node for repository `name` on `storage`, keeping time by `clock` (Unix seconds),
+/// which decides token expiry and the public frontier. The World log and the gate are opened
+/// on first use and kept, so their caches outlive one request.
 pub struct Node<S> {
     name: RepositoryId,
     storage: S,
+    clock: fn() -> u64,
     log: Option<FileWorldLog>,
     gate: Option<Gate>,
 }
 
 impl<S: Storage + Coordination> Node<S> {
-    pub fn new(name: RepositoryId, storage: S) -> Self {
+    pub fn new(name: RepositoryId, storage: S, clock: fn() -> u64) -> Self {
         Self {
             name,
             storage,
+            clock,
             log: None,
             gate: None,
         }
@@ -97,15 +100,9 @@ impl<S: Storage + Coordination> Node<S> {
     }
 
     /// One protocol version 2 request: `authorization` is the request's `Authorization`
-    /// header, `origin` whether it had an `Origin` header, and `now` Unix seconds. A
-    /// repository this node never provisioned is 404, as on a node that does not serve it.
-    pub fn v2(
-        &mut self,
-        authorization: Option<&str>,
-        origin: bool,
-        now: u64,
-        body: &[u8],
-    ) -> Response {
+    /// header and `origin` whether it had an `Origin` header. A repository this node never
+    /// provisioned is 404, as on a node that does not serve it.
+    pub fn v2(&mut self, authorization: Option<&str>, origin: bool, body: &[u8]) -> Response {
         if body.len() > MAX_FRAME {
             return Response::status(413);
         }
@@ -121,9 +118,10 @@ impl<S: Storage + Coordination> Node<S> {
             Ok(false) => return Response::status(404),
             Err(error) => return Response::error(500, "storage_error", error),
         }
-        let answer = self
-            .open()
-            .and_then(|(log, gate)| wire::handle(log, gate, token.as_deref(), origin, now, body));
+        let answer = self.open().and_then(|(log, gate)| {
+            let now = log.now();
+            wire::handle(log, gate, token.as_deref(), origin, now, body)
+        });
         match answer {
             Ok(answer) => Response {
                 status: 200,
@@ -137,7 +135,8 @@ impl<S: Storage + Coordination> Node<S> {
 
     fn open(&mut self) -> Result<(&mut FileWorldLog, &Gate), ProtocolError> {
         if self.log.is_none() {
-            self.log = Some(FileWorldLog::on(&self.storage, &self.storage)?);
+            let clock = Box::new(self.clock);
+            self.log = Some(FileWorldLog::on(&self.storage, &self.storage, clock)?);
         }
         if self.gate.is_none() {
             self.gate = Some(Gate::load_from(&self.storage, self.name.as_str())?);

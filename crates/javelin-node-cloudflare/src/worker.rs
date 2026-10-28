@@ -121,7 +121,7 @@ impl WasmNode {
     pub fn new(name: &str, pages: JsPages) -> Result<WasmNode, JsError> {
         let name = RepositoryId::parse(name).map_err(|error| JsError::new(&error.to_string()))?;
         let storage = PageStorage::new(Rc::new(ObjectPages(pages)));
-        Ok(Self(Node::new(name, storage)))
+        Ok(Self(Node::new(name, storage, now)))
     }
 
     pub fn admin(&mut self, action: &str, body: &[u8]) -> Result<Reply, JsError> {
@@ -132,14 +132,16 @@ impl WasmNode {
         &mut self,
         authorization: Option<String>,
         origin: bool,
-        now: f64,
         body: &[u8],
     ) -> Result<Reply, JsError> {
-        settle(
-            self.0
-                .v2(authorization.as_deref(), origin, now as u64, body),
-        )
+        settle(self.0.v2(authorization.as_deref(), origin, body))
     }
+}
+
+/// The Worker's clock, in Unix seconds. The runtime advances it between requests, not within
+/// one, which is all expiry and the frontier need.
+fn now() -> u64 {
+    (js_sys::Date::now() / 1000.0) as u64
 }
 
 /// The reply, unless storage failed during the call.

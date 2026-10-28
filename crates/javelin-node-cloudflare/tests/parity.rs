@@ -3,12 +3,17 @@
 //! Durable Object keeps (`PageStorage` over `MemPages`): object uploads, `LayerAppend`, the
 //! World-log commit path (`PublishLayer`, its replay and a reused operation), the writer
 //! lease (`LayerHead`, `LayerTake`), reads that
-//! follow the caller's audiences (#99), a write refused for a hidden path, a Publish Request,
-//! and the browser and anonymous refusals. Every reply must match, with object IDs masked:
+//! follow the caller's audiences (#99), a write refused for a hidden path, a Publish Request
+//! with its list, review and comment, a version held by an embargo until it is released, and
+//! the browser, anonymous and outsider refusals. Every reply must match, with object IDs masked:
 //! hidden entries are salted per store, so IDs over them differ between any two stores.
 
 use std::{
     rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -121,8 +126,9 @@ impl Session<'_> {
     fn send_from(&mut self, caller: Option<&str>, origin: bool, message: &Message) -> Message {
         let token = caller.map(token);
         let body = encode(message).unwrap();
+        let now = self.log.now();
         let answer =
-            wire::handle(self.log, &self.gate, token.as_deref(), origin, now(), &body).unwrap();
+            wire::handle(self.log, &self.gate, token.as_deref(), origin, now, &body).unwrap();
         let reply = decode(&answer.body).unwrap();
         self.seen
             .push(format!("cors={} {}", answer.cors, masked(&reply)));
@@ -164,14 +170,21 @@ impl Session<'_> {
         id
     }
 
-    /// Creates Layer `name` over `base` and appends `files` over the wire as `owner`.
+    /// Creates Layer `name` over `base` and appends `files`, both over the wire as `owner`.
     fn layer_with(&mut self, name: &str, base: u64, files: &[(&str, &[u8])]) -> ObjectId {
-        let head = self.log.create_layer(&layer(name), v(base)).unwrap();
+        let create = Message::LayerCreate {
+            layer: layer(name),
+            base: v(base),
+        };
+        let head = match self.send(Some("owner"), &create) {
+            Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+            other => panic!("create refused: {other:?}"),
+        };
         let changes = self.upload("owner", files);
         let append = Message::LayerAppend {
             operation: op(&format!("append-{name}")),
             layer: layer(name),
-            parent: Some(head.checkpoint().object()),
+            parent: Some(head),
             checkpoint: changes,
         };
         match self.send(Some("owner"), &append) {
@@ -191,8 +204,8 @@ fn publish(name: &str, operation: &str, expected: ObjectId, base: u64) -> Messag
     }
 }
 
-/// The scenario's replies, in order.
-fn scenario(log: &mut FileWorldLog) -> Vec<String> {
+/// The scenario's replies, in order. `clock` is the node's time, which the scenario moves.
+fn scenario(log: &mut FileWorldLog, clock: &AtomicU64) -> Vec<String> {
     let mut s = Session {
         log,
         gate: gate(),
@@ -293,6 +306,71 @@ fn scenario(log: &mut FileWorldLog) -> Vec<String> {
     );
     s.send(None, &Message::Resolve { version: None });
 
+    // The request loop's reads: the list and the review, for a member and an outsider, and a
+    // comment on the published request.
+    let request = RequestId::parse("pr-1").unwrap();
+    s.send(
+        Some("owner"),
+        &Message::Comment {
+            operation: op("comment-1"),
+            request: request.clone(),
+            revision: Some(1),
+            body: "shipped".into(),
+        },
+    );
+    for caller in [Some("owner"), Some("member"), Some("stranger"), None] {
+        s.send(caller, &Message::ListRequests { after: None });
+        s.send(
+            caller,
+            &Message::ReadReview {
+                request: request.clone(),
+                comments_from: 0,
+            },
+        );
+    }
+
+    // A held version: World 3 is embargoed for an hour, so outsiders stay at World 2 until a
+    // maintainer releases it, while members read the head.
+    s.send(Some("owner"), &Message::SetDelay { delay: 0 });
+    s.send(
+        Some("member"),
+        &Message::Embargo {
+            operation: op("publish-held"),
+            until: None,
+        },
+    );
+    let until = s.log.now() + 3600;
+    s.send(
+        Some("owner"),
+        &Message::Embargo {
+            operation: op("publish-held"),
+            until: Some(until),
+        },
+    );
+    let held = s.layer_with("held", 2, &[("src/c", b"c\n")]);
+    s.send(Some("owner"), &publish("held", "publish-held", held, 2));
+    for caller in [None, Some("member")] {
+        s.send(caller, &Message::Resolve { version: None });
+        s.send(caller, &Message::ReadDisclosure);
+    }
+    s.send(
+        None,
+        &Message::Resolve {
+            version: Some(v(3)),
+        },
+    );
+    // A signed-in caller without a role is refused Layer work before anything is looked up.
+    s.send(
+        Some("stranger"),
+        &Message::LayerCreate {
+            layer: layer("outside"),
+            base: v(2),
+        },
+    );
+    clock.fetch_add(60, Ordering::SeqCst);
+    s.send(Some("owner"), &Message::Release { version: v(3) });
+    s.send(None, &Message::Resolve { version: None });
+
     // Refusals before any handler: a browser write, an anonymous write, an unknown Layer.
     s.send_from(
         Some("owner"),
@@ -309,16 +387,33 @@ fn scenario(log: &mut FileWorldLog) -> Vec<String> {
     s.seen
 }
 
-fn run_on(storage: &(impl Storage + Coordination)) -> Vec<String> {
-    let mut log = FileWorldLog::on(storage, storage).unwrap();
-    scenario(&mut log)
+/// A clock from `start`, which the scenario moves forward. Start near the real time: tokens
+/// are issued at the real time and stay valid for ten minutes.
+fn clock(start: u64) -> Arc<AtomicU64> {
+    Arc::new(AtomicU64::new(start))
+}
+
+fn open(storage: &(impl Storage + Coordination), clock: &Arc<AtomicU64>) -> FileWorldLog {
+    let clock = clock.clone();
+    FileWorldLog::on(
+        storage,
+        storage,
+        Box::new(move || clock.load(Ordering::SeqCst)),
+    )
+    .unwrap()
+}
+
+fn run_on(storage: &(impl Storage + Coordination), start: u64) -> Vec<String> {
+    let clock = clock(start);
+    scenario(&mut open(storage, &clock), &clock)
 }
 
 #[test]
 fn the_durable_object_node_answers_as_the_self_hosted_node() {
     let dir = tempfile::tempdir().unwrap();
-    let native = run_on(&Directory::new(dir.path()));
-    let object = run_on(&PageStorage::new(Rc::new(MemPages::default())));
+    let start = now();
+    let native = run_on(&Directory::new(dir.path()), start);
+    let object = run_on(&PageStorage::new(Rc::new(MemPages::default())), start);
     assert!(
         native.iter().any(|reply| reply.contains("Published")),
         "{native:#?}"
@@ -333,11 +428,11 @@ fn the_durable_object_node_answers_as_the_self_hosted_node() {
 fn a_reopened_node_keeps_what_it_committed() {
     let pages = Rc::new(MemPages::default());
     let first = PageStorage::new(pages.clone());
-    run_on(&first);
+    run_on(&first, now());
     drop(first);
     let storage = PageStorage::new(pages);
-    let mut log = FileWorldLog::on(&storage, &storage).unwrap();
-    assert_eq!(log.head().unwrap().number, v(2));
+    let mut log = open(&storage, &clock(now()));
+    assert_eq!(log.head().unwrap().number, v(3));
     let mut s = Session {
         log: &mut log,
         gate: gate(),
@@ -360,7 +455,7 @@ fn a_reopened_node_keeps_what_it_committed() {
 #[test]
 fn a_second_connection_to_an_open_database_is_refused() {
     let storage = PageStorage::new(Rc::new(MemPages::default()));
-    let _log = FileWorldLog::on(&storage, &storage).unwrap();
+    let _log = open(&storage, &clock(now()));
     let error = storage.records().expect_err("node.db is open");
     assert_eq!(
         error.sqlite_error_code(),

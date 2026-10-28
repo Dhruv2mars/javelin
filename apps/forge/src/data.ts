@@ -54,6 +54,11 @@ export type DirectoryPage = {
   entries: TreeItem[];
   /** `links` gives the entry kind of each relative link target in the README that exists. */
   readme: { name: string; text: string; links: Record<string, "dir" | "file"> } | null;
+  /**
+   * Whether the public view is delayed. The forge reads signed out, so the node shows it the
+   * public frontier as the head; this says so, never by how much any one change waits.
+   */
+  delayed: boolean;
 };
 
 /** Most README links whose targets are looked up. */
@@ -109,6 +114,11 @@ export async function loadDirectory(
     path,
     entries,
     readme,
+    // A node that predates disclosure refuses the message; its view is not delayed.
+    delayed: await client.disclosure().then(
+      (d) => d.delayed,
+      () => false,
+    ),
   };
 }
 

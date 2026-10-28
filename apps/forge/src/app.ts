@@ -17,6 +17,7 @@ import {
 } from "./data";
 import type { Hunk } from "./diff";
 import { escapeHtml as esc, highlightLines, languageOf } from "./highlight";
+import { landingPage, openTarget } from "./landing";
 import { renderMarkdown } from "./markdown";
 import { type Config, type Route, type Target, findTarget, href, parseRoute, readConfig } from "./routes";
 
@@ -129,8 +130,12 @@ function directoryPage(r: { owner: string; repo: string }, d: DirectoryPage) {
         d.path,
       )}</div></article>`
     : "";
+  const delayed = d.delayed
+    ? `<p class="notice delayed">The public view of this repository is delayed. It shows the repository as it was a while ago; members see newer versions.</p>`
+    : "";
   return `
     ${masthead(r, v, d.head, "code", `${attribution(v, d.publication)}. Tree <code>${short(d.version.tree)}</code>`)}
+    ${delayed}
     <div class="code-layout">
       <section class="files" aria-label="Files">
         ${d.path ? crumbs(r, v, d.path) : ""}
@@ -259,16 +264,6 @@ function versionPage(r: { owner: string; repo: string }, v: VersionPage) {
     </section>`;
 }
 
-function indexPage() {
-  const repos = Object.entries(config.repositories);
-  const list = repos.length
-    ? `<ul class="entries">${repos
-        .map(([key, t]) => `<li class="entry entry-dir"><a href="/${key}"><span class="glyph" aria-hidden="true"></span>${esc(key)}</a> <span class="muted">on ${esc(t.node)}</span></li>`)
-        .join("")}</ul>`
-    : `<p class="empty">No repositories are listed in <code>forge.config.json</code>. Open <code>/OWNER/REPO?node=URL&amp;repository=ID</code> to read one from its node.</p>`;
-  return `<section class="index"><h1 class="index-title">Repositories</h1>${list}</section>`;
-}
-
 function failure(error: unknown, target: Target | null) {
   const e = error instanceof ProtocolError ? error : new ProtocolError("error", String(error));
   const where = target ? esc(target.node) : "the node";
@@ -291,7 +286,14 @@ async function render() {
     document.title = title;
     main.removeAttribute("aria-busy");
   };
-  if (route.page === "index") return show(indexPage(), "Javelin");
+  if (route.page === "index") {
+    nodeLabel.textContent = "";
+    show(landingPage(config, storage()), "Javelin: version control for people and agents");
+    // On a narrow screen the World line scrolls; start at the head, where Publish lands.
+    const line = main.querySelector<HTMLElement>(".wl-scroll");
+    if (line) line.scrollLeft = line.scrollWidth;
+    return;
+  }
   if (route.page === "missing") {
     return show(`<section class="failure"><h1>No page here</h1><p>Forge pages look like <code>/OWNER/REPO</code>.</p></section>`, "Not found");
   }
@@ -339,6 +341,25 @@ document.addEventListener("click", (event) => {
   render();
 });
 window.addEventListener("popstate", render);
+
+// The landing page's form opens a repository by its node address and ID.
+document.addEventListener("submit", (event) => {
+  const form = event.target as HTMLFormElement;
+  if (form.id !== "open-repository") return;
+  event.preventDefault();
+  const field = (name: string) => String(new FormData(form).get(name) ?? "");
+  const opened = openTarget(field("node"), field("repository"), field("name"));
+  const error = form.querySelector<HTMLElement>("#open-error")!;
+  if (!opened.ok) {
+    error.textContent = opened.error;
+    error.hidden = false;
+    return;
+  }
+  error.hidden = true;
+  history.pushState(null, "", opened.url);
+  window.scrollTo(0, 0);
+  render();
+});
 
 fetch("/forge.config.json")
   .then((r) => (r.ok ? r.json() : null))

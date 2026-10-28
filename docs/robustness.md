@@ -58,6 +58,7 @@ is refused as `operation_id_reused`.
 | Racing retries | `racing_retries_of_one_operation_publish_once_with_identical_receipts` | Six processes share one operation ID; one version, identical receipts |
 | Lock held past timeout | `lock_held_past_the_timeout_is_busy_and_retry_publishes_once` | An exclusive lock held for the timeout; `busy`, then a retry publishes once |
 | Layer create crash | `layer_create_crash_points_leave_no_partial_layer_and_retries_are_idempotent` | Failpoints around the commit |
+| Layer create killed on a real volume | Gate 2 `crash/interrupted-create-recovers` (`tools/workspace-probe/gate2.mjs`) | A release binary is killed twice: held at the store lock after its Layer is recorded, and after its directory appears but before it exits |
 | Capture crash | `capture_crash_points_never_leave_a_half_recorded_checkpoint` | Failpoints around the commit; the revision count is checked through the library |
 | Layer discard crash | `layer_discard_crash_points_are_atomic_and_retries_end_discarded_once` | Failpoints around the commit |
 | Publish crash | `publish_crash_before_commit_publishes_once_on_retry` | Failpoint before commit; retry publishes once |

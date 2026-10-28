@@ -15,6 +15,7 @@
 pub mod admin;
 pub mod auth;
 pub mod checks;
+pub mod disclosure;
 pub mod fork;
 mod layer;
 mod lease;

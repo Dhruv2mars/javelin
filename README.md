@@ -17,14 +17,18 @@ no complete hosted workflow yet. See the [architecture](docs/architecture.md),
 
 ## Install
 
-Pre-GA. The release pipeline ships install scripts for macOS, Linux and Windows that
-verify SHA-256 checksums and upgrade in place. Pin a release tag until GA:
+Pre-GA. Release builds with installers for macOS, Linux and Windows are coming. Until then,
+build the CLI from source. Cloning needs an Entire login (`entire login`); the source is also
+readable at https://entire.com/et/dhruv2mars/javelin. You need a Rust toolchain and a C
+compiler:
 
 ```sh
-curl -fsSLO https://github.com/Dhruv2mars/javelin/releases/download/TAG/install.sh
-sh install.sh --version TAG
+entire repo clone /et/dhruv2mars/javelin
+cd javelin
+cargo install --locked --path crates/javelin-cli
+javelin --version
 ```
 
-On Windows, use `install.ps1` with `-Version TAG`. Details, limits, and upgrade notes
-are in [docs/install.md](docs/install.md). Without a release, build from source with
-the [quickstart](docs/quickstart.md).
+This installs `javelin` into Cargo's bin directory. The [quickstart](docs/quickstart.md) walks
+through a first repository. [docs/install.md](docs/install.md) describes the release
+installers, which are not published yet.

@@ -118,6 +118,21 @@ impl Repository {
         .map_err(|_| Error::CorruptObject(id))
     }
 
+    /// The checkpoint bytes another store records for a plain capture of `changes` over
+    /// `head`, one of its checkpoints: the same base and Stack sources, these changes, and no
+    /// provenance, as a node records a `LayerAppend`. `changes` must be normalized against that
+    /// base, as a local Layer's changes over a World with the same tree are. Their hash is the
+    /// node's next checkpoint ID, so a client can name it before the node is reachable, as a
+    /// queued revision does.
+    pub fn foreign_capture(head: &[u8], changes: &SparseChanges) -> Result<Vec<u8>> {
+        let id = ObjectId::for_checkpoint(head);
+        let mut encoded: crate::layer::EncodedCheckpoint =
+            serde_json::from_slice(head).map_err(|_| Error::CorruptObject(id))?;
+        encoded.changes = changes.encoded();
+        encoded.provenance = None;
+        serde_json::to_vec(&encoded).map_err(|_| Error::CorruptObject(id))
+    }
+
     /// Moves `expected` to a head another store produced, such as a Stack on a node.
     /// `changes` is that head's delta against the same base. The changes are stored as a
     /// standalone checkpoint and stacked onto `expected` in one transaction, so the new head

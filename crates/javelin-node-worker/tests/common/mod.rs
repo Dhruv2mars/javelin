@@ -322,4 +322,171 @@ pub fn run_wire(repository: &RepositoryId, wire: &Wire, absent: &Wire) {
     let answer = wire.post_raw(Some(&token), true, &encode(&publish).expect("encode"));
     assert!(!answer.cors);
     assert_eq!(answer.message.as_ref().and_then(code), Some("forbidden"));
+
+    // The commit path, the request loop and a held version, end to end over the wire.
+    commit_review_and_hold(wire);
+}
+
+fn number(message: &Message) -> u64 {
+    match message {
+        Message::Resolved { number, .. } => number.get(),
+        Message::PublishOutcome(PublishOutcome::Published { number, .. }) => number.get(),
+        other => panic!("expected a version: {other:?}"),
+    }
+}
+
+/// Creates Layer `name` over World `base` and appends one new file to it, as `admin`.
+/// Returns the Layer's head.
+fn layer_with(wire: &Wire, name: &str, base: u64, path: &str) -> javelin::ObjectId {
+    let layer = javelin::LayerId::parse(name).expect("layer");
+    let head = match wire.reply(
+        Some("admin"),
+        &Message::LayerCreate {
+            layer: layer.clone(),
+            base: javelin::VersionNumber::new(base).expect("version"),
+        },
+    ) {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("create {name}: {other:?}"),
+    };
+    let bytes = format!("{name}\n").into_bytes();
+    let blob = javelin::ObjectId::for_blob(&bytes);
+    wire.reply(
+        Some("admin"),
+        &Message::Objects(vec![(Kind::Blob, blob, bytes)]),
+    );
+    let changes = javelin::SparseChanges::new([(
+        javelin::RepoPath::parse(path).expect("path"),
+        Some(javelin::FileEntry::Regular {
+            content: blob,
+            executable: false,
+        }),
+    )])
+    .expect("changes");
+    let bytes = changes.canonical_bytes();
+    let id = Kind::Checkpoint.id(&bytes);
+    wire.reply(
+        Some("admin"),
+        &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]),
+    );
+    let append = Message::LayerAppend {
+        operation: javelin::OperationId::parse(&format!("append-{name}")).expect("operation"),
+        layer,
+        parent: Some(head),
+        checkpoint: id,
+    };
+    match wire.reply(Some("admin"), &append) {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("append {name}: {other:?}"),
+    }
+}
+
+fn publish_layer(name: &str, operation: &str, expected: javelin::ObjectId, base: u64) -> Message {
+    Message::PublishLayer {
+        operation: javelin::OperationId::parse(operation).expect("operation"),
+        layer: javelin::LayerId::parse(name).expect("layer"),
+        expected,
+        base: javelin::VersionNumber::new(base).expect("version"),
+        attribution: javelin::PublishAttribution::Human,
+    }
+}
+
+fn commit_review_and_hold(wire: &Wire) {
+    let head = Message::Resolve { version: None };
+
+    // A Layer is created, written and published as World 1; the retry replays it.
+    let work = layer_with(wire, "work", 0, "src/work");
+    let publish = publish_layer("work", "publish-work", work, 0);
+    let first = wire.reply(Some("admin"), &publish);
+    assert_eq!(number(&first), 1);
+    assert_eq!(wire.reply(Some("admin"), &publish), first);
+
+    // A Publish Request: opened, listed, read and published as World 2.
+    let feature = layer_with(wire, "feature", 1, "src/feature");
+    let request = javelin_protocol::codec::RequestId::parse("pr-1").expect("request");
+    let opened = wire.reply(
+        Some("admin"),
+        &Message::OpenRequest {
+            operation: javelin::OperationId::parse("open-pr-1").expect("operation"),
+            request: request.clone(),
+            layer: javelin::LayerId::parse("feature").expect("layer"),
+            checkpoint: feature,
+            base: javelin::VersionNumber::new(1).expect("version"),
+        },
+    );
+    assert!(matches!(opened, Message::ReviewOutcome(_)), "{opened:?}");
+    match wire.reply(Some("admin"), &Message::ListRequests { after: None }) {
+        Message::RequestList { requests, .. } => assert_eq!(requests.len(), 1),
+        other => panic!("list: {other:?}"),
+    }
+    let review = Message::ReadReview {
+        request: request.clone(),
+        comments_from: 0,
+    };
+    assert!(matches!(
+        wire.reply(Some("reviewer"), &review),
+        Message::ReviewDetail(_)
+    ));
+    let published = wire.reply(
+        Some("admin"),
+        &Message::PublishRequest {
+            operation: javelin::OperationId::parse("publish-pr-1").expect("operation"),
+            request,
+            revision: 1,
+            base: javelin::VersionNumber::new(1).expect("version"),
+        },
+    );
+    assert_eq!(number(&published), 2);
+
+    // A signed-in caller without a role is refused requests and Layers.
+    let list = Message::ListRequests { after: None };
+    assert_eq!(
+        code(&wire.reply(Some("stranger"), &list)),
+        Some("forbidden")
+    );
+    assert_eq!(
+        code(&wire.reply(Some("stranger"), &review)),
+        Some("forbidden")
+    );
+    let create = Message::LayerCreate {
+        layer: javelin::LayerId::parse("outside").expect("layer"),
+        base: javelin::VersionNumber::new(2).expect("version"),
+    };
+    assert_eq!(
+        code(&wire.reply(Some("stranger"), &create)),
+        Some("forbidden")
+    );
+
+    // An embargoed World 3 is held from outsiders until it is released; members read it.
+    wire.reply(Some("admin"), &Message::SetDelay { delay: 0 });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let embargo = Message::Embargo {
+        operation: javelin::OperationId::parse("publish-held").expect("operation"),
+        until: Some(now + 3600),
+    };
+    assert!(matches!(
+        wire.reply(Some("admin"), &embargo),
+        Message::Disclosure(_)
+    ));
+    let held = layer_with(wire, "held", 2, "src/held");
+    let held = wire.reply(
+        Some("admin"),
+        &publish_layer("held", "publish-held", held, 2),
+    );
+    assert_eq!(number(&held), 3);
+    assert_eq!(number(&wire.reply(None, &head)), 2, "outsiders are held");
+    assert_eq!(number(&wire.reply(Some("stranger"), &head)), 2);
+    assert_eq!(number(&wire.reply(Some("reviewer"), &head)), 3);
+    let release = Message::Release {
+        version: javelin::VersionNumber::new(3).expect("version"),
+    };
+    assert_eq!(
+        code(&wire.reply(Some("reviewer"), &release)),
+        Some("forbidden")
+    );
+    wire.reply(Some("admin"), &release);
+    assert_eq!(number(&wire.reply(None, &head)), 3, "released");
 }

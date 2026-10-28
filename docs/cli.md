@@ -58,9 +58,20 @@ javelin workspace discard ID --operation ID
 javelin workspace publish ID --operation ID [--actor human|agent]
     [--context HASH | --trace FILE] [--allow-missing-trace]
 javelin workspace recover
+
+javelin attach https://HOST[:PORT]/REPOSITORY [project-directory]
+javelin sync
+javelin request open ID --layer LAYER --operation OP
+javelin request revise ID --revision N --operation OP [--layer LAYER]
+javelin request comment ID --body TEXT --operation OP [--revision N]
+javelin request approve ID --revision N --operation OP
+javelin request show ID [--revision N]
+javelin request list
+javelin request publish ID --revision N --operation OP [--base WORLD]
 ```
 
-All `checkpoint`, `layer` and `workspace` commands accept `--repo DIR` and `--json`. The default
+All `checkpoint`, `layer`, `workspace`, `request` and `sync` commands accept `--repo DIR`
+and `--json`. The default
 repository is the current directory, with no ancestor search.
 `--allow-missing-trace` is a flag. Other options take separate values
 and may appear before or after positional arguments. Unknown, repeated, and
@@ -394,8 +405,10 @@ the fetch never overwrites local divergence: when this repository's World head i
 attached head (for example after a local `workspace publish`), the take is refused with
 `local_world_diverged`, naming both heads; take the Layer from a fresh `javelin attach`
 directory. A take that stopped after the World followed the node but before
-`attach.json` recorded it is finished by the next take: a head made by `sync-<number>-<id>`
-that the node confirms (same chain ID and tree) is written to `attach.json` first. Those checks, and the refresh of an
+`attach.json` recorded it is finished by the next take or sync: a head made by
+`sync-<number>-<id>` that the node confirms (same chain ID and tree) is written to
+`attach.json` first. The fetch, the divergence check and that recovery are `javelin sync`'s
+own (see Sync below). Those checks, and the refresh of an
 existing local Layer, run before the lease moves. A retried `--operation OP` replays the
 recorded take; JSON `holds_lease` and `lease` (`this_device`, `another_device`) say who holds
 it now, and the text says plainly when another device does. Only the Layer's owner can take the lease (`forbidden` otherwise),
@@ -443,14 +456,181 @@ rules never silently untracks an entry. `.javelinignore` itself is always
 captured. Capture never removes ignored bytes. The same matcher is available to
 library callers as `javelin::IgnoreRules`.
 
+## Public frontier
+
+```text
+javelin frontier --node https://HOST[:PORT] --repository ID [--json]
+javelin delay [DURATION] --node https://HOST[:PORT] --repository ID [--json]
+javelin embargo --operation ID [--until UNIX] --node https://HOST[:PORT] --repository ID [--json]
+javelin embargo release VERSION --node https://HOST[:PORT] --repository ID [--json]
+```
+
+A reader outside a hosted repository sees it at its public frontier: the newest version
+older than the disclosure delay with no unreleased embargo at or below it. Members see the
+head (`docs/direction.md`, Superposition).
+
+`frontier` prints the frontier. A member also sees the delay and each unreleased embargo;
+anyone else sees only whether the public view is delayed. It reads with this device's
+credential for the repository or `JAVELIN_TOKEN`, and signed out without one.
+
+`delay` shows the delay, or sets it with Maintain. `DURATION` is seconds, or a count
+followed by `s`, `m`, `h` or `d`; `0` turns the delay off. Each version becomes public on
+its own once the delay has passed since it was published. A version already public stays
+public when the delay is raised.
+
+`embargo --operation ID` embargoes the Publish with that operation ID, with Maintain. Send
+it before the Publish: readers outside the repository then stay below the version it makes
+until Unix time `--until`, or until `embargo release VERSION`, and every version waiting
+behind it becomes public at once (each still after the delay). Repeating the same embargo is
+safe; a Publish already decided cannot gain one. Changes print the disclosure as a member
+sees it. A refusal exits 1 with the node's code.
+
+## Hosted repositories: sync and Publish Requests
+
+`javelin attach` fetches a hosted repository's head into an empty repository and records
+it in `.javelin/attach.json`. From then on the node is the World's authority. Local World
+numbers are not the node's: each World that attach or sync brings here is recorded under
+`attach-<number>-<id>` or `sync-<number>-<id>`, naming the remote version it holds, and
+JSON output reports remote numbers. A Layer created over one of those Worlds can be
+proposed to the node.
+
+Credentials come from `javelin login` (the device's sign-in, refreshed through the control
+plane) or `JAVELIN_TOKEN`. Reads of a public repository's Worlds (attach, sync) need
+neither, and show a caller without a role the public frontier, not the head (see Public
+frontier). Layers and Publish Requests, `request list` and `request show` included, need
+a role in the repository.
+
+### Sync
+
+`javelin sync` brings the local World to the node's head:
+
+1. It replays the outbox first, so a queued revision or Publish reaches the node before the
+   fetch.
+2. It fetches the versions after the attached head, verified from that head's ID (the trust
+   anchor), so the work follows the number of new versions, not the length of history. A
+   node whose chain does not pass through the attached head is refused with
+   `chain_mismatch`, and nothing is written. Hidden entries arrive as attach brings them:
+   the ones the node opens for this token with their content, the rest as commitments left
+   out of the rolling base.
+3. It stores the tree chunks and blobs it lacks, advances the local World and the rolling
+   base, and rewrites `attach.json` last. A sync interrupted after the advance is finished
+   by the next sync or `layer take`, once the node confirms the head the advance names.
+
+Layers are not touched: they keep their bases, and Publish composes them onto the node's
+head. JSON reports `from` and `head` (remote heads), `advanced`, `local_head`, `base` and
+`outbox` (`delivered`, `stalled`, `pending`). A record that still cannot be delivered
+returns exit 1 with its `code`, after the fetch. A node that cannot be reached is
+`node_unavailable`, and nothing changes.
+
+Sync never replaces local history. The local head must be a World that attach or sync took
+from the node, holding the attached tree, with no Publish receipt. If the local World moved
+away from the attachment, because `workspace publish` ran in this attached repository, sync
+refuses with `local_world_diverged` and exit 1, before the outbox replays. The message names the published Layer's last checkpoint:
+`javelin layer clone NEW --checkpoint HASH` makes a Layer from it, and `javelin request open`
+proposes that Layer to the node. To follow the node again, attach a fresh directory.
+
+### Publish Requests
+
+A Publish Request proposes one Layer's work to the node. It has one author, and each
+revision is an immutable checkpoint of the author's Layer on the node. An approval applies
+to exactly one revision; a new revision needs new approvals.
+
+- `request open ID --layer LAYER --operation OP` captures the Layer's workspace, uploads its
+  changes to the node (creating the Layer there over the remote World its base holds, then
+  the blobs and changes it lacks), and opens request ID with them as revision 1. Request IDs
+  have 1 to 128 ASCII letters, digits, `-`, `_`, `.` or `:`.
+- `request revise ID --revision N --operation OP` submits the Layer's current changes as
+  revision N + 1. N is the current revision, so a revision prepared against an older one is
+  refused with `stale_revision`. Only the author revises (`not_author`). The Layer is the
+  one the request was opened from here; `--layer` names another.
+- `request comment ID --body TEXT --operation OP [--revision N]` comments on the request, or
+  on revision N.
+- `request approve ID --revision N --operation OP` approves exactly revision N. The author
+  cannot approve their own request (`self_approval`), and approvers need the Review or
+  Maintain role.
+- `request show ID [--revision N]` prints the request, every revision with its base,
+  checkpoint and approvals, the approvals Publish needs, the comments, and the paths
+  revision N (default: the current one) changes. JSON has the same fields. A revision whose
+  checkpoint changes a path this token may not read shows `checkpoint: null` and no paths,
+  as the node treats that checkpoint: never stored.
+- `request list` prints every request on the node with its Layer, author, state and current
+  revision.
+- `request publish ID --revision N --operation OP` publishes exactly revision N's
+  checkpoint, not the Layer's later head. The node checks at Publish that N is current and
+  has enough approvals under the current permissions: `stale_revision` (exit 3),
+  `not_enough_approvals` (exit 1). A conflict with the World returns exit 3 with `paths`.
+  The base is the revision's: it is read from the node, or from this clone's record of a
+  request it opened. Pass `--base WORLD` (a remote number from `request show`) to queue a
+  Publish of someone else's request while the node is down.
+
+Every write takes an operation ID. A retry with the same ID returns the original outcome,
+including after a lost reply; the node refuses the same ID with different input as
+`operation_id_reused`.
+
+What waits for the node follows the outage rules (`docs/online-design.md`, D7):
+
+| Command | Node unavailable |
+| --- | --- |
+| `request revise`, `request publish` | Queued in the outbox: exit 0 with `queued: true` and `code: node_unavailable`. `javelin sync` or `outbox replay` delivers it. |
+| `request open`, `approve`, `comment`, `show`, `list` | Refused with `node_unavailable` (exit 1). Nothing is queued. |
+
+A queued revision names the checkpoint the node will record for it, computed from the
+node's Layer head this clone last saw, which `request open` and `revise` keep in
+`.javelin/requests.json`. If another device moves that Layer on the node in the meantime,
+the queued revision is refused with `missing_object` when it is delivered; run
+`javelin layer refresh LAYER` and revise again. Retrying a queued command with the same
+operation ID delivers what was queued, unchanged; later edits need a new operation ID.
+
+Refusals print the node's code: `not_author`, `self_approval`, `stale_revision`,
+`unknown_revision`, `not_enough_approvals`, `not_open`, `already_approved`,
+`unchanged_revision`, `insufficient_role`.
+
+### Worked example
+
+Ada authors and Ben maintains; each is signed in on their own machine with `javelin login`.
+
+```sh
+# Ada: attach, work in a Layer, and propose it.
+javelin attach https://node.example.com/acme-vault ~/vault
+cd ~/vault
+javelin workspace create greet
+printf 'hello\n' > .javelin/layers/greet/hello.txt
+javelin request open greet-1 --layer greet --operation ada-open-1
+
+# Ben: attach a second clone, review, and comment on revision 1.
+javelin attach https://node.example.com/acme-vault ~/vault
+cd ~/vault
+javelin request list
+javelin request show greet-1          # revision 1 changes hello.txt
+javelin request comment greet-1 --revision 1 --body 'Say it louder' --operation ben-c1
+
+# Ada: revise. Ben's approval, had he given one, would not carry over.
+printf 'HELLO\n' > .javelin/layers/greet/hello.txt
+javelin request revise greet-1 --revision 1 --operation ada-revise-1
+
+# Ben: approve exactly revision 2, publish it, and sync.
+javelin request approve greet-1 --revision 2 --operation ben-approve-2
+javelin request publish greet-1 --revision 2 --operation ben-publish-2
+javelin sync                           # remote World 1 is now the local head
+javelin workspace create next          # next/hello.txt reads HELLO
+
+# Ada: sync too.
+javelin sync
+```
+
+If the node is down when Ada revises, the revision is queued and the command exits 0 with
+`queued: true`; her next `javelin sync` delivers it. Ben's approval and comment, by
+contrast, wait until he can reach the node.
+
 ## Output and exit status
 
 `--json` prints one JSON object. Successful results and stale outcomes go to
 stdout, with no stderr. Failures have no stdout and retain the existing stderr
 shape `{"ok":false,"error":{"code":"...","message":"..."}}`.
 
-Exit status is 0 for success (including unknown receipt lookup), 1 for runtime or storage failure including
-`unsupported` and `busy`, 2 for invalid input, and 3 for a conflict or stale mutation/receipt. Stale
+Exit status is 0 for success (including unknown receipt lookup and a queued revision or
+Publish), 1 for runtime or storage failure including `unsupported` and `busy` and for a
+node's refusal, 2 for invalid input, and 3 for a conflict or stale mutation/receipt. Stale
 output has `ok: false` and the native `stale` outcome. Partial recovery has
 `ok: false`, exit 1, and the full recovery report on stdout.
 

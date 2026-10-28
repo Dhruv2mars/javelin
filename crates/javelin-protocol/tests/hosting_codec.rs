@@ -6,8 +6,9 @@ use javelin::{LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, Vers
 use javelin_protocol::{
     Kind, Message,
     codec::{
-        LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome, RequestId, RequestStatus,
-        ReviewOutcome, Role, Visibility, code, decode, encode, read_frame, write_frame,
+        CommentDetail, LayerOutcome, LayerStatus, LeaseHolder, MAX_REQUESTS, PublishOutcome,
+        RequestId, RequestStatus, RequestSummary, ReviewDetail, ReviewOutcome, RevisionDetail,
+        Role, Visibility, code, decode, encode, read_frame, write_frame,
     },
     limits::{MAX_CHECKPOINT, MAX_COMMENT, MAX_FRAME, MAX_WANT},
 };
@@ -244,6 +245,82 @@ fn every_hosting_message_round_trips() {
     }
 }
 
+fn summary(n: u32) -> RequestSummary {
+    RequestSummary {
+        request: RequestId::parse(&format!("req-{n}")).unwrap(),
+        layer: layer(),
+        author: "alice".into(),
+        state: RequestStatus::Open,
+        revision: n,
+    }
+}
+
+#[test]
+fn layer_create_and_request_reads_round_trip() {
+    roundtrip(Message::LayerCreate {
+        layer: layer(),
+        base: version(4),
+    });
+    roundtrip(Message::ListRequests { after: None });
+    roundtrip(Message::ListRequests {
+        after: Some(request()),
+    });
+    roundtrip(Message::RequestList {
+        requests: vec![],
+        more: false,
+    });
+    roundtrip(Message::RequestList {
+        requests: (0..3).map(summary).collect(),
+        more: true,
+    });
+    roundtrip(Message::ReadReview {
+        request: request(),
+        comments_from: 7,
+    });
+    roundtrip(Message::ReviewDetail(ReviewDetail {
+        summary: summary(2),
+        required_approvals: 1,
+        revisions: vec![
+            RevisionDetail {
+                index: 1,
+                base: version(3),
+                checkpoint: Some(id(1)),
+                approvals: vec!["rita".into()],
+            },
+            RevisionDetail {
+                index: 2,
+                base: version(3),
+                checkpoint: None,
+                approvals: vec![],
+            },
+        ],
+        comments: vec![
+            CommentDetail {
+                author: "rita".into(),
+                revision: Some(1),
+                body: "rename this".into(),
+            },
+            CommentDetail {
+                author: "alice".into(),
+                revision: None,
+                body: String::new(),
+            },
+        ],
+        comments_total: 9,
+    }));
+}
+
+#[test]
+fn request_lists_are_bounded_and_absent_cursors_are_empty() {
+    let over = Message::RequestList {
+        requests: (0..=MAX_REQUESTS as u32).map(summary).collect(),
+        more: false,
+    };
+    assert_eq!(encode(&over).unwrap_err().code, code::LIMIT_EXCEEDED);
+    // An absent cursor followed by a name is not one canonical encoding.
+    assert_eq!(refused(&[0x57, 0, 1, b'x']), code::MALFORMED);
+}
+
 #[test]
 fn checkpoint_kind_round_trips_in_object_messages() {
     let bytes = br#"{"changes":{}}"#.to_vec();
@@ -287,7 +364,7 @@ fn checkpoint_objects_are_bounded() {
 
 #[test]
 fn unknown_tags_are_malformed() {
-    for tag in [0x00, 0x04, 0x05, 0x07, 0x32, 0x3b, 0x4f, 0x57, 0x7e] {
+    for tag in [0x00, 0x04, 0x05, 0x07, 0x32, 0x3b, 0x4f, 0x5b, 0x7e] {
         assert_eq!(refused(&[tag]), code::MALFORMED, "tag {tag:#04x}");
     }
 }
@@ -645,4 +722,55 @@ fn attribution_messages_round_trip_canonically() {
     let mut extra = body.clone();
     extra.push(0);
     assert_eq!(refused(&extra), code::MALFORMED);
+}
+
+#[test]
+fn disclosure_messages_round_trip_and_match_the_browser_codec() {
+    use javelin_protocol::codec::{Disclosure, Embargoed};
+    roundtrip(Message::ReadDisclosure);
+    roundtrip(Message::SetDelay { delay: 604_800 });
+    roundtrip(Message::Embargo {
+        operation: op("publish-fix"),
+        until: None,
+    });
+    roundtrip(Message::Embargo {
+        operation: op("publish-fix"),
+        until: Some(1_900_000_000),
+    });
+    roundtrip(Message::Release {
+        version: version(3),
+    });
+    roundtrip(Message::Disclosure(Disclosure {
+        delayed: true,
+        delay: Some(604_800),
+        frontier: version(2),
+        embargoes: vec![
+            Embargoed {
+                version: version(3),
+                until: None,
+            },
+            Embargoed {
+                version: version(5),
+                until: Some(1_900_000_000),
+            },
+        ],
+    }));
+    // The bytes `apps/forge/test/codec.test.ts` decodes: an outsider's view, delayed, with
+    // no delay, frontier 2 and no embargoes.
+    let outsider = Message::Disclosure(Disclosure {
+        delayed: true,
+        delay: None,
+        frontier: version(2),
+        embargoes: Vec::new(),
+    });
+    let mut expected = vec![0x49, 1, 0];
+    expected.extend_from_slice(&0u64.to_be_bytes());
+    expected.extend_from_slice(&2u64.to_be_bytes());
+    expected.extend_from_slice(&0u32.to_be_bytes());
+    assert_eq!(encode(&outsider).unwrap(), expected);
+    assert_eq!(encode(&Message::ReadDisclosure).unwrap(), vec![0x48]);
+    // An absent number must be zero, so one message has one encoding.
+    let mut absent = expected.clone();
+    absent[3 + 7] = 1;
+    assert_eq!(refused(&absent), code::MALFORMED);
 }

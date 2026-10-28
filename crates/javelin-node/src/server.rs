@@ -11,8 +11,13 @@
 //! caller can only read a public repository. Refusals are `Error` replies with status 200.
 //! The transport has no TLS, so the server binds loopback addresses only.
 //!
+//! A caller outside the repository reads at the public frontier (`disclosure.rs`): every
+//! read is served as if the frontier were the head, and it holds no Layer or Publish
+//! Request it could see. Time comes from the log's clock (`FileWorldLog::now`).
+//!
 //! Browsers may read: `OPTIONS` answers a CORS preflight, and replies to the read
-//! messages (`Resolve`, `Get`, `Changeset`, `Attribution`) allow any origin. Any other
+//! messages (`Resolve`, `Get`, `Changeset`, `Attribution`, `ReadDisclosure`) allow any
+//! origin. Any other
 //! message that arrives with an `Origin` header is refused with `forbidden` before it
 //! is served, so a web page can never write through a visitor's browser.
 
@@ -216,9 +221,7 @@ fn read_request(
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = log.now();
     let answer = wire::handle(log, gate, token.as_deref(), origin, now, &body)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.detail))?;
     Ok(Reply::Message {

@@ -5,8 +5,10 @@
 //!
 //! Every message passes the node's gate (`auth.rs`) with the request's bearer token, or as an
 //! anonymous caller without one, so an anonymous caller can only read a public repository.
-//! Refusals are `Error` replies. Replies to the read messages (`Resolve`, `Get`, `Changeset`,
-//! `Attribution`) may be read by any browser origin; any other message sent with an `Origin`
+//! Refusals are `Error` replies. A caller outside the repository reads at the public frontier
+//! (`disclosure.rs`), so it holds no Layer or Publish Request it could see. Replies to the
+//! read messages (`Resolve`, `Get`, `Changeset`, `Attribution`, `ReadDisclosure`) may be read
+//! by any browser origin; any other message sent with an `Origin`
 //! is refused with `forbidden` before it is served, so a web page can never write through a
 //! visitor's browser.
 
@@ -63,7 +65,13 @@ pub fn handle(
                 "a browser origin may only send read messages",
             ));
         }
-        serve_one(log, gate, token, now, message)
+        // Every version is stamped, and every decided embargo tied to its version, before
+        // anything is read, and again after a Publish, so the version's time is this request.
+        crate::disclosure::stamp(log.records(), log.repo(), now)?;
+        let reply = serve_one(log, gate, token, now, message);
+        // A failure here leaves the stamp to the next request, which only delays disclosure.
+        let _ = crate::disclosure::stamp(log.records(), log.repo(), now);
+        reply
     }) {
         Ok(reply) => reply,
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
@@ -83,6 +91,7 @@ fn is_read(message: &Message) -> bool {
             | Message::Get(_)
             | Message::Changeset { .. }
             | Message::Attribution { .. }
+            | Message::ReadDisclosure
     )
 }
 
@@ -96,16 +105,23 @@ fn serve_one(
     now: u64,
     message: Message,
 ) -> Result<Message, ProtocolError> {
+    refuse_outsider_work(gate, token, now, &message)?;
     match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
         | Message::Approve { .. }
         | Message::Comment { .. }
         | Message::PublishRequest { .. }
-        | Message::ReadRequest { .. } => return review::handle(log, gate, token, now, &message),
+        | Message::ReadRequest { .. }
+        | Message::ListRequests { .. }
+        | Message::ReadReview { .. } => return review::handle(log, gate, token, now, &message),
         Message::CheckReport(report) => {
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
+        Message::ReadDisclosure
+        | Message::SetDelay { .. }
+        | Message::Embargo { .. }
+        | Message::Release { .. } => return disclose(log, gate, token, now, &message),
         _ => {}
     }
     // Version negotiation reveals nothing about the repository, so it needs no grant.
@@ -117,10 +133,13 @@ fn serve_one(
     let reader = grant
         .as_ref()
         .map_or_else(javelin::Reader::outsider, |grant| gate.reader(grant));
+    // Outside the repository, the World ends at the public frontier.
+    let reader = crate::disclosure::hold(log.records(), log.repo(), now, reader)?;
     if grant.is_some() {
         check_writes(log, &reader, &message)?;
     }
-    log.traces().refuse_wire_fetch(&message)?;
+    log.traces()
+        .refuse_wire_fetch(log.repo(), &reader, &message)?;
     // Writes to a Layer go through its writer lease, which names the grant's device.
     let writer = || {
         grant
@@ -170,11 +189,89 @@ fn serve_one(
             &operation,
             &layer,
         )?)),
+        Message::LayerCreate { layer, base } => Ok(Message::LayerOutcome(crate::layer::create(
+            log.parts().0,
+            &layer,
+            base,
+        )?)),
         Message::Get(items) if crate::stack::all_checkpoints(&items) => {
             crate::stack::get_checkpoints(log.repo(), items, &reader)
         }
         message => handle_request_as(log, message, &reader),
     }
+}
+
+/// Refuses a caller without a role in the repository any message about Layers, Publish
+/// Requests or check results, before anything stored is looked up. A Layer is work above
+/// every version: its state, base and checkpoints, a request's state, or a check's subject
+/// could each name a version above the public frontier, and whether one exists must not
+/// show. A public repository grants every signed-in caller Read, which carries the write
+/// scopes, so this holds whatever the token carries. The token is checked first, with no
+/// Layer named, so that refusal does not depend on stored state either.
+fn refuse_outsider_work(
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: &Message,
+) -> Result<(), ProtocolError> {
+    let scope = match message {
+        Message::LayerHead { .. }
+        | Message::ReadRequest { .. }
+        | Message::ListRequests { .. }
+        | Message::ReadReview { .. } => Scope::Read,
+        Message::LayerAppend { .. }
+        | Message::LayerStack { .. }
+        | Message::LayerTake { .. }
+        | Message::LayerCreate { .. } => Scope::LayerWrite,
+        Message::OpenRequest { .. } | Message::Revise { .. } | Message::Comment { .. } => {
+            Scope::ReviewWrite
+        }
+        Message::Approve { .. } => Scope::ReviewApprove,
+        Message::PublishRequest { .. } | Message::PublishLayer { .. } => Scope::Publish,
+        Message::CheckReport(_) => Scope::CheckReport,
+        Message::Get(items) if crate::stack::all_checkpoints(items) => Scope::Read,
+        _ => return Ok(()),
+    };
+    let grant = gate.check(token, now, Need { scope, layer: None })?;
+    if gate.reader(&grant).is_member() {
+        return Ok(());
+    }
+    Err(ProtocolError::new(
+        code::FORBIDDEN,
+        "Layers, Publish Requests and check results need a role in the repository",
+    ))
+}
+
+/// The disclosure messages. Anyone who may read the repository reads its disclosure, as
+/// far as its role allows; only Maintain changes it.
+fn disclose(
+    log: &mut FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: &Message,
+) -> Result<Message, ProtocolError> {
+    let grant = gate.check(token, now, need(message))?;
+    let reader = gate.reader(&grant);
+    let records = log.records();
+    let repo = log.repo();
+    if !matches!(message, Message::ReadDisclosure) && !reader.reads_all() {
+        return Err(ProtocolError::new(
+            code::FORBIDDEN,
+            "only Maintain changes the disclosure delay and embargoes",
+        ));
+    }
+    match message {
+        Message::SetDelay { delay } => crate::disclosure::set_delay(records, *delay)?,
+        Message::Embargo { operation, until } => {
+            crate::disclosure::embargo(records, repo, operation, *until)?
+        }
+        Message::Release { version } => crate::disclosure::release(records, *version, now)?,
+        _ => {}
+    }
+    Ok(Message::Disclosure(crate::disclosure::state(
+        records, repo, now, &reader,
+    )?))
 }
 
 /// Refuses a write that would change a path outside the caller's audiences, before it
@@ -250,11 +347,16 @@ fn check_writes(
 /// by content. Everything else, replies sent as requests included, needs `read`.
 fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
-        Message::LayerAppend { layer, .. } => (Scope::LayerWrite, Some(layer)),
+        Message::LayerAppend { layer, .. } | Message::LayerCreate { layer, .. } => {
+            (Scope::LayerWrite, Some(layer))
+        }
         Message::LayerStack { target, .. } => (Scope::LayerWrite, Some(target)),
         Message::LayerTake { layer, .. } => (Scope::LayerWrite, Some(layer)),
         Message::PublishLayer { layer, .. } => (Scope::Publish, Some(layer)),
-        Message::Publish { .. } => (Scope::Publish, None),
+        Message::Publish { .. }
+        | Message::SetDelay { .. }
+        | Message::Embargo { .. }
+        | Message::Release { .. } => (Scope::Publish, None),
         Message::Want(_) | Message::Objects(_) => (Scope::LayerWrite, None),
         Message::LayerHead { layer } => (Scope::Read, Some(layer)),
         _ => (Scope::Read, None),

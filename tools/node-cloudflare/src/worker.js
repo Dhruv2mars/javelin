@@ -81,8 +81,7 @@ export class RepositoryNode extends DurableObject {
     if (url.pathname === "/v2") {
       const authorization = request.headers.get("authorization") ?? undefined;
       const origin = request.headers.get("x-javelin-origin") === "1";
-      const now = Math.floor(Date.now() / 1000);
-      return this.call(name, (node) => node.v2(authorization, origin, now, body));
+      return this.call(name, (node) => node.v2(authorization, origin, body));
     }
     const action = url.pathname.slice("/admin/".length);
     const response = this.call(name, (node) => node.admin(action, body));

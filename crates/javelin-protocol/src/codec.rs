@@ -2,10 +2,12 @@
 //! byte is the message tag. Integers are big-endian; IDs are raw 32-byte values.
 //! Snapshots travel as content-addressed tree chunks and blobs, root first.
 //!
-//! Hosting messages (tags 0x03, 0x06, 0x33-0x3a, 0x50-0x56) move Layer, World and
-//! Publish Request state. Each variant of [`Message`] documents its fields. Encodings
-//! are canonical: an absent optional is a zero flag followed by zeroed bytes, and any
-//! other form of absence is malformed, so one message has one encoding.
+//! Hosting messages (tags 0x03, 0x06, 0x33-0x3c, 0x50-0x5a) move Layer, World and
+//! Publish Request state. Disclosure messages (0x48-0x4c) read and change the delay and
+//! embargoes that hold readers outside the repository at its public frontier. Each variant
+//! of [`Message`] documents its fields. Encodings are canonical: an absent optional is a
+//! zero flag followed by zeroed bytes, and any other form of absence is malformed, so one
+//! message has one encoding.
 
 use std::io::{self, Read, Write};
 
@@ -17,13 +19,17 @@ use javelin::{
 use crate::{ProtocolError, limits::*};
 
 mod checks;
+mod disclosure;
 mod hosting;
+mod review;
 mod wire;
 
+pub use disclosure::{Disclosure, Embargoed};
 pub use hosting::{
     CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome,
     RequestId, RequestStatus, ReviewOutcome, Role, Visibility,
 };
+pub use review::{CommentDetail, MAX_REQUESTS, RequestSummary, ReviewDetail, RevisionDetail};
 use wire::*;
 
 pub const MAGIC: &[u8; 4] = b"JVLP";
@@ -49,6 +55,7 @@ const PUBLISH_LAYER: u8 = 0x38;
 const PUBLISH_OUTCOME: u8 = 0x39;
 const PUBLISH_REQUEST: u8 = 0x3a;
 const LAYER_TAKE: u8 = 0x3b;
+const LAYER_CREATE: u8 = 0x3c;
 const RESOLVE: u8 = 0x40;
 const RESOLVED: u8 = 0x41;
 const CHANGESET: u8 = 0x42;
@@ -57,6 +64,11 @@ const ATTRIBUTION: u8 = 0x44;
 const ATTRIBUTED: u8 = 0x45;
 const OPEN: u8 = 0x46;
 const OPENED: u8 = 0x47;
+const READ_DISCLOSURE: u8 = 0x48;
+const DISCLOSURE: u8 = 0x49;
+const SET_DELAY: u8 = 0x4a;
+const EMBARGO: u8 = 0x4b;
+const RELEASE: u8 = 0x4c;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -64,6 +76,10 @@ const APPROVE: u8 = 0x53;
 const COMMENT: u8 = 0x54;
 const READ_REQUEST: u8 = 0x55;
 const REQUEST_STATE: u8 = 0x56;
+const LIST_REQUESTS: u8 = 0x57;
+const REQUEST_LIST: u8 = 0x58;
+const READ_REVIEW: u8 = 0x59;
+const REVIEW_DETAIL: u8 = 0x5a;
 const CHECK_REPORT: u8 = 0x60;
 const CHECK_OUTCOME: u8 = 0x61;
 const ERROR: u8 = 0x7f;
@@ -210,6 +226,12 @@ pub enum Message {
         checkpoint: ObjectId,
     },
     LayerOutcome(LayerOutcome),
+    /// Create `layer` over World `base` on the node, so a client can append its captures.
+    /// A retry with the same base returns the same revision 0. Reply: `LayerOutcome`.
+    LayerCreate {
+        layer: LayerId,
+        base: VersionNumber,
+    },
     /// Read a Layer's head and state.
     LayerHead {
         layer: LayerId,
@@ -294,6 +316,31 @@ pub enum Message {
     /// does not say whether it exists. The audience is not sent: the caller holds it in
     /// the committed entry. Each opening is checked against its commitment on decode.
     Opened(Vec<(ObjectId, Opening)>),
+    /// Ask how the repository discloses its versions to readers outside it. Any reader
+    /// may ask. Reply: `Disclosure`.
+    ReadDisclosure,
+    /// The delay, the public frontier and the unreleased embargoes, as the caller may
+    /// know them (`Disclosure`).
+    Disclosure(Disclosure),
+    /// Set the disclosure delay, in seconds; zero shows readers outside the repository the
+    /// head. Maintain only. Reply: `Disclosure`.
+    SetDelay {
+        delay: u64,
+    },
+    /// Embargo the Publish whose operation ID is `operation`. Sent before that Publish,
+    /// which then holds readers outside the repository below the version it makes until
+    /// Unix time `until`, or, when `until` is `None`, until a maintainer sends `Release`.
+    /// Repeating it is safe until the Publish is decided; after that it is refused unless
+    /// it is identical. Maintain only. Reply: `Disclosure`.
+    Embargo {
+        operation: OperationId,
+        until: Option<u64>,
+    },
+    /// Release the embargo on `version` now. Releasing a released embargo changes
+    /// nothing. Maintain only. Reply: `Disclosure`.
+    Release {
+        version: VersionNumber,
+    },
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
         operation: OperationId,
@@ -336,6 +383,23 @@ pub enum Message {
         state: RequestStatus,
         revision: u32,
     },
+    /// List Publish Requests in ID order, after `after` when it is set. Reply:
+    /// `RequestList`. Encoded as a flag, then the ID (empty when absent).
+    ListRequests {
+        after: Option<RequestId>,
+    },
+    /// At most `MAX_REQUESTS` requests; `more` when the list continues past the last.
+    RequestList {
+        requests: Vec<RequestSummary>,
+        more: bool,
+    },
+    /// Read a request with its revisions, approvals and comments, from comment
+    /// `comments_from`. Reply: `ReviewDetail`.
+    ReadReview {
+        request: RequestId,
+        comments_from: u32,
+    },
+    ReviewDetail(ReviewDetail),
     Error {
         code: String,
         detail: String,
@@ -448,6 +512,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                     put_short(&mut out, code);
                 }
             }
+        }
+        Message::LayerCreate { layer, base } => {
+            out.push(LAYER_CREATE);
+            put_short(&mut out, layer.as_str());
+            out.extend_from_slice(&base.get().to_be_bytes());
         }
         Message::LayerHead { layer } => {
             out.push(LAYER_HEAD);
@@ -596,6 +665,24 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
                 put_id(&mut out, &opening.content);
             }
         }
+        Message::ReadDisclosure => out.push(READ_DISCLOSURE),
+        Message::Disclosure(disclosure) => {
+            out.push(DISCLOSURE);
+            disclosure::put_disclosure(&mut out, disclosure);
+        }
+        Message::SetDelay { delay } => {
+            out.push(SET_DELAY);
+            out.extend_from_slice(&delay.to_be_bytes());
+        }
+        Message::Embargo { operation, until } => {
+            out.push(EMBARGO);
+            put_short(&mut out, operation.as_str());
+            disclosure::put_optional_u64(&mut out, *until);
+        }
+        Message::Release { version } => {
+            out.push(RELEASE);
+            out.extend_from_slice(&version.get().to_be_bytes());
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -674,6 +761,27 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.push(state.code());
             out.extend_from_slice(&revision.to_be_bytes());
         }
+        Message::ListRequests { after } => {
+            out.push(LIST_REQUESTS);
+            out.push(u8::from(after.is_some()));
+            put_short(&mut out, after.as_ref().map_or("", RequestId::as_str));
+        }
+        Message::RequestList { requests, more } => {
+            out.push(REQUEST_LIST);
+            review::put_list(&mut out, requests, *more);
+        }
+        Message::ReadReview {
+            request,
+            comments_from,
+        } => {
+            out.push(READ_REVIEW);
+            put_short(&mut out, request.as_str());
+            out.extend_from_slice(&comments_from.to_be_bytes());
+        }
+        Message::ReviewDetail(detail) => {
+            out.push(REVIEW_DETAIL);
+            review::put_detail(&mut out, detail);
+        }
         Message::CheckReport(report) => {
             out.push(CHECK_REPORT);
             checks::put_report(&mut out, report);
@@ -733,6 +841,7 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
             LayerOutcome::Stale { .. } => 34,
             LayerOutcome::Refused { code } => 2 + short(code)?,
         },
+        Message::LayerCreate { layer, .. } => 1 + short(layer.as_str())? + 8,
         Message::LayerHead { layer } => 1 + short(layer.as_str())?,
         Message::LayerState { layer, .. } => 1 + short(layer.as_str())? + 8 + 8 + 32 + 2,
         Message::LayerStack {
@@ -836,8 +945,17 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         }
         Message::ReadRequest { request } => 1 + short(request.as_str())?,
         Message::RequestState { request, .. } => 1 + short(request.as_str())? + 1 + 4,
+        Message::ListRequests { after } => 2 + short(after.as_ref().map_or("", RequestId::as_str))?,
+        Message::RequestList { requests, .. } => review::list_len(requests)?,
+        Message::ReadReview { request, .. } => 1 + short(request.as_str())? + 4,
+        Message::ReviewDetail(detail) => review::detail_len(detail)?,
         Message::CheckReport(report) => checks::report_len(report)?,
         Message::CheckOutcome(outcome) => checks::outcome_len(outcome)?,
+        Message::ReadDisclosure => 1,
+        Message::Disclosure(disclosure) => disclosure::disclosure_len(disclosure)?,
+        Message::SetDelay { .. } => 9,
+        Message::Embargo { operation, .. } => 1 + short(operation.as_str())? + 9,
+        Message::Release { .. } => 9,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -944,6 +1062,10 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             },
             _ => return Err(malformed("unknown layer outcome")),
         }),
+        LAYER_CREATE => Message::LayerCreate {
+            layer: r.layer()?,
+            base: r.version()?,
+        },
         LAYER_HEAD => Message::LayerHead { layer: r.layer()? },
         LAYER_STATE => Message::LayerState {
             layer: r.layer()?,
@@ -1111,8 +1233,34 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             state: r.request_status()?,
             revision: r.u32()?,
         },
+        LIST_REQUESTS => Message::ListRequests {
+            after: match r.flag()? {
+                true => Some(r.request()?),
+                false if r.short_str()?.is_empty() => None,
+                false => return Err(malformed("absent request must be empty")),
+            },
+        },
+        REQUEST_LIST => {
+            let (requests, more) = review::read_list(&mut r)?;
+            Message::RequestList { requests, more }
+        }
+        READ_REVIEW => Message::ReadReview {
+            request: r.request()?,
+            comments_from: r.u32()?,
+        },
+        REVIEW_DETAIL => Message::ReviewDetail(review::read_detail(&mut r)?),
         CHECK_REPORT => Message::CheckReport(checks::read_report(&mut r)?),
         CHECK_OUTCOME => Message::CheckOutcome(checks::read_outcome(&mut r)?),
+        READ_DISCLOSURE => Message::ReadDisclosure,
+        DISCLOSURE => Message::Disclosure(disclosure::read_disclosure(&mut r)?),
+        SET_DELAY => Message::SetDelay { delay: r.u64()? },
+        EMBARGO => Message::Embargo {
+            operation: r.operation()?,
+            until: disclosure::read_optional_u64(&mut r)?,
+        },
+        RELEASE => Message::Release {
+            version: r.version()?,
+        },
         ERROR => {
             let code = r.short_str()?.to_owned();
             let len = r.u16()? as usize;

@@ -9,6 +9,10 @@
 //! a commitment. An object inside hidden entries is served only to their audiences, and
 //! `Want` and `Get` answer as if it were absent for anyone else, so a guessed ID is never
 //! confirmed. `Open` returns only the openings the reader may read.
+//!
+//! A reader held at a frontier (`Reader::with_frontier`) reads the World as if the frontier
+//! were the head: `Resolve` of the head answers the frontier, and a version above it is
+//! refused exactly as a version that does not exist.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -294,6 +298,7 @@ fn handle(
             Ok(Message::Outcome(Outcome::from_native(&outcome)?))
         }
         Message::Changeset { version, offset } => {
+            seen(reader, version)?;
             let bytes = repo.changeset(version)?.canonical_bytes();
             let total = bytes.len();
             let start = usize::try_from(offset)
@@ -318,9 +323,13 @@ fn handle(
             ))
         }
         Message::Resolve { version } => {
-            let world = match version {
-                Some(number) => repo.version(number)?,
-                None => repo.head()?,
+            let world = match (version, reader.frontier()) {
+                (Some(number), _) => {
+                    seen(reader, number)?;
+                    repo.version(number)?
+                }
+                (None, Some(frontier)) => repo.version(frontier)?,
+                (None, None) => repo.head()?,
             };
             Ok(Message::Resolved {
                 number: world.number,
@@ -328,10 +337,13 @@ fn handle(
                 tree: world.tree,
             })
         }
-        Message::Attribution { version } => Ok(Message::Attributed {
-            number: version,
-            publication: repo.version_publication(version)?,
-        }),
+        Message::Attribution { version } => {
+            seen(reader, version)?;
+            Ok(Message::Attributed {
+                number: version,
+                publication: repo.version_publication(version)?,
+            })
+        }
         // The reply is the longest prefix of the request that fits one frame.
         Message::Get(items) => {
             unique(&items)?;
@@ -356,6 +368,15 @@ fn handle(
             Ok(Message::Objects(objects))
         }
         _ => Err(unexpected()),
+    }
+}
+
+/// Refuses a version above the reader's frontier exactly as one that does not exist.
+fn seen(reader: &Reader, version: VersionNumber) -> Result<(), ProtocolError> {
+    if reader.sees(version) {
+        Ok(())
+    } else {
+        Err(javelin::Error::MissingVersion(version).into())
     }
 }
 

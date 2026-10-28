@@ -5,6 +5,7 @@
 
 use javelin::{
     Error, LayerId, LayerState, LayerUpdate, ObjectId, OperationId, Repository, SparseChanges,
+    VersionNumber,
 };
 use javelin_protocol::{
     Message, ProtocolError,
@@ -143,6 +144,30 @@ pub(crate) fn append(
             | "invalid_input" => Ok(refused(error.code())),
             _ => Err(error.into()),
         },
+    }
+}
+
+/// `LayerCreate`: an empty Layer over World `base`, so a client can append its captures to
+/// it. A retry with the same base returns the same revision 0; another base is refused with
+/// `invalid_input`, as is a World the node does not hold. A revision's Layer is reserved.
+pub(crate) fn create(
+    repo: &mut Repository,
+    layer: &LayerId,
+    base: VersionNumber,
+) -> Result<LayerOutcome, ProtocolError> {
+    if crate::review::is_review_layer(layer) {
+        return Ok(refused(refusal::LAYER_RESERVED));
+    }
+    let created = repo
+        .layer_base(base)
+        .and_then(|base| repo.create_layer(layer, &base));
+    match created {
+        Ok(head) => Ok(LayerOutcome::Accepted {
+            seq: head.revision(),
+            checkpoint: head.checkpoint().object(),
+        }),
+        Err(Error::MissingVersion(_) | Error::InvalidInput(_)) => Ok(refused(code::INVALID_INPUT)),
+        Err(error) => Err(error.into()),
     }
 }
 
