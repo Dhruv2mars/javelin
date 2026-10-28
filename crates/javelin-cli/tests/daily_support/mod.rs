@@ -358,7 +358,17 @@ fn git_stand_in(dir: &Path) -> (OsString, PathBuf) {
         let path =
             std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited)))
                 .unwrap();
-        let control = Command::new("git").env("PATH", &path).status().unwrap();
+        // Linux refuses to run a file another thread's fork still holds open for writing
+        // (ETXTBSY) until that child execs, so the positive control retries briefly.
+        let control = (0..200)
+            .find_map(|_| match Command::new("git").env("PATH", &path).status() {
+                Err(error) if error.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    None
+                }
+                status => Some(status.unwrap()),
+            })
+            .expect("the git stand-in stayed busy");
         assert_eq!(control.code(), Some(99), "the git stand-in did not run");
         assert!(marker.exists());
         fs::remove_file(&marker).unwrap();
