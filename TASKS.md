@@ -42,7 +42,17 @@ CI left open. Work from it, in roughly this order:
     at or below the frontier, once a Layer records who created it.
   - [ ] `--embargo` on `javelin request publish`; until then `javelin embargo --operation ID`
     precedes the Publish.
-- [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
+- [x] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit
+  (feat/node-budget). `budget.json` (storage bytes, rows written per UTC day, largest object;
+  Free-plan defaults), enforced in `wire::handle` before any state changes on both nodes;
+  `ReadUsage`/`Usage` and numbers in the refusal for Maintain only; `PUT /admin/r/{repo}/budget`
+  on Cloudflare; `javelin node usage`. Evidence: parity budget scenario on `Directory` and
+  `PageStorage`, conformance `run_budget` on loopback and `wrangler dev`, `crates/javelin-cli/
+  tests/budget.rs`.
+  - [ ] Budget rows across repositories on one Cloudflare account (the daily quota is per
+    account; each repository counts only its own), and admin pushes.
+  - [ ] A CLI for the owner to change the budget (today: the admin route, or `budget.json`
+    and a restart on a self-hosted node).
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
   list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,

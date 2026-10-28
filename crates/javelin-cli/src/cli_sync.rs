@@ -152,10 +152,9 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     let (stall, mut code, mut exit) = match stalled {
         Some(stall) => {
             text.push_str(&format!(
-                "\nRecord {} waits: {}: {}",
+                "\nRecord {} waits: {}",
                 stall.seq,
-                stall.fault.code(),
-                stall.fault.detail()
+                crate::cli_node::refusal_text(stall.fault.code(), stall.fault.detail())
             ));
             (
                 json!({"seq": stall.seq, "code": stall.fault.code(), "detail": stall.fault.detail()}),

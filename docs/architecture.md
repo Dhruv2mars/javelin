@@ -105,6 +105,18 @@ Code: src/audience.rs, src/seal.rs, src/repository.rs, src/publish.rs, src/domai
 
 Code: crates/javelin-node/src/disclosure.rs, crates/javelin-node/src/server.rs, crates/javelin-protocol/src/receiver.rs, crates/javelin-protocol/src/codec/disclosure.rs, crates/javelin-cli/src/cli_disclosure.rs
 
+## Node budget
+
+`crates/javelin-node/src/budget.rs` (`docs/direction.md`, What a node needs, 8). The node holds writes to its owner's budget, so a write that would cross a free-tier quota is refused with `quota_exceeded` instead of failing however the provider fails.
+
+- Budget: `budget.json` in the node's storage, fields `storage_bytes` (default 1,000,000,000, the documented per-object storage on Workers Free), `rows_written_per_day` (default 100,000, the Free plan's daily rows written, per account) and `largest_object` (default `MAX_BLOB`, the protocol's bound). Absent fields keep their default; a document that does not parse stops the node from opening. `FileWorldLog` reads it when it opens. Only the owner changes it: on Cloudflare `PUT /admin/r/{repo}/budget` with the admin token (`GET` reads it with the use); a self-hosted owner edits `budget.json` in the data directory and restarts the node.
+- Use, the same code on every store: storage is the page count times the page size of the repository database and `node.db` (`javelin::database_use`). Rows written are the pages each request writes (SQLite's `SQLITE_DBSTATUS_CACHE_WRITE`, `javelin::take_pages_written`), counted as 64 KiB rows (a Durable Object's page row), plus one size row per database written and one for the count itself, in `node.db` table `budget_rows(day, rows)` keyed by the UTC day. On `PageStorage` this is within a few rows of the page rows the object writes, never fewer (`crates/javelin-node-cloudflare/tests/parity.rs`). Admin pushes, provisioning included, are not counted.
+- Admission: `wire::handle` decodes the message, refuses a browser write and an outsider's Layer work, then calls `budget::admit` before the disclosure stamp and the handler, so a refused write changes nothing and is safe to retry under the same operation ID. Writes are `Objects`, the Layer messages, `PublishLayer`, the Publish Request writes, `CheckReport` and the disclosure changes; reads, `Want` included, are never refused. A write is refused when an object it carries is larger than `largest_object`, when storage plus its body and a reserve of 16 pages would pass `storage_bytes`, or when today's rows plus its body in rows and 16 more would pass `rows_written_per_day`. An estimate can be short of what a write then writes, so the count can end a request slightly past the budget; the next write is refused.
+- Disclosure: a refused caller first passes the gate for the message, so a caller the gate refuses gets that refusal. The detail names the budget (`storage_bytes`, `rows_written_per_day`, `largest_object`); only a maintainer, who reads the whole repository, also gets the use, the limit and the estimate. `ReadUsage` answers `Usage` (day and meters) to Maintain only and is `forbidden` otherwise.
+- CLI: `javelin node usage --node URL --repository ID`; any command the node refuses with `quota_exceeded`, and an outbox record waiting on one, prints the budget and what the owner can do.
+
+Code: crates/javelin-node/src/budget.rs, crates/javelin-node/src/wire.rs, crates/javelin-protocol/src/codec/budget.rs, crates/javelin-node-cloudflare/src/service.rs, crates/javelin-cli/src/cli_node.rs
+
 ## Layers and checkpoints
 
 - Layer state lives in tables `repository_identity`, `layer_heads`, and `layer_attempts` (`SCHEMA` in `src/layer.rs`).
