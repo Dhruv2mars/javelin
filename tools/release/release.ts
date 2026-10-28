@@ -254,9 +254,15 @@ async function publish(flags: Map<string, string>): Promise<void> {
     }
   }
 
-  // A published version is never replaced.
-  const existing = await fetch(`${publicUrl}/${version}/SHA256SUMS`, { method: "HEAD" }).catch(() => undefined);
-  if (existing?.ok) throw new Fail(`${version} is already published at ${publicUrl}`);
+  // A published version is never replaced: go on only when the host says 404.
+  const probe = `${publicUrl}/${version}/SHA256SUMS`;
+  const existing = await fetch(probe, { method: "HEAD" }).catch((e: Error) => e);
+  if (existing instanceof Response && existing.ok) throw new Fail(`${version} is already published at ${publicUrl}`);
+  if (!(existing instanceof Response && existing.status === 404)) {
+    const why = existing instanceof Response ? `answered ${existing.status}` : `could not be reached (${existing.message})`;
+    if (!dry) throw new Fail(`${probe} ${why}; publish goes on only after a 404`);
+    console.log(`${probe} ${why}; a real publish would stop here`);
+  }
   if (!dry && !(process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID)) {
     throw new Fail("set CLOUDFLARE_API_TOKEN (R2 edit on this bucket) and CLOUDFLARE_ACCOUNT_ID");
   }

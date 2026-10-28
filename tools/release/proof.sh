@@ -50,6 +50,7 @@ echo "javelin is not installed"
 
 step "curl -fsSL $base/install.sh | sh"
 curl -fsSL "$base/install.sh" | sh | tee "$work/install.log"
+grep -q "^Installed javelin and javelin-node" "$work/install.log" || fail "the one-line install did not finish (output above)"
 grep -q "is not on your PATH" "$work/install.log" || fail "installer did not say how to put javelin on PATH"
 bin="$HOME/.javelin/bin"
 

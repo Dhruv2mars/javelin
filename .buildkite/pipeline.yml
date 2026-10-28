@@ -60,7 +60,7 @@ steps:
       - docker#v5.12.0:
           image: rust:1.99.0
           environment: [CARGO_TERM_COLOR=never]
-    artifact_paths: "dist/release/**/*"
+    artifact_paths: "release-linux.tar"
     command: |
       apt-get update -qq && apt-get install -y -qq xz-utils > /dev/null
       curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
@@ -72,6 +72,7 @@ steps:
       rustup target add aarch64-unknown-linux-gnu
       git config --global --add safe.directory '*'
       bun tools/release/release.ts build --version v0.1.0-ci --targets x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu --base-url http://127.0.0.1:4873
+      tar -cf release-linux.tar dist/release
 
   # A new developer on a plain distro: the one-line install from a loopback server, then
   # javelin init and a first publish, as a non-root user with a fresh HOME
@@ -82,7 +83,7 @@ steps:
     agents: { queue: linux-small }
     timeout_in_minutes: 20
     command: |
-      buildkite-agent artifact download "dist/release/**/*" .
+      buildkite-agent artifact download release-linux.tar . && tar -xf release-linux.tar
       docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
       for platform in linux/amd64 linux/arm64; do
         echo "--- proof on ubuntu:24.04 $$platform"
