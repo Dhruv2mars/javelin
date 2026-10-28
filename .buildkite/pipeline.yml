@@ -83,7 +83,7 @@ steps:
     timeout_in_minutes: 20
     command: |
       buildkite-agent artifact download "dist/release/**/*" .
-      docker run --privileged --rm tonistiigi/binfmt:qemu-v9.2.2 --install arm64
+      docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
       for platform in linux/amd64 linux/arm64; do
         echo "--- proof on ubuntu:24.04 $$platform"
         docker run --rm --platform "$$platform" -v "$$PWD:/w:ro" ubuntu:24.04 sh -c '
