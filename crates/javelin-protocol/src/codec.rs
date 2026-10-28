@@ -123,6 +123,11 @@ pub mod code {
     pub const CHECK_NAME_NOT_ALLOWED: &str = "check_name_not_allowed";
     pub const CHECKS_MISSING: &str = "checks_missing";
     pub const CHECKS_FAILED: &str = "checks_failed";
+    /// A direct `PublishLayer` from a member whose role does not Publish.
+    pub const INSUFFICIENT_ROLE: &str = "insufficient_role";
+    /// A direct `PublishLayer` on a repository whose rules require approvals: the change
+    /// goes through a Publish Request.
+    pub const REVIEW_REQUIRED: &str = "review_required";
 }
 
 /// Object IDs are kind-separated; every reference names the expected kind.

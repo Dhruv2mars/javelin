@@ -12,11 +12,12 @@
 //! is refused with `forbidden` before it is served, so a web page can never write through a
 //! visitor's browser.
 
-use javelin::LayerState;
+use javelin::{LayerId, LayerState};
+use javelin_collaboration::{PrincipalId, Role};
 use javelin_identity::{Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{code, decode, encode},
+    codec::{PublishOutcome, code, decode, encode},
     handle_request_as,
     receiver::WorldLog,
 };
@@ -106,6 +107,13 @@ fn serve_one(
     message: Message,
 ) -> Result<Message, ProtocolError> {
     refuse_outsider_work(gate, token, now, &message)?;
+    if let Message::PublishLayer { layer, .. } = &message
+        && let Some(refused) = refuse_direct_publish(gate, token, now, layer)?
+    {
+        return Ok(Message::PublishOutcome(PublishOutcome::Refused {
+            code: refused.into(),
+        }));
+    }
     match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
@@ -227,7 +235,9 @@ fn refuse_outsider_work(
             Scope::ReviewWrite
         }
         Message::Approve { .. } => Scope::ReviewApprove,
-        Message::PublishRequest { .. } | Message::PublishLayer { .. } => Scope::Publish,
+        Message::PublishRequest { .. } => Scope::Publish,
+        // A member's direct Publish is answered by `refuse_direct_publish`.
+        Message::PublishLayer { .. } => Scope::LayerWrite,
         Message::CheckReport(_) => Scope::CheckReport,
         Message::Get(items) if crate::stack::all_checkpoints(items) => Scope::Read,
         _ => return Ok(()),
@@ -240,6 +250,50 @@ fn refuse_outsider_work(
         code::FORBIDDEN,
         "Layers, Publish Requests and check results need a role in the repository",
     ))
+}
+
+/// Direct Publish is for Maintain on a repository whose rules require no approvals. Any
+/// other member's `PublishLayer` is answered with a refusal outcome that says to open a Publish
+/// Request: `insufficient_role` for a role below Maintain, `review_required` when approvals
+/// are required, and `forbidden` for a token without the Publish scope. An outcome, not an error, so a queued Publish is decided rather than retried
+/// forever. Nothing is recorded, so the same operation may publish once the rules allow it. A
+/// token limited to another Layer is refused by the gate, as before.
+fn refuse_direct_publish(
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    layer: &LayerId,
+) -> Result<Option<&'static str>, ProtocolError> {
+    let grant = gate.check(
+        token,
+        now,
+        Need {
+            scope: Scope::LayerWrite,
+            layer: Some(layer.as_str()),
+        },
+    )?;
+    let Some(permissions) = gate.permissions() else {
+        return Ok(None);
+    };
+    let role = grant
+        .principal
+        .as_deref()
+        .and_then(|principal| PrincipalId::parse(principal).ok())
+        .and_then(|principal| permissions.role(&principal));
+    if role < Some(Role::Maintain) {
+        return Ok(Some(code::INSUFFICIENT_ROLE));
+    }
+    if permissions.required_approvals > 0 {
+        return Ok(Some(code::REVIEW_REQUIRED));
+    }
+    let publish = Need {
+        scope: Scope::Publish,
+        layer: Some(layer.as_str()),
+    };
+    match gate.check(token, now, publish) {
+        Err(error) if error.code == code::FORBIDDEN => Ok(Some(code::FORBIDDEN)),
+        _ => Ok(None),
+    }
 }
 
 /// The disclosure messages. Anyone who may read the repository reads its disclosure, as
