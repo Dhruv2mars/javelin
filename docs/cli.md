@@ -685,7 +685,11 @@ and any member may list.
 - `member invite REPOSITORY ACCOUNT [--role ROLE]` prints a one-time code for a new account
   named ACCOUNT. `javelin login --invite CODE` makes the account, signs that device in as it
   and grants the role. A name that already has an account is refused (`conflict`): add it
-  instead. A new invite for the same name replaces the pending one.
+  instead. A new invite for the same name replaces the pending one, and `member remove`
+  cancels it. On a Cloudflare node, which only a maintainer's control plane reaches (with
+  `JAVELIN_NODE_ADMIN_TOKEN`), the invite still makes the account and the membership, and
+  `login --invite` says the node has not applied the role yet; the maintainer's next
+  `member add` for that account pushes it.
 - `repo settings REPOSITORY --required-approvals N` sets the approvals a Publish Request needs.
 
 A repository always keeps one `maintain` member, so the last one cannot be removed or

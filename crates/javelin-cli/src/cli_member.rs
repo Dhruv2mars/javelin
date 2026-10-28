@@ -18,7 +18,7 @@ use serde_json::json;
 
 use crate::{
     cli::Output,
-    cli_control::{bearer, control_dir, now},
+    cli_control::{bearer, control, control_dir, now},
 };
 
 const USAGE: &str = "usage:\n  javelin member list REPOSITORY\n  javelin member add REPOSITORY ACCOUNT [--role read|review|maintain]\n  javelin member role REPOSITORY ACCOUNT read|review|maintain\n  javelin member remove REPOSITORY ACCOUNT\n  javelin member invite REPOSITORY ACCOUNT [--role read|review|maintain]\nREPOSITORY is OWNER/NAME or the repository's ID.";
@@ -95,7 +95,8 @@ fn plane_for(repository: &str) -> Result<Box<dyn Control>, ControlError> {
 }
 
 fn list(repository: &str) -> Result<Output, ControlError> {
-    let plane = plane_for(repository)?;
+    // Listing pushes nothing, so it never needs the node's admin token.
+    let plane = control()?;
     let now = now()?;
     let members = plane.members(&bearer(plane.as_ref(), now)?, repository, now)?;
     let mut text = format!(

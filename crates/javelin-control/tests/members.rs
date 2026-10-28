@@ -5,7 +5,9 @@
 use std::path::Path;
 
 use javelin_collaboration::{RepositoryId, Role};
-use javelin_control::{ControlPlane, CreateRequest, LocalNode, MemberChange, Poll, Publish};
+use javelin_control::{
+    ControlPlane, CreateRequest, LocalNode, MemberChange, NodeTarget, Poll, Publish,
+};
 use javelin_identity::{Need, Scope};
 
 const T0: u64 = 1_800_000_000;
@@ -266,4 +268,65 @@ fn a_signed_in_device_approves_another_device_for_the_same_account() {
     };
     assert_eq!(desktop.principal, "cora");
     assert_ne!(desktop.device, laptop.device);
+}
+
+#[test]
+fn removing_a_name_cancels_its_pending_invite() {
+    let dir = tempfile::tempdir().unwrap();
+    let (plane, admin) = open(dir.path());
+    let (owner, repo) = repository(&plane, &admin);
+    let invite = plane
+        .invite(&owner, &repo, "cora", Role::Maintain, T0)
+        .unwrap();
+    let removed = plane
+        .change_member(&owner, &repo, "cora", MemberChange::Remove, T0)
+        .unwrap();
+    assert!(removed.changed && removed.invites.is_empty(), "{removed:?}");
+    assert_eq!(
+        plane.redeem_invite(&invite.code, T0).unwrap_err().code(),
+        "not_found"
+    );
+}
+
+/// An invite to a repository whose node this control plane cannot push to (a Cloudflare node
+/// needs its admin token) still makes the account and the membership; a maintainer's control
+/// plane, which reaches the node, pushes it with the next member command.
+#[test]
+fn an_invite_redeemed_away_from_the_node_is_pushed_by_the_next_member_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = "https://node.example.workers.dev";
+    let at_node = ControlPlane::with_node(
+        dir.path(),
+        Box::new(LocalNode::new(dir.path().join("nodes"))),
+        NodeTarget::cloudflare(url),
+    )
+    .unwrap();
+    let admin = at_node.bootstrap().unwrap();
+    let (owner, repo) = repository(&at_node, &admin);
+    let invite = at_node
+        .invite(&owner, &repo, "cora", Role::Review, T0)
+        .unwrap();
+
+    let elsewhere = ControlPlane::open(dir.path()).unwrap();
+    let redeemed = elsewhere.redeem_invite(&invite.code, T0).unwrap();
+    assert_eq!(redeemed.session.principal, "cora");
+    let error = redeemed.node_error.expect("the node was not reached");
+    assert!(error.contains("member add"), "{error}");
+    let node_dir = dir.path().join("nodes").join(&repo);
+    let stored = javelin_node::auth::read_permissions(&node_dir)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.epoch, 1,
+        "nothing was pushed to a node it cannot reach"
+    );
+
+    let pushed = at_node
+        .change_member(&owner, &repo, "cora", MemberChange::Add(Role::Review), T0)
+        .unwrap();
+    assert!(!pushed.changed);
+    let stored = javelin_node::auth::read_permissions(&node_dir)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.epoch, 2);
 }

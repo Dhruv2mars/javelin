@@ -92,7 +92,8 @@ pub enum MemberChange {
     Add(Role),
     /// Changes a member's role.
     Role(Role),
-    /// Removes a member. Removing someone who is not a member changes nothing.
+    /// Removes a member, and cancels a pending invite for the same name. Removing someone who
+    /// is neither changes nothing.
     Remove,
 }
 
@@ -191,7 +192,15 @@ impl ControlPlane {
                     "a repository keeps at least one maintain member; give the role to someone else first".into(),
                 ));
             }
-            let changed = set_roles(record, &roles);
+            let mut changed = set_roles(record, &roles);
+            if change == MemberChange::Remove {
+                // A pending invite would grant the role back once redeemed.
+                let before = state.invites.len();
+                state.invites.retain(|_, invite| {
+                    !(invite.repository == id && invite.principal == principal)
+                });
+                changed |= state.invites.len() != before;
+            }
             Ok((id, changed))
         })?;
         self.push(&id, changed)
@@ -267,9 +276,12 @@ impl ControlPlane {
 
     /// Redeems an invite code once: makes its account, grants its role, and signs a new device
     /// in as that account. An account that came to exist since the invite was made is refused,
-    /// so a code never signs anyone in as an existing person.
+    /// so a code never signs anyone in as an existing person. A repository whose node this
+    /// control plane cannot push to, such as a Cloudflare node reached with an admin token
+    /// only its maintainers hold, keeps the membership and reports `node_error`; a maintainer's
+    /// next member command pushes it.
     pub fn redeem_invite(&self, code: &str, now: u64) -> Result<Redeemed, ControlError> {
-        let (session, id, role) =
+        let (session, id, role, elsewhere) =
             self.store.update(|state| {
                 let invite = state.invites.get(&secret::hash(code)).cloned().ok_or(
                     ControlError::NotFound("this invite code is not known or was already used"),
@@ -283,7 +295,7 @@ impl ControlPlane {
                     .repositories
                     .get(&invite.repository)
                     .ok_or(ControlError::NotFound("the invited repository is gone"))?;
-                self.check_node(record)?;
+                let elsewhere = self.check_node(record).err();
                 if known_account(state, &invite.principal) {
                     return Err(ControlError::Conflict(format!(
                         "{} already has an account; ask to be added with `javelin member add`",
@@ -306,9 +318,15 @@ impl ControlPlane {
                 roles.insert(invite.principal.clone(), role);
                 set_roles(record, &roles);
                 let session = open_session(state, invite.principal, secret::id("dev_"), now)?;
-                Ok((session, invite.repository, role))
+                Ok((session, invite.repository, role, elsewhere))
             })?;
-        let node_error = self.push(&id, true).err().map(|error| error.to_string());
+        let node_error = match elsewhere {
+            Some(error) => Some(format!(
+                "{error}. Until then the node does not know the role: a maintainer runs \
+                 `javelin member add REPOSITORY ACCOUNT --role ROLE` there, which pushes it"
+            )),
+            None => self.push(&id, true).err().map(|error| error.to_string()),
+        };
         Ok(Redeemed {
             session,
             repository: id,
