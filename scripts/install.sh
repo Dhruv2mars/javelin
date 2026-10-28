@@ -153,11 +153,16 @@ case ":$PATH:" in
       fish) profile= ;;
       *) profile='~/.profile' ;;
     esac
+    # Written as $HOME/... when it is under HOME, so the line reads the same for everyone.
+    case "$INSTALL_DIR" in
+      "$HOME"/*) shown="\$HOME${INSTALL_DIR#"$HOME"}" ;;
+      *) shown=$INSTALL_DIR ;;
+    esac
     printf '\n%s is not on your PATH. To add it:\n' "$INSTALL_DIR"
     if [ -n "$profile" ]; then
-      printf "  echo 'export PATH=\"%s:\$PATH\"' >> %s\n" "$INSTALL_DIR" "$profile"
+      printf "  echo 'export PATH=\"%s:\$PATH\"' >> %s\n" "$shown" "$profile"
     else
-      printf '  fish_add_path %s\n' "$INSTALL_DIR"
+      printf '  fish_add_path %s\n' "$shown"
     fi
     printf 'then open a new terminal and run: javelin --version\n' ;;
 esac
