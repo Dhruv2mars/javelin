@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 use crate::{
     CliError,
     cli::Output,
-    cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, unexpected},
+    cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, stale_appends, unexpected},
     cli_upload::{
         create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
@@ -367,7 +367,15 @@ fn revise(args: Vec<OsString>) -> Outcome {
             format!("Revision of request {}", request.as_str()),
         )),
         Delivery::Done(reply) => {
-            let revision = review_outcome(reply)?;
+            let revision = match review_outcome(reply) {
+                // The append before it was answered as stale: another device took the Layer.
+                Err(CliError::Remote(error)) if error.code == code::MISSING_OBJECT => {
+                    return Err(CliError::Remote(
+                        taken_elsewhere(&outbox, &attached.repo, &operation).unwrap_or(error),
+                    ));
+                }
+                revision => revision?,
+            };
             let mut value = base_value;
             value["ok"] = json!(true);
             value["queued"] = json!(false);
@@ -376,6 +384,31 @@ fn revise(args: Vec<OsString>) -> Outcome {
             Ok((value, text, 0))
         }
     }
+}
+
+/// `layer_stale` when the node answered revise `operation`'s append as stale: the Layer moved
+/// on the node, usually by `javelin layer take` on another device. The append stays in the
+/// outbox, and its local head is the work to keep.
+fn taken_elsewhere(
+    outbox: &Outbox,
+    repo: &Repository,
+    operation: &OperationId,
+) -> Option<RemoteError> {
+    let append = derived("append", operation);
+    let stale = stale_appends(outbox, repo)
+        .into_iter()
+        .find(|record| record["operation"] == append.as_str())?;
+    let layer = stale["layer"].as_str().unwrap_or_default();
+    let keep = stale["local_head"].as_str().map_or(String::new(), |head| {
+        format!("; keep this clone's work with `javelin layer clone NEW --checkpoint {head}`")
+    });
+    Some(RemoteError::new(
+        code::LAYER_STALE,
+        format!(
+            "Layer {layer} moved on the node, perhaps by `javelin layer take` on another \
+             device, so the revision was not recorded{keep}"
+        ),
+    ))
 }
 
 /// `request comment ID --body TEXT --operation OP [--revision N]`
