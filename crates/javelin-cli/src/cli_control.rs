@@ -282,9 +282,17 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
 /// The control plane: over HTTP at `JAVELIN_CONTROL_URL`, else in process at the control
 /// directory.
 pub(crate) fn control() -> Result<Box<dyn Control>, ControlError> {
-    match env::var("JAVELIN_CONTROL_URL") {
-        Ok(url) => Ok(Box::new(RemoteControl::new(&url)?)),
-        Err(_) => Ok(Box::new(ControlPlane::open(&control_dir()?)?)),
+    control_until(None)
+}
+
+/// [`control`], whose calls over HTTP give up at `deadline`, when there is one.
+pub(crate) fn control_until(
+    deadline: Option<std::time::Instant>,
+) -> Result<Box<dyn Control>, ControlError> {
+    match (env::var("JAVELIN_CONTROL_URL"), deadline) {
+        (Ok(url), Some(deadline)) => Ok(Box::new(RemoteControl::until(&url, deadline)?)),
+        (Ok(url), None) => Ok(Box::new(RemoteControl::new(&url)?)),
+        (Err(_), _) => Ok(Box::new(ControlPlane::open(&control_dir()?)?)),
     }
 }
 

@@ -6,8 +6,10 @@
 //!
 //! An append names the node's head as its parent. This clone keeps what it knows of each
 //! Layer on the node in `.javelin/uploads.json`: the node's head as the queued appends will
-//! leave it ([`Repository::foreign_capture`] names it before the node is reachable), and the
-//! journal position it was learned at. The head is read from the node the first time, and
+//! leave it ([`Repository::foreign_capture`] names it before the node is reachable), the
+//! journal position it was learned at, and the last local revision queued. Every later local
+//! revision is queued in order, so a capture made while the node's head was unknown still
+//! reaches the node's history. A capture that records nothing still delivers the queue. The head is read from the node the first time, and
 //! again after an append the node did not accept; only then is the writer lease read, so a
 //! device that does not hold it queues nothing (`layer_stale`) until `javelin layer take`
 //! moves the lease here. Appends already queued when another device took the lease replay
@@ -42,7 +44,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     CliError,
-    cli_remote::{Link, NodeTransport, RemoteError, Session, parse_target_within, remote},
+    cli_remote::{Link, NodeTransport, RemoteError, Session, parse_target_until, remote},
     cli_request::{Options, Outcome, remote_error},
     cli_upload::{self, create_layer, derived, node_checkpoint},
 };
@@ -80,25 +82,51 @@ impl CheckpointSink for Streaming {
         before: &LayerHead,
         _: &SparseChanges,
     ) -> std::result::Result<(), String> {
+        report(self.run(source, before.layer()))
+    }
+
+    fn unchanged(
+        &mut self,
+        source: &Repository,
+        head: &LayerHead,
+    ) -> Option<std::result::Result<(), String>> {
+        match self.run(source, head.layer()) {
+            // Nothing to say about a Layer that does not stream.
+            Ok(Streamed::Held { code, .. }) if code == LOCAL || code == EMPTY => None,
+            streamed => Some(report(streamed)),
+        }
+    }
+}
+
+impl Streaming {
+    /// Queues what the node lacks of `layer` and delivers the queue, all within the budget.
+    fn run(&self, source: &Repository, layer: &LayerId) -> Result<Streamed, CliError> {
         let budget = std::env::var(BUDGET_VAR)
             .ok()
             .and_then(|ms| ms.parse().ok())
             .map_or(BUDGET, Duration::from_millis);
-        let streamed = Node::new(&self.attachment, budget, true).and_then(|mut node| {
-            let mut outbox = Outbox::open(&self.root, &self.attachment.repository)?;
-            let streamed = stream(&self.root, &mut node, source, &mut outbox, before.layer())?;
-            let fault = node.flush(&mut outbox)?;
-            settle(&self.root, &outbox, source, before.layer(), streamed, fault)
-        });
-        match streamed {
-            Ok(Streamed::Uploaded) => Ok(()),
-            Ok(other) => Err(other.to_string()),
-            Err(error) => Err(format!(
-                "not_queued: {error}; the next capture or `javelin sync` uploads it"
-            )),
-        }
+        let mut node = Node::new(&self.attachment, Some(Instant::now() + budget))?;
+        let mut outbox = Outbox::open(&self.root, &self.attachment.repository)?;
+        let streamed = stream(&self.root, &mut node, source, &mut outbox, layer)?;
+        let fault = node.flush(&mut outbox)?;
+        settle(&self.root, &outbox, source, layer, streamed, fault)
     }
 }
+
+fn report(streamed: Result<Streamed, CliError>) -> std::result::Result<(), String> {
+    match streamed {
+        Ok(Streamed::Uploaded) => Ok(()),
+        Ok(other) => Err(other.to_string()),
+        Err(error) => Err(format!(
+            "not_queued: {error}; the next capture or `javelin sync` uploads it"
+        )),
+    }
+}
+
+/// A Layer whose base is not a World from the node: it never streams.
+const LOCAL: &str = "local";
+/// A Layer the node has never seen and that holds no changes yet.
+const EMPTY: &str = "empty";
 
 /// Where one Layer's latest checkpoint is, as far as this clone knows.
 #[derive(Debug)]
@@ -163,7 +191,7 @@ impl std::fmt::Display for Streamed {
     }
 }
 
-/// The node, reached with a bounded budget. After it fails once, nothing more is sent.
+/// The node, reached until a deadline. After it fails once, nothing more is sent.
 struct Node {
     link: RefCell<Link>,
     transport: NodeTransport,
@@ -172,13 +200,17 @@ struct Node {
 }
 
 impl Node {
-    /// `bounded` stops sending once `budget` has passed; each request gives up after it.
-    fn new(attachment: &Attachment, budget: Duration, bounded: bool) -> Result<Self, CliError> {
+    /// Every request, token renewal included, gives up at `until`, when there is one.
+    fn new(attachment: &Attachment, until: Option<Instant>) -> Result<Self, CliError> {
         let target = format!("{}/{}", attachment.node, attachment.repository);
+        let (node, repository) = (&attachment.node, &attachment.repository);
         Ok(Self {
-            link: Link::writing(parse_target_within(&target, budget)?),
-            transport: NodeTransport::within(&attachment.node, &attachment.repository, budget)?,
-            until: bounded.then(|| Instant::now() + budget),
+            link: Link::writing(parse_target_until(&target, until)?),
+            transport: match until {
+                Some(until) => NodeTransport::until(node, repository, until)?,
+                None => NodeTransport::new(node, repository)?,
+            },
+            until,
             down: None,
         })
     }
@@ -235,8 +267,9 @@ impl Transport for Node {
     }
 }
 
-/// Queues the upload of `layer`'s local head, unless the node holds it or will once the
-/// queue is delivered. Learns the node's head first when this clone does not know it.
+/// Queues the upload of every local revision of `layer` after the last one queued, unless the
+/// node holds it or will once the queue is delivered. Learns the node's head first when this
+/// clone does not know it.
 fn stream(
     root: &Path,
     node: &mut Node,
@@ -246,14 +279,14 @@ fn stream(
 ) -> Result<Streamed, CliError> {
     let LayerState::Active { head: local } = repo.layer_state(layer)? else {
         return Ok(Streamed::held(
-            "local",
+            LOCAL,
             format!("Layer {} is not active", layer.as_str()),
         ));
     };
     let checkpoint = repo.read_checkpoint(local.checkpoint())?;
     let Some(base) = repo.remote_world(checkpoint.base().version())? else {
         return Ok(Streamed::held(
-            "local",
+            LOCAL,
             format!(
                 "Layer {}'s base is not a World this repository fetched from the node, so it \
                  stays on this device",
@@ -261,14 +294,20 @@ fn stream(
             ),
         ));
     };
-    let changes = checkpoint.changes();
     let mut uploads = Uploads::load(root)?;
     let known = uploads.get(layer, outbox)?;
     if let Some(stopped) = known.stopped.as_deref().filter(|code| finished(code)) {
         return Ok(Streamed::held(stopped, stopped_detail(stopped, layer)));
     }
+    let mut queued = known.revision;
     let (head, since) = match known.head {
         Some(head) => (head, known.since),
+        None if known.stopped.is_none() && checkpoint.changes().entries().is_empty() => {
+            return Ok(Streamed::held(
+                EMPTY,
+                format!("Layer {} has no changes to upload yet", layer.as_str()),
+            ));
+        }
         None => {
             // Records already queued move the node's head; learn it after they land.
             if let Some(fault) = node.flush(outbox)? {
@@ -276,23 +315,21 @@ fn stream(
                     "not_queued",
                     format!(
                         "earlier records wait in the outbox ({fault}); Layer {}'s head on the \
-                         node is read, and its checkpoint queued, once they are delivered",
+                         node is read, and its checkpoints queued, once they are delivered",
                         layer.as_str()
                     ),
                 ));
             }
             match learn(node, layer, &base) {
-                Ok(head) => (head, last_seq(outbox)),
-                Err(Learned::Stale) => {
-                    uploads.stop(layer, code::LAYER_STALE, outbox);
-                    uploads.save(root)?;
-                    return Ok(Streamed::held(
-                        code::LAYER_STALE,
-                        stopped_detail(code::LAYER_STALE, layer),
-                    ));
+                // The node's Layer has history of its own: only the local head goes after it.
+                Ok((head, seq)) => {
+                    if queued.is_none() && seq > 0 {
+                        queued = local.revision().checked_sub(1);
+                    }
+                    (head, last_seq(outbox))
                 }
                 Err(Learned::Stopped(code)) => {
-                    uploads.stop(layer, &code, outbox);
+                    uploads.stop(layer, &code, outbox, queued);
                     uploads.save(root)?;
                     return Ok(Streamed::held(&code, stopped_detail(&code, layer)));
                 }
@@ -300,8 +337,8 @@ fn stream(
                     node.failed(&error);
                     let detail = if error.code == code::NODE_UNAVAILABLE {
                         format!(
-                            "Layer {} has not reached the node yet ({}); the next capture or \
-                             `javelin sync` uploads it",
+                            "Layer {}'s head on the node is not known yet ({}); the next \
+                             capture or `javelin sync` queues its checkpoints",
                             layer.as_str(),
                             error.detail
                         )
@@ -313,20 +350,45 @@ fn stream(
             }
         }
     };
-    if Repository::foreign_checkpoint_changes(&head)? != *changes {
+    // The revisions after the last one queued, oldest first; usually only the local head.
+    let revisions = match queued {
+        Some(queued) if queued >= local.revision() => Vec::new(),
+        Some(queued) if queued + 1 == local.revision() => vec![local.clone()],
+        _ => repo
+            .layer_history(layer)?
+            .into_iter()
+            .filter_map(|state| match state {
+                LayerState::Active { head } if queued.is_none_or(|q| head.revision() > q) => {
+                    Some(head)
+                }
+                _ => None,
+            })
+            .collect(),
+    };
+    let mut expected = head;
+    for revision in &revisions {
+        let checkpoint = repo.read_checkpoint(revision.checkpoint())?;
+        let changes = checkpoint.changes();
+        let have = Repository::foreign_checkpoint_changes(&expected)?;
+        if have == *changes {
+            continue;
+        }
         let changes_id = Kind::Checkpoint.id(&changes.canonical_bytes());
-        let parent = ObjectId::for_checkpoint(&head);
+        let parent = ObjectId::for_checkpoint(&expected);
+        // Contents can revert, so the local store and revision make the operation unique.
         let seed = format!(
-            "javelin-capture\0{}\0{parent}\0{changes_id}",
-            layer.as_str()
+            "javelin-capture\0{}\0{}\0{}\0{parent}\0{changes_id}",
+            revision.repository(),
+            layer.as_str(),
+            revision.revision()
         );
         let operation =
             OperationId::parse(&format!("capture-{}", ObjectId::for_blob(seed.as_bytes())))?;
         let link = node.online().then_some(&node.link);
-        let mut records = cli_upload::uploads(link, repo, changes, layer, &operation);
+        let mut records = cli_upload::uploads(link, repo, changes, &have, layer, &operation);
         if let Err(CliError::Remote(error)) = &records {
             node.failed(error);
-            records = cli_upload::uploads(None, repo, changes, layer, &operation);
+            records = cli_upload::uploads(None, repo, changes, &have, layer, &operation);
         }
         let mut records = records?;
         let append = derived("append", &operation);
@@ -345,10 +407,9 @@ fn stream(
         for (kind, scope, operation, payload) in &records {
             outbox.enqueue(*kind, scope, operation, payload)?;
         }
-        uploads.set(layer, &Repository::foreign_capture(&head, changes)?, since);
-    } else {
-        uploads.set(layer, &head, since);
+        expected = Repository::foreign_capture(&expected, changes)?;
     }
+    uploads.set(layer, &expected, since, Some(local.revision()));
     uploads.save(root)?;
     Ok(Streamed::Queued {
         pending: pending_appends(outbox, layer),
@@ -419,16 +480,23 @@ fn stopped_detail(code: &str, layer: &LayerId) -> String {
 
 /// Why the node's head could not be learned.
 enum Learned {
-    /// Another device holds the writer lease.
-    Stale,
-    /// The node's Layer is published or discarded: nothing more goes to it.
+    /// Another device holds the writer lease (`layer_stale`), or the node's Layer is
+    /// published or discarded.
     Stopped(String),
     Failed(RemoteError),
 }
 
-/// The node's head checkpoint for `layer`, created over remote World `base` if the node
-/// lacks it, when this device may write to it.
-fn learn(node: &Node, layer: &LayerId, base: &RemoteHead) -> Result<Vec<u8>, Learned> {
+/// The node's head checkpoint for `layer` and its `seq`, created over remote World `base` if
+/// the node lacks it, when this device may write to it.
+fn learn(node: &Node, layer: &LayerId, base: &RemoteHead) -> Result<(Vec<u8>, u64), Learned> {
+    if !node.online() {
+        return Err(Learned::Failed(RemoteError::new(
+            code::NODE_UNAVAILABLE,
+            node.down
+                .clone()
+                .unwrap_or_else(|| "the upload budget is spent".into()),
+        )));
+    }
     create_layer(&node.link, layer, base).map_err(Learned::Failed)?;
     let state = sender::layer_head(&mut Session(&node.link), layer)
         .map_err(|e| Learned::Failed(remote(&node.link, e)))?;
@@ -438,12 +506,13 @@ fn learn(node: &Node, layer: &LayerId, base: &RemoteHead) -> Result<Vec<u8>, Lea
         LayerStatus::Discarded => return Err(Learned::Stopped(LAYER_DISCARDED.into())),
     }
     if state.lease == LeaseHolder::Other {
-        return Err(Learned::Stale);
+        return Err(Learned::Stopped(code::LAYER_STALE.into()));
     }
-    node_checkpoint(&node.link, state.head).map_err(|error| match error {
+    let head = node_checkpoint(&node.link, state.head).map_err(|error| match error {
         CliError::Remote(error) => Learned::Failed(error),
         other => Learned::Failed(RemoteError::new(other.code(), other.to_string())),
-    })
+    })?;
+    Ok((head, state.seq))
 }
 
 /// Pending appends of `layer`: one per checkpoint still to upload.
@@ -468,9 +537,11 @@ struct Known {
     since: u64,
     /// Why uploads stopped: `layer_stale`, `layer_published`, `layer_discarded` or a refusal.
     stopped: Option<String>,
+    /// The last local revision queued, or found on the node.
+    revision: Option<u64>,
 }
 
-/// `.javelin/uploads.json`: Layer ID to `{head, since, stopped}`.
+/// `.javelin/uploads.json`: Layer ID to `{head, since, stopped, revision}`.
 pub(crate) struct Uploads(Map<String, Value>);
 
 impl Uploads {
@@ -506,6 +577,7 @@ impl Uploads {
             },
             since: entry["since"].as_u64().ok_or_else(corrupt)?,
             stopped: entry["stopped"].as_str().map(str::to_owned),
+            revision: entry["revision"].as_u64(),
         };
         if known.head.is_some()
             && let Some(refused) = refused_append(outbox, layer, known.since)
@@ -514,25 +586,28 @@ impl Uploads {
             known.stopped = Some(refused);
             self.0.insert(
                 layer.as_str().into(),
-                json!({"head": null, "since": known.since, "stopped": known.stopped}),
+                json!({"head": null, "since": known.since, "stopped": known.stopped,
+                       "revision": known.revision}),
             );
         }
         Ok(known)
     }
 
-    /// Records the node's head for `layer` once the appends after `since` land.
-    fn set(&mut self, layer: &LayerId, head: &[u8], since: u64) {
+    /// Records the node's head for `layer` once the appends after `since` land, and the
+    /// local `revision` they bring it to.
+    fn set(&mut self, layer: &LayerId, head: &[u8], since: u64, revision: Option<u64>) {
         let head = String::from_utf8_lossy(head);
         self.0.insert(
             layer.as_str().into(),
-            json!({"head": head, "since": since, "stopped": null}),
+            json!({"head": head, "since": since, "stopped": null, "revision": revision}),
         );
     }
 
-    fn stop(&mut self, layer: &LayerId, code: &str, outbox: &Outbox) {
+    fn stop(&mut self, layer: &LayerId, code: &str, outbox: &Outbox, revision: Option<u64>) {
         self.0.insert(
             layer.as_str().into(),
-            json!({"head": null, "since": last_seq(outbox), "stopped": code}),
+            json!({"head": null, "since": last_seq(outbox), "stopped": code,
+                   "revision": revision}),
         );
     }
 
@@ -570,13 +645,20 @@ fn refused_append(outbox: &Outbox, layer: &LayerId, since: u64) -> Option<String
         })
 }
 
-/// Records that the node's head for `layer` is `head` now, as `layer take`, `layer refresh`
-/// and `request open` and `revise` see it, so the next capture appends after it. Nothing
-/// is lost if this cannot be written: the next append is refused, and the head relearned.
-pub(crate) fn remember(root: &Path, attachment: &Attachment, layer: &LayerId, head: &[u8]) {
+/// Records that the node's head for `layer` is `head` now, holding local `revision`, as
+/// `layer take`, `layer refresh` and `request open` see it, so the next capture appends after
+/// it. Nothing is lost if this cannot be written: the next append is refused, and the head
+/// relearned.
+pub(crate) fn remember(
+    root: &Path,
+    attachment: &Attachment,
+    layer: &LayerId,
+    head: &[u8],
+    revision: u64,
+) {
     // The open outbox keeps another command from writing the file at the same time.
     if let Ok(outbox) = Outbox::open(root, &attachment.repository) {
-        let _ = remember_in(root, last_seq(&outbox), layer, head);
+        let _ = remember_in(root, last_seq(&outbox), layer, head, revision);
     }
 }
 
@@ -587,9 +669,10 @@ pub(crate) fn remember_in(
     since: u64,
     layer: &LayerId,
     head: &[u8],
+    revision: u64,
 ) -> Result<(), CliError> {
     let mut uploads = Uploads::load(root)?;
-    uploads.set(layer, head, since);
+    uploads.set(layer, head, since, Some(revision));
     uploads.save(root)
 }
 
@@ -606,7 +689,7 @@ pub(crate) fn catch_up(
     repo: &Repository,
     outbox: &mut Outbox,
 ) -> Result<Vec<Value>, CliError> {
-    let mut node = Node::new(attachment, crate::cli_remote::TIMEOUT, false)?;
+    let mut node = Node::new(attachment, None)?;
     let mut report = Vec::new();
     for layer in repo.layers()? {
         let LayerState::Active { head } = repo.layer_state(&layer)? else {
@@ -617,16 +700,15 @@ pub(crate) fn catch_up(
             continue;
         }
         let known = Uploads::load(root)?.get(&layer, outbox)?;
-        let current = known.head.as_deref().is_some_and(|head| {
-            Repository::foreign_checkpoint_changes(head).ok().as_ref() == Some(checkpoint.changes())
-        });
-        // An empty Layer the node never saw has nothing to upload.
-        if current || (known.head.is_none() && checkpoint.changes().entries().is_empty()) {
+        if known.head.is_some() && known.revision == Some(head.revision()) {
             continue;
         }
         let streamed = stream(root, &mut node, repo, outbox, &layer)?;
         let fault = node.flush(outbox)?;
-        report.push(settle(root, outbox, repo, &layer, streamed, fault)?.value(&layer));
+        let streamed = settle(root, outbox, repo, &layer, streamed, fault)?;
+        if !matches!(streamed.status(), LOCAL | EMPTY) {
+            report.push(streamed.value(&layer));
+        }
     }
     Ok(report)
 }
@@ -673,12 +755,11 @@ pub fn status(args: Vec<OsString>) -> Outcome {
                         pending,
                         fault: None,
                     },
-                    None if known.head.as_deref().is_some_and(|node| {
-                        Repository::foreign_checkpoint_changes(node).ok().as_ref()
-                            == Some(checkpoint.changes())
-                    }) =>
-                    {
+                    None if known.head.is_some() && known.revision == Some(head.revision()) => {
                         Streamed::Uploaded
+                    }
+                    None if known.head.is_none() && checkpoint.changes().entries().is_empty() => {
+                        Streamed::held(EMPTY, "no changes to upload yet".into())
                     }
                     None => Streamed::held(
                         "not_uploaded",
@@ -689,7 +770,7 @@ pub fn status(args: Vec<OsString>) -> Outcome {
                 }
             }
             _ => Streamed::held(
-                "local",
+                LOCAL,
                 "its base is not a World fetched from the node, so it stays on this device".into(),
             ),
         };

@@ -23,7 +23,8 @@ use std::{
 };
 
 use javelin::{
-    Attachment, Error, LayerId, ObjectId, OperationId, RemoteHead, Repository, VersionNumber,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository,
+    VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
 };
 use javelin_protocol::{
@@ -233,7 +234,15 @@ fn open(args: Vec<OsString>) -> Outcome {
     .map_err(CliError::Remote)?;
     let revision = review_outcome(reply)?;
     save_record(&attached.root, &request, &layer, &base, &node.bytes)?;
-    crate::cli_stream::remember(&attached.root, &attached.attachment, &layer, &node.bytes);
+    if let LayerState::Active { head } = attached.repo.layer_state(&layer)? {
+        crate::cli_stream::remember(
+            &attached.root,
+            &attached.attachment,
+            &layer,
+            &node.bytes,
+            head.revision(),
+        );
+    }
     let value = json!({
         "ok": true,
         "command": "request open",
@@ -327,7 +336,15 @@ fn revise(args: Vec<OsString>) -> Outcome {
         } else {
             let next = Repository::foreign_capture(&bytes, &changes)?;
             let link = online.then_some(&link);
-            records.extend(uploads(link, &attached.repo, &changes, &layer, &operation)?);
+            let have = Repository::foreign_checkpoint_changes(&bytes)?;
+            records.extend(uploads(
+                link,
+                &attached.repo,
+                &changes,
+                &have,
+                &layer,
+                &operation,
+            )?);
             records.push((
                 Record::Append,
                 layer.as_str().to_owned(),
@@ -359,7 +376,9 @@ fn revise(args: Vec<OsString>) -> Outcome {
             outbox.enqueue(*kind, scope, operation, payload)?;
         }
         save_record(&attached.root, &request, &layer, &base, &next)?;
-        crate::cli_stream::remember_in(&attached.root, since, &layer, &next)?;
+        if let LayerState::Active { head } = attached.repo.layer_state(&layer)? {
+            crate::cli_stream::remember_in(&attached.root, since, &layer, &next, head.revision())?;
+        }
     }
     let delivered = deliver(&attached, &mut outbox, Record::Revise, &operation)?;
     let base_value = json!({

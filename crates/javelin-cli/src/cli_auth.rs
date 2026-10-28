@@ -42,6 +42,8 @@ const STALE_AFTER: Duration = Duration::from_secs(2 * 3600);
 pub struct Credential {
     repository: String,
     source: Source,
+    /// A renewal through the control plane gives up at this instant.
+    deadline: Option<std::time::Instant>,
 }
 
 enum Source {
@@ -54,6 +56,11 @@ enum Source {
 impl Credential {
     /// The credential for `repository`'s node.
     pub fn for_repository(repository: &str) -> Self {
+        Self::until(repository, None)
+    }
+
+    /// As [`Credential::for_repository`], renewing only until `deadline`, when there is one.
+    pub fn until(repository: &str, deadline: Option<std::time::Instant>) -> Self {
         let source = match env::var("JAVELIN_TOKEN") {
             Ok(token) if !token.is_empty() => Source::Static(token),
             _ => Source::Device,
@@ -61,6 +68,7 @@ impl Credential {
         Self {
             repository: repository.into(),
             source,
+            deadline,
         }
     }
 
@@ -89,7 +97,7 @@ impl Credential {
             )),
             Source::Device => {
                 let credentials = Credentials::load(&credentials_path()?).map_err(fault)?;
-                let control = cli_control::control().map_err(fault)?;
+                let control = cli_control::control_until(self.deadline).map_err(fault)?;
                 let signin = control
                     .refresh(&credentials.refresh_token, now)
                     .map_err(fault)?;

@@ -191,25 +191,28 @@ pub(crate) fn node_checkpoint(link: &RefCell<Link>, id: ObjectId) -> Result<Vec<
     }
 }
 
-/// The outbox records that upload `changes`: blob batches, then the changes object. With a
-/// live `link`, only what the node lacks; without one, everything, since the node may lack
-/// any of it and stores each object once.
+/// The outbox records that upload `changes`: blob batches, then the changes object. Blobs
+/// `have` names are left out: the node holds them, or records queued before these upload
+/// them. Of the rest, with a live `link`, only what the node lacks; without one, everything,
+/// since the node may lack any of it and stores each object once.
 pub(crate) fn uploads(
     link: Option<&RefCell<Link>>,
     repo: &Repository,
     changes: &SparseChanges,
+    have: &SparseChanges,
     layer: &LayerId,
     operation: &OperationId,
 ) -> Result<Vec<Queued>, CliError> {
-    let blobs: Vec<ObjectId> = changes
-        .entries()
-        .values()
-        .flatten()
-        // A hidden entry names no object.
-        .filter_map(|entry| entry.content())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let named = |changes: &SparseChanges| -> BTreeSet<ObjectId> {
+        changes
+            .entries()
+            .values()
+            .flatten()
+            // A hidden entry names no object.
+            .filter_map(|entry| entry.content())
+            .collect()
+    };
+    let blobs: Vec<ObjectId> = named(changes).difference(&named(have)).copied().collect();
     let bytes = changes.canonical_bytes();
     let changes_id = Kind::Checkpoint.id(&bytes);
     // A node that stops answering here still gets the whole revision queued, and is not

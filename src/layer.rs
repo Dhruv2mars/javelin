@@ -100,6 +100,10 @@ pub struct LayerHead {
 }
 
 impl LayerHead {
+    /// The identity of the store that holds the Layer.
+    pub fn repository(&self) -> ObjectId {
+        self.repository
+    }
     pub fn layer(&self) -> &LayerId {
         &self.layer
     }

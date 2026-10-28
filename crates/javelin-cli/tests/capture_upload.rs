@@ -285,6 +285,32 @@ fn captures_upload_and_another_device_takes_the_latest_one() {
 }
 
 #[test]
+fn reverted_contents_upload_as_new_checkpoints() {
+    let owner = Owner::start(&[]);
+    let laptop_dir = owner.attach("laptop", |args| owner.laptop(args));
+    let laptop = |args: &[&str]| owner.laptop(args);
+    ok(laptop(&[
+        "workspace",
+        "create",
+        "work",
+        "--repo",
+        s(&laptop_dir),
+    ]));
+    let work = workspace(&laptop_dir, "work");
+    for (n, content) in ["A\n", "B\n", "A\n", "B\n"].into_iter().enumerate() {
+        fs::write(work.join("a.txt"), content).unwrap();
+        assert_eq!(
+            checkpoint(laptop, &laptop_dir, "work")["status"],
+            "uploaded"
+        );
+        assert_eq!(
+            owner.node_layer("work"),
+            (n as u64 + 1, vec![file("a.txt", content)])
+        );
+    }
+}
+
+#[test]
 fn a_node_outage_queues_captures_and_they_replay() {
     let owner = Owner::start(&[]);
     let node = owner.deployment.node_url.clone();
@@ -324,7 +350,8 @@ fn a_node_outage_queues_captures_and_they_replay() {
     let status = layer_status(laptop, &laptop_dir, "work");
     assert_eq!(status["status"], "queued", "{status}");
     assert_eq!(status["queued"], 2);
-    // A Layer the node has never seen cannot name its parent yet; it waits for the node.
+    // A Layer the node has never seen cannot name its parent yet; its captures wait for the
+    // node, every one of them.
     ok(laptop(&[
         "workspace",
         "create",
@@ -332,17 +359,24 @@ fn a_node_outage_queues_captures_and_they_replay() {
         "--repo",
         s(&laptop_dir),
     ]));
-    fs::write(workspace(&laptop_dir, "fresh").join("b.txt"), "b\n").unwrap();
-    let waiting = checkpoint(laptop, &laptop_dir, "fresh");
-    assert_eq!(waiting["status"], "not_queued", "{waiting}");
+    for n in ["b1\n", "b2\n"] {
+        fs::write(workspace(&laptop_dir, "fresh").join("b.txt"), n).unwrap();
+        let waiting = checkpoint(laptop, &laptop_dir, "fresh");
+        assert_eq!(waiting["status"], "not_queued", "{waiting}");
+    }
     assert_eq!(
         layer_status(laptop, &laptop_dir, "fresh")["status"],
         "not_uploaded"
     );
     assert_eq!(owner.node_layer("work"), (1, vec![file("a.txt", "1\n")]));
 
-    // Back up: the next capture delivers what waited, in order, then its own.
+    // Back up: a capture that records nothing still delivers what waited, in order.
     set_node(&laptop_dir, &node);
+    assert_eq!(
+        checkpoint(laptop, &laptop_dir, "work")["status"],
+        "uploaded"
+    );
+    assert_eq!(owner.node_layer("work"), (3, vec![file("a.txt", "3\n")]));
     fs::write(work.join("a.txt"), "4\n").unwrap();
     assert_eq!(
         checkpoint(laptop, &laptop_dir, "work")["status"],
@@ -380,7 +414,7 @@ fn a_node_outage_queues_captures_and_they_replay() {
     assert_eq!(synced["uploads"][0]["layer"], "fresh", "{synced}");
     assert_eq!(synced["uploads"][0]["status"], "uploaded", "{synced}");
     assert_eq!(owner.node_layer("work"), (5, vec![file("a.txt", "5\n")]));
-    assert_eq!(owner.node_layer("fresh"), (1, vec![file("b.txt", "b\n")]));
+    assert_eq!(owner.node_layer("fresh"), (2, vec![file("b.txt", "b2\n")]));
     for name in ["work", "fresh"] {
         assert_eq!(
             layer_status(laptop, &laptop_dir, name)["status"],
