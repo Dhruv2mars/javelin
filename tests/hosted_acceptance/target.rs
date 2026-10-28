@@ -156,14 +156,13 @@ fn target_repository_flows_and_retries() {
     for (id, reason) in [
         (
             "gate4.exact-revision-authorization",
-            "no wire message creates a Layer yet, so no Publish Request can be opened on a \
-             remote node; the review partition's parity with the self-hosted node is proven in \
-             crates/javelin-node-cloudflare/tests/parity.rs",
+            "not driven through the Worker by this suite yet; the Worker serves the review \
+             partition (crates/javelin-node-worker/tests/common opens and publishes a request \
+             over HTTP, and crates/javelin-node-cloudflare/tests/parity.rs proves parity)",
         ),
         (
             "gate4.immutable-prior-revisions",
-            "no wire message creates a Layer yet, so no Publish Request can be opened on a \
-             remote node",
+            "not driven through the Worker by this suite yet",
         ),
         (
             "gate4.fork-data-without-credentials",
@@ -177,8 +176,8 @@ fn target_repository_flows_and_retries() {
         ),
         (
             "gate4.distinct-outage-outcomes",
-            "no wire message creates a Layer yet, so the queued node-down and \
-             control-plane-down outcomes of Layer writes cannot be driven through the Worker",
+            "not driven through the Worker by this suite yet: the queued node-down and \
+             control-plane-down outcomes need the suite's outage hooks on a remote node",
         ),
     ] {
         target.not_verified(id, reason);
@@ -189,9 +188,9 @@ fn target_repository_flows_and_retries() {
             "workerd and miniflare are not accepted for coordinator transactions \
              (docs/online-design.md section 6); only a deployed Durable Object proves them"
         } else {
-            "the Worker runs the World-log commit path, but no wire message creates the Layer a \
-             Publish needs yet; parity with the self-hosted commit path is proven in \
-             crates/javelin-node-cloudflare/tests/parity.rs"
+            "not driven through the Worker by this suite yet; the node conformance suite \
+             publishes through the Worker's commit path, and parity with the self-hosted commit \
+             path is proven in crates/javelin-node-cloudflare/tests/parity.rs"
         },
     );
 }

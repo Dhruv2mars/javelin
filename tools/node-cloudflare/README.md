@@ -10,13 +10,18 @@ Scope is the Free plan only. Nothing here needs or should use a paid tier or a p
 ## How it runs
 
 - `crates/javelin-node` without its `native` feature is the node core: the World-log commit
-  path, objects, Layers and their writer leases, Stack, review, checks, traces and audiences, and `wire::handle`, which
-  answers one protocol version 2 body. It reaches its provider only through two traits in
+  path, objects, Layers (`LayerCreate`) and their writer leases, Stack, Publish Requests and
+  their reads (`ListRequests`, `ReadReview`), checks, traces, audiences, and disclosure (delay,
+  embargo, release and the public frontier a caller without a role is held at), and
+  `wire::handle`, which answers one protocol version 2 body. It reaches its provider only through two traits in
   `storage.rs`: `Storage` (the repository, the node's records, two documents) and
   `Coordination` (the one ordering point per repository). The root `javelin` crate without its
   `fs` feature is the data model under it, with no filesystem code.
 - The self-hosted node implements both traits with `Directory` (files, fsync and a process
   lock) and serves loopback HTTP. Nothing about it changed.
+- The node's clock (token expiry, the frontier, embargo deadlines) is passed to
+  `FileWorldLog::on`: the operating system's on a self-hosted node, the Worker's `Date` in the
+  object, which the runtime advances between requests.
 - `crates/javelin-node-cloudflare` implements them with `PageStorage`: the node's two SQLite
   databases run unchanged inside the wasm module, on a SQLite VFS that keeps each 64 KiB page as
   one row of the object's own SQLite storage (`pages`, `files`). Rows written per day is the
@@ -28,7 +33,7 @@ Scope is the Free plan only. Nothing here needs or should use a paid tier or a p
 - `src/worker.js` is the only JavaScript: the Worker routes `/v2/r/{repo}` and
   `/admin/r/{repo}/...` to the repository's object and checks the admin token; the object gives
   the core its page rows. Compose, hashing and SQLite all run in the object, which has its own
-  30 s CPU limit; the Worker spends at most 2 ms per request (measured below).
+  30 s CPU limit; the Worker spends at most about 2 ms per request (measured below).
 - An object the TypeScript node provisioned (before 2026-10-28) keeps its World 0 and applied
   permissions: on its first request the object provisions the core from the old `world` table,
   applies the old `permissions` row and drops both tables, in that request's transaction.
@@ -70,7 +75,8 @@ same token.
     https://javelin-node.dhruv-sharma10102005.workers.dev
 
 The Rust node replaced the TypeScript node there on 2026-10-28 (first version
-`3ffe1098-5392-44b7-8cec-91bafda4d764`, current `a35a386b-1b97-4c5c-996f-812389033127`), on
+`3ffe1098-5392-44b7-8cec-91bafda4d764`, current `d0499fbb-bf29-4d2f-866a-68d659115c60`, which
+carries requests and sync and the public frontier), on
 Workers Free. The admin token is a 32-byte
 random hex string set with `wrangler secret put` and kept on the owner's machine in
 `~/.config/javelin/cloudflare-node-admin-token`; it is not in this repository or any log.
@@ -79,22 +85,23 @@ Checks run against it on 2026-10-28:
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Conformance suite, admin and protocol version 2 | `JAVELIN_NODE_URL=<url> JAVELIN_NODE_ADMIN_TOKEN=... JAVELIN_NODE_REPOSITORY=repo_conformance_20261028 cargo test -p javelin-node-worker --test workerd -- --ignored --test-threads=1` | 3 passed |
+| Conformance suite, admin and protocol version 2 (commit path, request loop, embargo) | `JAVELIN_NODE_URL=<url> JAVELIN_NODE_ADMIN_TOKEN=... JAVELIN_NODE_REPOSITORY=repo_conformance_20261028e cargo test -p javelin-node-worker --test workerd -- --ignored --test-threads=1` | 3 passed |
 | A repository the TypeScript node provisioned | `GET /admin/r/repo_conformance_20261026/state` before and after the deploy | identical genesis and epoch-2 permissions |
 
 ## Measured on Workers Free
 
-Measured on the deployed node on 2026-10-28 (`wrangler deploy` output, `wrangler tail --format
-json` during the conformance run, the account's GraphQL analytics, and
-`x-javelin-database-bytes`). Each figure is against the Free-plan limit in the table below.
+Measured on the deployed node on 2026-10-28, last with version `d0499fbb` (`wrangler deploy`
+output, `wrangler tail --format json` during the conformance run, the account's GraphQL
+analytics, and `x-javelin-database-bytes`). Each figure is against the Free-plan limit in the
+table below.
 
 | Item | Measured | Free-plan limit | Headroom |
 | --- | --- | --- | --- |
-| Bundle | 3,358 KiB uploaded, 1,222 KiB gzip (with #101's leases) | 64 MiB uncompressed; no compressed limit | 19x |
-| Worker startup | 4 to 6 ms | 1 s | 160x |
-| Worker CPU per request | max 2.07 ms over the run (analytics `max.cpuTime`); p50 0 ms in the tail | 10 ms | 4.8x |
-| Object CPU per request | max 102 ms (the first request to a new object: wasm instantiation, SQLite schema, World 0), next highest 50 ms; p50 1 ms, p95 33 ms over 23 sampled requests | 30 s | 290x |
-| Object storage per repository | 3,325,952 bytes for a provisioned, empty repository (about 50 B-trees at 64 KiB a page); unchanged by the suite's uploads | 1 GB documented per object, 5 GB per account | about 1,500 empty repositories per account |
+| Bundle | 3,424 KiB uploaded, 1,242 KiB gzip (with leases, requests and disclosure) | 64 MiB uncompressed; no compressed limit | 19x |
+| Worker startup | 3 to 6 ms | 1 s | 160x |
+| Worker CPU per request | max 1.2 ms on 2026-10-28 UTC, 2.07 ms on 2026-10-27 (analytics `max.cpuTime`); p50 0 ms in the tail | 10 ms | 4.8x |
+| Object CPU per request | max 44 ms (provisioning: wasm instantiation, SQLite schema, World 0), next highest 25 ms; p50 1 ms over 27 sampled requests of the run that publishes, reviews and embargoes. The first deploy's first request took 102 ms | 30 s | 290x |
+| Object storage per repository | 4,120,576 bytes for a provisioned, empty repository (63 pages of 64 KiB, one B-tree or more each); 4,460,544 bytes after the suite's three publishes, a request and an embargo | 1 GB documented per object, 5 GB per account | about 1,200 empty repositories per account |
 | Rows per provision | about 71 written and 69 read (one provision and one state read, analytics delta) | 100,000 written and 5,000,000 read per day | about 1,400 provisions a day |
 | The account's whole day (2026-10-27 UTC): both deploys, two conformance runs' repositories, the migrated repository | 416 rows written, 519 read, 60 Worker requests, 55 object requests | as above | under 0.5% of a day |
 
@@ -134,16 +141,20 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
 - `crates/javelin-node-cloudflare/tests/parity.rs` runs one scenario on a self-hosted data
   directory and on `PageStorage` over in-memory pages, natively: uploads, `LayerAppend`,
   `PublishLayer` (the commit path), its replay and a reused operation, the writer lease
-  (`LayerHead`, `LayerTake`), reads that follow the
-  caller's audiences, a write refused for a hidden path, a Publish Request that publishes, and
-  the browser and anonymous refusals. Every reply matches, object IDs masked (hidden entries are
+  (`LayerHead`, `LayerTake`), reads that follow the caller's audiences, a write refused for a
+  hidden path, a Publish Request that publishes with its list, review and comment, a version
+  held by an embargo from outsiders until it is released, and the browser, anonymous and
+  outsider (`forbidden`) refusals. Both stores run on one moved clock. Every reply matches, object IDs masked (hidden entries are
   salted per store). It also checks that a reopened node keeps what it committed and that a
   second connection to an open database is refused.
 - The conformance suite in `crates/javelin-node-worker/tests/common` runs against the
   self-hosted node (`local_node.rs`: `LocalNode` and the loopback server) and against the Worker
   (`workerd.rs`): the admin pushes, then over HTTP the transport statuses, an anonymous and
   browser read of World 0, an upload only its uploader can confirm, Layer messages for an
-  unknown Layer, and the anonymous, untrusted-token, reviewer and browser refusals.
+  unknown Layer, and the anonymous, untrusted-token, reviewer and browser refusals; then a
+  Layer created, written and published with its replay, a Publish Request opened, listed, read
+  and published, a signed-in outsider refused requests and Layers, and an embargoed version
+  held from outsiders until a maintainer releases it.
 - `bun run test` starts `wrangler dev` with fresh state, runs that suite against it, then
   `repo create acme/app` end to end with the CLI: a refused token leaves the create
   Provisioning, a retry naming another node is `operation_id_reused`, the retry completes at
@@ -152,11 +163,9 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
 
 ## Known gaps
 
-- No wire message creates a Layer yet (#101 added the writer lease and `LayerTake`, not
-  creation), so on a remote node no Layer exists for `LayerAppend`, `LayerTake`,
-  `PublishLayer`, Stack or a Publish Request. The
-  Worker runs the commit path, but only the parity test drives it; the hosted acceptance
-  `target_*` checks that need it stay not verified.
+- The hosted acceptance `target_*` checks that need Layers on a remote node are still marked
+  not verified: the conformance suite drives those paths through the Worker, but the
+  acceptance suite has not been rerun against it.
 - Fork is not served: `NodeLink::fork` needs two repositories' objects to stream between.
 - Stack on the object merges without the volume alias probe the self-hosted node runs on its
   own disk (`javelin-stack`'s `fs` feature): the object has no volume. The client's refresh
