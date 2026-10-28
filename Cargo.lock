@@ -1223,6 +1223,7 @@ dependencies = [
  "javelin-collaboration",
  "javelin-control",
  "javelin-identity",
+ "javelin-merge",
  "javelin-node",
  "javelin-node-worker",
  "javelin-protocol",

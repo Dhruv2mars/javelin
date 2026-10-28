@@ -252,6 +252,7 @@ fn summary(n: u32) -> RequestSummary {
         author: "alice".into(),
         state: RequestStatus::Open,
         revision: n,
+        base: version(u64::from(n) + 1),
     }
 }
 

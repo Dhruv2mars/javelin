@@ -124,7 +124,7 @@ Additions, all in `codec.rs`:
 | 0x4b | `Embargo` | `{ operation, until: Option<u64> }` (before the Publish with that operation; Maintain) | `Disclosure` |
 | 0x4c | `Release` | `{ version }` (Maintain) | `Disclosure` |
 | 0x3c | `LayerCreate` | `{ layer, base }` | `LayerOutcome` (`Accepted { seq: 0, checkpoint }`; a retry with the same base replays) |
-| 0x57 | `ListRequests` | `{ after: Option<RequestId> }` | `RequestList` 0x58: `{ requests: [{ request, layer, author, state, revision }], more }` |
+| 0x57 | `ListRequests` | `{ after: Option<RequestId> }` | `RequestList` 0x58: `{ requests: [{ request, layer, author, state, revision, base }], more }` |
 | 0x59 | `ReadReview` | `{ request, comments_from }` | `ReviewDetail` 0x5a: `{ summary, required_approvals, revisions: [{ index, base, checkpoint?, approvals }], comments, comments_total }` |
 
 Outcome shapes:

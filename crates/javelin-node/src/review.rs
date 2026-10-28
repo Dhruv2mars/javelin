@@ -323,6 +323,10 @@ fn summary(
         author: review.author().map_or("", PrincipalId::as_str).to_owned(),
         state: status(review.state()),
         revision: review.current().map_or(0, |current| current.index),
+        base: match review.current() {
+            Some(current) => current.revision.base(),
+            None => VersionNumber::new(0)?,
+        },
     })
 }
 
