@@ -233,6 +233,7 @@ fn open(args: Vec<OsString>) -> Outcome {
     .map_err(CliError::Remote)?;
     let revision = review_outcome(reply)?;
     save_record(&attached.root, &request, &layer, &base, &node.bytes)?;
+    crate::cli_stream::remember(&attached.root, &attached.attachment, &layer, &node.bytes);
     let value = json!({
         "ok": true,
         "command": "request open",
@@ -294,13 +295,18 @@ fn revise(args: Vec<OsString>) -> Outcome {
         };
         let (head, bytes, online) = match state {
             Ok((head, bytes)) => (head, bytes, true),
-            Err(error) if error.code == code::NODE_UNAVAILABLE => match &record {
-                Some(record) if record.layer == layer => (
+            // Captures since the last revision may have queued appends: their head comes first.
+            Err(error) if error.code == code::NODE_UNAVAILABLE => match (
+                crate::cli_stream::expected_head(&attached.root, &outbox, &layer),
+                &record,
+            ) {
+                (Some(head), _) => (ObjectId::for_checkpoint(&head), head, false),
+                (None, Some(record)) if record.layer == layer => (
                     ObjectId::for_checkpoint(&record.head),
                     record.head.clone(),
                     false,
                 ),
-                _ => {
+                (None, _) => {
                     return Err(CliError::Remote(RemoteError::new(
                         code::NODE_UNAVAILABLE,
                         format!(
@@ -314,6 +320,7 @@ fn revise(args: Vec<OsString>) -> Outcome {
             },
             Err(error) => return Err(CliError::Remote(error)),
         };
+        let since = outbox.entries().map(|entry| entry.seq).max().unwrap_or(0);
         let mut records = Vec::new();
         let (checkpoint, next) = if Repository::foreign_checkpoint_changes(&bytes)? == changes {
             (head, bytes)
@@ -352,6 +359,7 @@ fn revise(args: Vec<OsString>) -> Outcome {
             outbox.enqueue(*kind, scope, operation, payload)?;
         }
         save_record(&attached.root, &request, &layer, &base, &next)?;
+        crate::cli_stream::remember_in(&attached.root, since, &layer, &next)?;
     }
     let delivered = deliver(&attached, &mut outbox, Record::Revise, &operation)?;
     let base_value = json!({

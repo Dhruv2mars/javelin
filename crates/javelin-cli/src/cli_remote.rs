@@ -46,7 +46,7 @@ use crate::cli_auth::{Credential, now};
 const PROVIDER: &str = "self-hosted";
 /// Lock file inside a staging directory, held by the attach that owns it.
 const STAGING_LOCK: &str = "attach.lock";
-const TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(30);
 /// One framed message.
 const MAX_REPLY: u64 = javelin_protocol::limits::MAX_FRAME as u64;
 
@@ -83,6 +83,11 @@ pub(crate) struct Target {
 }
 
 pub(crate) fn parse_target(text: &str) -> Result<Target> {
+    parse_target_within(text, TIMEOUT)
+}
+
+/// [`parse_target`] whose requests each give up after `timeout`.
+pub(crate) fn parse_target_within(text: &str, timeout: Duration) -> Result<Target> {
     let usage =
         "expected a node URL https://HOST[:PORT]/REPOSITORY (plain http only for localhost)";
     let (scheme, rest) = text
@@ -103,7 +108,7 @@ pub(crate) fn parse_target(text: &str) -> Result<Target> {
     Ok(Target {
         node: endpoint.origin().into(),
         repository: repository.into(),
-        agent: endpoint.agent(TIMEOUT),
+        agent: endpoint.agent(timeout),
     })
 }
 
@@ -825,6 +830,10 @@ pub fn layer_refresh(args: Vec<OsString>) -> std::result::Result<Output, CliErro
         Refresh::Current { seq, head } => ("current", *seq, *head),
         Refresh::Imported { seq, head, .. } => ("imported", *seq, *head),
     };
+    // Captures here now append after the node's head.
+    if let Ok(bytes) = crate::cli_upload::node_checkpoint(&link, node_head) {
+        crate::cli_stream::remember(&root, &attached, &layer, &bytes);
+    }
     let head = match repo.layer_state(&layer)? {
         LayerState::Active { head } => head,
         _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
@@ -974,6 +983,12 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
     let lease = sender::layer_head(&mut Session(&link), &layer)
         .map_err(read)?
         .lease;
+    // Captures here now append after the node's head.
+    if lease == LeaseHolder::Caller
+        && let Ok(bytes) = crate::cli_upload::node_checkpoint(&link, node_head)
+    {
+        crate::cli_stream::remember(&root, &attached, &layer, &bytes);
+    }
     let head = match repo.layer_state(&layer)? {
         LayerState::Active { head } => head,
         _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
@@ -1166,8 +1181,13 @@ pub struct NodeTransport {
 impl NodeTransport {
     /// A transport to `repository` on the node at `https://HOST[:PORT]` (plain http only for localhost).
     pub fn new(node: &str, repository: &str) -> Result<Self> {
+        Self::within(node, repository, TIMEOUT)
+    }
+
+    /// As [`NodeTransport::new`], with each request giving up after `timeout`.
+    pub(crate) fn within(node: &str, repository: &str, timeout: Duration) -> Result<Self> {
         Ok(Self {
-            target: parse_target(&format!("{node}/{repository}"))?,
+            target: parse_target_within(&format!("{node}/{repository}"), timeout)?,
             credential: Credential::for_repository(repository),
         })
     }

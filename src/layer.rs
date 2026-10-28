@@ -249,6 +249,24 @@ impl Repository {
         Ok(state)
     }
 
+    /// Every Layer this store holds, in ID order, whatever its state.
+    pub fn layers(&self) -> Result<Vec<LayerId>> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let layers = tx
+            .prepare("SELECT DISTINCT layer FROM layer_heads ORDER BY layer")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        tx.commit()?;
+        layers
+            .iter()
+            .map(|layer| {
+                LayerId::parse(layer)
+                    .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))
+            })
+            .collect()
+    }
+
     /// Verifies the checkpoint and its complete Stack ancestry.
     pub fn read_checkpoint(&self, checkpoint: CheckpointId) -> Result<LayerCheckpoint> {
         let tx = self.conn.unchecked_transaction()?;

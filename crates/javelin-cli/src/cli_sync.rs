@@ -112,6 +112,12 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         })
         .collect();
     let stalled = replay.as_ref().and_then(|replay| replay.stalled.as_ref());
+    // Then any Layer checkpoint that no capture has queued yet, such as one captured while
+    // the node's head for its Layer was unknown.
+    let uploads = match stalled {
+        None => crate::cli_stream::catch_up(&root, &attachment, &attached.repo, &mut outbox)?,
+        Some(_) => Vec::new(),
+    };
     let pending = outbox.pending().count();
     drop(outbox);
 
@@ -134,6 +140,13 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         text.push_str(&format!(
             "\nDelivered {} queued records; {pending} pending.",
             delivered.len()
+        ));
+    }
+    for upload in &uploads {
+        text.push_str(&format!(
+            "\nLayer {}: {}",
+            upload["layer"].as_str().unwrap_or_default(),
+            upload["detail"].as_str().unwrap_or_default()
         ));
     }
     let (stall, mut code, mut exit) = match stalled {
@@ -171,6 +184,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         "local_head": local,
         "base": base,
         "outbox": {"delivered": delivered, "stalled": stall, "pending": pending},
+        "uploads": uploads,
         "code": code,
     });
     Ok((value, text, exit))
