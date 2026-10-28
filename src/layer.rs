@@ -100,6 +100,10 @@ pub struct LayerHead {
 }
 
 impl LayerHead {
+    /// The identity of the store that holds the Layer.
+    pub fn repository(&self) -> ObjectId {
+        self.repository
+    }
     pub fn layer(&self) -> &LayerId {
         &self.layer
     }
@@ -247,6 +251,24 @@ impl Repository {
             .unwrap_or(latest_in(&tx, layer)?.state(identity_in(&tx)?));
         tx.commit()?;
         Ok(state)
+    }
+
+    /// Every Layer this store holds, in ID order, whatever its state.
+    pub fn layers(&self) -> Result<Vec<LayerId>> {
+        let tx = self.conn.unchecked_transaction()?;
+        validate_format(&tx)?;
+        let layers = tx
+            .prepare("SELECT DISTINCT layer FROM layer_heads ORDER BY layer")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        tx.commit()?;
+        layers
+            .iter()
+            .map(|layer| {
+                LayerId::parse(layer)
+                    .map_err(|_| Error::CorruptRepository("invalid stored Layer ID".into()))
+            })
+            .collect()
     }
 
     /// Verifies the checkpoint and its complete Stack ancestry.

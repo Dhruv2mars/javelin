@@ -18,7 +18,8 @@ use std::{
 
 use javelin::{
     Error, LayerHead, LayerId, LayerState, ObjectId, OperationId, PublishAttribution, RemoteHead,
-    Repository, VersionNumber, outbox::Kind as Record,
+    Repository, VersionNumber,
+    outbox::{Kind as Record, Outbox},
 };
 use javelin_protocol::{
     Kind, Message,
@@ -188,10 +189,7 @@ fn publish(
     }
     let mut outbox = attached.outbox()?;
     if !queued(&outbox, Record::Publish, operation) {
-        let records = prepare(&link, &attached, layer, operation, attribution)?;
-        for (kind, scope, operation, payload) in &records {
-            outbox.enqueue(*kind, scope, operation, payload)?;
-        }
+        prepare(&link, &attached, &mut outbox, layer, operation, attribution)?;
     }
     let mut value = json!({
         "command": command,
@@ -254,10 +252,11 @@ fn publish(
 fn prepare(
     link: &RefCell<Link>,
     attached: &Attached,
+    outbox: &mut Outbox,
     layer: &LayerId,
     operation: &OperationId,
     attribution: &PublishAttribution,
-) -> Result<Vec<crate::cli_upload::Queued>, CliError> {
+) -> Result<(), CliError> {
     let repo = &attached.repo;
     let head = active_head(repo, layer)?;
     let checkpoint = repo.read_checkpoint(head.checkpoint())?;
@@ -300,10 +299,32 @@ fn prepare(
             ));
         }
     }
-    let expected = match upload(link, repo, layer, &base, &changes, operation) {
-        Ok(node) => node.checkpoint,
+    // Queued captures go first: until they are delivered, the node's head is not the one
+    // this Publish names.
+    if outbox.pending().count() > 0 {
+        outbox.replay(&mut attached.transport()?)?;
+    }
+    let live = match outbox.pending().count() {
+        0 => upload(link, repo, layer, &base, &changes, operation),
+        _ => Err(CliError::Remote(RemoteError::new(
+            code::NODE_UNAVAILABLE,
+            "earlier queued records are still waiting for the node",
+        ))),
+    };
+    let since = outbox.entries().map(|entry| entry.seq).max().unwrap_or(0);
+    let mut next = None;
+    let expected = match live {
+        Ok(node) => {
+            next = Some(node.bytes);
+            node.checkpoint
+        }
         Err(CliError::Remote(error)) if error.code == code::NODE_UNAVAILABLE => {
-            let Some(known) = known_layer_head(&attached.root, layer)? else {
+            // What queued captures leave on the node, else what a request from here saw.
+            let known = match crate::cli_stream::expected_head(&attached.root, outbox, layer) {
+                Some(head) => Some(head),
+                None => known_layer_head(&attached.root, layer)?,
+            };
+            let Some(known) = known else {
                 return Err(CliError::Remote(RemoteError::new(
                     code::NODE_UNAVAILABLE,
                     format!(
@@ -314,10 +335,11 @@ fn prepare(
                     ),
                 )));
             };
-            if Repository::foreign_checkpoint_changes(&known)? == changes {
+            let have = Repository::foreign_checkpoint_changes(&known)?;
+            if have == changes {
                 ObjectId::for_checkpoint(&known)
             } else {
-                records.extend(uploads(None, repo, &changes, layer, operation)?);
+                records.extend(uploads(None, repo, &changes, &have, layer, operation)?);
                 let append = derived("append", operation);
                 records.push((
                     Record::Append,
@@ -331,7 +353,10 @@ fn prepare(
                     })
                     .map_err(remote_error)?,
                 ));
-                ObjectId::for_checkpoint(&Repository::foreign_capture(&known, &changes)?)
+                let bytes = Repository::foreign_capture(&known, &changes)?;
+                let id = ObjectId::for_checkpoint(&bytes);
+                next = Some(bytes);
+                id
             }
         }
         Err(error) => return Err(error),
@@ -349,7 +374,14 @@ fn prepare(
         })
         .map_err(remote_error)?,
     ));
-    Ok(records)
+    for (kind, scope, operation, payload) in &records {
+        outbox.enqueue(*kind, scope, operation, payload)?;
+    }
+    // Later captures append after the head this Publish leaves the Layer at.
+    if let Some(next) = next {
+        crate::cli_stream::remember_in(&attached.root, since, layer, &next, head.revision())?;
+    }
+    Ok(())
 }
 
 /// The Layer's latest Active head: what is published.
