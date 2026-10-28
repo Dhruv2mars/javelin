@@ -188,16 +188,18 @@ fn browsers_may_read_but_never_write() {
     let (log, expected) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
+    // Served until the test process exits, not for a count of connections: other local
+    // processes can connect to a reused ephemeral port, and a stray connection that used up
+    // the count would close the listener under this test's last request, which then resets.
+    thread::spawn(move || {
         let mut log = log;
-        serve(
+        let _ = serve(
             &listener,
             "demo",
             &mut log,
             &wire_support::gate("demo"),
-            Some(7),
-        )
-        .unwrap();
+            None,
+        );
     });
     let send = |origin: bool, token: bool, body: &[u8]| {
         let origin = if origin {
@@ -278,7 +280,6 @@ fn browsers_may_read_but_never_write() {
             publication: None,
         }
     );
-    server.join().unwrap();
 }
 
 #[test]
