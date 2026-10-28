@@ -1035,3 +1035,108 @@ fn outcomes_without_a_version_are_bounded_before_they_are_recorded() {
     let object = PageStorage::new(Rc::new(MemPages::default()));
     conflict_scenario(&object, &mut open(&object, &clock(now())), 64 << 10);
 }
+
+/// Layer `name` over World 0 with one shared file at each of `paths`, over the wire as
+/// `owner`: one blob, so a large Layer costs one upload.
+fn shared_layer(s: &mut Session<'_>, name: &str, paths: &[String]) -> ObjectId {
+    let create = Message::LayerCreate {
+        layer: layer(name),
+        base: v(0),
+    };
+    let Message::LayerOutcome(LayerOutcome::Accepted {
+        checkpoint: head, ..
+    }) = s.send(Some("owner"), &create)
+    else {
+        panic!("create refused");
+    };
+    let content = b"shared\n".to_vec();
+    let blob = ObjectId::for_blob(&content);
+    s.send(
+        Some("owner"),
+        &Message::Objects(vec![(Kind::Blob, blob, content)]),
+    );
+    let changes = SparseChanges::new(paths.iter().map(|path| {
+        (
+            RepoPath::parse(path).unwrap(),
+            Some(FileEntry::Regular {
+                content: blob,
+                executable: false,
+            }),
+        )
+    }))
+    .unwrap();
+    let bytes = changes.canonical_bytes();
+    let id = Kind::Checkpoint.id(&bytes);
+    s.send(
+        Some("owner"),
+        &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]),
+    );
+    let append = Message::LayerAppend {
+        operation: op(&format!("append-{name}")),
+        layer: layer(name),
+        parent: Some(head),
+        checkpoint: id,
+    };
+    match s.send(Some("owner"), &append) {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("append refused: {other:?}"),
+    }
+}
+
+/// A Publish Request whose measured clone and Publish dirty more pages than the page cache
+/// holds is refused without writing any: the measurement never spills a page. The
+/// self-hosted node's 2 MB cache is the smallest, so its store shows it with the fewest
+/// paths; the measurement is the same root-crate code on every store.
+fn spill_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let long = format!("{}/", vec!["s".repeat(250); 15].join("/"));
+    let paths: Vec<String> = (0..500)
+        .map(|i| format!("{long}d{}/e{}/f{i}.txt", i % 10, i % 7))
+        .collect();
+    let checkpoint = shared_layer(&mut s, "big", &paths);
+    let request = RequestId::parse("pr-big").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-big"),
+            request: request.clone(),
+            layer: layer("big"),
+            checkpoint,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let usage = usage_of(&mut s);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: used(&usage, ROWS_WRITTEN_PER_DAY) + 128,
+            ..Budget::default()
+        },
+    );
+    let before = usage_of(&mut s);
+    let publish = Message::PublishRequest {
+        operation: op("publish-big"),
+        request,
+        revision: 1,
+        base: v(0),
+    };
+    quota(&s.send(Some("owner"), &publish));
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "the refused measurement wrote no page"
+    );
+}
+
+#[test]
+fn measuring_a_publish_larger_than_the_page_cache_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    spill_scenario(&native, &mut open(&native, &clock(now())));
+}

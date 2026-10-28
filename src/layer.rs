@@ -247,12 +247,24 @@ impl Repository {
         operation: &OperationId,
         attribution: &crate::PublishAttribution,
     ) -> Result<crate::PublishWrite> {
-        let tx = self
+        // A page spilled from the cache mid-transaction is written to storage, and again by
+        // the rollback. The probe keeps every page in memory instead: it is bounded by the
+        // checkpoint's changes, which the protocol limits.
+        let spill: i64 = self
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let write = crate::publish::clone_write_in(&tx, layer, checkpoint, operation, attribution)?;
-        tx.rollback()?;
-        Ok(write)
+            .pragma_query_value(None, "cache_spill", |r| r.get(0))?;
+        self.conn.pragma_update(None, "cache_spill", false)?;
+        let write = (|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let write =
+                crate::publish::clone_write_in(&tx, layer, checkpoint, operation, attribution)?;
+            tx.rollback()?;
+            Ok(write)
+        })();
+        self.conn.pragma_update(None, "cache_spill", spill)?;
+        write
     }
 
     pub fn layer_state(&self, layer: &LayerId) -> Result<LayerState> {
