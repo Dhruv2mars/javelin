@@ -201,7 +201,12 @@ impl Repository {
     pub fn attach_head(&mut self, head: &RemoteHead) -> Result<()> {
         self.check_attach()?;
         let local = self.head()?;
-        if local.tree != head.tree {
+        // A remote World with the empty tree still gets its own World here, so it maps back;
+        // an interrupted attach that already holds this head does not advance again.
+        let holds = self
+            .recorded_remote(&local)?
+            .is_some_and(|remote| remote == *head);
+        if !holds && (local.tree != head.tree || head.number != 0) {
             let operation = remote_operation(ATTACH_PREFIX, head)?;
             match self.advance_to_tree(&operation, local.number, head.tree)? {
                 AdvanceOutcome::Accepted { .. } => {}
@@ -266,7 +271,12 @@ impl Repository {
         local: &WorldVersion,
         head: &RemoteHead,
     ) -> Result<()> {
-        if local.tree == head.tree {
+        // A remote advance that leaves the tree as it was still gets its own World, so every
+        // remote number this store reached maps back to a local World.
+        if self
+            .recorded_remote(local)?
+            .is_some_and(|remote| remote == *head)
+        {
             if self.head()?.number != local.number {
                 return Err(Error::InvalidInput(
                     "the local World moved during sync; nothing was changed".into(),

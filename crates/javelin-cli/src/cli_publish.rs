@@ -188,7 +188,20 @@ fn publish(
         return Err(diverged(&attached));
     }
     let mut outbox = attached.outbox()?;
-    if !queued(&outbox, Record::Publish, operation) {
+    if queued(&outbox, Record::Publish, operation) {
+        // A retry replays only the same Publish: the same Layer and attribution.
+        let same = outbox
+            .entries()
+            .filter(|entry| entry.kind == Record::Publish && entry.operation == *operation)
+            .any(|entry| {
+                matches!(decode(&entry.payload), Ok(Message::PublishLayer {
+                    layer: queued, attribution: recorded, ..
+                }) if queued == *layer && recorded == *attribution)
+            });
+        if !same {
+            return Err(Error::OperationIdReused(operation.clone()).into());
+        }
+    } else {
         prepare(&link, &attached, &mut outbox, layer, operation, attribution)?;
     }
     let mut value = json!({
@@ -398,8 +411,9 @@ fn active_head(repo: &Repository, layer: &LayerId) -> Result<LayerHead, CliError
 
 /// Closes the local Layer whose `PublishLayer` of node checkpoint `node` the node accepted
 /// under `operation`: discards it and reclaims its directory, when its latest head holds the
-/// published changes. A Layer that moved on since, or ended, is left as it is. Returns
-/// whether the Layer is closed.
+/// published changes. The directory is captured first, so a Layer edited since, or one whose
+/// files are still changing, is left as it is, as is one that ended. Returns whether the Layer
+/// is closed.
 pub(crate) fn close(
     link: &RefCell<Link>,
     repo: &mut Repository,
@@ -407,10 +421,18 @@ pub(crate) fn close(
     operation: &OperationId,
     node: ObjectId,
 ) -> Result<bool, CliError> {
-    let head = match repo.layer_state(layer)? {
-        LayerState::Active { head } => head,
+    match repo.layer_state(layer)? {
+        LayerState::Active { .. } => {}
         LayerState::Discarded { .. } => return Ok(true),
         LayerState::Published { .. } => return Ok(false),
+    }
+    if let Some(capture) = repo.capture_workspace(layer)?
+        && (capture.behind || !capture.uncertain.is_empty())
+    {
+        return Ok(false);
+    }
+    let LayerState::Active { head } = repo.layer_state(layer)? else {
+        return Ok(false);
     };
     let bytes = node_checkpoint(link, node)?;
     let local = repo.read_checkpoint(head.checkpoint())?;

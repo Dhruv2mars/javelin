@@ -93,15 +93,18 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     }
     // A queued record the node refused was delivered, but did not do what it asked.
     let mut refused = None;
-    // Direct Publishes the node accepted: their Layers close here once the World follows.
-    let published: Vec<_> = replay
-        .iter()
-        .flat_map(|replay| &replay.delivered)
-        .filter_map(|delivered| {
-            let entry = outbox.entry(delivered.seq)?;
+    // Direct Publishes the node accepted, delivered now or before: their Layers that are
+    // still active close here once the World follows.
+    let published: Vec<_> = outbox
+        .entries()
+        .filter_map(|entry| {
             let (layer, node) =
-                crate::cli_publish::published_layer(&entry.payload, &delivered.outcome)?;
-            Some((layer, entry.operation.clone(), node))
+                crate::cli_publish::published_layer(&entry.payload, entry.outcome.as_ref()?)?;
+            let active = matches!(
+                repo.layer_state(&layer),
+                Ok(javelin::LayerState::Active { .. })
+            );
+            active.then(|| (layer, entry.operation.clone(), node))
         })
         .collect();
     let delivered: Vec<Value> = replay
