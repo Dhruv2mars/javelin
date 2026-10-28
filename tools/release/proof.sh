@@ -48,7 +48,9 @@ printf '#!/bin/sh\n: > "%s/invoked"\nexit 97\n' "$shim" > "$shim/git"
 chmod 755 "$shim/git"
 tools=$(dirname "$tool")${node:+:$(dirname "$node")}
 export PATH="$shim:$tools:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-unset JAVELIN_NPM_REGISTRY JAVELIN_VERSION JAVELIN_INSTALL_DIR NPM_CONFIG_PREFIX BUN_INSTALL || true
+# A new user's defaults: images such as oven/bun point bun's global bin at /usr/local/bin.
+unset JAVELIN_NPM_REGISTRY JAVELIN_VERSION JAVELIN_INSTALL_DIR NPM_CONFIG_PREFIX BUN_INSTALL \
+  BUN_INSTALL_BIN BUN_INSTALL_GLOBAL_DIR BUN_INSTALL_CACHE_DIR || true
 
 step "Git stand-in on PATH (positive control first)"
 set +e
