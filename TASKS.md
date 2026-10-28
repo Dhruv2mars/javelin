@@ -169,14 +169,25 @@ Open:
 - [ ] Local World numbers and IDs differ between clones of the same repository (one remote World
   5 was local World 4, 5 and 2 in three clones). `history` and `workspace create` ("Base World
   N") print local numbers; only `sync`, `attach` and request output show the node's.
-- [ ] `request show` marks every changed path `M`, added files included: the node's sparse
-  changes do not say whether the base had the path.
-- [ ] A Layer whose request was published on the node stays active in the clone that opened it,
-  with its directory. `layer radar` keeps listing it as a live Layer that would conflict.
-- [ ] No way to move a Layer onto a newer World after a conflict. `layer refresh` follows only a
-  node-side Stack; the author redoes the change in a new Layer by hand.
-- [ ] Queuing a Publish of someone else's request while the node is down needs `--base WORLD`,
-  read from `request show` before the outage.
+- [x] `request show` marks every changed path `M`, added files included: the node's sparse
+  changes do not say whether the base had the path. It now marks `A`, `M` and `D` (JSON
+  `change`), reading the base's tree down to each path from local chunks or the node's `Get`,
+  which serves only what the token may read; no new wire data. (trail: layer lifecycle)
+- [x] A Layer whose request was published on the node stays active in the clone that opened it,
+  with its directory. `layer radar` keeps listing it as a live Layer that would conflict. After
+  `request publish`, and after a `sync` that sees the request published, every clone retires
+  the Layers that proposed it (captured, discarded, directory trashed, history kept).
+  (trail: layer lifecycle)
+- [x] No way to move a Layer onto a newer World after a conflict. `layer refresh` follows only a
+  node-side Stack; the author redoes the change in a new Layer by hand. `javelin layer update
+  ID` merges the Layer's work onto the node's head as successor Layer `ID.2` (a Layer's base is
+  immutable), writes text conflicts between markers, retires the old Layer, survives a crash at
+  any step, and `request revise` follows the successor. The daily workflow test and script use
+  it. (trail: layer lifecycle)
+- [x] Queuing a Publish of someone else's request while the node is down needs `--base WORLD`,
+  read from `request show` before the outage. The clone remembers each revision's base from
+  `request show`, `request list` (`RequestSummary` now carries `base` on the wire) and `sync`.
+  (trail: layer lifecycle)
 - [ ] `layer take` works only for a Layer the node has seen, which today means one a request was
   opened from (see "Checkpoint upload on capture" above).
 - [ ] The attach URL names the repository by its opaque ID (`repo_…`), not `acme/app`.

@@ -601,7 +601,10 @@ pub(crate) fn retire_published(
         }
         // Layer IDs are not unique across people, so a Layer counts only when its history
         // holds one of the request's revisions.
-        let revisions = revision_changes(link, &request.request)?;
+        // A request the node cannot show now is retired by a later sync.
+        let Ok(revisions) = revision_changes(link, &request.request) else {
+            continue;
+        };
         for layer in active {
             repo.capture_workspace(&layer)?;
             let head = active_head(repo, &layer)?;

@@ -75,15 +75,6 @@ fn kinds(changes: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-fn paths(changes: &Value) -> Vec<String> {
-    changes["paths"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["path"].as_str().unwrap().to_string())
-        .collect()
-}
-
 /// `javelin control init|serve`, the owner's `javelin login`, `javelin repo create` for a
 /// private repository that takes Publish Requests, and `javelin-node serve` for it.
 fn owner_site() -> (Site, Person) {

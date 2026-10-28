@@ -48,6 +48,7 @@ javelin layer radar ID
 javelin layer clone ID --checkpoint HASH
 javelin layer stack ID --revision N --source HASH --operation ID
 javelin layer refresh ID
+javelin layer update ID [--as NEW]
 javelin layer discard ID --revision N --operation ID
 
 javelin workspace create ID [--world N]
@@ -518,9 +519,11 @@ a role in the repository.
    base, and rewrites `attach.json` last. A sync interrupted after the advance is finished
    by the next sync or `layer take`, once the node confirms the head the advance names.
 
-Layers are not touched: they keep their bases, and Publish composes them onto the node's
-head. JSON reports `from` and `head` (remote heads), `advanced`, `local_head`, `base` and
-`outbox` (`delivered`, `stalled`, `pending`). A record that still cannot be delivered
+Layers keep their bases, and Publish composes them onto the node's head. Sync then lists the
+node's requests: it keeps each current revision's base for a Publish queued later (see
+`request publish`), and retires every active Layer here that proposed a request the node has
+published (see "Retired Layers" below). JSON reports `from` and `head` (remote heads),
+`advanced`, `local_head`, `base`, `outbox` (`delivered`, `stalled`, `pending`) and `retired`. A record that still cannot be delivered
 returns exit 1 with its `code`, after the fetch. A node that cannot be reached is
 `node_unavailable`, and nothing changes.
 
@@ -552,18 +555,25 @@ to exactly one revision; a new revision needs new approvals.
   Maintain role.
 - `request show ID [--revision N]` prints the request, every revision with its base,
   checkpoint and approvals, the approvals Publish needs, the comments, and the paths
-  revision N (default: the current one) changes. JSON has the same fields. A revision whose
-  checkpoint changes a path this token may not read shows `checkpoint: null` and no paths,
-  as the node treats that checkpoint: never stored.
-- `request list` prints every request on the node with its Layer, author, state and current
-  revision.
+  revision N (default: the current one) changes, each marked `A` (added), `M` (modified) or
+  `D` (deleted) against the revision's base. JSON has the same fields, with each path's
+  `change` (`added`, `modified`, `deleted`). The base's tree is read from the root down to
+  each path, from chunks this clone holds, else from the node, which serves this token only
+  what it may read; a path under a hidden entry is `changed`, since whether the base had it is
+  hidden too. A revision whose checkpoint changes a path this token may not read shows
+  `checkpoint: null` and no paths, as the node treats that checkpoint: never stored.
+- `request list` prints every request on the node with its Layer, author, state, current
+  revision and that revision's base.
 - `request publish ID --revision N --operation OP` publishes exactly revision N's
   checkpoint, not the Layer's later head. The node checks at Publish that N is current and
   has enough approvals under the current permissions: `stale_revision` (exit 3),
   `not_enough_approvals` (exit 1). A conflict with the World returns exit 3 with `paths`.
-  The base is the revision's: it is read from the node, or from this clone's record of a
-  request it opened. Pass `--base WORLD` (a remote number from `request show`) to queue a
-  Publish of someone else's request while the node is down.
+  The base is the revision's. This clone remembers it from the last `request show`, `request
+  list` or `sync` that saw the revision, and from its own `open` and `revise`, in
+  `.javelin/request-bases.json`; otherwise it is read from the node. So a Publish queues while
+  the node is down without `--base WORLD` (a remote number from `request show`), which is
+  needed only when this clone has never seen the revision. After a Publish, the Layer this
+  clone proposed the request from is retired (see "Retired Layers").
 
 Every write takes an operation ID. A retry with the same ID returns the original outcome,
 including after a lost reply; the node refuses the same ID with different input as
@@ -585,7 +595,74 @@ operation ID delivers what was queued, unchanged; later edits need a new operati
 
 Refusals print the node's code: `not_author`, `self_approval`, `stale_revision`,
 `unknown_revision`, `not_enough_approvals`, `not_open`, `already_approved`,
-`unchanged_revision`, `insufficient_role`.
+`unchanged_revision`, `insufficient_role`. `request open` and `revise` also refuse with
+`unresolved_conflict` (exit 1) while a file `layer update` marked still holds markers.
+
+### Moving a Layer onto a newer World
+
+`javelin layer update ID [--as NEW]` moves a Layer's work onto the node's current World, after
+a Publish conflict or whenever the author wants the newer World under it. It captures the
+Layer's directory, brings the local World to the node's head as `sync` does (refused with
+`local_world_diverged` in a repository that published locally), and three-way merges the
+Layer's work onto that World with the merge Stack uses. A Layer's base never changes, here
+or on the node, so the result is a successor Layer over the node's head, `ID.2` (then `ID.3`,
+and so on; `--as NEW` names it), whose first checkpoint holds the merge and whose directory is
+opened. The old Layer is then retired as `workspace discard` retires one: it leaves `layer
+radar`, its directory goes to trash, and its checkpoints stay in `layer history`.
+
+A region of a text file both sides changed is written into the successor's file between
+markers, with the rest of the file merged:
+
+```text
+<<<<<<< Layer ID
+the Layer's lines
+||||||| remote World 2
+the base's lines
+=======
+the World's lines
+>>>>>>> remote World 3
+```
+
+Other conflicts (binary files, a path one side deleted, a file and a symlink) keep the Layer's
+side. Every conflict is listed by path with its kind and how it was written; the command then
+exits 3 with `ok: false` and `code: conflict`, and exits 0 when the merge was clean. Resolve
+by editing the files; the next command for the Layer captures them. `request open` and `request
+revise` refuse with `unresolved_conflict` while a marked file still holds a marker line. A
+conflict that cannot be written at all, because the paths would collide as a file and a
+directory whichever side is kept, refuses with `invalid_input` and changes no Layer. A Layer
+already over the node's head reports `status: current` and changes nothing.
+
+`request revise ID` without `--layer` follows the request's Layer to its latest successor, so
+the request is revised from the updated Layer as it is:
+
+```sh
+javelin layer update greet             # conflict in hello.txt; work is in Layer greet.2
+$EDITOR .javelin/layers/greet.2/hello.txt
+javelin request revise greet-1 --revision 1 --operation ada-revise-2
+```
+
+The update is recorded in `.javelin/updates.json` before the successor is made. Each step
+repeats safely, and the old Layer is retired only after the successor's directory is open, so
+a crash at any point loses nothing: running the same `layer update ID` again finishes that
+update against the same World, and running it after it finished reports it again. If the old
+Layer changed between the crash and the retry, the retry refuses and leaves both Layers.
+
+JSON reports `layer`, `status` (`updated` or `current`), `successor`, `from` and `base`
+(remote heads), the successor's `head` and directory `root`, `retired`, and `conflicts`
+(`path`, `kind`, `written`: `markers` or `layer_side`).
+
+### Retired Layers
+
+A published request's work is in the World, and a published Layer is read-only
+(`build-contract.md`). So after `request publish` succeeds, and after a `sync` that sees the
+request published, each Layer here that proposed it is retired: the request's Layer, the one
+this clone last revised it from, and their `layer update` successors, whichever is active
+here, on every device that holds one. A Layer counts only when its history holds one of the
+request's revisions, since another person's Layer may share its ID. Its directory is captured
+first, so edits made after the published revision stay in its history, then the Layer is
+discarded and its directory trashed and reclaimed. It leaves `layer radar`, and `layer history`
+still reads it. JSON lists each under `retired` with `later_work: true` when it held work
+after the published revision; `javelin layer clone NEW --checkpoint HEAD` keeps that work.
 
 ### Worked example
 
@@ -625,8 +702,8 @@ If the node is down when Ada revises, the revision is queued and the command exi
 contrast, wait until he can reach the node.
 
 When a Publish conflicts, the World changed the same paths after the revision's base. The
-author syncs, redoes the change in a new Layer over the new head, and submits it with
-`javelin request revise ID --revision N --layer NEW --operation OP`. A revise from a device whose Layer was
+author runs `javelin layer update LAYER`, resolves the markers it writes, and submits the
+result with `javelin request revise ID --revision N --operation OP`. A revise from a device whose Layer was
 taken by another one (`javelin layer take`) is refused with `layer_stale`, and the message
 names the `javelin layer clone NEW --checkpoint HASH` that keeps that device's work.
 

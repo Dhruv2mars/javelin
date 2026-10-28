@@ -596,10 +596,13 @@ fn publish(args: Vec<OsString>) -> Outcome {
             // This clone's Layer for the request is published now: retire it here.
             let mut attached = attached;
             let link = attached.reading()?;
-            let summary = read_review(&link, &request, u32::MAX)
-                .map_err(CliError::Remote)?
-                .summary;
-            let retired = retire_published(&link, &mut attached.repo, &attached.root, &[summary])?;
+            // The Publish is done; a node that cannot answer now leaves this to the next sync.
+            let retired = match read_review(&link, &request, u32::MAX) {
+                Ok(detail) => {
+                    retire_published(&link, &mut attached.repo, &attached.root, &[detail.summary])?
+                }
+                Err(_) => Vec::new(),
+            };
             for line in retired_lines(&retired) {
                 text.push('\n');
                 text.push_str(&line);
