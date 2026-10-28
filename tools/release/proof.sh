@@ -1,7 +1,9 @@
 #!/bin/sh
 # Installs a staged or published release the way a new developer would, then uses it.
 #
-#   proof.sh BASE_URL EXPECTED_VERSION        e.g. proof.sh http://127.0.0.1:4873 0.1.0
+#   proof.sh SITE EXPECTED_VERSION [RELEASE_BASE]
+#     SITE           where install.sh is served, e.g. http://127.0.0.1:4873
+#     RELEASE_BASE   the release host, when it is not SITE (default: SITE)
 #
 # Runs with a fresh HOME and a PATH of system directories only, so nothing from the build
 # machine is found. A git stand-in that records its use comes first on PATH; it must never
@@ -10,8 +12,9 @@
 # binaries, and a tampered archive that must be refused without touching them.
 set -eu
 
-base=${1:?usage: proof.sh BASE_URL EXPECTED_VERSION}
-expected=${2:?usage: proof.sh BASE_URL EXPECTED_VERSION}
+base=${1:?usage: proof.sh SITE EXPECTED_VERSION [RELEASE_BASE]}
+expected=${2:?usage: proof.sh SITE EXPECTED_VERSION [RELEASE_BASE]}
+release=${3:-$base}
 
 step() { printf '\n== %s\n' "$*"; }
 fail() { printf 'proof: FAIL: %s\n' "$*" >&2; exit 1; }
@@ -80,13 +83,13 @@ javelin check "$project" | grep -q '^Integrity OK' || fail "project does not ope
 echo "reinstalled; $project still checks"
 
 step "A tampered archive is refused and the installed binaries stay as they were"
-version=$(curl -fsSL "$base/latest" | tr -d ' \r\n')
+version=$(curl -fsSL "$release/latest" | tr -d ' \r\n')
 mirror="$work/mirror"
 mkdir -p "$mirror/$version"
 printf '%s\n' "$version" > "$mirror/latest"
-curl -fsSL -o "$mirror/$version/SHA256SUMS" "$base/$version/SHA256SUMS"
+curl -fsSL -o "$mirror/$version/SHA256SUMS" "$release/$version/SHA256SUMS"
 for f in $(awk '{print $2}' "$mirror/$version/SHA256SUMS" | grep '\.tar\.gz$'); do
-  curl -fsSL -o "$mirror/$version/$f" "$base/$version/$f"
+  curl -fsSL -o "$mirror/$version/$f" "$release/$version/$f"
   printf 'x' >> "$mirror/$version/$f"
 done
 before=$(sha256_of "$bin/javelin")

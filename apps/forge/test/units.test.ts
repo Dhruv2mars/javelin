@@ -155,3 +155,15 @@ test("the landing form opens a repository by node address and ID", () => {
   expect(rememberedRepositories(storage).map(([k]) => k)).toEqual(["demo/lantern"]);
   expect(rememberedRepositories(null)).toEqual([]);
 });
+
+test("the install section says installers are coming until a release is published", () => {
+  const pending = landing.installSection(false);
+  expect(pending).toContain("installers for macOS, Linux and Windows are coming");
+  expect(pending).not.toContain("install.sh");
+  expect(landing.installSection()).toBe(pending);
+
+  const published = landing.installSection(true);
+  expect(published).toContain("curl -fsSL https://javelin-codes.vercel.app/install.sh | sh");
+  expect(published).toContain("irm https://javelin-codes.vercel.app/install.ps1 | iex");
+  expect(published).toContain("~/.javelin/bin");
+});

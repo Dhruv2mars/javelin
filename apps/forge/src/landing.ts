@@ -125,6 +125,43 @@ function repositoryList(config: Config, storage: Storage | null) {
   return `<div class="known"><h3>Opened in this browser</h3><ul class="entries">${rows}</ul></div>`;
 }
 
+/**
+ * Whether a release is published on the release host (docs/releases.md). Until it is, the
+ * section says installers are coming; the installers the forge serves would find nothing.
+ */
+export const INSTALLERS_PUBLISHED = false;
+const SITE = "https://javelin-codes.vercel.app";
+
+/** The install section: the one-line installers once a release is published. */
+export function installSection(published = INSTALLERS_PUBLISHED): string {
+  if (!published) {
+    return `
+      <section class="band" id="install" aria-labelledby="install-title">
+        <div class="band-head">
+          <h2 id="install-title">Install the CLI</h2>
+          <p>Install opens soon.</p>
+        </div>
+        <div class="band-body prose-block">
+          <p>Javelin is pre-release. Release builds with installers for macOS, Linux and Windows are coming, and the commands will be here. Until then you can read <a href="${SOURCE}">the source on Entire</a>.</p>
+        </div>
+      </section>`;
+  }
+  return `
+      <section class="band" id="install" aria-labelledby="install-title">
+        <div class="band-head">
+          <h2 id="install-title">Install the CLI</h2>
+          <p>One command installs <code>javelin</code> and <code>javelin-node</code>.</p>
+        </div>
+        <div class="band-body prose-block">
+          <p>macOS and Linux (x86_64 or arm64, glibc 2.28 or newer):</p>
+          <pre class="install-command"><code>curl -fsSL ${SITE}/install.sh | sh</code></pre>
+          <p>Windows x86_64, in PowerShell:</p>
+          <pre class="install-command"><code>irm ${SITE}/install.ps1 | iex</code></pre>
+          <p>The installer checks the download's SHA-256 before it writes anything, puts both programs in <code>~/.javelin/bin</code>, and tells you how to add that to your <code>PATH</code>. It never edits your shell profile. Then run <code>javelin --version</code> and <code>javelin init</code> in a project. Javelin is pre-release; read <a href="${SOURCE}">the source on Entire</a>.</p>
+        </div>
+      </section>`;
+}
+
 export function landingPage(config: Config, storage: Storage | null) {
   return `
     <div class="landing">
@@ -181,15 +218,7 @@ export function landingPage(config: Config, storage: Storage | null) {
         </div>
       </section>
 
-      <section class="band" id="install" aria-labelledby="install-title">
-        <div class="band-head">
-          <h2 id="install-title">Install the CLI</h2>
-          <p>Install opens soon.</p>
-        </div>
-        <div class="band-body prose-block">
-          <p>Javelin is pre-release. Release builds with installers for macOS, Linux and Windows are coming, and the commands will be here. Until then you can read <a href="${SOURCE}">the source on Entire</a>.</p>
-        </div>
-      </section>
+      ${installSection()}
 
       <footer class="landing-foot">
         <p>Javelin is open source and pre-release. <a href="${SOURCE}">Source on Entire</a>.</p>

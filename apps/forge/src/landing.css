@@ -239,6 +239,15 @@
   color: var(--muted);
 }
 
+.install-command {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  background: var(--sheet);
+  font-family: var(--mono);
+}
+
 .open-band {
   margin-top: clamp(40px, 6vw, 72px);
 }

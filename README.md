@@ -30,5 +30,5 @@ javelin --version
 ```
 
 This installs `javelin` into Cargo's bin directory. The [quickstart](docs/quickstart.md) walks
-through a first repository. [docs/install.md](docs/install.md) describes the release
-installers, which are not published yet.
+through a first repository. [docs/install.md](docs/install.md) describes the one-line
+installers, which wait for the first release ([docs/releases.md](docs/releases.md)).

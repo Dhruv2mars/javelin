@@ -1,108 +1,94 @@
 # Install and upgrade Javelin
 
-Javelin is pre-GA. This page covers only what the release pipeline checks. There are
-no package-manager installs (Homebrew, crates.io, npm), and this page does not
-describe a stable release channel. Until GA, pin a version with `--version` or
-`-Version`.
-
-## Platforms
-
-Each release has one archive per platform, built on a native runner of that platform.
-
-| Platform | Archive target | Runner used for build and clean-machine check |
-| --- | --- | --- |
-| macOS, Apple silicon | `aarch64-apple-darwin` | macOS 15 (arm64) |
-| macOS, Intel | `x86_64-apple-darwin` | macOS 15 Intel |
-| Linux, x86_64 (glibc) | `x86_64-unknown-linux-gnu` | Ubuntu 24.04 |
-| Linux, aarch64 (glibc) | `aarch64-unknown-linux-gnu` | Ubuntu 24.04 arm |
-| Windows, x86_64 | `x86_64-pc-windows-msvc` | Windows Server 2025 |
-
-Linux binaries are dynamically linked against glibc. They are built on Ubuntu 24.04,
-and the build of this commit needs glibc 2.34 or newer (its highest `GLIBC_` symbol
-version, read by `objdump -T` in the release build log). Other OS versions and
-architectures are not tested.
+Javelin is pre-GA, and **no release is published yet**: the commands below work once the
+first release is on the release host ([releases.md](releases.md)). Until then, build from
+source as the [quickstart](quickstart.md) describes. There are no package-manager installs
+(Homebrew, crates.io, npm).
 
 ## Install on macOS or Linux
 
-Replace `TAG` with a release tag such as `v0.1.0`.
-
 ```sh
-curl -fsSLO https://github.com/Dhruv2mars/javelin/releases/download/TAG/install.sh
-sh install.sh --version TAG
-javelin --version
+curl -fsSL https://javelin-codes.vercel.app/install.sh | sh
 ```
 
-This installs `javelin` to `~/.local/bin/javelin`. If that directory is not on your
-`PATH`, the script says so; it does not edit your shell profile.
+This installs `javelin` and `javelin-node` into `~/.javelin/bin`. If that directory is not
+on your `PATH`, the installer prints the line to add to your shell profile; it never edits
+the profile itself. Then:
 
-Options:
+```sh
+javelin --version
+javelin init
+```
 
-- `--bin-dir DIR` installs elsewhere (default `$HOME/.local/bin`, or `JAVELIN_BIN_DIR`).
-- `--archive FILE --sums FILE` installs a local archive after checking it against a
-  local `SHA256SUMS` file. Use this for files you downloaded by hand.
+Options, after `sh -s --` (or as environment variables):
+
+- `--version v0.1.0` (`JAVELIN_VERSION`) installs that version instead of the latest.
+- `--install-dir DIR` (`JAVELIN_INSTALL_DIR`) installs elsewhere.
+- `--release-base URL-OR-DIR` (`JAVELIN_RELEASE_BASE`) reads releases from another host or a
+  local directory with the same layout.
+- `--archive FILE --sums FILE` installs an archive you downloaded, after checking it against
+  its `SHA256SUMS`.
 
 ## Install on Windows
 
-Replace `TAG` with a release tag such as `v0.1.0`. Run this in Windows PowerShell or
-PowerShell 7.
+In Windows PowerShell 5.1 or PowerShell 7:
 
 ```powershell
-Invoke-WebRequest https://github.com/Dhruv2mars/javelin/releases/download/TAG/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Version TAG
+irm https://javelin-codes.vercel.app/install.ps1 | iex
 javelin --version
 ```
 
-This installs `javelin.exe` to `%LOCALAPPDATA%\Programs\Javelin\bin`. The script does
-not change `PATH`; add that directory yourself if you want `javelin` on every shell.
+This installs `javelin.exe` and `javelin-node.exe` into `%USERPROFILE%\.javelin\bin` and
+prints how to add it to your user `PATH`. Set `$env:JAVELIN_VERSION`,
+`$env:JAVELIN_INSTALL_DIR` or `$env:JAVELIN_RELEASE_BASE` first to change what it does. The
+Windows build and this installer have not run on Windows yet: there is no Windows runner.
+
+## Platforms
+
+| Platform | Target | Needs |
+| --- | --- | --- |
+| macOS, Apple silicon | `aarch64-apple-darwin` | macOS 11 or newer |
+| macOS, Intel | `x86_64-apple-darwin` | macOS 11 or newer (untested) |
+| Linux, x86_64 | `x86_64-unknown-linux-gnu` | glibc 2.28 or newer |
+| Linux, arm64 | `aarch64-unknown-linux-gnu` | glibc 2.28 or newer |
+| Windows, x86_64 | `x86_64-pc-windows-gnu` | Windows 10 or newer (untested) |
+
+musl systems such as Alpine are refused. [releases.md](releases.md) says where each build
+runs and what has been tested on it.
 
 ## What the installer checks
 
-- The archive's SHA-256 must match its line in the release's `SHA256SUMS` before
-  anything is extracted or written. On a mismatch, the installer stops and the
-  existing binary is unchanged.
-- The binary is written to a temporary file in the destination directory and renamed
-  into place. An interrupted install does not leave a partial `javelin`.
-- Nothing runs with elevated privileges. Nothing else on the machine is changed.
+- The archive's SHA-256 must match its line in that version's `SHA256SUMS` before anything
+  is extracted or written. On a mismatch the installer stops and installed binaries stay
+  as they were.
+- Each binary is written to a temporary file beside its destination and renamed into
+  place, so an interrupted install never leaves a partial `javelin`.
+- Downloads use HTTPS; plain HTTP is accepted only from `127.0.0.1` or `localhost`.
+- Nothing runs with elevated privileges, and nothing outside the install directory changes.
 
-To check the files yourself:
-
-```sh
-shasum -a 256 -c SHA256SUMS --ignore-missing     # macOS
-sha256sum -c SHA256SUMS --ignore-missing         # Linux
-```
-
-Each archive is also attested with GitHub build provenance. With the GitHub CLI:
-
-```sh
-gh attestation verify javelin-TAG-x86_64-unknown-linux-gnu.tar.gz --repo Dhruv2mars/javelin
-```
+To check the files yourself, download `SHA256SUMS` and the archive from
+`RELEASE_BASE/VERSION/` and run `shasum -a 256 -c SHA256SUMS --ignore-missing` (macOS) or
+`sha256sum -c SHA256SUMS --ignore-missing` (Linux).
 
 ## Upgrade
 
-Run the installer again with a newer `--version`. It replaces `javelin` in the same
-place, atomically. Your repositories are not touched: a repository is a `.javelin`
-directory inside the project, and the binary does not rewrite it on install.
-
-The release workflow checks one upgrade path: the immediately previous build of the
-same source, and then the new build, both on a clean runner. Repositories created
-by the previous build still open with the new one. Upgrades from older public
-releases are not tested yet, because no public release exists.
+Run the installer again. It replaces both binaries in place. Your repositories are not
+touched: a repository is a `.javelin` directory inside the project, and installing does
+not rewrite it.
 
 ## Uninstall
 
-Delete the installed binary. Repositories are left alone.
-
 ```sh
-rm ~/.local/bin/javelin          # macOS and Linux
+rm -r ~/.javelin/bin                                  # macOS and Linux
 ```
 
 ```powershell
-Remove-Item "$env:LOCALAPPDATA\Programs\Javelin" -Recurse   # Windows
+Remove-Item "$HOME\.javelin\bin" -Recurse              # Windows
 ```
 
 ## Known limits
 
 - Binaries are not code-signed or notarized on macOS or Windows.
-- The Javelin CLI is pre-GA. See [cli.md](cli.md) for the commands it has, and the
+- `SHA256SUMS` is served from the same host as the archives and is not signed.
+- See [cli.md](cli.md) for the commands the CLI has, and the
   [build checklist](../TASKS.md) for what is not built yet.
-- Source builds work as described in the [quickstart](quickstart.md).

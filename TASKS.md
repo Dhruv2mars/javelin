@@ -117,8 +117,17 @@ every push (`.buildkite/pipeline.yml`).
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
-- [ ] Release binaries: GitHub releases are gone. Decide where `javelin` binaries are
-  published.
+- [x] Release binaries: GitHub releases are gone. Decided: a public R2 bucket
+  `javelin-releases` on the owner's Cloudflare account, installers on the forge
+  (`docs/releases.md`). `tools/release/release.ts` builds `javelin` and `javelin-node` for 5
+  targets on the Mac (Linux and Windows through cargo-zigbuild, glibc 2.28), stages archives,
+  `manifest.json` and `SHA256SUMS`, and publishes with wrangler. `scripts/install.sh` and
+  `install.ps1` install both into `~/.javelin/bin` after the checksum. Proved against a
+  loopback host on macOS arm64 and, on Buildkite, in `ubuntu:24.04` amd64 and arm64
+  (`tools/release/proof.sh`). macOS x86_64 and Windows are built, never run; `install.ps1` is
+  unrun.
+  - [ ] First publish, with the owner's go-ahead: bucket, token, `publish --latest`, stamp
+    the installers, `INSTALLERS_PUBLISHED = true`, deploy the forge, rerun the proof.
 - [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
   of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
