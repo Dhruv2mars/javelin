@@ -531,11 +531,12 @@ fn publish_checkpoint(
         Err(Error::InvalidInput(_)) => {
             let checkpoint = CheckpointId::parse(&revision.checkpoint().to_string())?;
             let attribution = PublishAttribution::Human;
-            if let Some(write) =
-                repo.clone_publish_write(&layer, checkpoint, operation, &attribution)?
-            {
-                room.publish(&write)?;
-            }
+            room.publish(&repo.clone_publish_write(
+                &layer,
+                checkpoint,
+                operation,
+                &attribution,
+            )?)?;
             fresh = true;
             repo.clone_layer(&layer, checkpoint)?
         }
@@ -723,12 +724,12 @@ fn link(prev: &str, epoch: u64, command: &[u8], reply: &[u8]) -> String {
     ObjectId::for_blob(&input).to_string()
 }
 
-/// Whether the review partition recorded `operation`, so a retry of it replays.
+/// Whether the review partition recorded `operation`, so a retry of it replays. Reads only:
+/// the tables exist from when the node opened.
 pub(crate) fn is_recorded(
     conn: &Connection,
     operation: &OperationId,
 ) -> Result<bool, ProtocolError> {
-    ensure_schema(conn)?;
     Ok(recorded(conn, operation)?.is_some())
 }
 
@@ -752,9 +753,8 @@ fn request_layer(conn: &Connection, id: &RequestId) -> Result<Option<String>, Pr
     .map_err(storage)
 }
 
-fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS review_requests (
+/// The review partition's tables, which the node creates when it opens.
+pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS review_requests (
             request TEXT PRIMARY KEY,
             layer TEXT NOT NULL
         );
@@ -767,9 +767,10 @@ fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
             reply BLOB NOT NULL,
             chain TEXT NOT NULL,
             PRIMARY KEY (request, seq)
-        );",
-    )
-    .map_err(storage)
+        );";
+
+fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
+    conn.execute_batch(SCHEMA).map_err(storage)
 }
 
 /// The canonical bytes of a command: one space-separated line, so a stored command

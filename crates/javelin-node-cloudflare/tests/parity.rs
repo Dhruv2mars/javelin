@@ -922,3 +922,116 @@ fn an_admitted_write_ends_within_the_budget_and_a_publish_replays_past_it() {
     let object = PageStorage::new(Rc::new(MemPages::default()));
     bounds_scenario(&object, &mut open(&object, &clock(now())));
 }
+
+/// Outcomes that record paths but make no version are bounded too: a Publish that conflicts
+/// over many long paths, directly or through a Publish Request whose revision Layer is new,
+/// is refused before anything is written, and recorded once the budget is raised. A fresh
+/// node's first Publish Request, refused, writes nothing either.
+fn conflict_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: 0,
+            storage_bytes: 0,
+            ..Budget::default()
+        },
+    );
+    // The first request stamps World 0's disclosure time, a read's only write.
+    usage_of(&mut s);
+    let before = usage_of(&mut s);
+    let first = Message::PublishRequest {
+        operation: op("publish-first"),
+        request: RequestId::parse("pr-none").unwrap(),
+        revision: 1,
+        base: v(0),
+    };
+    quota(&s.send(Some("owner"), &first));
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "a fresh node's refused request writes nothing"
+    );
+
+    set(storage, &mut s, Budget::default());
+    let long = format!("{}/", vec!["c".repeat(250); 15].join("/"));
+    let ours = many_files("x", 100, &long);
+    let theirs: Vec<_> = ours
+        .iter()
+        .map(|(path, _)| (path.clone(), b"theirs\n".to_vec()))
+        .collect();
+    let first = s.layer_with("ours", 0, &as_refs(&ours));
+    let second = s.layer_with("theirs", 0, &as_refs(&theirs));
+    let request = RequestId::parse("pr-conflict").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-conflict"),
+            request: request.clone(),
+            layer: layer("theirs"),
+            checkpoint: second,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let published = s.send(Some("owner"), &publish("ours", "publish-ours", first, 0));
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { .. })
+        ),
+        "{published:?}"
+    );
+
+    let conflicts = [
+        publish("theirs", "publish-theirs", second, 0),
+        Message::PublishRequest {
+            operation: op("publish-conflict"),
+            request,
+            revision: 1,
+            base: v(0),
+        },
+    ];
+    for conflict in conflicts {
+        // Room for the outcome's request (16 pages), not for its paths (64 pages and more).
+        let usage = usage_of(&mut s);
+        set(
+            storage,
+            &mut s,
+            Budget {
+                storage_bytes: used(&usage, STORAGE_BYTES) + 40 * page,
+                ..Budget::default()
+            },
+        );
+        let before = usage_of(&mut s);
+        quota(&s.send(Some("owner"), &conflict));
+        assert_eq!(
+            usage_of(&mut s),
+            before,
+            "a refused conflict writes nothing"
+        );
+        set(storage, &mut s, Budget::default());
+        let recorded = s.send(Some("owner"), &conflict);
+        assert!(
+            matches!(
+                &recorded,
+                Message::PublishOutcome(PublishOutcome::Conflict { .. })
+            ),
+            "{recorded:?}"
+        );
+    }
+}
+
+#[test]
+fn outcomes_without_a_version_are_bounded_before_they_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    conflict_scenario(&native, &mut open(&native, &clock(now())), 4096);
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    conflict_scenario(&object, &mut open(&object, &clock(now())), 64 << 10);
+}

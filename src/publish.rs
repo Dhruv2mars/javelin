@@ -114,6 +114,31 @@ pub struct PublishWrite {
 }
 
 impl PublishWrite {
+    /// Paths a write records and nothing else, such as a conflict's.
+    fn paths<'a>(paths: impl Iterator<Item = &'a RepoPath>) -> Self {
+        let (mut count, mut bytes) = (0, 0);
+        for path in paths {
+            count += 1;
+            bytes += path.as_str().len() as u64;
+        }
+        Self {
+            bytes: 0,
+            objects: 0,
+            paths: count,
+            path_bytes: bytes,
+        }
+    }
+
+    /// Both writes together.
+    fn and(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes + other.bytes,
+            objects: self.objects + other.objects,
+            paths: self.paths + other.paths,
+            path_bytes: self.path_bytes + other.path_bytes,
+        }
+    }
+
     fn of(
         chunks: &[(ObjectId, Vec<u8>)],
         view_chunks: &[(ObjectId, Vec<u8>)],
@@ -138,16 +163,18 @@ impl PublishWrite {
 }
 
 /// What publishing `checkpoint` as the new Layer `layer` would write, without writing it: the
-/// clone and the Publish are prepared in a transaction that is rolled back. `None` when the
-/// Publish would not make a version (a replay, a stale Layer or a conflict).
+/// clone and the Publish are prepared in a transaction that is rolled back. The clone records
+/// the checkpoint's paths; the Publish adds its chunks, or a conflict's paths.
 pub(crate) fn clone_write_in(
     conn: &Connection,
     layer: &LayerId,
     checkpoint: crate::CheckpointId,
     operation: &OperationId,
     attribution: &PublishAttribution,
-) -> Result<Option<PublishWrite>> {
+) -> Result<PublishWrite> {
     let head = crate::layer::clone_in(conn, layer, checkpoint)?;
+    let frozen = crate::layer::checkpoint_in(conn, checkpoint.object())?;
+    let clone = PublishWrite::paths(frozen.changes().entries().keys());
     Ok(match prepare_in(conn, operation, &head, attribution)? {
         Prepared::Advance(Plan {
             composed:
@@ -159,8 +186,12 @@ pub(crate) fn clone_write_in(
                     ..
                 })),
             ..
-        }) => Some(PublishWrite::of(&chunks, &view_chunks, &openings, &plain)),
-        _ => None,
+        }) => clone.and(PublishWrite::of(&chunks, &view_chunks, &openings, &plain)),
+        Prepared::Advance(Plan {
+            composed: Some(Err(paths)),
+            ..
+        }) => clone.and(PublishWrite::paths(paths.iter())),
+        _ => clone,
     })
 }
 
@@ -246,7 +277,12 @@ impl Repository {
                 None => PublishOutcome::LayerStale {
                     actual: actual.clone(),
                 },
-                Some(Err(paths)) => PublishOutcome::Conflict { paths },
+                Some(Err(paths)) => {
+                    // The receipt records every conflicting path.
+                    let bound = bound.take().expect("bound runs at most once");
+                    bound(&PublishWrite::paths(paths.iter()))?;
+                    PublishOutcome::Conflict { paths }
+                }
                 Some(Ok(Candidate {
                     plain,
                     view,

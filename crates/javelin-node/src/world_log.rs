@@ -88,6 +88,7 @@ impl FileWorldLog {
         records.execute_batch(crate::trace::SCHEMA)?;
         records.execute_batch(crate::disclosure::SCHEMA)?;
         records.execute_batch(crate::budget::SCHEMA)?;
+        records.execute_batch(crate::review::SCHEMA)?;
         // Opening writes only on a store being provisioned, which the budget does not count.
         repo.take_pages_written()?;
         javelin::take_pages_written(&records)?;

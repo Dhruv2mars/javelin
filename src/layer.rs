@@ -238,15 +238,15 @@ impl Repository {
     }
 
     /// What [`Repository::clone_layer`] and then a Publish of the clone as `operation` would
-    /// write, measured in a transaction that is rolled back, so nothing is written. `None`
-    /// when that Publish would make no version. A node bounds the write by it first.
+    /// write, whatever its outcome, measured in a transaction that is rolled back, so nothing
+    /// is written. A node bounds the write by it first.
     pub fn clone_publish_write(
         &mut self,
         layer: &LayerId,
         checkpoint: CheckpointId,
         operation: &OperationId,
         attribution: &crate::PublishAttribution,
-    ) -> Result<Option<crate::PublishWrite>> {
+    ) -> Result<crate::PublishWrite> {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
