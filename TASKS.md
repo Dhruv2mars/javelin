@@ -146,7 +146,7 @@ Rough edges hit on the way. Fixed in this trail:
   `layer refresh`; it now reports `layer_stale` with the `layer clone --checkpoint` that keeps
   the work.
 - [x] A conflicting `request publish` said "the author revises the request over them" without
-  saying how; it now names `sync`, a new Layer, and `request revise ID --revision N --layer NEW`.
+  saying how; it now names `sync`, a new Layer, and `request revise ID --revision N --layer NEW --operation OP`.
 - [x] `history` and `check` took only a positional directory; they accept `--repo DIR` too.
 - [x] `repo create` did not say how to serve the new self-hosted repository; it prints the
   `javelin-node serve` line and the attach URL.

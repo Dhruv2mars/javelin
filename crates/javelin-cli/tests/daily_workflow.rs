@@ -21,376 +21,19 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::{BufRead, BufReader},
-    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    process::Command,
 };
 
 use javelin::Repository;
-use javelin_collaboration::{PrincipalId, Role};
-use javelin_control::{LocalNode, NodeLink};
-use javelin_identity::{Scope, test_keys};
-use javelin_node::auth;
+use javelin_collaboration::Role;
 use serde_json::Value;
-use tempfile::TempDir;
 
-const JAVELIN: &str = env!("CARGO_BIN_EXE_javelin");
+mod daily_support;
 
-/// What the collaborator's token carries: read, write their Layers, comment and approve.
-const COLLABORATOR: &[Scope] = &[
-    Scope::Read,
-    Scope::LayerWrite,
-    Scope::ReviewWrite,
-    Scope::ReviewApprove,
-];
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
-
-fn step(text: &str) {
-    eprintln!("\n== {text}");
-}
-
-fn describe(output: &Output) -> String {
-    format!(
-        "exit {:?}\nstdout: {}\nstderr: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
-
-fn json(bytes: &[u8], output: &Output) -> Value {
-    serde_json::from_slice(bytes).unwrap_or_else(|_| panic!("not JSON: {}", describe(output)))
-}
-
-/// The JSON of a command that must succeed.
-fn ok(output: Output) -> Value {
-    assert_eq!(output.status.code(), Some(0), "{}", describe(&output));
-    json(&output.stdout, &output)
-}
-
-/// The error code of a command the node or the CLI refused (exit 1, nothing on stdout).
-fn refused(output: Output) -> String {
-    assert_eq!(output.status.code(), Some(1), "{}", describe(&output));
-    assert!(output.stdout.is_empty(), "{}", describe(&output));
-    json(&output.stderr, &output)["error"]["code"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
-/// The stdout of a conflict or stale outcome (exit 3, `ok: false`).
-fn exit3(output: Output) -> Value {
-    assert_eq!(output.status.code(), Some(3), "{}", describe(&output));
-    let value = json(&output.stdout, &output);
-    assert_eq!(value["ok"], false, "{value}");
-    value
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn wait_listening(port: u16, what: &str) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "{what} never listened on {port}");
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// The `javelin-node` binary beside `javelin`, built once per test run. Cargo builds only this
-/// package's binaries for its tests, so a node left over from an older build would serve an
-/// older storage format; the build is a no-op when it is current.
-fn node_binary() -> PathBuf {
-    static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    BUILT
-        .get_or_init(|| {
-            let path = Path::new(JAVELIN)
-                .with_file_name(format!("javelin-node{}", std::env::consts::EXE_SUFFIX));
-            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-            let mut build = Command::new(cargo);
-            build.args([
-                "build",
-                "--locked",
-                "-p",
-                "javelin-node",
-                "--bin",
-                "javelin-node",
-            ]);
-            if path.parent().and_then(Path::file_name) == Some("release".as_ref()) {
-                build.arg("--release");
-            }
-            let built = build.output().unwrap();
-            assert!(built.status.success(), "{}", describe(&built));
-            assert!(path.exists(), "no {}", path.display());
-            path
-        })
-        .clone()
-}
-
-/// Every file under `dir`, except `.javelin`, with its bytes.
-fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
-    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
-        for entry in fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            if entry.file_name() == ".javelin" {
-                continue;
-            }
-            let path = entry.path();
-            if entry.file_type().unwrap().is_dir() {
-                walk(root, &path, out);
-            } else {
-                let name = path.strip_prefix(root).unwrap().to_string_lossy();
-                out.insert(name.replace('\\', "/"), fs::read(&path).unwrap());
-            }
-        }
-    }
-    let mut out = BTreeMap::new();
-    walk(dir, dir, &mut out);
-    out
-}
-
-/// The control plane and the repository's node, each a process of the real binaries.
-struct Site {
-    temp: TempDir,
-    control_dir: PathBuf,
-    control_url: String,
-    admin: String,
-    control: Child,
-    repository: String,
-    node_port: u16,
-    node: Option<Child>,
-}
-
-impl Site {
-    /// `javelin control init`, then `javelin control serve` on loopback.
-    fn start() -> Self {
-        let temp = TempDir::new().unwrap();
-        let control_dir = temp.path().join("control");
-        let init = ok(Command::new(JAVELIN)
-            .args(["--json", "control", "init"])
-            .env("JAVELIN_CONTROL_DIR", &control_dir)
-            .env_remove("JAVELIN_CONTROL_URL")
-            .output()
-            .unwrap());
-        let admin = init["admin_token"].as_str().unwrap().to_string();
-        let port = free_port();
-        let control = Command::new(JAVELIN)
-            .args(["control", "serve", &format!("127.0.0.1:{port}")])
-            .env("JAVELIN_CONTROL_DIR", &control_dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        wait_listening(port, "javelin control serve");
-        Self {
-            temp,
-            control_dir,
-            control_url: format!("http://127.0.0.1:{port}"),
-            admin,
-            control,
-            repository: String::new(),
-            node_port: 0,
-            node: None,
-        }
-    }
-
-    fn dir(&self, name: &str) -> PathBuf {
-        self.temp.path().join(name)
-    }
-
-    /// Where the control plane provisioned the self-hosted node's data.
-    fn node_dir(&self) -> PathBuf {
-        self.control_dir.join("nodes").join(&self.repository)
-    }
-
-    fn attach_url(&self) -> String {
-        format!("http://127.0.0.1:{}/{}", self.node_port, self.repository)
-    }
-
-    /// `javelin-node serve DIR REPOSITORY 127.0.0.1:PORT`, on the same port every time, so
-    /// every clone's `attach.json` keeps working across restarts.
-    fn start_node(&mut self) {
-        assert!(self.node.is_none());
-        if self.node_port == 0 {
-            self.node_port = free_port();
-        }
-        let mut node = Command::new(node_binary())
-            .arg("serve")
-            .arg(self.node_dir())
-            .arg(&self.repository)
-            .arg(format!("127.0.0.1:{}", self.node_port))
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // It prints one line once it listens.
-        let mut line = String::new();
-        BufReader::new(node.stderr.take().unwrap())
-            .read_line(&mut line)
-            .unwrap();
-        assert!(line.contains("javelin-node serving"), "node said: {line}");
-        self.node = Some(node);
-    }
-
-    /// Kills the node process, as a crash or a reboot would.
-    fn stop_node(&mut self) {
-        let mut node = self.node.take().expect("the node is running");
-        node.kill().unwrap();
-        node.wait().unwrap();
-    }
-
-    /// The operator's stand-in for a membership API: with the node stopped, trust the key that
-    /// signs `principal`'s tokens, grant `role`, and require `required_approvals`.
-    fn invite(&mut self, principal: &str, role: Role, required_approvals: u32) {
-        self.stop_node();
-        let dir = self.node_dir();
-        let mut keys = auth::read_keys(&dir).unwrap();
-        keys.trust(test_keys::KID, test_keys::signing_key(1).verifying_key())
-            .unwrap();
-        auth::write_keys(&dir, &keys).unwrap();
-        let mut permissions = auth::read_permissions(&dir).unwrap().unwrap();
-        permissions.epoch += 1;
-        permissions
-            .roles
-            .insert(PrincipalId::parse(principal).unwrap(), role);
-        permissions.required_approvals = required_approvals;
-        LocalNode::new(self.control_dir.join("nodes"))
-            .apply(&permissions)
-            .unwrap();
-        self.start_node();
-    }
-
-    /// A token the node accepts for `principal` on `device`.
-    fn token(&self, principal: &str, device: &str) -> String {
-        let mut claims = test_keys::claims(
-            principal,
-            &self.repository,
-            COLLABORATOR,
-            now(),
-            now() + 3600,
-            &format!("{principal}-{device}"),
-        );
-        claims.dev = device.into();
-        test_keys::issuer().issue(&claims).unwrap()
-    }
-
-    /// The node's head, read from its directory.
-    fn node_head(&self) -> javelin::WorldVersion {
-        Repository::open(self.node_dir()).unwrap().head().unwrap()
-    }
-}
-
-impl Drop for Site {
-    fn drop(&mut self) {
-        for child in self.node.iter_mut().chain([&mut self.control]) {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-/// One person on one device: their own `JAVELIN_HOME`, and either a control-plane sign-in or
-/// a token.
-struct Person {
-    home: PathBuf,
-    token: Option<String>,
-    control_url: String,
-}
-
-impl Person {
-    fn command(&self) -> Command {
-        let mut command = Command::new(JAVELIN);
-        command
-            .env("JAVELIN_HOME", &self.home)
-            .env("JAVELIN_CONTROL_URL", &self.control_url)
-            .env_remove("JAVELIN_ADMIN_TOKEN")
-            .env_remove("JAVELIN_CONTROL_DIR");
-        match &self.token {
-            Some(token) => command.env("JAVELIN_TOKEN", token),
-            None => command.env_remove("JAVELIN_TOKEN"),
-        };
-        command
-    }
-
-    fn run(&self, args: &[&str]) -> Output {
-        self.command().arg("--json").args(args).output().unwrap()
-    }
-
-    /// Runs `args` in `clone`.
-    fn at(&self, clone: &Path, args: &[&str]) -> Output {
-        let mut args = args.to_vec();
-        args.extend(["--repo", clone.to_str().unwrap()]);
-        self.run(&args)
-    }
-
-    /// `javelin login`, approved with `javelin control approve` and the admin token.
-    fn login(&self, site: &Site) {
-        let mut login = self
-            .command()
-            .arg("login")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut stderr = BufReader::new(login.stderr.take().unwrap());
-        let mut line = String::new();
-        let code = loop {
-            line.clear();
-            assert!(
-                stderr.read_line(&mut line).unwrap() > 0,
-                "login printed no code"
-            );
-            if let Some((_, code)) = line.trim().rsplit_once("javelin control approve ") {
-                break code.to_string();
-            }
-        };
-        let approved = Command::new(JAVELIN)
-            .args(["control", "approve", &code])
-            .env("JAVELIN_HOME", &self.home)
-            .env("JAVELIN_CONTROL_URL", &site.control_url)
-            .env("JAVELIN_ADMIN_TOKEN", &site.admin)
-            .output()
-            .unwrap();
-        assert!(approved.status.success(), "{}", describe(&approved));
-        assert!(login.wait().unwrap().success(), "login failed");
-    }
-
-    /// `javelin attach URL DIR`; the directory need not exist.
-    fn attach(&self, site: &Site, name: &str) -> PathBuf {
-        let clone = site.dir(name);
-        let attached = ok(self.run(&["attach", &site.attach_url(), clone.to_str().unwrap()]));
-        assert_eq!(attached["ok"], true, "{attached}");
-        clone
-    }
-
-    /// Opens a Layer over the clone's World and returns its plain directory.
-    fn layer(&self, clone: &Path, id: &str) -> PathBuf {
-        let created = ok(self.at(clone, &["workspace", "create", id]));
-        PathBuf::from(
-            created["workspace"]["root"]
-                .as_str()
-                .expect("workspace root"),
-        )
-    }
-
-    fn sync(&self, clone: &Path) -> Value {
-        ok(self.at(clone, &["sync"]))
-    }
-}
+use daily_support::{
+    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, refused, step,
+};
 
 fn write(dir: &Path, path: &str, text: &str) {
     let path = dir.join(path);
@@ -432,11 +75,7 @@ fn paths(changes: &Value) -> Vec<String> {
 /// private repository that takes Publish Requests, and `javelin-node serve` for it.
 fn owner_site() -> (Site, Person) {
     let mut site = Site::start();
-    let owner = Person {
-        home: site.dir("owner-home"),
-        token: None,
-        control_url: site.control_url.clone(),
-    };
+    let owner = site.owner();
     owner.login(&site);
     let create = [
         "repo",
@@ -517,11 +156,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
 
     step("owner: invite cora as a reviewer; Publish now needs one approval");
     site.invite("cora", Role::Review, 1);
-    let cora = Person {
-        home: site.dir("cora-laptop-home"),
-        token: Some(site.token("cora", "cora-laptop")),
-        control_url: closed_control_url(),
-    };
+    let cora = site.member("cora", "cora-laptop");
 
     step("cora: attach a second clone, edit a Layer as a plain directory, open a request");
     let theirs = cora.attach(&site, "cora");
@@ -836,8 +471,9 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         .unwrap();
     assert_eq!(text.status.code(), Some(3), "{}", describe(&text));
     assert!(
-        String::from_utf8_lossy(&text.stdout)
-            .contains("`javelin request revise cora-tweak --revision 1 --layer NEW`"),
+        String::from_utf8_lossy(&text.stdout).contains(
+            "`javelin request revise cora-tweak --revision 1 --layer NEW --operation OP`"
+        ),
         "{}",
         describe(&text)
     );
@@ -917,11 +553,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "notes-open",
         ],
     ));
-    let desktop = Person {
-        home: site.dir("cora-desktop-home"),
-        token: Some(site.token("cora", "cora-desktop")),
-        control_url: closed_control_url(),
-    };
+    let desktop = site.member("cora", "cora-desktop");
     let other = desktop.attach(&site, "cora-desktop");
     // Only the Layer's owner can take it.
     let code = refused(owner.at(&ours, &["layer", "take", "notes", "--operation", "o-take"]));
@@ -1045,6 +677,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             .contains(&site.node_head().tree.to_string()),
         "{history}"
     );
+    site.assert_no_git();
 }
 
 /// Every clone is attached at the node's head and holds its tree, and a Layer opened over it
@@ -1081,11 +714,6 @@ fn same_world(
     trees.remove(0)
 }
 
-/// A control-plane URL with nothing behind it: these people never need one.
-fn closed_control_url() -> String {
-    format!("http://127.0.0.1:{}", free_port())
-}
-
 /// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it
 /// through `NODE_SERVE`, with a second device for `layer take`. It never runs Git either.
 #[cfg(unix)]
@@ -1102,10 +730,11 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
         node_binary().display(),
         site.node_dir().display(),
         site.repository,
-        site.node_port
+        site.node_port()
     );
     let output = Command::new("bash")
         .arg(script)
+        .env("PATH", site.path())
         .arg(site.attach_url())
         .env("JAVELIN", JAVELIN)
         .env("WORKDIR", site.dir("script"))
@@ -1125,4 +754,5 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("== PASS"), "{printed}");
     assert!(!stdout.contains("SKIP"), "{printed}");
+    site.assert_no_git();
 }

@@ -626,7 +626,7 @@ contrast, wait until he can reach the node.
 
 When a Publish conflicts, the World changed the same paths after the revision's base. The
 author syncs, redoes the change in a new Layer over the new head, and submits it with
-`javelin request revise ID --revision N --layer NEW`. A revise from a device whose Layer was
+`javelin request revise ID --revision N --layer NEW --operation OP`. A revise from a device whose Layer was
 taken by another one (`javelin layer take`) is refused with `layer_stale`, and the message
 names the `javelin layer clone NEW --checkpoint HASH` that keeps that device's work.
 

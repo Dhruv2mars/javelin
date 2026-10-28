@@ -583,7 +583,7 @@ fn publish(args: Vec<OsString>) -> Outcome {
                 "Conflict: the World changed these paths since the revision's base: {}. The \
                  author runs `javelin sync`, redoes the change in a Layer over the new head \
                  (`javelin workspace create NEW`), and runs `javelin request revise {} \
-                 --revision {revision} --layer NEW`.",
+                 --revision {revision} --layer NEW --operation OP`.",
                 names.join(", "),
                 request.as_str()
             );
