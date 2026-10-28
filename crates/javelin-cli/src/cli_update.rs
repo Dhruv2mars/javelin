@@ -18,9 +18,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use javelin::{
@@ -38,6 +36,7 @@ use crate::{
     CliError,
     cli_remote::{LOCAL_WORLD_DIVERGED, Link, RemoteError, parse_target, recover_attachment},
     cli_request::{Options, Outcome},
+    cli_store::{read_json, write_json},
     cli_sync::follow,
 };
 
@@ -582,11 +581,13 @@ pub(crate) fn retire_published(
         .filter(|r| r.state == RequestStatus::Published)
     {
         let mut layers = BTreeSet::from([request.layer.clone()]);
-        if let Some(layer) = records
-            .get(request.request.as_str())
-            .and_then(|record| LayerId::parse(record["layer"].as_str()?).ok())
-        {
-            layers.insert(layer);
+        if let Some(record) = records.get(request.request.as_str()) {
+            let named = record["layers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .chain([&record["layer"]]);
+            layers.extend(named.filter_map(|layer| LayerId::parse(layer.as_str()?).ok()));
         }
         let layers: BTreeSet<LayerId> = layers
             .iter()
@@ -606,20 +607,37 @@ pub(crate) fn retire_published(
             continue;
         };
         for layer in active {
-            repo.capture_workspace(&layer)?;
+            // Only a directory whose every edit is now in a checkpoint is trashed. A directory
+            // behind a stacked head, a stale capture or files still changing wait for a later
+            // sync.
+            let capture = repo.capture_workspace(&layer)?;
+            if capture.as_ref().is_some_and(|capture| {
+                capture.behind
+                    || !capture.uncertain.is_empty()
+                    || matches!(capture.update, Some(LayerUpdate::Stale { .. }))
+            }) {
+                continue;
+            }
             let head = active_head(repo, &layer)?;
             let mut proposed = false;
             for state in repo.layer_history(&layer)? {
                 if let LayerState::Active { head } = state {
-                    let changes = repo.read_checkpoint(head.checkpoint())?;
-                    proposed |= revisions.contains(changes.changes());
+                    let checkpoint = repo.read_checkpoint(head.checkpoint())?;
+                    let base = repo
+                        .remote_world(checkpoint.base().version())?
+                        .map(|remote| remote.number);
+                    proposed |= revisions.iter().any(|(over, changes)| {
+                        Some(*over) == base && changes == checkpoint.changes()
+                    });
                 }
             }
             if !proposed {
                 continue;
             }
-            let later = repo.read_checkpoint(head.checkpoint())?.changes()
-                != revisions.last().expect("a proposed revision");
+            let later = revisions.last().is_some_and(|(_, changes)| {
+                repo.read_checkpoint(head.checkpoint())
+                    .is_ok_and(|c| c.changes() != changes)
+            });
             let operation = derived("retire", &layer, head.checkpoint().object());
             let discarded = repo.discard_workspace(&operation, &head)?;
             if !matches!(discarded.update, LayerUpdate::Applied { .. }) {
@@ -637,11 +655,12 @@ pub(crate) fn retire_published(
     Ok(retired)
 }
 
-/// The changes of each of `request`'s revisions this token may read, in revision order.
+/// The base and changes of each of `request`'s revisions this token may read, in revision
+/// order.
 fn revision_changes(
     link: &std::cell::RefCell<Link>,
     request: &RequestId,
-) -> Result<Vec<SparseChanges>, CliError> {
+) -> Result<Vec<(u64, SparseChanges)>, CliError> {
     let detail = match crate::cli_remote::call(
         link,
         &Message::ReadReview {
@@ -655,9 +674,15 @@ fn revision_changes(
         _ => return Err(CliError::Remote(crate::cli_remote::unexpected())),
     };
     let mut changes = Vec::new();
-    for checkpoint in detail.revisions.iter().filter_map(|r| r.checkpoint) {
+    for revision in &detail.revisions {
+        let Some(checkpoint) = revision.checkpoint else {
+            continue;
+        };
         let bytes = crate::cli_upload::node_checkpoint(link, checkpoint)?;
-        changes.push(Repository::foreign_checkpoint_changes(&bytes)?);
+        changes.push((
+            revision.base.get(),
+            Repository::foreign_checkpoint_changes(&bytes)?,
+        ));
     }
     Ok(changes)
 }
@@ -705,44 +730,6 @@ fn decode_update(value: &Value) -> Result<Update, CliError> {
         local: VersionNumber::new(value["local"].as_u64().ok_or_else(corrupt)?)
             .map_err(|_| corrupt())?,
     })
-}
-
-/// A JSON object kept under `.javelin/`, empty when the file is missing.
-pub(crate) fn read_json(
-    root: &Path,
-    name: &str,
-) -> Result<serde_json::Map<String, Value>, CliError> {
-    match fs::read(store(root).join(name)) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(Value::Object(map)) => Ok(map),
-            _ => Err(Error::CorruptRepository(format!("{name} is not a JSON object")).into()),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(error) => Err(Error::from(error).into()),
-    }
-}
-
-/// Replaces `.javelin/NAME` atomically: a temporary file, synced, then renamed.
-pub(crate) fn write_json(
-    root: &Path,
-    name: &str,
-    map: serde_json::Map<String, Value>,
-) -> Result<(), CliError> {
-    let path = store(root).join(name);
-    let temporary = path.with_extension("json.tmp");
-    let write = || -> std::io::Result<()> {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(
-            &serde_json::to_vec_pretty(&Value::Object(map)).map_err(std::io::Error::other)?,
-        )?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    };
-    write().map_err(|error| CliError::from(Error::from(error)))
-}
-
-fn store(root: &Path) -> PathBuf {
-    root.join(".javelin")
 }
 
 /// Stops the process here when `JAVELIN_FAILPOINT` names this point, as the library's

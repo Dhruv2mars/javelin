@@ -5,11 +5,13 @@ use serde_json::{Value, json};
 
 mod cli;
 mod cli_auth;
+mod cli_changes;
 mod cli_check;
 mod cli_control;
 mod cli_disclosure;
 mod cli_remote;
 mod cli_request;
+mod cli_store;
 mod cli_sync;
 mod cli_update;
 mod cli_upload;

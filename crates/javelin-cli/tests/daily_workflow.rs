@@ -908,6 +908,87 @@ fn a_crash_mid_update_loses_nothing() {
     site.assert_no_git();
 }
 
+/// A published Layer whose directory holds edits no capture could record, because a Stack moved
+/// its head and the directory lacks the stacked work, is not trashed: retirement waits until the
+/// directory is refreshed and captured, then keeps those edits in the Layer's history.
+#[test]
+fn retirement_waits_for_edits_a_capture_cannot_record() {
+    let (site, owner) = owner_site();
+    let ours = owner.attach(&site, "owner");
+    let work = owner.layer(&ours, "work");
+    write(&work, "a.txt", "a\n");
+    let source = owner.layer(&ours, "source");
+    write(&source, "b.txt", "b\n");
+    let state =
+        |layer: &str| ok(owner.at(&ours, &["layer", "state", layer]))["state"]["head"].clone();
+    let checkpoint = state("source")["checkpoint"].as_str().unwrap().to_string();
+    let revision = state("work")["revision"].to_string();
+    ok(owner.at(
+        &ours,
+        &[
+            "layer",
+            "stack",
+            "work",
+            "--revision",
+            &revision,
+            "--source",
+            &checkpoint,
+            "--operation",
+            "stack-1",
+        ],
+    ));
+    // The directory lacks b.txt, so this edit cannot be captured yet.
+    write(&work, "late.txt", "late\n");
+    ok(owner.at(
+        &ours,
+        &[
+            "request",
+            "open",
+            "work",
+            "--layer",
+            "work",
+            "--operation",
+            "work-open",
+        ],
+    ));
+    let published = ok(owner.at(
+        &ours,
+        &[
+            "request",
+            "publish",
+            "work",
+            "--revision",
+            "1",
+            "--operation",
+            "work-publish",
+        ],
+    ));
+    assert_eq!(published["retired"], serde_json::json!([]), "{published}");
+    assert_eq!(fs::read_to_string(work.join("late.txt")).unwrap(), "late\n");
+
+    ok(owner.at(&ours, &["workspace", "refresh", "work"]));
+    let synced = owner.sync(&ours);
+    assert_eq!(synced["retired"][0]["layer"], "work", "{synced}");
+    assert_eq!(synced["retired"][0]["later_work"], true);
+    assert!(!work.exists());
+    let history = ok(owner.at(&ours, &["layer", "history", "work"]));
+    let last = history["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|state| state["state"] == "active")
+        .unwrap()["head"]["checkpoint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    ok(owner.at(&ours, &["layer", "clone", "kept", "--checkpoint", &last]));
+    let kept = ok(owner.at(&ours, &["workspace", "open", "kept"]));
+    let kept = PathBuf::from(kept["workspace"]["root"].as_str().unwrap());
+    assert_eq!(fs::read_to_string(kept.join("late.txt")).unwrap(), "late\n");
+    site.assert_no_git();
+}
+
 /// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it
 /// through `NODE_SERVE`, with a second device for `layer take`. It never runs Git either.
 #[cfg(unix)]

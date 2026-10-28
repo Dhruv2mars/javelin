@@ -17,15 +17,12 @@
 use std::{
     cell::RefCell,
     ffi::OsString,
-    fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 
 use javelin::{
     Attachment, Error, LayerId, ObjectId, OperationId, RemoteHead, Repository, VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
-    tree::{Node, Trees},
 };
 use javelin_protocol::{
     Kind, Message,
@@ -33,18 +30,18 @@ use javelin_protocol::{
         PublishOutcome, RequestId, RequestStatus, RequestSummary, ReviewDetail, ReviewOutcome,
         RevisionDetail, code, decode, encode,
     },
-    limits::MAX_TREE,
 };
 use serde_json::{Value, json};
 
 use crate::{
     CliError,
     cli::Output,
+    cli_changes::change_kinds,
     cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, stale_appends, unexpected},
-    cli_update::{
-        latest, read_json, retire_published, retired_lines, unresolved, unresolved_error,
-        write_json,
+    cli_store::{
+        queued_base, read_json, remember_bases, remember_listed, remembered_base, write_json,
     },
+    cli_update::{latest, retire_published, retired_lines, unresolved, unresolved_error},
     cli_upload::{
         create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
@@ -520,7 +517,9 @@ fn publish(args: Vec<OsString>) -> Outcome {
         // `sync`, else read now.
         let base = match options.number::<u64>("--base")? {
             Some(base) => base,
-            None => match remembered_base(&attached.root, &request, revision)? {
+            None => match remembered_base(&attached.root, &request, revision)?
+                .or_else(|| queued_base(&outbox, &request, revision))
+            {
                 Some(base) => base,
                 None => {
                     let detail = read_review(&attached.reading()?, &request, 0).map_err(|e| {
@@ -848,146 +847,6 @@ pub(crate) fn list_requests(
     }
 }
 
-/// Whether each change in `changes` adds, modifies or deletes its path over remote World
-/// `base`, in path order. The base's tree is read from the root down to each path: chunks this
-/// clone holds from its own Worlds, the rest from the node, which serves this token only what
-/// it may read, as a fetch does. A path under a hidden entry is `changed`: whether the base had
-/// it is hidden too.
-fn change_kinds(
-    link: &RefCell<Link>,
-    repo: &Repository,
-    base: VersionNumber,
-    changes: &javelin::SparseChanges,
-) -> Result<Vec<&'static str>, CliError> {
-    let root = match call(
-        link,
-        &Message::Resolve {
-            version: Some(base),
-        },
-    )
-    .map_err(CliError::Remote)?
-    {
-        Message::Resolved { number, tree, .. } if number == base => tree,
-        _ => return Err(CliError::Remote(unexpected())),
-    };
-    let trees = Trees::new(NodeTrees { repo, link });
-    let mut kinds = Vec::new();
-    for (path, entry) in changes.entries() {
-        let mut hidden = false;
-        let mut prefix = String::new();
-        for name in path.as_str().split('/') {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(name);
-            if prefix.len() == path.as_str().len() {
-                break;
-            }
-            let ancestor = javelin::RepoPath::parse(&prefix)?;
-            if let Some(Node::File(file)) = trees.lookup(root, &ancestor)? {
-                hidden = file.is_hidden();
-                break;
-            }
-        }
-        let before = trees.lookup(root, path)?.is_some();
-        kinds.push(match (hidden, before, entry.is_some()) {
-            (true, _, true) => "changed",
-            (_, _, false) => "deleted",
-            (false, true, true) => "modified",
-            (false, false, true) => "added",
-        });
-    }
-    Ok(kinds)
-}
-
-/// Tree chunks from this clone's store, else from the node, each checked against its ID.
-struct NodeTrees<'a> {
-    repo: &'a Repository,
-    link: &'a RefCell<Link>,
-}
-
-impl javelin::tree::Store for NodeTrees<'_> {
-    fn load(&self, id: ObjectId) -> javelin::Result<Vec<u8>> {
-        if self.repo.has_tree(id)? {
-            return self.repo.tree_bytes_bounded(id, MAX_TREE);
-        }
-        match call(self.link, &Message::Get(vec![(Kind::Tree, id)])) {
-            Ok(Message::Objects(mut objects))
-                if objects.len() == 1
-                    && objects[0].0 == Kind::Tree
-                    && objects[0].1 == id
-                    && Kind::Tree.id(&objects[0].2) == id =>
-            {
-                Ok(objects.remove(0).2)
-            }
-            Ok(_) => Err(Error::MissingObject(id)),
-            Err(error) => Err(Error::InvalidInput(format!(
-                "reading tree {id} from the node: {}: {}",
-                error.code, error.detail
-            ))),
-        }
-    }
-    fn save(&self, _: ObjectId, _: &[u8]) -> javelin::Result<()> {
-        Ok(())
-    }
-}
-
-/// Where this clone keeps the base of each request revision it has seen.
-const BASES: &str = "request-bases.json";
-
-/// Records the remote World each of `revisions` of `request` is over, so a Publish of it can
-/// queue while the node is down without `--base`.
-pub(crate) fn remember_bases(
-    root: &Path,
-    request: &RequestId,
-    revisions: impl IntoIterator<Item = (u32, u64)>,
-) -> Result<(), CliError> {
-    let mut bases = read_json(root, BASES)?;
-    let entry = bases
-        .entry(request.as_str().to_owned())
-        .or_insert_with(|| json!({}));
-    let before = entry.clone();
-    for (revision, base) in revisions {
-        if revision > 0 {
-            entry[revision.to_string()] = json!(base);
-        }
-    }
-    if *entry == before {
-        return Ok(());
-    }
-    write_json(root, BASES, bases)
-}
-
-/// Records each listed request's current revision base.
-pub(crate) fn remember_listed(root: &Path, requests: &[RequestSummary]) -> Result<(), CliError> {
-    let mut bases = read_json(root, BASES)?;
-    let mut changed = false;
-    for r in requests.iter().filter(|r| r.revision > 0) {
-        let entry = bases
-            .entry(r.request.as_str().to_owned())
-            .or_insert_with(|| json!({}));
-        let key = r.revision.to_string();
-        if entry[&key] != json!(r.base.get()) {
-            entry[&key] = json!(r.base.get());
-            changed = true;
-        }
-    }
-    match changed {
-        true => write_json(root, BASES, bases),
-        false => Ok(()),
-    }
-}
-
-fn remembered_base(
-    root: &Path,
-    request: &RequestId,
-    revision: u32,
-) -> Result<Option<u64>, CliError> {
-    Ok(read_json(root, BASES)?
-        .get(request.as_str())
-        .and_then(|revisions| revisions[revision.to_string()].as_u64()))
-}
-
 /// Refuses to propose `layer` while files `layer update` marked still hold markers.
 fn refuse_unresolved(attached: &Attached, layer: &LayerId) -> Result<(), CliError> {
     let left = unresolved(&attached.repo, &attached.root, layer)?;
@@ -1125,19 +984,8 @@ struct RequestRecord {
     head: Vec<u8>,
 }
 
-fn records_path(root: &Path) -> PathBuf {
-    root.join(".javelin").join(REQUESTS)
-}
-
 fn read_records(root: &Path) -> Result<serde_json::Map<String, Value>, CliError> {
-    match fs::read(records_path(root)) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(Value::Object(map)) => Ok(map),
-            _ => Err(Error::CorruptRepository(format!("{REQUESTS} is not a JSON object")).into()),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(error) => Err(Error::from(error).into()),
-    }
+    read_json(root, REQUESTS)
 }
 
 fn load_record(root: &Path, request: &RequestId) -> Result<Option<RequestRecord>, CliError> {
@@ -1167,19 +1015,17 @@ fn save_record(
     let mut records = read_records(root)?;
     let head = std::str::from_utf8(head)
         .map_err(|_| Error::CorruptRepository("a node checkpoint is not UTF-8 JSON".into()))?;
+    // Every Layer the request was proposed from here, so each is retired once it publishes.
+    let mut layers: Vec<Value> = records
+        .get(request.as_str())
+        .and_then(|record| record["layers"].as_array().cloned())
+        .unwrap_or_default();
+    if !layers.contains(&json!(layer)) {
+        layers.push(json!(layer));
+    }
     records.insert(
         request.as_str().into(),
-        json!({"layer": layer, "base": base, "head": head}),
+        json!({"layer": layer, "layers": layers, "base": base, "head": head}),
     );
-    let path = records_path(root);
-    let temporary = path.with_extension("json.tmp");
-    let write = || -> std::io::Result<()> {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(
-            &serde_json::to_vec_pretty(&Value::Object(records)).map_err(std::io::Error::other)?,
-        )?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    };
-    write().map_err(|error| CliError::from(Error::from(error)))
+    write_json(root, REQUESTS, records)
 }

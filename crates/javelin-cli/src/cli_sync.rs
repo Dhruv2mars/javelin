@@ -27,7 +27,8 @@ use crate::{
         Down, LOCAL_WORLD_DIVERGED, Link, RemoteError, RepoBlobs, Up, parse_target,
         recover_attachment, remote, summary,
     },
-    cli_request::{Attached, Options, Outcome, list_requests, remember_listed},
+    cli_request::{Attached, Options, Outcome, list_requests},
+    cli_store::remember_listed,
     cli_update::{retire_published, retired_lines},
 };
 
