@@ -368,6 +368,19 @@ fn a_node_outage_queues_captures_and_they_replay() {
         layer_status(laptop, &laptop_dir, "fresh")["status"],
         "not_uploaded"
     );
+    // Even one whose captures end where it started.
+    ok(laptop(&[
+        "workspace",
+        "create",
+        "gone",
+        "--repo",
+        s(&laptop_dir),
+    ]));
+    let gone = workspace(&laptop_dir, "gone");
+    fs::write(gone.join("c.txt"), "c\n").unwrap();
+    checkpoint(laptop, &laptop_dir, "gone");
+    fs::remove_file(gone.join("c.txt")).unwrap();
+    checkpoint(laptop, &laptop_dir, "gone");
     assert_eq!(owner.node_layer("work"), (1, vec![file("a.txt", "1\n")]));
 
     // Back up: a capture that records nothing still delivers what waited, in order.
@@ -411,11 +424,26 @@ fn a_node_outage_queues_captures_and_they_replay() {
     set_node(&laptop_dir, &node);
     let synced = ok(laptop(&["sync", "--repo", s(&laptop_dir)]));
     assert_eq!(synced["outbox"]["pending"], 0, "{synced}");
-    assert_eq!(synced["uploads"][0]["layer"], "fresh", "{synced}");
-    assert_eq!(synced["uploads"][0]["status"], "uploaded", "{synced}");
+    let uploads: Vec<(&str, &str)> = synced["uploads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|upload| {
+            (
+                upload["layer"].as_str().unwrap(),
+                upload["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        uploads,
+        [("fresh", "uploaded"), ("gone", "uploaded")],
+        "{synced}"
+    );
     assert_eq!(owner.node_layer("work"), (5, vec![file("a.txt", "5\n")]));
     assert_eq!(owner.node_layer("fresh"), (2, vec![file("b.txt", "b2\n")]));
-    for name in ["work", "fresh"] {
+    assert_eq!(owner.node_layer("gone"), (2, Vec::new()));
+    for name in ["work", "fresh", "gone"] {
         assert_eq!(
             layer_status(laptop, &laptop_dir, name)["status"],
             "uploaded"
@@ -536,6 +564,14 @@ fn uploads_carry_only_what_the_writer_may_write_and_never_widen_an_audience() {
         &sam,
         ObjectId::for_blob(b"member key\n")
     ));
+    assert_eq!(
+        layer_status(member, &member_dir, "draft")["status"],
+        "forbidden"
+    );
+    // A capture that records nothing does not take the refusal for an upload.
+    let again = checkpoint(member, &member_dir, "draft");
+    assert_eq!(again["status"], "forbidden", "{again}");
+    assert_eq!(owner.node_layer("draft"), (0, Vec::new()));
     assert_eq!(
         layer_status(member, &member_dir, "draft")["status"],
         "forbidden"

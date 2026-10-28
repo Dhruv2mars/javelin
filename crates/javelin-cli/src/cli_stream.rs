@@ -302,7 +302,8 @@ fn stream(
     let mut queued = known.revision;
     let (head, since) = match known.head {
         Some(head) => (head, known.since),
-        None if known.stopped.is_none() && checkpoint.changes().entries().is_empty() => {
+        // Revision 0 of a created Layer: nothing was captured yet.
+        None if local.revision() == 0 && checkpoint.changes().entries().is_empty() => {
             return Ok(Streamed::held(
                 EMPTY,
                 format!("Layer {} has no changes to upload yet", layer.as_str()),
@@ -321,11 +322,15 @@ fn stream(
                 ));
             }
             match learn(node, layer, &base) {
-                // The node's Layer has history of its own: only the local head goes after it.
                 Ok((head, seq)) => {
-                    if queued.is_none() && seq > 0 {
-                        queued = local.revision().checked_sub(1);
-                    }
+                    // A new node Layer takes the whole local history. One with history of its
+                    // own takes the local head; so does one that refused the last upload,
+                    // after the revisions that were never queued.
+                    queued = match (queued, local.revision().checked_sub(1)) {
+                        (_, None) => None,
+                        (Some(queued), Some(before)) => Some(queued.min(before)),
+                        (None, Some(before)) => (seq > 0).then_some(before),
+                    };
                     (head, last_seq(outbox))
                 }
                 Err(Learned::Stopped(code)) => {
@@ -758,7 +763,10 @@ pub fn status(args: Vec<OsString>) -> Outcome {
                     None if known.head.is_some() && known.revision == Some(head.revision()) => {
                         Streamed::Uploaded
                     }
-                    None if known.head.is_none() && checkpoint.changes().entries().is_empty() => {
+                    None if known.head.is_none()
+                        && head.revision() == 0
+                        && checkpoint.changes().entries().is_empty() =>
+                    {
                         Streamed::held(EMPTY, "no changes to upload yet".into())
                     }
                     None => Streamed::held(
