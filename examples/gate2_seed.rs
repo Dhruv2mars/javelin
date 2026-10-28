@@ -7,15 +7,24 @@
 //! each path to `{"from": FILE}`, `{"text": STRING}` or `{"link": TARGET}`, with an
 //! optional `"exec": true`. Inline text lets a spec name paths that the seeding volume
 //! itself could not hold side by side, such as `Foo` and `foo`.
-use std::{collections::BTreeMap, fs};
+//!
+//! `gate2_seed --hold-store REPO` takes the workspace store lock, prints one line, and
+//! holds it until stdin closes. Gate 2 uses it to stop a create at a known point: the
+//! Layer is recorded and its directory waits for the lock.
+use std::{collections::BTreeMap, fs, io::Read};
 
 use javelin::{AdvanceOutcome, FileEntry, Manifest, OperationId, RepoPath, Repository};
 use serde_json::{Value, json};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, repo] = args.as_slice()
+        && flag == "--hold-store"
+    {
+        return hold_store(repo);
+    }
     let [repo, spec] = args.as_slice() else {
-        eprintln!("usage: gate2_seed REPO SPEC.json");
+        eprintln!("usage: gate2_seed REPO SPEC.json | gate2_seed --hold-store REPO");
         std::process::exit(2);
     };
     let spec: BTreeMap<String, Value> =
@@ -58,4 +67,17 @@ fn main() {
         }
         other => panic!("World did not advance: {other:?}"),
     }
+}
+
+/// The same lock file and call as `Store::lock` in `src/workspace.rs`.
+fn hold_store(repo: &str) {
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(std::path::Path::new(repo).join(".javelin/workspace.lock"))
+        .expect("open the store lock");
+    lock.lock().expect("take the store lock");
+    println!("{}", json!({"ok": true, "held": true}));
+    let _ = std::io::stdin().read_to_end(&mut Vec::new());
 }
