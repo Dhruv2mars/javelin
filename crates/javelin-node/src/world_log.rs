@@ -1,13 +1,10 @@
-//! The self-hosted World log: one SQLite-backed `Repository` in a data directory, behind
-//! an exclusive process lock. The repository's transactions give the ordering: a unique
-//! head per version, recorded publications, and a Layer's one successful Publish.
-//! Every decided `PublishLayer` is also recorded in `node.db`, so a retry replays it
-//! even when the Layer has moved on since.
+//! The node's World log: one SQLite-backed `Repository` and the node's records, from the
+//! provider's `Storage`, behind its `Coordination` guard. The repository's transactions give
+//! the ordering: a unique head per version, recorded publications, and a Layer's one
+//! successful Publish. Every decided `PublishLayer` is also recorded in `node.db`, so a retry
+//! replays it even when the Layer has moved on since.
 
-use std::{
-    fs::{self, File, OpenOptions, TryLockError},
-    path::Path,
-};
+use std::any::Any;
 
 use javelin::{
     Error, LayerHead, LayerId, LayerState, LayerUpdate, ObjectId, OperationId, PublicationReceipt,
@@ -21,46 +18,55 @@ use javelin_protocol::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::{checks, review::is_review_layer, trace::Traces};
+use crate::{
+    checks,
+    review::is_review_layer,
+    storage::{Coordination, Storage},
+    trace::Traces,
+};
+
+/// The operating system's clock, for a self-hosted node.
+#[cfg(feature = "native")]
+pub fn system_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
 
 /// A decided request's bytes, and the outcome it was decided with.
 type Decided = (Vec<u8>, Vec<u8>);
 
-/// Held for the node's lifetime. A second node on the same directory is refused.
-const LOCK: &str = "node.lock";
-/// Decided `PublishLayer` requests and their outcomes, keyed by operation ID.
-const RECORDS: &str = "node.db";
+/// The node's clock: Unix time in seconds. It decides token expiry and the public frontier.
+pub type Clock = Box<dyn Fn() -> u64 + Send>;
 
 pub struct FileWorldLog {
     repo: Repository,
+    /// Decided `PublishLayer` requests and their outcomes, keyed by operation ID, and the
+    /// other partitions' rows (`node.db`).
     records: Connection,
-    traces: Traces,
-    _lock: File,
+    clock: Clock,
+    _guard: Box<dyn Any + Send>,
 }
 
 impl FileWorldLog {
-    /// Creates the repository on first use, then takes the directory's lock. The
-    /// lock file sits beside `.javelin`, so the repository's directory stays as it is.
-    pub fn open(dir: impl AsRef<Path>) -> Result<Self> {
-        let dir = dir.as_ref();
-        fs::create_dir_all(dir)?;
-        let repo = Repository::init(dir)?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join(LOCK))?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => {
-                return Err(Error::Busy(format!(
-                    "node data directory {} is held by another node",
-                    dir.display()
-                )));
-            }
-            Err(TryLockError::Error(e)) => return Err(e.into()),
-        }
-        let records = Connection::open(dir.join(RECORDS))?;
+    /// The self-hosted node on data directory `dir`: creates the repository on first use,
+    /// then takes the directory's lock. Its clock is the operating system's.
+    #[cfg(feature = "native")]
+    pub fn open(dir: impl AsRef<std::path::Path>) -> Result<Self> {
+        let dir = crate::storage::Directory::new(dir);
+        Self::on(&dir, &dir, Box::new(system_now))
+    }
+
+    /// The node on `storage`, keeping time by `clock`: creates the repository on first use,
+    /// then takes the ordering point from `coordination` for the node's lifetime.
+    pub fn on(
+        storage: &dyn Storage,
+        coordination: &dyn Coordination,
+        clock: Clock,
+    ) -> Result<Self> {
+        let repo = storage.repository()?;
+        let guard = coordination.acquire()?;
+        let records = storage.records()?;
         records.execute_batch(
             "CREATE TABLE IF NOT EXISTS decided (
                 operation TEXT PRIMARY KEY,
@@ -72,13 +78,36 @@ impl FileWorldLog {
         records.execute_batch(crate::layer::SCHEMA)?;
         records.execute_batch(crate::lease::SCHEMA)?;
         records.execute_batch(crate::checks::SCHEMA)?;
-        let traces = Traces::open(&dir.join(RECORDS))?;
+        records.execute_batch(crate::trace::SCHEMA)?;
+        records.execute_batch(crate::disclosure::SCHEMA)?;
         Ok(Self {
             repo,
             records,
-            traces,
-            _lock: lock,
+            clock,
+            _guard: guard,
         })
+    }
+
+    /// Replaces the node's clock, which decides token expiry and the public frontier. Tests
+    /// move time this way instead of sleeping.
+    pub fn set_clock(&mut self, clock: impl Fn() -> u64 + Send + 'static) {
+        self.clock = Box::new(clock);
+    }
+
+    /// Unix time now, in seconds, by the node's clock.
+    pub fn now(&self) -> u64 {
+        (self.clock)()
+    }
+
+    /// Stamps versions the node has not seen and ties decided embargoes to their versions
+    /// (`disclosure::stamp`), at the node's time.
+    pub fn stamp(&self) -> std::result::Result<(), ProtocolError> {
+        crate::disclosure::stamp(&self.records, &self.repo, self.now())
+    }
+
+    /// The public frontier now: the newest version a reader outside the repository sees.
+    pub fn frontier(&self) -> std::result::Result<VersionNumber, ProtocolError> {
+        crate::disclosure::frontier(&self.records, &self.repo, self.now())
     }
 
     /// Read access to the repository, for checks and inspection.
@@ -98,8 +127,8 @@ impl FileWorldLog {
     }
 
     /// The trace store, which keeps its visibility beside the decided operations.
-    pub fn traces(&self) -> &Traces {
-        &self.traces
+    pub fn traces(&self) -> Traces<'_> {
+        Traces::new(&self.records)
     }
 
     pub fn head(&self) -> Result<WorldVersion> {

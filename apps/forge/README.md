@@ -26,7 +26,12 @@ There is no control-plane lookup yet. The forge finds a repository's node from, 
    `{"repositories": {"owner/repo": {"node": "http://127.0.0.1:7878", "repository": "ID"}}}`.
 
 The self-hosted node allows any origin on read messages (`Resolve`, `Get`, `Changeset`,
-`Attribution`) and refuses every other message that carries an `Origin` header.
+`Attribution`, `ReadDisclosure`) and refuses every other message that carries an `Origin` header.
+
+The forge reads signed out, so the node shows it a repository at its public frontier
+(`docs/direction.md`, Superposition): versions held by the disclosure delay or an embargo
+do not exist for it. When the repository has a delay, its home page says the public view is
+delayed, never by how much any one change waits.
 
 ## Commands
 

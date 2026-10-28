@@ -7,6 +7,7 @@ mod cli;
 mod cli_auth;
 mod cli_check;
 mod cli_control;
+mod cli_disclosure;
 mod cli_remote;
 mod cli_request;
 mod cli_sync;
@@ -117,6 +118,15 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     }
     if args.first().is_some_and(|a| a == "attach") {
         return cli_remote::attach(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "frontier") {
+        return cli_disclosure::frontier(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "delay") {
+        return cli_disclosure::delay(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "embargo") {
+        return cli_disclosure::embargo(args.into_iter().skip(1).collect());
     }
     if args.first().is_some_and(|a| a == "request") {
         return cli_request::request(args.into_iter().skip(1).collect());

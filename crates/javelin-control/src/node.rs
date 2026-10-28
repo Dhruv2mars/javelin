@@ -14,8 +14,10 @@ use javelin_collaboration::{AppliedPermissions, RepositoryId};
 use javelin_identity::KeySet;
 use javelin_node::{
     FileWorldLog,
+    admin::{self, ApplyError},
     auth::{self, Gate},
     fork::Forked,
+    storage::Directory,
 };
 
 use crate::{
@@ -99,6 +101,15 @@ impl NodeLink for LocalNode {
         Ok(head.number)
     }
 
+    /// Opens the repository with its node lock, so it reads the same frontier the node
+    /// serves.
+    fn frontier(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        FileWorldLog::open(self.repository_dir(repository))
+            .map_err(|error| ControlError::Node(error.to_string()))?
+            .frontier()
+            .map_err(ControlError::Refused)
+    }
+
     /// Opens each repository with its own node lock, which `FileWorldLog` takes. No lock from
     /// `locked` is held here, because the two would conflict on the same file.
     fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
@@ -110,24 +121,18 @@ impl NodeLink for LocalNode {
         let mut target = open(&plan.target)?;
         let at = VersionNumber::new(plan.at)
             .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
-        javelin_node::fork::fork(&source, plan.source.as_str(), &mut target, at, plan.reader)
+        javelin_node::fork::fork_for(&source, plan.source.as_str(), &mut target, at, plan.reader)
             .map_err(ControlError::Refused)
     }
 
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {
         let _lock = self.locked(&permissions.repository)?;
-        let stored = self.stored(&permissions.repository)?;
-        let mut gate = Gate::new(permissions.repository.clone(), KeySet::new());
-        if let Some(current) = &stored {
-            gate.apply(current.clone()).map_err(ControlError::Refused)?;
+        let dir = Directory::new(self.repository_dir(&permissions.repository));
+        match admin::apply(&dir, permissions) {
+            Ok(_) => Ok(()),
+            Err(ApplyError::Refused(refusal)) => Err(ControlError::Refused(refusal)),
+            Err(ApplyError::Storage(error)) => Err(read_error(error)),
         }
-        gate.apply(permissions.clone())
-            .map_err(ControlError::Refused)?;
-        if stored.as_ref() == Some(permissions) {
-            return Ok(());
-        }
-        auth::write_permissions(&self.repository_dir(&permissions.repository), permissions)
-            .map_err(node_error)
     }
 
     fn trust(&self, repository: &RepositoryId, keys: &KeySet) -> Result<(), ControlError> {

@@ -4,10 +4,17 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# `fs` probes this machine's volume for case and Unicode aliases among merged paths. Without it,
+# as in the Cloudflare node, which has no volume, Stack merges without an alias probe and the
+# client's refresh meets any alias when it writes the files.
+[features]
+default = ["fs"]
+fs = ["javelin/fs"]
+
 [dependencies]
-javelin = { path = "../.." }
+javelin = { path = "../..", default-features = false }
 javelin-merge = { path = "../javelin-merge" }
-javelin-protocol = { path = "../javelin-protocol" }
+javelin-protocol = { path = "../javelin-protocol", default-features = false }
 serde_json = "1.0.154"
 
 [dev-dependencies]

@@ -34,13 +34,14 @@ pub(crate) const SESSION_SCOPES: [Scope; 7] = [
 ];
 
 /// A fork to make on the node: `source` at version `at`, copied into `target`. `reader` is the
-/// role the forker holds in `source`, which decides whether restricted traces are copied.
+/// role the forker holds in `source`, which decides whether restricted traces and hidden
+/// entries are copied; `None` is a forker outside it, held at the public frontier.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForkPlan {
     pub source: RepositoryId,
     pub target: RepositoryId,
     pub at: u64,
-    pub reader: Role,
+    pub reader: Option<Role>,
 }
 
 /// The node side of the control plane's pushes. Each method is idempotent, so a retry
@@ -60,6 +61,11 @@ pub trait NodeLink {
         Err(ControlError::Node(
             "this node cannot report its head".into(),
         ))
+    }
+    /// The newest version a reader outside the repository sees. A fork by an outsider refuses
+    /// a fork point past it. A node without a disclosure delay or embargoes shows the head.
+    fn frontier(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        self.head(repository)
     }
     /// Copies the source's log into the target. Repeating it finishes an interrupted copy;
     /// a finished fork returns the origin it was made with.

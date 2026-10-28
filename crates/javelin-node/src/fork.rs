@@ -73,7 +73,7 @@ pub fn fork(
 }
 
 /// Like `fork`, for a forker who may hold no role in the source: `None` is an outsider, who
-/// copies public content only.
+/// copies public content only, at or below the source's public frontier.
 pub fn fork_for(
     source: &FileWorldLog,
     source_name: &str,
@@ -93,6 +93,13 @@ pub fn fork_for(
         return Err(refused(&format!(
             "repository is already forked from {} at {}",
             origin.source, origin.number
+        )));
+    }
+    // An outsider forks at or below the public frontier, and a point above it is refused
+    // exactly as one past the head, so the refusal says nothing about the versions between.
+    if role.is_none() && upto > source.frontier()? {
+        return Err(refused(&format!(
+            "fork point {upto} is past the source's public frontier"
         )));
     }
     if upto.get() > source.head()?.number.get() {

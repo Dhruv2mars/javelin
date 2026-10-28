@@ -23,6 +23,8 @@ const tag = {
   CHANGESET_PART: 0x43,
   ATTRIBUTION: 0x44,
   ATTRIBUTED: 0x45,
+  READ_DISCLOSURE: 0x48,
+  DISCLOSURE: 0x49,
   ERROR: 0x7f,
 } as const;
 
@@ -42,6 +44,18 @@ export type Attribution =
 
 export type Publication = { layer: string; attribution: Attribution };
 
+/**
+ * How a repository discloses its versions, as the caller may know it. A reader outside the
+ * repository (the forge reads signed out) learns whether the public view is delayed and its
+ * frontier, the newest version it sees; `delay` is null and `embargoes` empty for it.
+ */
+export type Disclosure = {
+  delayed: boolean;
+  delay: number | null;
+  frontier: number;
+  embargoes: { version: number; until: number | null }[];
+};
+
 export type Message =
   | { type: "get"; items: [Kind, Hex][] }
   | { type: "objects"; objects: { kind: Kind; id: Hex; bytes: Uint8Array }[] }
@@ -51,6 +65,8 @@ export type Message =
   | { type: "changesetPart"; total: number; bytes: Uint8Array }
   | { type: "attribution"; version: number }
   | { type: "attributed"; number: number; publication: Publication | null }
+  | { type: "readDisclosure" }
+  | ({ type: "disclosure" } & Disclosure)
   | { type: "error"; code: string; detail: string };
 
 /** A refusal with a stable code, from the node or from decoding its reply. */
@@ -179,6 +195,13 @@ class Reader {
     if (id !== ABSENT) throw malformed("absent ID must be zeroed");
     return null;
   }
+  optionalU64(): number | null {
+    const present = this.flag();
+    const value = this.u64();
+    if (present) return value;
+    if (value !== 0) throw malformed("absent number must be zero");
+    return null;
+  }
   attribution(): Attribution {
     switch (this.u8()) {
       case 0:
@@ -260,6 +283,23 @@ export function encode(message: Message): Uint8Array<ArrayBuffer> {
       }
       break;
     }
+    case "readDisclosure":
+      w.u8(tag.READ_DISCLOSURE);
+      break;
+    case "disclosure":
+      if (message.embargoes.length > limits.MAX_WANT) throw exceeded("count exceeds limit");
+      w.u8(tag.DISCLOSURE);
+      w.u8(message.delayed ? 1 : 0);
+      w.u8(message.delay === null ? 0 : 1);
+      w.u64(message.delay ?? 0);
+      w.u64(message.frontier);
+      w.u32(message.embargoes.length);
+      for (const { version, until } of message.embargoes) {
+        w.u64(version);
+        w.u8(until === null ? 0 : 1);
+        w.u64(until ?? 0);
+      }
+      break;
     case "error": {
       w.u8(tag.ERROR);
       w.short(message.code);
@@ -336,6 +376,19 @@ export function decode(body: Uint8Array): Message {
         throw malformed("absent publication must be empty");
       }
       message = { type: "attributed", number, publication };
+      break;
+    }
+    case tag.READ_DISCLOSURE:
+      message = { type: "readDisclosure" };
+      break;
+    case tag.DISCLOSURE: {
+      const delayed = r.flag();
+      const delay = r.optionalU64();
+      const frontier = r.u64();
+      const n = r.count(limits.MAX_WANT);
+      const embargoes = [];
+      for (let i = 0; i < n; i++) embargoes.push({ version: r.u64(), until: r.optionalU64() });
+      message = { type: "disclosure", delayed, delay, frontier, embargoes };
       break;
     }
     case tag.ERROR: {

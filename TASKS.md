@@ -30,6 +30,18 @@ CI left open. Work from it, in roughly this order:
   - [ ] Apply named groups from the control plane.
 - [ ] Path audiences, disclosure delay, embargo and the public frontier on the node, CLI
   and forge.
+  - [x] Disclosure delay, embargo and the public frontier on the node (`disclosure.rs`,
+    format 11 `object_access.since`), CLI (`javelin frontier`, `delay`, `embargo`) and forge
+    (frontier as the head, "delayed" notice). Tests: `crates/javelin-node/tests/wire_frontier.rs`,
+    `apps/forge/test/frontier.test.ts`. macOS only; Linux and Windows unverified.
+  - [x] Trail 3's `ListRequests`, `ReadReview` and `LayerCreate` refuse callers without a
+    role before any lookup; signed-out `attach` and `sync` stop at the frontier
+    (`wire_frontier.rs`, `crates/javelin-cli/tests/frontier.rs`).
+  - [ ] Outside contributors (signed in, no role) are refused every Layer, Publish Request and
+    check message so none can name a held version. Let them reach their own Layers, based
+    at or below the frontier, once a Layer records who created it.
+  - [ ] `--embargo` on `javelin request publish`; until then `javelin embargo --operation ID`
+    precedes the Publish.
 - [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
@@ -50,7 +62,19 @@ CI left open. Work from it, in roughly this order:
   `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
 - [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
   and `revise` upload a Layer to the node.
-- [ ] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker.
+- [x] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker
+  (`feat/node-core-wasm`). `javelin` without `fs` and `javelin-node` without `native` build
+  for wasm32; `Storage`/`Coordination` in `crates/javelin-node/src/storage.rs`; the Durable
+  Object runs the core with SQLite on a page-row VFS (`crates/javelin-node-cloudflare`).
+  Conformance (admin + protocol v2) passes on the self-hosted node, `wrangler dev` and the
+  deployed Worker; parity test in `crates/javelin-node-cloudflare/tests/parity.rs`; Free-plan
+  measurements in `tools/node-cloudflare/README.md`. TypeScript node and `tools/spike-do` deleted.
+  - [x] Requests and sync (trail 3) and the public frontier (trail 19) folded into the core:
+    request reads, delay, embargo and release, frontier filtering and `LayerCreate` run in
+    the Durable Object; parity and the wire conformance cover a request loop and a held
+    version.
+  - [ ] Rerun the hosted acceptance `target_*` now that `LayerCreate` reaches a remote node.
+  - [ ] Fork on the Cloudflare node (`NodeLink::fork` across two objects).
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
 - [x] Forge live on Vercel at https://javelin-codes.vercel.app (Hobby, CLI deploys with

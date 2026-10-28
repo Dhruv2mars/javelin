@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "./build.sh",
     "typecheck": "tsc -p .",
     "dev": "wrangler dev --port 18788",
     "test": "bun run test/run.ts",

@@ -1,15 +1,24 @@
 //! Native immutable repository storage, Layers, Stack and whole-Layer Publish.
 //! Layers are plain directories cloned from an immutable World base and captured
 //! without a daemon (docs/workspace-approach.md).
+//!
+//! Without the default `fs` feature the crate is the node core: everything below except the
+//! workspace, capture, adoption, attachment and outbox modules, over SQLite connections the
+//! caller opens (`Repository::init_on`). It touches no filesystem and builds for
+//! wasm32-unknown-unknown, where a Durable Object runs it (`crates/javelin-node-cloudflare`).
 
+#[cfg(feature = "fs")]
 mod adopt;
+#[cfg(feature = "fs")]
 mod attach;
 mod audience;
 mod blame;
+#[cfg(feature = "fs")]
 pub mod capture;
 mod domain;
 mod ignore;
 mod layer;
+#[cfg(feature = "fs")]
 pub mod outbox;
 mod publish;
 mod radar;
@@ -17,13 +26,17 @@ mod repository;
 mod seal;
 mod stack;
 pub mod tree;
+#[cfg(feature = "fs")]
 mod workspace;
 
+#[cfg(feature = "fs")]
 pub use adopt::Adoption;
+#[cfg(feature = "fs")]
 pub use attach::{Attachment, RemoteHead};
 pub use audience::{Audience, MAX_POLICY_BYTES, MAX_RULES, POLICY_PATH, Policy, Reader};
 pub use blame::{Actor, BlameLine, LineBlame, Origin, PathBlame, Provenance};
-pub use capture::{Capture, CheckpointSink};
+#[cfg(feature = "fs")]
+pub use capture::Capture;
 pub use domain::{
     Choice, FileEntry, MAX_DEPTH, MAX_PATH, Manifest, ObjectId, OperationId, RepoPath,
     SparseChanges, VersionHasher, VersionNumber, genesis_version_id,
@@ -34,8 +47,9 @@ pub use layer::{
 };
 pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
-pub use repository::{AdvanceOutcome, IntegrityReport, Repository, WorldVersion};
+pub use repository::{AdvanceOutcome, CheckpointSink, IntegrityReport, Repository, WorldVersion};
 pub use seal::{Opening, SALT_BYTES, SealedKind};
+#[cfg(feature = "fs")]
 pub use workspace::{
     BaseReport, BaseSource, CloneReport, CloneStrategy, LayerWorkspace, WorkspaceDiscard,
     WorkspaceRecovery, WorkspaceRefresh, WorkspaceReport,

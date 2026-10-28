@@ -36,6 +36,18 @@ test("every read message round-trips", () => {
       number: 3,
       publication: { layer: "docs", attribution: { kind: "agent", context: id(9), allowMissingTrace: false } },
     },
+    { type: "readDisclosure" },
+    { type: "disclosure", delayed: true, delay: null, frontier: 4, embargoes: [] },
+    {
+      type: "disclosure",
+      delayed: true,
+      delay: 604800,
+      frontier: 2,
+      embargoes: [
+        { version: 3, until: null },
+        { version: 5, until: 1_900_000_000 },
+      ],
+    },
     { type: "error", code: "forbidden", detail: "a browser origin may only send read messages" },
   ];
   for (const message of messages) expect(decode(encode(message))).toEqual(message);
@@ -44,6 +56,16 @@ test("every read message round-trips", () => {
 test("encodings match the Rust codec byte for byte", () => {
   // Resolve { version: None }: tag 0x40, a zero flag, eight zero bytes.
   expect(encode({ type: "resolve", version: null })).toEqual(hex("40000000000000000000"));
+  // ReadDisclosure is its tag. An outsider's Disclosure: delayed, no delay, frontier 2, no
+  // embargoes.
+  expect(encode({ type: "readDisclosure" })).toEqual(hex("48"));
+  expect(decode(hex(`4901000000000000000000${"00000000000000" + "02"}00000000`))).toEqual({
+    type: "disclosure",
+    delayed: true,
+    delay: null,
+    frontier: 2,
+    embargoes: [],
+  });
   // Attributed for World 2 from the agent Layer `second` with the missing-trace override,
   // as `javelin-node` sent it.
   const fromNode = hex(`45000000000000000201067365636f6e640100${"00".repeat(32)}01`);

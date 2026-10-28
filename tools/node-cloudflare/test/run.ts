@@ -1,7 +1,8 @@
 // `bun run test`: the managed node's checks on workerd, end to end.
 //   1. start `wrangler dev` with fresh state and a random admin token (it is the only child
-//      this script kills);
-//   2. run the Rust conformance suite against it (`crates/javelin-node-worker/tests/workerd.rs`);
+//      this script kills); wrangler builds the Rust node core to wasm first (`build.sh`);
+//   2. run the Rust conformance suite against it, admin routes and protocol version 2
+//      (`crates/javelin-node-worker/tests/workerd.rs`);
 //   3. build the `javelin` CLI and run `repo create --provider cloudflare` end to end: a crash
 //      before provisioning, then a retry with the same operation ID, then an idempotent repeat.
 import { mkdtemp, rm } from "node:fs/promises";
@@ -32,7 +33,7 @@ function check(condition: boolean, what: string) {
 }
 
 async function waitForNode(): Promise<void> {
-  for (let attempt = 0; attempt < 120; attempt++) {
+  for (let attempt = 0; attempt < 600; attempt++) {
     try {
       if ((await fetch(`${base}/healthz`)).ok) return;
     } catch {
@@ -68,7 +69,7 @@ try {
     { JAVELIN_NODE_URL: base, JAVELIN_NODE_ADMIN_TOKEN: adminToken },
   );
   if (suite.code !== 0) throw new Error(`conformance failed:\n${suite.stdout}\n${suite.stderr}`);
-  check(/2 passed/.test(suite.stdout), "Rust conformance suite passes against workerd");
+  check(/3 passed/.test(suite.stdout), "Rust conformance suite passes against workerd");
 
   // 2. `repo create` end to end with the javelin CLI.
   const build = await run(["cargo", "build", "--locked", "-p", "javelin-cli"], repoRoot);

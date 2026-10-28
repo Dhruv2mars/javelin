@@ -12,8 +12,6 @@
 //! fetch path is guarded by `refuse_wire_fetch`, because `Get` would otherwise return a
 //! restricted trace's bytes to anyone who knows its ID.
 
-use std::path::Path;
-
 use javelin::{ObjectId, Repository};
 use javelin_collaboration::Role;
 use javelin_identity::{Need, Scope};
@@ -27,7 +25,8 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::auth::Gate;
 
 /// Restricted traces, by object ID. A trace absent from this table inherits.
-const RESTRICTED: &str = "restricted_traces";
+pub(crate) const SCHEMA: &str =
+    "CREATE TABLE IF NOT EXISTS restricted_traces (trace TEXT PRIMARY KEY);";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraceVisibility {
@@ -37,18 +36,14 @@ pub enum TraceVisibility {
     Restricted,
 }
 
-pub struct Traces {
-    db: Connection,
+/// The trace store in the node's `node.db`, which holds `SCHEMA`.
+pub struct Traces<'a> {
+    db: &'a Connection,
 }
 
-impl Traces {
-    /// Opens the trace store in `path`, which is the node's `node.db`.
-    pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let db = Connection::open(path)?;
-        db.execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS {RESTRICTED} (trace TEXT PRIMARY KEY);"
-        ))?;
-        Ok(Self { db })
+impl<'a> Traces<'a> {
+    pub(crate) fn new(db: &'a Connection) -> Self {
+        Self { db }
     }
 
     pub fn visibility(&self, trace: ObjectId) -> Result<TraceVisibility, ProtocolError> {
@@ -132,14 +127,28 @@ impl Traces {
         Ok(repo.read_blob_bounded(trace, MAX_BLOB)?)
     }
 
-    /// Refuses a fetch that names a restricted trace. The wire carries no caller identity yet,
-    /// so every fetch is anonymous, and an anonymous caller never reads a restricted trace.
-    pub fn refuse_wire_fetch(&self, message: &Message) -> Result<(), ProtocolError> {
+    /// Refuses a fetch that names a restricted trace `reader` could otherwise read. The wire
+    /// carries no caller identity yet, so every fetch is anonymous, and an anonymous caller
+    /// never reads a restricted trace.
+    pub fn refuse_wire_fetch(
+        &self,
+        repo: &Repository,
+        reader: &javelin::Reader,
+        message: &Message,
+    ) -> Result<(), ProtocolError> {
         let Message::Get(items) = message else {
             return Ok(());
         };
         for (kind, trace) in items {
-            if *kind == Kind::Blob && self.visibility(*trace)? == TraceVisibility::Restricted {
+            // A trace the reader may not read at all, such as one only a version above its
+            // frontier publishes, is left to `Get`, which answers it as never stored. One the
+            // reader uploaded is served back: it already holds the bytes, and refusing it would
+            // confirm a restricted trace with those bytes exists.
+            if *kind == Kind::Blob
+                && self.visibility(*trace)? == TraceVisibility::Restricted
+                && repo.readable(*trace, reader)?
+                && !repo.uploaded(*trace, reader)?
+            {
                 return Err(restricted());
             }
         }

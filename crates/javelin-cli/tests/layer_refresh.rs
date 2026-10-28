@@ -161,14 +161,15 @@ impl Read for Link {
 }
 
 fn javelin(cwd: &Path, args: &[&str]) -> Output {
-    // No sign-in and no token: the public node is read anonymously.
+    // The owner's token: a Layer is work above the public frontier, so reading its head
+    // needs a role in the repository.
     Command::new(env!("CARGO_BIN_EXE_javelin"))
         .current_dir(cwd)
         .env(
             "JAVELIN_HOME",
             std::env::temp_dir().join("javelin-test-signed-out"),
         )
-        .env_remove("JAVELIN_TOKEN")
+        .env("JAVELIN_TOKEN", wire_support::token("demo"))
         .args(args)
         .output()
         .unwrap()

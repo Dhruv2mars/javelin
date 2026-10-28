@@ -34,3 +34,18 @@ steps:
       curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
       useradd -m ci && chown -R ci:ci .
       su ci -c '/usr/local/package/bin/bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin --seed target/release/examples/gate2_seed --dir /tmp/gate2 --fs overlay --expect copy --out /tmp/gate2.json --only crash'
+
+  - label: ":cloudflare: node core for wasm"
+    key: wasm
+    agents: { queue: linux-small }
+    timeout_in_minutes: 30
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          environment: [CARGO_TERM_COLOR=never]
+    # The Cloudflare node's wasm module, SQLite included (clang and llvm-ar build it). The
+    # Worker glue (wasm-bindgen) and wrangler run where the node is deployed, not here.
+    command: |
+      apt-get update -qq && apt-get install -y -qq clang llvm > /dev/null
+      rustup target add wasm32-unknown-unknown
+      AR_wasm32_unknown_unknown=llvm-ar cargo build --locked --release --target wasm32-unknown-unknown -p javelin-node-cloudflare

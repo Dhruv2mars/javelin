@@ -65,7 +65,8 @@ and a self-hosted node has the durability of its one disk. This replaces the con
 "quorum-replicated log" wording.
 
 The node core is one Rust implementation. Each provider is an adapter behind its storage
-and coordination traits. The TypeScript Worker is a stopgap until the core builds for wasm.
+and coordination traits (`crates/javelin-node/src/storage.rs`). On Cloudflare the core runs
+compiled to wasm inside the Durable Object (`crates/javelin-node-cloudflare`, since 2026-10-28).
 
 ## Publishing
 

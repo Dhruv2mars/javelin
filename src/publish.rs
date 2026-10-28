@@ -199,7 +199,7 @@ impl Repository {
                         ..
                     } = attribution
                     {
-                        crate::repository::grant_public_in(&tx, *trace)?;
+                        crate::repository::grant_public_in(&tx, *trace, version.number)?;
                     }
                     crate::blame::record_in(&tx, expected.layer(), version.number, &plain)?;
                     crate::radar::untrack_in(&tx, expected.layer())?;

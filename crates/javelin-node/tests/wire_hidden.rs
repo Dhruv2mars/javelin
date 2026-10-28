@@ -177,7 +177,7 @@ fn reads_follow_the_callers_role() {
     let public_edit = append(&mut log, "public", &[("src/a", Some(b"b\n"))]);
     let (owner, member) = (token(REPO), token_for("member", REPO));
     let stranger = token_for("stranger", REPO);
-    let (addr, server) = start(&dir, log, 16);
+    let (addr, server) = start(&dir, log, 17);
     let open = Message::Open(vec![env, internal]);
     let opened = |reply: Message| match reply {
         Message::Opened(openings) => openings.into_iter().map(|(c, _)| c).collect::<Vec<_>>(),
@@ -192,15 +192,18 @@ fn reads_follow_the_callers_role() {
         error(send(addr, None, &get(Kind::Blob, notes))).0,
         "missing_object"
     );
-    assert_eq!(
-        error(send(addr, None, &get(Kind::Checkpoint, hidden_edit))).0,
-        "missing_object"
-    );
-    assert!(served(send(
-        addr,
-        None,
-        &get(Kind::Checkpoint, public_edit)
-    )));
+    // A Layer is work above the public frontier: an outsider reads no checkpoint, and is
+    // refused before anything is looked up, so the refusal says nothing about either.
+    for checkpoint in [
+        hidden_edit,
+        public_edit,
+        ObjectId::for_checkpoint(b"{}never"),
+    ] {
+        assert_eq!(
+            error(send(addr, None, &get(Kind::Checkpoint, checkpoint))).0,
+            "forbidden"
+        );
+    }
     // A public repository lets any signed-in caller read, but without a granted role the
     // caller is still an outsider.
     assert!(opened(send(addr, Some(&stranger), &open)).is_empty());
@@ -290,13 +293,13 @@ fn an_edit_made_while_hidden_stays_hidden_after_the_rule_is_removed() {
     let never = ObjectId::for_checkpoint(b"{}never");
     let (code, detail) = error(send(
         addr,
-        None,
+        Some(&member),
         &Message::Get(vec![(Kind::Checkpoint, never)]),
     ));
     assert_eq!(
         error(send(
             addr,
-            None,
+            Some(&member),
             &Message::Get(vec![(Kind::Checkpoint, secret)])
         )),
         (
@@ -305,7 +308,11 @@ fn an_edit_made_while_hidden_stays_hidden_after_the_rule_is_removed() {
         )
     );
     assert!(matches!(
-        send(addr, None, &Message::Get(vec![(Kind::Checkpoint, public)])),
+        send(
+            addr,
+            Some(&member),
+            &Message::Get(vec![(Kind::Checkpoint, public)])
+        ),
         Message::Objects(objects) if objects.len() == 1
     ));
     assert_eq!(
