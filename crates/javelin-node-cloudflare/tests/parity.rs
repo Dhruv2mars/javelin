@@ -744,11 +744,11 @@ fn the_rows_counted_are_the_rows_the_object_writes() {
 }
 
 /// Files at `count` paths in nested directories, for a Publish that composes many trees.
-fn many_files(name: &str, count: usize) -> Vec<(String, Vec<u8>)> {
+fn many_files(name: &str, count: usize, prefix: &str) -> Vec<(String, Vec<u8>)> {
     (0..count)
         .map(|i| {
             (
-                format!("d{}/e{}/{name}{i}.txt", i % 10, i % 7),
+                format!("{prefix}d{}/e{}/{name}{i}.txt", i % 10, i % 7),
                 format!("{name} {i}\n").into_bytes(),
             )
         })
@@ -771,13 +771,19 @@ fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
         gate: gate(),
         seen: Vec::new(),
     };
-    for meter in [STORAGE_BYTES, ROWS_WRITTEN_PER_DAY] {
+    // Paths near the longest allowed, which the changeset and blame each store.
+    let long = format!("{}/", vec!["p".repeat(250); 15].join("/"));
+    for (meter, prefix) in [
+        (STORAGE_BYTES, ""),
+        (ROWS_WRITTEN_PER_DAY, ""),
+        (STORAGE_BYTES, long.as_str()),
+    ] {
         // Fresh writes for each meter, prepared under the default budget.
         set(storage, &mut s, Budget::default());
-        let name = format!("wide-{}", meter.len());
-        let files = many_files(&name, 200);
+        let name = format!("wide-{}-{}", meter.len(), prefix.len());
+        let files = many_files(&name, if prefix.is_empty() { 60 } else { 100 }, prefix);
         let wide = s.layer_with(&name, 0, &as_refs(&files));
-        let blobs: Vec<_> = (0..100)
+        let blobs: Vec<_> = (0..60)
             .map(|i| {
                 let bytes = format!("small {meter} {i}\n").into_bytes();
                 (Kind::Blob, ObjectId::for_blob(&bytes), bytes)
@@ -801,7 +807,7 @@ fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
                 set(storage, &mut s, budget);
                 let reply = s.send(Some("owner"), &write);
                 if matches!(&reply, Message::Error { code, .. } if code == "quota_exceeded") {
-                    headroom = (headroom + step).max(headroom * 5 / 4);
+                    headroom = (headroom + step).max(headroom * 3 / 2);
                     continue;
                 }
                 assert!(!matches!(reply, Message::Error { .. }), "{reply:?}");
@@ -813,7 +819,8 @@ fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
                 break;
             }
         }
-        // The Publish replays with no budget left at all.
+        // With no budget left at all, the decided Publish replays, and a new Publish, even
+        // one that would only record a refusal, writes nothing.
         set(
             storage,
             &mut s,
@@ -834,7 +841,77 @@ fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
             ),
             "{replay:?}"
         );
+        let before = usage_of(&mut s);
+        let unknown = s.send(Some("owner"), &publish("none", "publish-none", wide, 0));
+        quota(&unknown);
+        assert_eq!(usage_of(&mut s), before, "a refused Publish writes nothing");
     }
+}
+
+/// A Publish Request refused by the budget leaves nothing behind, not even its revision's
+/// Layer, and publishes once the budget is raised.
+fn request_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let files = many_files("r", 100, "");
+    let checkpoint = s.layer_with("review", 0, &as_refs(&files));
+    let request = RequestId::parse("pr-budget").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-budget"),
+            request: request.clone(),
+            layer: layer("review"),
+            checkpoint,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let publish = Message::PublishRequest {
+        operation: op("publish-budget"),
+        request,
+        revision: 1,
+        base: v(0),
+    };
+    // Room for the request's own records (16 pages), not for a Publish (64 pages and more).
+    let usage = usage_of(&mut s);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            storage_bytes: used(&usage, STORAGE_BYTES) + 40 * page,
+            ..Budget::default()
+        },
+    );
+    let before = usage_of(&mut s);
+    let refused = s.send(Some("owner"), &publish);
+    quota(&refused);
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "a refused Publish Request writes nothing, its revision's Layer included"
+    );
+    set(storage, &mut s, Budget::default());
+    let published = s.send(Some("owner"), &publish);
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { .. })
+        ),
+        "{published:?}"
+    );
+}
+
+#[test]
+fn a_publish_request_past_the_budget_leaves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    request_scenario(&native, &mut open(&native, &clock(now())), 4096);
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    request_scenario(&object, &mut open(&object, &clock(now())), 64 << 10);
 }
 
 #[test]

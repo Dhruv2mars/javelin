@@ -517,6 +517,7 @@ fn publish_checkpoint(
         }
         return outcome(receipt.outcome);
     }
+    let mut fresh = false;
     let head = match repo.layer_state(&layer) {
         // The Layer must hold the approved checkpoint, not whatever head it was created with.
         Ok(LayerState::Active { head }) if head.checkpoint().object() == revision.checkpoint() => {
@@ -525,20 +526,31 @@ fn publish_checkpoint(
         Ok(LayerState::Active { .. }) => return Ok(refused(code::LAYER_STALE)),
         Ok(LayerState::Published { .. }) => return Ok(refused(code::LAYER_PUBLISHED)),
         Ok(LayerState::Discarded { .. }) => return Ok(refused(refusal::LAYER_DISCARDED)),
+        // The revision's Layer is made here, so the clone and the Publish are bounded
+        // together first, measured without writing: a refusal leaves nothing.
         Err(Error::InvalidInput(_)) => {
             let checkpoint = CheckpointId::parse(&revision.checkpoint().to_string())?;
+            let attribution = PublishAttribution::Human;
+            if let Some(write) =
+                repo.clone_publish_write(&layer, checkpoint, operation, &attribution)?
+            {
+                room.publish(&write)?;
+            }
+            fresh = true;
             repo.clone_layer(&layer, checkpoint)?
         }
         Err(error) => return Err(error.into()),
     };
-    // A Publish the budget refuses leaves the revision's Layer, which a retry publishes.
     let mut crossed = None;
     let published = repo.publish_layer_bounded(
         operation,
         &head,
         &PublishAttribution::Human,
         |_, _| Ok(()),
-        |write| crate::budget::hold(room, write, &mut crossed),
+        |write| match fresh {
+            true => Ok(()),
+            false => crate::budget::hold(room, write, &mut crossed),
+        },
     );
     if let Some(refusal) = crossed {
         return Err(refusal);
@@ -709,6 +721,15 @@ fn link(prev: &str, epoch: u64, command: &[u8], reply: &[u8]) -> String {
     input.extend_from_slice(command);
     input.extend_from_slice(reply);
     ObjectId::for_blob(&input).to_string()
+}
+
+/// Whether the review partition recorded `operation`, so a retry of it replays.
+pub(crate) fn is_recorded(
+    conn: &Connection,
+    operation: &OperationId,
+) -> Result<bool, ProtocolError> {
+    ensure_schema(conn)?;
+    Ok(recorded(conn, operation)?.is_some())
 }
 
 fn recorded(conn: &Connection, operation: &OperationId) -> Result<Option<Recorded>, ProtocolError> {

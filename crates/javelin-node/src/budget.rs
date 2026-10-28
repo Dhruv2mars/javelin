@@ -155,7 +155,9 @@ impl Room {
     /// Refuses a prepared Publish whose bound would cross the budget. The detail carries the
     /// numbers; `wire::handle` keeps them for maintainers only.
     pub(crate) fn publish(&self, write: &javelin::PublishWrite) -> Result<(), ProtocolError> {
-        let bytes = write.bytes + (write.objects + write.paths) * OBJECT_BYTES;
+        // Each path is stored in the changeset and in blame, each with an index.
+        let bytes =
+            write.bytes + 4 * write.path_bytes + (write.objects + write.paths) * OBJECT_BYTES;
         self.fits(
             bytes + PUBLISH_RESERVE_ROWS * self.page_size,
             2 * bytes.div_ceil(ROW) + write.objects + PUBLISH_RESERVE_ROWS,
@@ -202,8 +204,8 @@ pub fn cost(message: &Message, body: usize, page_size: u64) -> (u64, u64) {
 }
 
 /// Refuses a write whose bound would cross the budget, before anything is stored. `body` is
-/// the request's length. A Publish passes here and is bounded once prepared (`Room::publish`),
-/// so its replay is never refused. A caller the gate refuses gets that refusal instead, so a
+/// the request's length. A decided Publish replays without a check; a new one is checked here
+/// and again once prepared (`Room::publish`). A caller the gate refuses gets that refusal instead, so a
 /// refusal never tells it more than the write would have. The detail carries the numbers;
 /// `wire::handle` keeps them for maintainers only.
 pub fn admit(
@@ -214,7 +216,7 @@ pub fn admit(
     message: &Message,
     body: usize,
 ) -> Result<(), ProtocolError> {
-    if !writes(message) {
+    if !writes(message) || replays(log, message)? {
         return Ok(());
     }
     let room = Room::now(log, now)?;
@@ -248,6 +250,22 @@ pub(crate) fn hold(
         let detail = refusal.detail.clone();
         *crossed = Some(refusal);
         javelin::Error::InvalidInput(detail)
+    })
+}
+
+/// Whether `message` is a Publish already decided, which replays its recorded outcome
+/// however little budget is left. A new one is admitted here for the records any outcome
+/// writes, and bounded again once prepared (`Room::publish`).
+fn replays(log: &FileWorldLog, message: &Message) -> Result<bool, ProtocolError> {
+    Ok(match message {
+        Message::PublishLayer { operation, .. } => {
+            log.decided(operation)?.is_some() || log.repo().publication(operation)?.is_some()
+        }
+        Message::PublishRequest { operation, .. } => {
+            crate::review::is_recorded(log.records(), operation)?
+                || log.repo().publication(operation)?.is_some()
+        }
+        _ => false,
     })
 }
 
@@ -311,8 +329,7 @@ fn rows_today(records: &Connection, now: u64) -> Result<u64, ProtocolError> {
     Ok(rows.unwrap_or(0).max(0) as u64)
 }
 
-/// Messages that store something, besides a Publish. Reads, `Want` among them, are never
-/// refused here.
+/// Messages that store something. Reads, `Want` among them, are never refused here.
 fn writes(message: &Message) -> bool {
     matches!(
         message,
@@ -321,6 +338,8 @@ fn writes(message: &Message) -> bool {
             | Message::LayerAppend { .. }
             | Message::LayerStack { .. }
             | Message::LayerTake { .. }
+            | Message::PublishLayer { .. }
+            | Message::PublishRequest { .. }
             | Message::OpenRequest { .. }
             | Message::Revise { .. }
             | Message::Approve { .. }

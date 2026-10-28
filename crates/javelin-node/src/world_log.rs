@@ -338,7 +338,7 @@ impl FileWorldLog {
             && self.base_of(&receipt.expected)? == base)
     }
 
-    fn decided(
+    pub(crate) fn decided(
         &self,
         operation: &OperationId,
     ) -> std::result::Result<Option<Decided>, ProtocolError> {

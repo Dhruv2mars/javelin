@@ -103,12 +103,65 @@ impl PublicationReceipt {
 }
 
 /// What a Publish is about to write: the bytes of its new tree and view chunks, how many
-/// objects and openings it inserts, and how many paths its changeset touches.
+/// objects and openings it inserts, and the paths its changeset touches, by count and by
+/// their bytes, which its changeset and blame each store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PublishWrite {
     pub bytes: u64,
     pub objects: u64,
     pub paths: u64,
+    pub path_bytes: u64,
+}
+
+impl PublishWrite {
+    fn of(
+        chunks: &[(ObjectId, Vec<u8>)],
+        view_chunks: &[(ObjectId, Vec<u8>)],
+        openings: &[(crate::Opening, crate::Audience)],
+        plain: &SparseChanges,
+    ) -> Self {
+        Self {
+            bytes: chunks
+                .iter()
+                .chain(view_chunks)
+                .map(|(_, bytes)| bytes.len() as u64)
+                .sum(),
+            objects: (chunks.len() + view_chunks.len() + openings.len()) as u64,
+            paths: plain.entries().len() as u64,
+            path_bytes: plain
+                .entries()
+                .keys()
+                .map(|path| path.as_str().len() as u64)
+                .sum(),
+        }
+    }
+}
+
+/// What publishing `checkpoint` as the new Layer `layer` would write, without writing it: the
+/// clone and the Publish are prepared in a transaction that is rolled back. `None` when the
+/// Publish would not make a version (a replay, a stale Layer or a conflict).
+pub(crate) fn clone_write_in(
+    conn: &Connection,
+    layer: &LayerId,
+    checkpoint: crate::CheckpointId,
+    operation: &OperationId,
+    attribution: &PublishAttribution,
+) -> Result<Option<PublishWrite>> {
+    let head = crate::layer::clone_in(conn, layer, checkpoint)?;
+    Ok(match prepare_in(conn, operation, &head, attribution)? {
+        Prepared::Advance(Plan {
+            composed:
+                Some(Ok(Candidate {
+                    plain,
+                    view_chunks,
+                    chunks,
+                    openings,
+                    ..
+                })),
+            ..
+        }) => Some(PublishWrite::of(&chunks, &view_chunks, &openings, &plain)),
+        _ => None,
+    })
 }
 
 impl Repository {
@@ -206,15 +259,7 @@ impl Repository {
                     let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &plain)?;
                     let bound = bound.take().expect("bound runs at most once");
-                    bound(&PublishWrite {
-                        bytes: chunks
-                            .iter()
-                            .chain(&view_chunks)
-                            .map(|(_, bytes)| bytes.len() as u64)
-                            .sum(),
-                        objects: (chunks.len() + view_chunks.len() + openings.len()) as u64,
-                        paths: plain.entries().len() as u64,
-                    })?;
+                    bound(&PublishWrite::of(&chunks, &view_chunks, &openings, &plain))?;
                     let number = crate::repository::next_number(against.number)?;
                     tx.execute(
                         "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",
