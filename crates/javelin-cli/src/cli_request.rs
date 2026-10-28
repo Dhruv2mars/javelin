@@ -23,7 +23,8 @@ use std::{
 };
 
 use javelin::{
-    Attachment, Error, LayerId, ObjectId, OperationId, RemoteHead, Repository, VersionNumber,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository,
+    VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
 };
 use javelin_protocol::{
@@ -38,7 +39,7 @@ use serde_json::{Value, json};
 use crate::{
     CliError,
     cli::Output,
-    cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, unexpected},
+    cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, stale_appends, unexpected},
     cli_upload::{
         create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
@@ -233,6 +234,15 @@ fn open(args: Vec<OsString>) -> Outcome {
     .map_err(CliError::Remote)?;
     let revision = review_outcome(reply)?;
     save_record(&attached.root, &request, &layer, &base, &node.bytes)?;
+    if let LayerState::Active { head } = attached.repo.layer_state(&layer)? {
+        crate::cli_stream::remember(
+            &attached.root,
+            &attached.attachment,
+            &layer,
+            &node.bytes,
+            head.revision(),
+        );
+    }
     let value = json!({
         "ok": true,
         "command": "request open",
@@ -294,13 +304,18 @@ fn revise(args: Vec<OsString>) -> Outcome {
         };
         let (head, bytes, online) = match state {
             Ok((head, bytes)) => (head, bytes, true),
-            Err(error) if error.code == code::NODE_UNAVAILABLE => match &record {
-                Some(record) if record.layer == layer => (
+            // Captures since the last revision may have queued appends: their head comes first.
+            Err(error) if error.code == code::NODE_UNAVAILABLE => match (
+                crate::cli_stream::expected_head(&attached.root, &outbox, &layer),
+                &record,
+            ) {
+                (Some(head), _) => (ObjectId::for_checkpoint(&head), head, false),
+                (None, Some(record)) if record.layer == layer => (
                     ObjectId::for_checkpoint(&record.head),
                     record.head.clone(),
                     false,
                 ),
-                _ => {
+                (None, _) => {
                     return Err(CliError::Remote(RemoteError::new(
                         code::NODE_UNAVAILABLE,
                         format!(
@@ -314,13 +329,22 @@ fn revise(args: Vec<OsString>) -> Outcome {
             },
             Err(error) => return Err(CliError::Remote(error)),
         };
+        let since = outbox.entries().map(|entry| entry.seq).max().unwrap_or(0);
         let mut records = Vec::new();
         let (checkpoint, next) = if Repository::foreign_checkpoint_changes(&bytes)? == changes {
             (head, bytes)
         } else {
             let next = Repository::foreign_capture(&bytes, &changes)?;
             let link = online.then_some(&link);
-            records.extend(uploads(link, &attached.repo, &changes, &layer, &operation)?);
+            let have = Repository::foreign_checkpoint_changes(&bytes)?;
+            records.extend(uploads(
+                link,
+                &attached.repo,
+                &changes,
+                &have,
+                &layer,
+                &operation,
+            )?);
             records.push((
                 Record::Append,
                 layer.as_str().to_owned(),
@@ -352,6 +376,9 @@ fn revise(args: Vec<OsString>) -> Outcome {
             outbox.enqueue(*kind, scope, operation, payload)?;
         }
         save_record(&attached.root, &request, &layer, &base, &next)?;
+        if let LayerState::Active { head } = attached.repo.layer_state(&layer)? {
+            crate::cli_stream::remember_in(&attached.root, since, &layer, &next, head.revision())?;
+        }
     }
     let delivered = deliver(&attached, &mut outbox, Record::Revise, &operation)?;
     let base_value = json!({
@@ -367,7 +394,15 @@ fn revise(args: Vec<OsString>) -> Outcome {
             format!("Revision of request {}", request.as_str()),
         )),
         Delivery::Done(reply) => {
-            let revision = review_outcome(reply)?;
+            let revision = match review_outcome(reply) {
+                // The append before it was answered as stale: another device took the Layer.
+                Err(CliError::Remote(error)) if error.code == code::MISSING_OBJECT => {
+                    return Err(CliError::Remote(
+                        taken_elsewhere(&outbox, &attached.repo, &operation).unwrap_or(error),
+                    ));
+                }
+                revision => revision?,
+            };
             let mut value = base_value;
             value["ok"] = json!(true);
             value["queued"] = json!(false);
@@ -376,6 +411,31 @@ fn revise(args: Vec<OsString>) -> Outcome {
             Ok((value, text, 0))
         }
     }
+}
+
+/// `layer_stale` when the node answered revise `operation`'s append as stale: the Layer moved
+/// on the node, usually by `javelin layer take` on another device. The append stays in the
+/// outbox, and its local head is the work to keep.
+fn taken_elsewhere(
+    outbox: &Outbox,
+    repo: &Repository,
+    operation: &OperationId,
+) -> Option<RemoteError> {
+    let append = derived("append", operation);
+    let stale = stale_appends(outbox, repo)
+        .into_iter()
+        .find(|record| record["operation"] == append.as_str())?;
+    let layer = stale["layer"].as_str().unwrap_or_default();
+    let keep = stale["local_head"].as_str().map_or(String::new(), |head| {
+        format!("; keep this clone's work with `javelin layer clone NEW --checkpoint {head}`")
+    });
+    Some(RemoteError::new(
+        code::LAYER_STALE,
+        format!(
+            "Layer {layer} moved on the node, perhaps by `javelin layer take` on another \
+             device, so the revision was not recorded{keep}"
+        ),
+    ))
 }
 
 /// `request comment ID --body TEXT --operation OP [--revision N]`
@@ -548,8 +608,11 @@ fn publish(args: Vec<OsString>) -> Outcome {
             let names: Vec<_> = paths.iter().map(|path| path.as_str()).collect();
             let text = format!(
                 "Conflict: the World changed these paths since the revision's base: {}. The \
-                 author revises the request over them.",
-                names.join(", ")
+                 author runs `javelin sync`, redoes the change in a Layer over the new head \
+                 (`javelin workspace create NEW`), and runs `javelin request revise {} \
+                 --revision {revision} --layer NEW --operation OP`.",
+                names.join(", "),
+                request.as_str()
             );
             Ok((value, text, 3))
         }

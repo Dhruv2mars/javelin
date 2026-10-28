@@ -250,12 +250,26 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
     )?;
     let visibility = if created.public { "public" } else { "private" };
     let text = if created.created {
-        format!(
+        let mut text = format!(
             "Repository {owner}/{name} ready: {} ({visibility}, publish {}, epoch {}, empty World 0).",
             created.repository,
             created.publish.as_str(),
             created.epoch
-        )
+        );
+        // A self-hosted repository lives in the control plane's directory until it is served.
+        if !cloudflare {
+            let id = &created.repository;
+            let dir = if remote {
+                format!("CONTROL_DIR/nodes/{id}")
+            } else {
+                control_dir()?.join("nodes").join(id).display().to_string()
+            };
+            text.push_str(&format!(
+                "\nServe it on the control plane's machine with\n  javelin-node serve {dir} {id} \
+                 127.0.0.1:PORT\nthen attach with `javelin attach http://127.0.0.1:PORT/{id} DIR`."
+            ));
+        }
+        text
     } else {
         format!(
             "Operation {operation} already created {owner}/{name}: {} (epoch {}).",
@@ -282,9 +296,17 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
 /// The control plane: over HTTP at `JAVELIN_CONTROL_URL`, else in process at the control
 /// directory.
 pub(crate) fn control() -> Result<Box<dyn Control>, ControlError> {
-    match env::var("JAVELIN_CONTROL_URL") {
-        Ok(url) => Ok(Box::new(RemoteControl::new(&url)?)),
-        Err(_) => Ok(Box::new(ControlPlane::open(&control_dir()?)?)),
+    control_until(None)
+}
+
+/// [`control`], whose calls over HTTP give up at `deadline`, when there is one.
+pub(crate) fn control_until(
+    deadline: Option<std::time::Instant>,
+) -> Result<Box<dyn Control>, ControlError> {
+    match (env::var("JAVELIN_CONTROL_URL"), deadline) {
+        (Ok(url), Some(deadline)) => Ok(Box::new(RemoteControl::until(&url, deadline)?)),
+        (Ok(url), None) => Ok(Box::new(RemoteControl::new(&url)?)),
+        (Err(_), _) => Ok(Box::new(ControlPlane::open(&control_dir()?)?)),
     }
 }
 

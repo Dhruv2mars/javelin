@@ -875,16 +875,21 @@ impl Repository {
             let update = self.capture_layer(&operation, &head, &changes)?;
             (Some(update), Some(operation))
         };
-        let upload = match (&update, &operation) {
-            (Some(LayerUpdate::Applied { .. }), Some(operation)) => match self.sink.take() {
-                Some(mut sink) => {
-                    let result = sink.upload(self, operation, &head, &changes);
-                    self.sink = Some(sink);
-                    Some(result)
-                }
-                None => None,
-            },
-            _ => None,
+        let upload = match (&update, &operation, self.sink.take()) {
+            (Some(LayerUpdate::Applied { .. }), Some(operation), Some(mut sink)) => {
+                let result = sink.upload(self, operation, &head, &changes);
+                self.sink = Some(sink);
+                Some(result)
+            }
+            (None, None, Some(mut sink)) => {
+                let result = sink.unchanged(self, &head);
+                self.sink = Some(sink);
+                result
+            }
+            (_, _, sink) => {
+                self.sink = sink;
+                None
+            }
         };
         Ok(Capture {
             update,

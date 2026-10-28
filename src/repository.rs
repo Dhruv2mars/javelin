@@ -159,6 +159,16 @@ pub trait CheckpointSink {
         before: &crate::LayerHead,
         changes: &SparseChanges,
     ) -> std::result::Result<(), String>;
+
+    /// Told about a capture that found the directory at `head` and recorded nothing, so
+    /// uploads that are still queued can go out. `None` when the sink has nothing to report.
+    fn unchanged(
+        &mut self,
+        _source: &Repository,
+        _head: &crate::LayerHead,
+    ) -> Option<std::result::Result<(), String>> {
+        None
+    }
 }
 
 impl Repository {

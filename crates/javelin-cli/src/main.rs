@@ -10,6 +10,7 @@ mod cli_control;
 mod cli_disclosure;
 mod cli_remote;
 mod cli_request;
+mod cli_stream;
 mod cli_sync;
 mod cli_upload;
 
@@ -131,6 +132,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "request") {
         return cli_request::request(args.into_iter().skip(1).collect());
     }
+    if args.first().is_some_and(|a| a == "status") {
+        return cli_stream::status(args.into_iter().skip(1).collect());
+    }
     if args.first().is_some_and(|a| a == "sync") {
         return cli_sync::sync(args.into_iter().skip(1).collect());
     }
@@ -173,18 +177,25 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
         .ok_or_else(|| Error::InvalidInput(HELP.into()))?;
     if command != "init" && command != "history" && command != "check" {
         return Err(Error::InvalidInput(format!(
-            "unknown command {:?}; expected init, adopt, attach, sync, request, history, check, blame, checkpoint, layer, or workspace",
+            "unknown command {:?}; expected init, adopt, attach, sync, status, request, history, check, blame, checkpoint, layer, or workspace",
             command
         )));
     }
+    let usage = "expected one optional project directory, or --repo DIR, and --json";
+    // `--repo DIR` names the directory as every other command does.
     let root = match args.next() {
+        Some(flag) if flag == "--repo" => PathBuf::from(
+            args.next()
+                .ok_or_else(|| Error::InvalidInput(usage.into()))?,
+        ),
+        Some(path) if path.to_string_lossy().starts_with('-') => {
+            return Err(Error::InvalidInput(usage.into()));
+        }
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir()?,
     };
-    if root.as_os_str().to_string_lossy().starts_with('-') || args.next().is_some() {
-        return Err(Error::InvalidInput(
-            "expected one optional project directory and --json".into(),
-        ));
+    if args.next().is_some() {
+        return Err(Error::InvalidInput(usage.into()));
     }
     if command == "init" {
         let repo = Repository::init(&root)?;

@@ -1,5 +1,6 @@
 //! `javelin layer refresh` against a loopback node: after a Stack on the node, the local
-//! Layer and its workspace move to the Stack's head, and a later capture keeps it.
+//! Layer and its workspace move to the Stack's head, and a later capture keeps it and
+//! uploads after it.
 
 use std::{
     fs,
@@ -253,8 +254,13 @@ fn refresh_brings_the_layer_and_its_workspace_to_a_node_stack() {
     assert_eq!(fs::read(workspace.join("new.txt")).unwrap(), b"new\n");
     assert_eq!(fs::read(workspace.join("draft.txt")).unwrap(), b"draft\n");
 
-    // Capture after the refresh builds on the Stack's head rather than reverting it.
-    json(root.path(), &["checkpoint", "target", "--repo", repo], 0);
+    // Capture after the refresh builds on the Stack's head rather than reverting it, and
+    // uploads after it.
+    let captured = json(root.path(), &["checkpoint", "target", "--repo", repo], 0);
+    assert_eq!(
+        captured["capture"]["upload"]["status"], "uploaded",
+        "{captured}"
+    );
     let local = Repository::open(&project).unwrap();
     let head = active(&local, "target");
     assert_eq!(head.revision(), 3);
@@ -266,13 +272,14 @@ fn refresh_brings_the_layer_and_its_workspace_to_a_node_stack() {
     local.check().unwrap();
     drop(local);
 
-    // That capture never reached the node, so a refresh refuses to replace it.
-    let diverged = json(
+    // That capture reached the node as the next checkpoint after the Stack.
+    let current = json(
         root.path(),
         &["layer", "refresh", "target", "--repo", repo],
-        1,
+        0,
     );
-    assert_eq!(diverged["error"]["code"], "layer_diverged");
+    assert_eq!(current["status"], "current");
+    assert_eq!(current["node"]["seq"], seq + 1);
 }
 
 #[test]

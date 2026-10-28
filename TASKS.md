@@ -60,8 +60,15 @@ CI left open. Work from it, in roughly this order:
   revision's checkpoint only when the caller may read it. Evidence: `requests_sync.rs`
   `sync_and_request_show_follow_the_callers_audiences`,
   `a_sync_stopped_before_attach_json_is_finished_by_the_next_sync`, `layer_lease.rs`.
-- [ ] Checkpoint upload on capture (U5's CLI call site) is still missing: only `request open`
-  and `revise` upload a Layer to the node.
+- [x] Checkpoint upload on capture (U5's CLI call site): every capture on an attached Layer
+  queues its checkpoint in the outbox and delivers it within the 2 s budget; outages queue and
+  replay on the next capture or `javelin sync`; only the lease holder uploads (`layer_stale`
+  otherwise); `forbidden` uploads are decided, not queued forever; `javelin status` reports
+  each Layer. Evidence: `crates/javelin-cli/tests/capture_upload.rs` against the node's server
+  with real tokens.
+  - [ ] The bytes of a path outside the writer's audiences reach the node before the append is
+    refused (served to nobody outside the audience). A client-side check would need the
+    caller's audiences.
 - [x] One Rust node core on Cloudflare through wasm, replacing the TypeScript Worker
   (`feat/node-core-wasm`). `javelin` without `fs` and `javelin-node` without `native` build
   for wasm32; `Storage`/`Coordination` in `crates/javelin-node/src/storage.rs`; the Durable
@@ -136,6 +143,61 @@ every push (`.buildkite/pipeline.yml`).
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
 - [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
   drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+
+## Daily workflow acceptance (2026-10-28)
+
+- [x] GA's promise in one script: `crates/javelin-cli/tests/daily_workflow.rs` drives the real
+  `javelin` and `javelin-node serve` processes with real tokens (owner signed in through
+  `javelin control serve`, collaborator on a key the node trusts): import to World 1, request,
+  comment, approve, revise (old approval stops counting), node restart with a queued Publish,
+  conflict and recovery, `layer take` to a second device, every clone at the node's World with
+  identical files. `tools/acceptance/daily-workflow.sh` is the same loop for any node URL;
+  the test runs it too (Unix). Linked from `docs/cli.md`. Windows: not run.
+
+Rough edges hit on the way. Fixed in this trail:
+
+- [x] `javelin attach URL DIR` into a missing DIR failed with a bare `filesystem error`; it now
+  makes the directory once the node has answered.
+- [x] A revise after `layer take` moved the Layer away reported `missing_object` and told you to
+  `layer refresh`; it now reports `layer_stale` with the `layer clone --checkpoint` that keeps
+  the work.
+- [x] A conflicting `request publish` said "the author revises the request over them" without
+  saying how; it now names `sync`, a new Layer, and `request revise ID --revision N --layer NEW --operation OP`.
+- [x] `history` and `check` took only a positional directory; they accept `--repo DIR` too.
+- [x] `repo create` did not say how to serve the new self-hosted repository; it prints the
+  `javelin-node serve` line and the attach URL.
+
+Open:
+
+- [ ] No membership: the control plane serves repository tokens only to the creator and admin,
+  and nothing grants a second person a role. The test invites by writing `permissions.json`
+  and `keys.json` into the stopped node's directory and signing the collaborator's tokens with
+  the test key. Belongs with the forge's accounts and members.
+- [ ] A serving `javelin-node` reads permissions and trusted keys only at start, so a role
+  change needs a node restart.
+- [ ] `javelin login` approved with the admin token signs the device in as principal `admin`; a
+  second person needs the browser passkey page, and then still has no role (above).
+- [ ] No direct Publish to the node from the CLI. Importing a project means opening a request
+  of your own and publishing it, which on a repository that requires approvals needs someone
+  else's approval first. `workspace publish` in an attached clone publishes locally and then
+  `sync` refuses `local_world_diverged`.
+- [ ] No import into an attached repository: `adopt` makes a new local repository only.
+- [ ] Local World numbers and IDs differ between clones of the same repository (one remote World
+  5 was local World 4, 5 and 2 in three clones). `history` and `workspace create` ("Base World
+  N") print local numbers; only `sync`, `attach` and request output show the node's.
+- [ ] `request show` marks every changed path `M`, added files included: the node's sparse
+  changes do not say whether the base had the path.
+- [ ] A Layer whose request was published on the node stays active in the clone that opened it,
+  with its directory. `layer radar` keeps listing it as a live Layer that would conflict.
+- [ ] No way to move a Layer onto a newer World after a conflict. `layer refresh` follows only a
+  node-side Stack; the author redoes the change in a new Layer by hand.
+- [ ] Queuing a Publish of someone else's request while the node is down needs `--base WORLD`,
+  read from `request show` before the outage.
+- [ ] `layer take` works only for a Layer the node has seen, which today means one a request was
+  opened from (see "Checkpoint upload on capture" above).
+- [ ] The attach URL names the repository by its opaque ID (`repo_…`), not `acme/app`.
+- [ ] A stale append stays listed under `outbox status` `stale` after its work was kept with
+  `layer clone`; nothing clears it.
 
 ## Working rules
 

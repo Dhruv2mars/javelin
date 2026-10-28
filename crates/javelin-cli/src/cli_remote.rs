@@ -17,13 +17,13 @@ use std::{
     ffi::OsString,
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use javelin::{
     Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository, Result,
     VersionNumber,
-    outbox::{Entry, Fault, Outbox, Transport},
+    outbox::{Entry, Fault, Kind, Outbox, Transport},
     tree::MemoryStore,
 };
 use javelin_control::Endpoint;
@@ -80,9 +80,16 @@ pub(crate) struct Target {
     node: String,
     repository: String,
     agent: ureq::Agent,
+    /// No request runs past this instant.
+    deadline: Option<Instant>,
 }
 
 pub(crate) fn parse_target(text: &str) -> Result<Target> {
+    parse_target_until(text, None)
+}
+
+/// [`parse_target`] whose requests give up at `deadline`, when there is one.
+pub(crate) fn parse_target_until(text: &str, deadline: Option<Instant>) -> Result<Target> {
     let usage =
         "expected a node URL https://HOST[:PORT]/REPOSITORY (plain http only for localhost)";
     let (scheme, rest) = text
@@ -104,6 +111,7 @@ pub(crate) fn parse_target(text: &str) -> Result<Target> {
         node: endpoint.origin().into(),
         repository: repository.into(),
         agent: endpoint.agent(TIMEOUT),
+        deadline,
     })
 }
 
@@ -135,7 +143,7 @@ impl Link {
     }
 
     fn with(target: Target, anonymous: bool) -> RefCell<Self> {
-        let credential = Credential::for_repository(&target.repository);
+        let credential = Credential::until(&target.repository, target.deadline);
         RefCell::new(Self {
             target,
             credential,
@@ -274,6 +282,13 @@ fn exchange(
         .agent
         .post(format!("{}/v2/r/{}", target.node, target.repository))
         .header("content-type", "application/octet-stream");
+    if let Some(deadline) = target.deadline {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(ureq::Error::Timeout(ureq::Timeout::Global));
+        }
+        request = request.config().timeout_global(Some(left)).build();
+    }
     if let Some(token) = token {
         request = request.header("authorization", &format!("Bearer {token}"));
     }
@@ -437,6 +452,8 @@ pub fn attach(args: Vec<OsString>) -> std::result::Result<Output, CliError> {
     // Nothing local is written until the node has answered.
     let link = Link::new(target);
     let head = resolve(&link).map_err(CliError::Remote)?;
+    // Like a clone, attach makes its project directory when it is missing.
+    std::fs::create_dir_all(&root).map_err(Error::from)?;
 
     let opened = match Repository::open(&root) {
         Ok(repo) => Some(repo),
@@ -829,6 +846,10 @@ pub fn layer_refresh(args: Vec<OsString>) -> std::result::Result<Output, CliErro
         LayerState::Active { head } => head,
         _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
     };
+    // Captures here now append after the node's head.
+    if let Ok(bytes) = crate::cli_upload::node_checkpoint(&link, node_head) {
+        crate::cli_stream::remember(&root, &attached, &layer, &bytes, head.revision());
+    }
     let workspace = match repo
         .workspace_root(&layer)?
         .try_exists()
@@ -978,6 +999,12 @@ pub fn layer_take(args: Vec<OsString>) -> std::result::Result<Output, CliError> 
         LayerState::Active { head } => head,
         _ => return Err(Error::InvalidInput("the Layer is no longer active".into()).into()),
     };
+    // Captures here now append after the node's head.
+    if lease == LeaseHolder::Caller
+        && let Ok(bytes) = crate::cli_upload::node_checkpoint(&link, node_head)
+    {
+        crate::cli_stream::remember(&root, &attached, &layer, &bytes, head.revision());
+    }
     let exists = repo
         .workspace_root(&layer)?
         .try_exists()
@@ -1172,6 +1199,15 @@ impl NodeTransport {
         })
     }
 
+    /// As [`NodeTransport::new`], with every request and token renewal giving up at
+    /// `deadline`.
+    pub(crate) fn until(node: &str, repository: &str, deadline: Instant) -> Result<Self> {
+        Ok(Self {
+            target: parse_target_until(&format!("{node}/{repository}"), Some(deadline))?,
+            credential: Credential::until(repository, Some(deadline)),
+        })
+    }
+
     fn send(&self, payload: &[u8], token: Option<&str>) -> std::result::Result<Vec<u8>, Fault> {
         post(&self.target, payload, token, false).map_err(|error| {
             // Every transport failure leaves the record undecided, so it stays queued.
@@ -1201,11 +1237,19 @@ impl Transport for NodeTransport {
                 )));
             }
         }
+        // An upload or append touching a path outside the writer's audiences is refused
+        // every time it is sent, so the refusal decides it: the checkpoint stays local, and a
+        // later capture uploads the Layer's changes again.
+        if matches!(entry.kind, Kind::Upload | Kind::Append)
+            && matches!(decode(&reply), Ok(Message::Error { code, .. }) if code == code::FORBIDDEN)
+        {
+            return Ok(reply);
+        }
         recorded(reply)
     }
 }
 
-/// Only an outcome the node recorded acknowledges a record. An `Error` reply, such as a
+/// Only an outcome the node recorded acknowledges a record, or a `forbidden` upload. An `Error` reply, such as a
 /// storage failure or `busy`, recorded nothing, so the record stays queued under its
 /// operation ID; so does a reply that does not decode.
 fn recorded(reply: Vec<u8>) -> std::result::Result<Vec<u8>, Fault> {
