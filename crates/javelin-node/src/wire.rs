@@ -68,12 +68,11 @@ pub fn handle(
         }
         refuse_outsider_work(gate, token, now, &message)?;
         // A direct Publish the caller's live role may not make is answered before the budget
-        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox. One
-        // already decided replays its recorded outcome instead, so a retry after a lost reply
-        // reads what happened even when the role or the rules changed since.
+        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox.
         if let Message::PublishLayer { layer, .. } = &message
-            && !crate::budget::replays(log, &message)?
-            && let Some(refused) = refuse_direct_publish(gate, token, now, layer)?
+            && let Some(refused) = refuse_direct_publish(gate, token, now, layer, || {
+                crate::budget::replays(log, &message)
+            })?
         {
             return Ok(Message::PublishOutcome(PublishOutcome::Refused {
                 code: refused.into(),
@@ -285,14 +284,21 @@ fn refuse_outsider_work(
 /// Direct Publish is for Maintain on a repository whose rules require no approvals. Any
 /// other member's `PublishLayer` is answered with a refusal outcome that says to open a Publish
 /// Request: `insufficient_role` for a role below Maintain, `review_required` when approvals
-/// are required, and `forbidden` for a token without the Publish scope. An outcome, not an error, so a queued Publish is decided rather than retried
-/// forever. The node records nothing, so the operation is not used up. A
-/// token limited to another Layer is refused by the gate, as before.
+/// are required, and `forbidden` for a token without the Publish scope. An outcome, not an
+/// error, so a queued Publish is decided rather than retried forever. The node records
+/// nothing, so the operation is not used up. A token limited to another Layer is refused by
+/// the gate, as before.
+///
+/// The approvals rule applies to new Publishes only: one already decided (`replays`) passes
+/// it, so a retry after a lost reply reads what happened even when the rules changed since.
+/// The role and the scope are checked first, whatever is stored, so a caller who may not
+/// publish learns nothing about which operations exist.
 fn refuse_direct_publish(
     gate: &Gate,
     token: Option<&str>,
     now: u64,
     layer: &LayerId,
+    replays: impl FnOnce() -> Result<bool, ProtocolError>,
 ) -> Result<Option<&'static str>, ProtocolError> {
     let grant = gate.check(
         token,
@@ -313,17 +319,19 @@ fn refuse_direct_publish(
     if role < Some(Role::Maintain) {
         return Ok(Some(code::INSUFFICIENT_ROLE));
     }
-    if permissions.required_approvals > 0 {
-        return Ok(Some(code::REVIEW_REQUIRED));
-    }
     let publish = Need {
         scope: Scope::Publish,
         layer: Some(layer.as_str()),
     };
-    match gate.check(token, now, publish) {
-        Err(error) if error.code == code::FORBIDDEN => Ok(Some(code::FORBIDDEN)),
-        _ => Ok(None),
+    if let Err(error) = gate.check(token, now, publish)
+        && error.code == code::FORBIDDEN
+    {
+        return Ok(Some(code::FORBIDDEN));
     }
+    if permissions.required_approvals > 0 && !replays()? {
+        return Ok(Some(code::REVIEW_REQUIRED));
+    }
+    Ok(None)
 }
 
 /// The disclosure messages. Anyone who may read the repository reads its disclosure, as

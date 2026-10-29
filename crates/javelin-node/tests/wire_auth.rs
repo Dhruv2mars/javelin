@@ -160,8 +160,8 @@ fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
 }
 
 /// A Publish whose reply was lost replays what the node decided, even after a live change to
-/// the rules would refuse it as new. The caller's role is still checked now, and a new
-/// operation is decided under the new rules.
+/// the rules would refuse it as new. The caller's role is still checked first, so it reveals
+/// nothing about which operations exist.
 #[test]
 fn a_decided_direct_publish_replays_after_the_rules_and_role_change() {
     let dir = TempDir::new().unwrap();
@@ -181,6 +181,9 @@ fn a_decided_direct_publish_replays_after_the_rules_and_role_change() {
     );
 
     let mut changed = permissions(REPO, Visibility::Private);
+    changed
+        .roles
+        .insert(PrincipalId::parse("reader").unwrap(), Role::Read);
     changed.epoch = 2;
     changed.required_approvals = 1;
     auth::write_permissions(dir.path(), &changed).unwrap();
@@ -195,22 +198,20 @@ fn a_decided_direct_publish_replays_after_the_rules_and_role_change() {
         Role::Review,
     );
     auth::write_permissions(dir.path(), &changed).unwrap();
-    // Authorization is still decided now: a caller whose role lost the Publish scope is refused.
-    assert_eq!(
-        error_code(send(addr, &owner, &publish(head)).1),
-        "forbidden"
-    );
-
-    let mut again = publish(head);
-    if let Message::PublishLayer { operation, .. } = &mut again {
-        *operation = op("publish-2");
+    // The role is still decided now, before anything stored is consulted: a demoted caller,
+    // and a reader probing operation IDs, get the same answer for a decided one and a new one.
+    let refused = Some(Message::PublishOutcome(PublishOutcome::Refused {
+        code: "insufficient_role".into(),
+    }));
+    let reader = bearer(&token_for("reader", REPO));
+    let mut unknown = publish(head);
+    if let Message::PublishLayer { operation, .. } = &mut unknown {
+        *operation = op("publish-9");
     }
-    assert_eq!(
-        send(addr, &owner, &again).1,
-        Some(Message::PublishOutcome(PublishOutcome::Refused {
-            code: "insufficient_role".into()
-        }))
-    );
+    for caller in [&reader, &owner] {
+        assert_eq!(send(addr, caller, &unknown).1, refused);
+        assert_eq!(send(addr, caller, &publish(head)).1, refused);
+    }
     served.join().unwrap();
 }
 
