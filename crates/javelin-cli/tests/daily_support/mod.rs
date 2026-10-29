@@ -72,9 +72,11 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// A control-plane URL with nothing behind it, for people who never need one.
+/// A control-plane URL with nothing behind it, for people who never need one. Port 1 lies
+/// below every system's ephemeral range, where each test's listener gets its port, so no test
+/// can be handed it.
 pub fn closed_url() -> String {
-    format!("http://127.0.0.1:{}", free_port())
+    "http://127.0.0.1:1".into()
 }
 
 fn wait_listening(port: u16, what: &str) {

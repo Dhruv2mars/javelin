@@ -82,12 +82,10 @@ fn start_node(dir: &Path, files: usize) -> String {
     format!("http://{addr}/demo")
 }
 
-/// A port with nothing listening on it.
+/// A port with nothing listening on it. Port 1 lies below every system's ephemeral range, where
+/// each test's listener gets its port, so no test can be handed it.
 fn closed_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}/demo")
+    "http://127.0.0.1:1/demo".into()
 }
 
 fn javelin(cwd: &Path, args: &[&str]) -> Output {

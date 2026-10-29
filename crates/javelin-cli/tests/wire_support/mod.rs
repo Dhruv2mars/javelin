@@ -209,21 +209,25 @@ impl Deployment {
 
     /// Runs the CLI as the holder of `token`, with a home of its own and no control plane.
     pub fn javelin_as(&self, token: &str, args: &[&str]) -> Output {
+        self.command_as(token).args(args).output().unwrap()
+    }
+
+    /// [`Deployment::javelin_as`] before its arguments.
+    pub fn command_as(&self, token: &str) -> Command {
         let home = self.temp.path().join(format!(
             "home-{}",
             &javelin::ObjectId::for_blob(token.as_bytes()).to_string()[..12]
         ));
         fs::create_dir_all(&home).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_javelin"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_javelin"));
+        command
             .current_dir(self.temp.path())
             .env("JAVELIN_HOME", home)
             .env("JAVELIN_CONTROL_URL", closed_url())
             .env("JAVELIN_TOKEN", token)
             .env_remove("JAVELIN_ADMIN_TOKEN")
-            .arg("--json")
-            .args(args)
-            .output()
-            .unwrap()
+            .arg("--json");
+        command
     }
 }
 
