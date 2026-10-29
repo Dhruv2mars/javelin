@@ -131,8 +131,11 @@ every push (`.buildkite/pipeline.yml`).
   local macOS checks on the merge result and a Sol approval: #99 superposition (trail 7),
   #101 Layer lease (trail 5), forge on Vercel (trail 6), Gate 2 create probe (trail 14), CLI
   requests and sync (trail 3), public frontier (trail 19), node core on wasm (trail 18).
-- [ ] End-to-end daily-workflow acceptance: two clones, Layers, request, review, publish and
-  sync against a self-hosted node (`test/daily-workflow-acceptance`, in progress).
+  On 2026-10-29, the same way: flaky-test fixes (trail 42), node budget (trail 25), members
+  and roles (trail 38), Publish and import on attached clones (trail 40), Layer lifecycle
+  (trail 28) and the npm release tooling (trail 23). The forge was redeployed from `750b51f`.
+- [x] End-to-end daily-workflow acceptance: two clones, Layers, request, review, publish and
+  sync against a self-hosted node (trail 22, merged 2026-10-28; see below).
 - [x] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
   flaked once on Linux (Buildkite build 25 on main `686a470`: `repo.has_blob(id).is_ok()`
   failed); the rebuild (32) and the same commit's branch build (22) passed. Find what
@@ -200,9 +203,15 @@ every push (`.buildkite/pipeline.yml`).
 ## Merge rule for flaky tests (2026-10-28)
 
 A trail may merge when its Buildkite build is green and every local macOS failure also
-reproduces on main. Known flakes (`fix/flaky-tests`): node server connection resets under load
-(`loopback.rs`, `wire_auth.rs`, `wire_hidden.rs`), duplicate sends in `outbox_replay.rs`, and
-`attach.rs`'s fake node.
+reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopback.rs`,
+`wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
+fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
+
+- [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
+  `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
+  loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
+  upload's completion instead of a clock.
+- [ ] The `closed_url()` port reuse above.
 
 ## Daily workflow acceptance (2026-10-28)
 
