@@ -47,6 +47,7 @@ Scope is the Free plan only. Nothing here needs or should use a paid tier or a p
 | `PUT /admin/r/{repo}/permissions` (`permissions.json` layout) | admin token | `{"applied","epoch"}`; `409 stale_permissions` with `seen`; `409 not_provisioned` |
 | `PUT /admin/r/{repo}/keys` (`KeySet` JSON) | admin token | `{"trusted":true}`: the keys the node verifies bearer tokens with |
 | `GET /admin/r/{repo}/state` | admin token | `{"provisioned","genesis","permissions"}` |
+| `GET /admin/r/{repo}/budget`, `PUT` with a `budget.json` body | admin token | `{"budget":{"storage_bytes","rows_written_per_day","largest_object"},"usage":{"day",<budget>:{"used","limit"}}}`; `PUT` replaces the owner's budget (absent fields keep their default); `409 not_provisioned`; `400 invalid_input` |
 | `POST /v2/r/{repo}` | caller's bearer token, or anonymous | one protocol message, as from the self-hosted node: 200 for every reply, 400 for a credential that is not a bearer token, 404 for a repository the node never provisioned, 405, 411, 413; `OPTIONS` answers the CORS preflight |
 
 Admin replies carry `x-javelin-database-bytes`, the object's whole SQLite storage.
@@ -75,8 +76,9 @@ same token.
     https://javelin-node.dhruv-sharma10102005.workers.dev
 
 The Rust node replaced the TypeScript node there on 2026-10-28 (first version
-`3ffe1098-5392-44b7-8cec-91bafda4d764`, current `d0499fbb-bf29-4d2f-866a-68d659115c60`, which
-carries requests and sync and the public frontier), on
+`3ffe1098-5392-44b7-8cec-91bafda4d764`, then `d0499fbb-bf29-4d2f-866a-68d659115c60`, which
+carries requests and sync and the public frontier, current `c17e6ce3-a852-4273-933c-5eff3400455a`,
+which adds the budget, deployed 2026-10-29 from feat/node-budget at 3,509 KiB, 1,268 KiB gzip), on
 Workers Free. The admin token is a 32-byte
 random hex string set with `wrangler secret put` and kept on the owner's machine in
 `~/.config/javelin/cloudflare-node-admin-token`; it is not in this repository or any log.
@@ -87,6 +89,8 @@ Checks run against it on 2026-10-28:
 | --- | --- | --- |
 | Conformance suite, admin and protocol version 2 (commit path, request loop, embargo) | `JAVELIN_NODE_URL=<url> JAVELIN_NODE_ADMIN_TOKEN=... JAVELIN_NODE_REPOSITORY=repo_conformance_20261028e cargo test -p javelin-node-worker --test workerd -- --ignored --test-threads=1` | 3 passed |
 | A repository the TypeScript node provisioned | `GET /admin/r/repo_conformance_20261026/state` before and after the deploy | identical genesis and epoch-2 permissions |
+| Conformance with the budget (version `c17e6ce3`, 2026-10-29) | the same command with `JAVELIN_NODE_REPOSITORY=repo_conformance_20261029budget` | 3 passed; `GET /admin/r/repo_conformance_20261029budget_wire/budget` after the run: 4,456,448 bytes stored and 260 rows written that day, against the Free-plan defaults |
+| The TypeScript-era repository on 2026-10-29 | `GET /admin/r/repo_conformance_20261026/state` | `500 storage_error`, `unsupported repository format 10`: it was provisioned at format 10, and format 11 (2026-10-28) shipped without a migration, before `d0499fbb` |
 
 ## Measured on Workers Free
 
@@ -107,8 +111,21 @@ table below.
 
 The page size trades storage for rows: smaller pages would shrink an empty repository
 (an estimated 0.8 MB at 16 KiB, not measured) but write more rows for every large object, and rows written per day
-is the quota a busy repository meets first. The node does not enforce any of this yet (the
-budget is a separate task).
+is the quota a busy repository meets first.
+
+## The budget
+
+The node core refuses a write that would cross its owner's budget with `quota_exceeded`
+before it changes anything (`crates/javelin-node/src/budget.rs`, `docs/architecture.md`, Node
+budget). The defaults are the Free-plan figures above: 1,000,000,000 bytes of storage per
+repository (the documented per-object figure, though only the 5 GB account total was seen
+enforced), 100,000 rows written per UTC day, and the protocol's 8 MiB per object (objects are
+split into 64 KiB page rows, so the 2 MB SQL row limit does not bind). Rows written per day
+and the 5 GB of storage are per account: an owner with several repositories on one account
+lowers each repository's budget so their sum fits, with `PUT /admin/r/{repo}/budget`.
+Requests per day, Worker CPU and object CPU are not budgeted: a refused request costs the same
+request, the frame and merge bounds limit one request's work, and the measured CPU above has
+4.8x headroom in the Worker and 290x in the object.
 
 ## Free-plan limits
 
@@ -144,7 +161,13 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
   (`LayerHead`, `LayerTake`), reads that follow the caller's audiences, a write refused for a
   hidden path, a Publish Request that publishes with its list, review and comment, a version
   held by an embargo from outsiders until it is released, and the browser, anonymous and
-  outsider (`forbidden`) refusals. Both stores run on one moved clock. Every reply matches, object IDs masked (hidden entries are
+  outsider (`forbidden`) refusals. Both stores run on one moved clock. A second scenario holds
+  both stores to a budget a few KB above their use: the crossing upload and Publish are
+  refused with `quota_exceeded`, nothing is stored, and the same writes succeed once the budget
+  is raised; a spent day's rows are accepted again the next UTC day. The rows the node counts
+  are checked against the page rows the object writes (an 8 MiB upload included), and an
+  upload of many objects and a Publish of many files, admitted at the lowest limit that
+  admits them, end within it; a decided Publish replays with no budget left. Every reply matches, object IDs masked (hidden entries are
   salted per store). It also checks that a reopened node keeps what it committed and that a
   second connection to an open database is refused.
 - The conformance suite in `crates/javelin-node-worker/tests/common` runs against the
@@ -154,7 +177,10 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
   unknown Layer, and the anonymous, untrusted-token, reviewer and browser refusals; then a
   Layer created, written and published with its replay, a Publish Request opened, listed, read
   and published, a signed-in outsider refused requests and Layers, and an embargoed version
-  held from outsiders until a maintainer releases it.
+  held from outsiders until a maintainer releases it; then the budget: a Publish and an upload
+  past a few KB of storage, and an object past `largest_object`, refused and then accepted
+  once the budget is raised (the Worker's `budget` route, or `budget.json` on the self-hosted
+  node).
 - `bun run test` starts `wrangler dev` with fresh state, runs that suite against it, then
   `repo create acme/app` end to end with the CLI: a refused token leaves the create
   Provisioning, a retry naming another node is `operation_id_reused`, the retry completes at
@@ -172,6 +198,6 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
   still meets any case or Unicode alias when it writes the files.
 - Two credentials in one request are a 400 on the self-hosted node; the Workers runtime joins
   repeated `Authorization` headers into one value, which then fails as an invalid token.
-- The node does not keep a budget yet (`quota_exceeded` is a separate task); the figures above
-  are what it would budget against.
+- The budget does not count admin pushes (about 71 rows per provision) or the Worker's own
+  rows, and each repository counts only its own rows against the account's daily quota.
 - A retry of a create or fork whose record is still `Provisioning` must name the same `--provider` and `--node-url` as the first attempt. A different node is refused with `operation_id_reused` before anything is provisioned there, so no Cloudflare object is left with a genesis and no permissions. A trailing `/` on the URL is ignored. Once a create is `Ready`, a retry returns it unchanged on any node. A record written before the provider was stored has no provider, so every retry of it is refused and its name stays reserved. Nothing releases it: remove that record from the control state by hand (pre-release only).

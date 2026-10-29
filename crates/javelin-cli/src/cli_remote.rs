@@ -1339,10 +1339,9 @@ pub fn outbox_replay(args: Vec<OsString>) -> std::result::Result<Output, CliErro
     let (stalled, code, exit) = match &replay.stalled {
         Some(stall) => {
             text.push_str(&format!(
-                "\nRecord {} waits: {}: {}",
+                "\nRecord {} waits: {}",
                 stall.seq,
-                stall.fault.code(),
-                stall.fault.detail()
+                crate::cli_node::refusal_text(stall.fault.code(), stall.fault.detail())
             ));
             (
                 json!({"seq": stall.seq, "code": stall.fault.code(), "detail": stall.fault.detail()}),

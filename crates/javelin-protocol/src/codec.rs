@@ -4,7 +4,8 @@
 //!
 //! Hosting messages (tags 0x03, 0x06, 0x33-0x3c, 0x50-0x5a) move Layer, World and
 //! Publish Request state. Disclosure messages (0x48-0x4c) read and change the delay and
-//! embargoes that hold readers outside the repository at its public frontier. Each variant
+//! embargoes that hold readers outside the repository at its public frontier. Budget messages
+//! (0x4d-0x4e) read a node's use against the budget its owner set. Each variant
 //! of [`Message`] documents its fields. Encodings are canonical: an absent optional is a
 //! zero flag followed by zeroed bytes, and any other form of absence is malformed, so one
 //! message has one encoding.
@@ -18,12 +19,14 @@ use javelin::{
 
 use crate::{ProtocolError, limits::*};
 
+mod budget;
 mod checks;
 mod disclosure;
 mod hosting;
 mod review;
 mod wire;
 
+pub use budget::{MAX_METERS, Meter, Usage};
 pub use disclosure::{Disclosure, Embargoed};
 pub use hosting::{
     CheckOutcome, CheckReport, Conclusion, LayerOutcome, LayerStatus, LeaseHolder, PublishOutcome,
@@ -69,6 +72,8 @@ const DISCLOSURE: u8 = 0x49;
 const SET_DELAY: u8 = 0x4a;
 const EMBARGO: u8 = 0x4b;
 const RELEASE: u8 = 0x4c;
+const READ_USAGE: u8 = 0x4d;
+const USAGE: u8 = 0x4e;
 const OPEN_REQUEST: u8 = 0x50;
 const REVIEW_OUTCOME: u8 = 0x51;
 const REVISE: u8 = 0x52;
@@ -128,6 +133,9 @@ pub mod code {
     /// A direct `PublishLayer` on a repository whose rules require approvals: the change
     /// goes through a Publish Request.
     pub const REVIEW_REQUIRED: &str = "review_required";
+    /// The write would cross a budget the node's owner set. The detail names the budget;
+    /// for a maintainer it also gives the use and the limit.
+    pub const QUOTA_EXCEEDED: &str = "quota_exceeded";
 }
 
 /// Object IDs are kind-separated; every reference names the expected kind.
@@ -346,6 +354,11 @@ pub enum Message {
     Release {
         version: VersionNumber,
     },
+    /// Ask for the node's use against each budget its owner set. Maintain only. Reply:
+    /// `Usage`.
+    ReadUsage,
+    /// The node's use against each budget (`Usage`).
+    Usage(Usage),
     /// Open a Publish Request whose first revision is `checkpoint` on `layer`.
     OpenRequest {
         operation: OperationId,
@@ -688,6 +701,11 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             out.push(RELEASE);
             out.extend_from_slice(&version.get().to_be_bytes());
         }
+        Message::ReadUsage => out.push(READ_USAGE),
+        Message::Usage(usage) => {
+            out.push(USAGE);
+            budget::put_usage(&mut out, usage);
+        }
         Message::OpenRequest {
             operation,
             request,
@@ -961,6 +979,8 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
         Message::SetDelay { .. } => 9,
         Message::Embargo { operation, .. } => 1 + short(operation.as_str())? + 9,
         Message::Release { .. } => 9,
+        Message::ReadUsage => 1,
+        Message::Usage(usage) => budget::usage_len(usage)?,
         Message::Error { code, .. } => {
             if code.len() > u8::MAX as usize {
                 return Err(malformed("error code too long"));
@@ -1266,6 +1286,8 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
         RELEASE => Message::Release {
             version: r.version()?,
         },
+        READ_USAGE => Message::ReadUsage,
+        USAGE => Message::Usage(budget::read_usage(&mut r)?),
         ERROR => {
             let code = r.short_str()?.to_owned();
             let len = r.u16()? as usize;

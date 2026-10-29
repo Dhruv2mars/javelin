@@ -1,5 +1,5 @@
 //! The control plane as a client sees it. [`Control`] is what the CLI needs: device sign-in,
-//! token refresh, repository tokens and repository create. [`ControlPlane`] serves it in
+//! token refresh, repository tokens, repository create, and members and invites. [`ControlPlane`] serves it in
 //! process; [`RemoteControl`] calls the control plane's HTTP API (`browser.rs`, `/api/`) over
 //! HTTPS, or plain HTTP on this machine only.
 //! A control plane that does not answer, or answers 5xx without a refusal of its own, is
@@ -7,11 +7,12 @@
 
 use std::time::Duration;
 
+use javelin_collaboration::Role;
 use serde_json::{Value, json};
 
 use crate::{
-    AccessToken, ControlError, ControlPlane, CreateRequest, Created, DeviceStart, Endpoint, Poll,
-    Publish, Session,
+    AccessToken, ControlError, ControlPlane, CreateRequest, Created, DeviceStart, Endpoint, Invite,
+    Member, MemberChange, Members, PendingInvite, Poll, Publish, Redeemed, Session,
 };
 
 /// How long one call may take to connect, and then to answer.
@@ -46,6 +47,32 @@ pub trait Control {
         request: &CreateRequest,
         now: u64,
     ) -> Result<Created, ControlError>;
+    fn members(&self, bearer: &str, repository: &str, now: u64) -> Result<Members, ControlError>;
+    fn change_member(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        change: MemberChange,
+        now: u64,
+    ) -> Result<Members, ControlError>;
+    fn set_required_approvals(
+        &self,
+        bearer: &str,
+        repository: &str,
+        required: u32,
+        now: u64,
+    ) -> Result<Members, ControlError>;
+    fn invite(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        role: Role,
+        now: u64,
+    ) -> Result<Invite, ControlError>;
+    /// Redeems an invite code. It needs no other credential: the code is the credential.
+    fn redeem_invite(&self, code: &str, now: u64) -> Result<Redeemed, ControlError>;
 }
 
 impl Control for ControlPlane {
@@ -81,6 +108,41 @@ impl Control for ControlPlane {
         now: u64,
     ) -> Result<Created, ControlError> {
         ControlPlane::create_repository(self, bearer, request, now)
+    }
+    fn members(&self, bearer: &str, repository: &str, now: u64) -> Result<Members, ControlError> {
+        ControlPlane::members(self, bearer, repository, now)
+    }
+    fn change_member(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        change: MemberChange,
+        now: u64,
+    ) -> Result<Members, ControlError> {
+        ControlPlane::change_member(self, bearer, repository, principal, change, now)
+    }
+    fn set_required_approvals(
+        &self,
+        bearer: &str,
+        repository: &str,
+        required: u32,
+        now: u64,
+    ) -> Result<Members, ControlError> {
+        ControlPlane::set_required_approvals(self, bearer, repository, required, now)
+    }
+    fn invite(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        role: Role,
+        now: u64,
+    ) -> Result<Invite, ControlError> {
+        ControlPlane::invite(self, bearer, repository, principal, role, now)
+    }
+    fn redeem_invite(&self, code: &str, now: u64) -> Result<Redeemed, ControlError> {
+        ControlPlane::redeem_invite(self, code, now)
     }
 }
 
@@ -186,6 +248,53 @@ fn malformed(key: &str) -> ControlError {
     }
 }
 
+fn role(value: &Value, key: &str) -> Result<Role, ControlError> {
+    Role::parse(&text(value, key)?).ok_or_else(|| malformed(key))
+}
+
+/// A change as the API names it: `add`, `role` or `remove`, with the role for the first two.
+pub(crate) fn change_json(change: MemberChange) -> Value {
+    match change {
+        MemberChange::Add(role) => json!({"change": "add", "role": role.name()}),
+        MemberChange::Role(role) => json!({"change": "role", "role": role.name()}),
+        MemberChange::Remove => json!({"change": "remove"}),
+    }
+}
+
+fn parse_members(value: &Value) -> Result<Members, ControlError> {
+    let list = |key: &str| value[key].as_array().cloned().ok_or_else(|| malformed(key));
+    Ok(Members {
+        repository: text(value, "repository")?,
+        owner: text(value, "owner")?,
+        name: text(value, "name")?,
+        epoch: number(value, "epoch")?,
+        required_approvals: u32::try_from(number(value, "required_approvals")?)
+            .map_err(|_| malformed("required_approvals"))?,
+        members: list("members")?
+            .iter()
+            .map(|member| {
+                Ok(Member {
+                    principal: text(member, "principal")?,
+                    role: role(member, "role")?,
+                })
+            })
+            .collect::<Result<_, ControlError>>()?,
+        invites: list("invites")?
+            .iter()
+            .map(|invite| {
+                Ok(PendingInvite {
+                    principal: text(invite, "principal")?,
+                    role: role(invite, "role")?,
+                    expires_at: number(invite, "expires_at")?,
+                })
+            })
+            .collect::<Result<_, ControlError>>()?,
+        changed: value["changed"]
+            .as_bool()
+            .ok_or_else(|| malformed("changed"))?,
+    })
+}
+
 fn access_token(value: &Value) -> Result<AccessToken, ControlError> {
     Ok(AccessToken {
         access_token: text(value, "access_token")?,
@@ -288,6 +397,80 @@ impl Control for RemoteControl {
             created: value["created"]
                 .as_bool()
                 .ok_or_else(|| malformed("created"))?,
+        })
+    }
+
+    fn members(&self, bearer: &str, repository: &str, _now: u64) -> Result<Members, ControlError> {
+        parse_members(&self.call(
+            "/api/members/list",
+            Some(bearer),
+            &json!({"repository": repository}),
+        )?)
+    }
+
+    fn change_member(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        change: MemberChange,
+        _now: u64,
+    ) -> Result<Members, ControlError> {
+        let mut body = change_json(change);
+        body["repository"] = json!(repository);
+        body["principal"] = json!(principal);
+        parse_members(&self.call("/api/members/change", Some(bearer), &body)?)
+    }
+
+    fn set_required_approvals(
+        &self,
+        bearer: &str,
+        repository: &str,
+        required: u32,
+        _now: u64,
+    ) -> Result<Members, ControlError> {
+        parse_members(&self.call(
+            "/api/repo/settings",
+            Some(bearer),
+            &json!({"repository": repository, "required_approvals": required}),
+        )?)
+    }
+
+    fn invite(
+        &self,
+        bearer: &str,
+        repository: &str,
+        principal: &str,
+        role: Role,
+        _now: u64,
+    ) -> Result<Invite, ControlError> {
+        let value = self.call(
+            "/api/members/invite",
+            Some(bearer),
+            &json!({"repository": repository, "principal": principal, "role": role.name()}),
+        )?;
+        Ok(Invite {
+            code: text(&value, "code")?,
+            repository: text(&value, "repository")?,
+            principal: text(&value, "principal")?,
+            role: self::role(&value, "role")?,
+            expires_at: number(&value, "expires_at")?,
+        })
+    }
+
+    fn redeem_invite(&self, code: &str, _now: u64) -> Result<Redeemed, ControlError> {
+        let value = self.call("/api/invite/redeem", None, &json!({"code": code}))?;
+        Ok(Redeemed {
+            session: Session {
+                principal: text(&value, "principal")?,
+                device: text(&value, "device")?,
+                access_token: text(&value, "access_token")?,
+                refresh_token: text(&value, "refresh_token")?,
+                expires_in: number(&value, "expires_in")?,
+            },
+            repository: text(&value, "repository")?,
+            role: self::role(&value, "role")?,
+            node_error: value["node_error"].as_str().map(str::to_owned),
         })
     }
 }

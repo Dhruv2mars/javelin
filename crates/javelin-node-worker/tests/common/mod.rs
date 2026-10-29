@@ -490,3 +490,82 @@ fn commit_review_and_hold(wire: &Wire) {
     wire.reply(Some("admin"), &release);
     assert_eq!(number(&wire.reply(None, &head)), 3, "released");
 }
+
+fn used(usage: &Message, budget: &str) -> u64 {
+    match usage {
+        Message::Usage(usage) => usage
+            .meters
+            .iter()
+            .find(|meter| meter.budget == budget)
+            .and_then(|meter| meter.used)
+            .unwrap_or_else(|| panic!("no use for {budget}: {usage:?}")),
+        other => panic!("usage: {other:?}"),
+    }
+}
+
+fn quota(message: &Message) -> &str {
+    match message {
+        Message::Error { code, detail } if code == "quota_exceeded" => detail,
+        other => panic!("expected quota_exceeded: {other:?}"),
+    }
+}
+
+/// The node's budget over the wire, after `run_wire` (the head is World 3). `set` replaces the
+/// owner's budget, in the `budget.json` layout, as the node's owner does. A Publish and an
+/// upload that would cross it are refused with `quota_exceeded`, change nothing, and are
+/// accepted unchanged once the budget is raised.
+pub fn run_budget(wire: &Wire, set: &dyn Fn(&serde_json::Value)) {
+    let read = Message::ReadUsage;
+    for caller in [Some("reviewer"), Some("stranger"), None] {
+        assert_eq!(
+            code(&wire.reply(caller, &read)),
+            Some("forbidden"),
+            "{caller:?}"
+        );
+    }
+    let budgeted = layer_with(wire, "budgeted", 3, "src/budgeted");
+    let stored = used(&wire.reply(Some("admin"), &read), "storage_bytes");
+
+    // A few KB left: the Publish is refused, and World 3 stays the head.
+    set(&serde_json::json!({ "storage_bytes": stored + 4096 }));
+    let publish = publish_layer("budgeted", "publish-budgeted", budgeted, 3);
+    let refused = wire.reply(Some("admin"), &publish);
+    assert!(
+        quota(&refused).starts_with("storage_bytes: "),
+        "{refused:?}"
+    );
+    // A member who may not publish directly is told so before the budget is consulted.
+    assert_eq!(
+        code(&wire.reply(Some("reviewer"), &publish)),
+        Some("insufficient_role")
+    );
+    let head = Message::Resolve { version: None };
+    assert_eq!(number(&wire.reply(Some("admin"), &head)), 3);
+    let blob = vec![7u8; 16 << 10];
+    let id = javelin::ObjectId::for_blob(&blob);
+    let upload = Message::Objects(vec![(Kind::Blob, id, blob)]);
+    assert!(quota(&wire.reply(Some("admin"), &upload)).starts_with("storage_bytes: "));
+    let want = Message::Want(vec![(Kind::Blob, id)]);
+    assert_eq!(
+        wire.reply(Some("admin"), &want),
+        Message::Missing(vec![(Kind::Blob, id)])
+    );
+
+    // Raised: the same Publish, under the same operation ID, makes World 4.
+    set(&serde_json::json!({}));
+    assert_eq!(number(&wire.reply(Some("admin"), &publish)), 4);
+    assert_eq!(number(&wire.reply(None, &head)), 4);
+
+    // An object larger than the owner allows is refused, then stored once allowed.
+    set(&serde_json::json!({ "largest_object": 4096 }));
+    assert_eq!(
+        quota(&wire.reply(Some("admin"), &upload)),
+        "largest_object: an object of 16384 bytes is larger than the 4096 allowed"
+    );
+    set(&serde_json::json!({}));
+    assert_eq!(
+        wire.reply(Some("admin"), &upload),
+        Message::Stored { count: 1 }
+    );
+    assert!(used(&wire.reply(Some("admin"), &read), "rows_written_per_day") > 0);
+}

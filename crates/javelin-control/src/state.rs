@@ -41,6 +41,11 @@ pub(crate) struct State {
     pub ceremonies: BTreeMap<String, CeremonyRecord>,
     /// Browser sign-ins, keyed by the hash of their token.
     pub browser_sessions: BTreeMap<String, BrowserRecord>,
+    /// Accounts an invite created, keyed by principal. The admin and passkey principals are
+    /// accounts too, without a record here.
+    pub accounts: BTreeMap<String, AccountRecord>,
+    /// Pending invites, keyed by the hash of their code.
+    pub invites: BTreeMap<String, InviteRecord>,
 }
 
 impl State {
@@ -94,6 +99,32 @@ pub(crate) struct RepositoryRecord {
     /// Set for a fork: its source repository and the version it was forked at.
     #[serde(default)]
     pub fork: Option<ForkOf>,
+    /// Principal to role name. Empty for a record written before membership, whose only
+    /// member is its creator, as Maintain; `members::roles` reads it that way.
+    #[serde(default)]
+    pub members: BTreeMap<String, String>,
+    /// Approvals a Publish Request needs, pushed to the node with the roles.
+    #[serde(default)]
+    pub required_approvals: u32,
+}
+
+/// An account made by redeeming an invite.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct AccountRecord {
+    pub created_at: u64,
+    /// The repository whose invite made it.
+    pub invited_to: String,
+}
+
+/// An invite to one repository, for an account that does not exist yet. Redeeming it makes
+/// the account, signs a device in as it, and grants it `role`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct InviteRecord {
+    pub repository: String,
+    pub principal: String,
+    pub role: String,
+    pub invited_by: String,
+    pub expires_at: u64,
 }
 
 /// Where a fork came from. Its version ID comes from the node, which holds the copied log.

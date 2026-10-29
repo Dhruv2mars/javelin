@@ -9,7 +9,7 @@ use javelin::{
     FileEntry, LayerId, ObjectId, OperationId, PublishAttribution, RepoPath, SparseChanges,
     VersionNumber,
 };
-use javelin_node::{FileWorldLog, bind_loopback, serve};
+use javelin_node::{FileWorldLog, bind_loopback};
 use javelin_protocol::{
     Message,
     codec::{Kind, PublishOutcome, decode, encode},
@@ -83,23 +83,17 @@ fn publish_layer_over_loopback_replays_the_recorded_outcome() {
     let (log, expected) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(2),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     let body = publish_request(expected);
     let request = format!(
         "POST /v2/r/demo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
         body.len()
     );
+    // A port probe, like the ones other local processes send to a new listener, is just
+    // one more connection: it does not take the place of either request.
+    assert_eq!(exchange(addr, "GET / HTTP/1.1\r\n\r\n", &[]).0, 405);
     let first = exchange(addr, &request, &body);
     let second = exchange(addr, &request, &body);
     server.join().unwrap();
@@ -120,17 +114,8 @@ fn transport_faults_have_http_statuses() {
     let (log, _) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(5),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     assert_eq!(
         exchange(
@@ -188,17 +173,8 @@ fn browsers_may_read_but_never_write() {
     let (log, expected) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(7),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
     let send = |origin: bool, token: bool, body: &[u8]| {
         let origin = if origin {
             "Origin: http://forge.test\r\n"
@@ -294,17 +270,8 @@ fn a_stalled_client_does_not_block_the_next_one() {
     let (log, expected) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(2),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     // Sends one byte and then nothing, so the node waits on it until the deadline.
     let mut stalled = TcpStream::connect(addr).unwrap();
@@ -334,17 +301,8 @@ fn the_header_limit_is_exact_and_needs_a_blank_line() {
     let (log, expected) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(2),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     let body = publish_request(expected);
     let headers =
@@ -375,17 +333,8 @@ fn a_slow_reader_cannot_hold_the_next_client_past_the_reply_deadline() {
     let id = log.repository().put_blob(&vec![0x5a; MAX_BLOB]).unwrap();
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(2),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     let get = encode(&Message::Get(vec![(Kind::Blob, id)])).unwrap();
     let request = format!(
@@ -436,17 +385,8 @@ fn malformed_lines_get_a_bad_request() {
     let (log, _) = seeded(&dir);
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(
-            &listener,
-            "demo",
-            &mut log,
-            &wire_support::gate("demo"),
-            Some(2),
-        )
-        .unwrap();
-    });
+    let server =
+        wire_support::serve_until_joined(listener, "demo", log, wire_support::gate("demo"));
 
     let overlong = format!(
         "POST /v2/r/demo HTTP/1.1\r\nX: {}\r\n\r\n",

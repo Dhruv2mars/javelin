@@ -2,7 +2,7 @@
 // `crates/javelin-node-cloudflare` (`bun run build`); this file is only the runtime glue:
 //
 // - The Worker routes each repository to its own `RepositoryNode` Durable Object. It checks
-//   the admin token for `/admin/r/{repo}/{provision,permissions,keys,state}` and passes
+//   the admin token for `/admin/r/{repo}/{provision,permissions,keys,state,budget}` and passes
 //   protocol version 2 (`POST /v2/r/{repo}`) through with the caller's own token.
 // - The object keeps the node's files as page rows in its SQLite storage and calls the core
 //   inside `transactionSync`, so each request's writes commit together or not at all.
@@ -24,7 +24,7 @@ const MAX_FRAME = maxFrame();
 let generation = 0;
 
 const REPO = /^[A-Za-z0-9._:-]{1,128}$/;
-const ADMIN = /^\/admin\/r\/([^/]+)\/(provision|permissions|keys|state)$/;
+const ADMIN = /^\/admin\/r\/([^/]+)\/(provision|permissions|keys|state|budget)$/;
 const V2 = /^\/v2\/r\/([^/]+)$/;
 const PREFLIGHT = {
   "access-control-allow-origin": "*",
@@ -209,8 +209,11 @@ export default {
     if (!authorized(request, env.NODE_ADMIN_TOKEN)) {
       return json({ error: "unauthorized" }, 401);
     }
-    const writes = action !== "state";
-    if (writes !== (request.method === "PUT")) {
+    // `state` only reads and the pushes only write; `budget` reads with GET and replaces
+    // the owner's budget with PUT.
+    const writes = request.method === "PUT";
+    const allowed = action === "budget" ? ["GET", "PUT"] : [action === "state" ? "GET" : "PUT"];
+    if (!allowed.includes(request.method)) {
       return json({ error: "method_not_allowed" }, 405);
     }
     return forward(env, repository, `/admin/${action}`, {

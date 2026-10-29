@@ -12,6 +12,9 @@
 //!   `409 not_provisioned` before provisioning.
 //! - `keys` (a `KeySet` as JSON): replaces the keys the node verifies tokens with.
 //! - `state`: `{"provisioned","genesis","permissions"}`.
+//! - `budget`: an empty body reads, a `budget.json` body (fields absent keep their default)
+//!   replaces the owner's budget. `{"budget":{...},"usage":{"day",<budget>:{"used","limit"}}}`;
+//!   `409 not_provisioned` before provisioning.
 //!
 //! A malformed body is `400 invalid_input`.
 
@@ -20,7 +23,8 @@ use javelin_identity::KeySet;
 use javelin_node::{
     FileWorldLog,
     admin::{self, ApplyError},
-    auth::{self, Gate},
+    auth::{self, Gate, LiveGate},
+    budget,
     storage::{Coordination, Storage},
     wire,
 };
@@ -66,24 +70,25 @@ impl Response {
 }
 
 /// The node for repository `name` on `storage`, keeping time by `clock` (Unix seconds),
-/// which decides token expiry and the public frontier. The World log and the gate are opened
-/// on first use and kept, so their caches outlive one request.
+/// which decides token expiry and the public frontier. The World log is opened on first use
+/// and kept, so its caches outlive one request. The gate follows the stored permissions and
+/// keys (`LiveGate`), as on the self-hosted node, so a push applies from the next request.
 pub struct Node<S> {
     name: RepositoryId,
     storage: S,
     clock: fn() -> u64,
     log: Option<FileWorldLog>,
-    gate: Option<Gate>,
+    gate: LiveGate,
 }
 
 impl<S: Storage + Coordination> Node<S> {
     pub fn new(name: RepositoryId, storage: S, clock: fn() -> u64) -> Self {
         Self {
+            gate: LiveGate::new(name.as_str()),
             name,
             storage,
             clock,
             log: None,
-            gate: None,
         }
     }
 
@@ -94,6 +99,7 @@ impl<S: Storage + Coordination> Node<S> {
             "permissions" => self.permissions(body),
             "keys" => self.keys(body),
             "state" => self.state(),
+            "budget" => self.budget(body),
             _ => return Response::error(404, "not_found", action),
         };
         answer.unwrap_or_else(|error| Response::error(500, "storage_error", error))
@@ -138,12 +144,10 @@ impl<S: Storage + Coordination> Node<S> {
             let clock = Box::new(self.clock);
             self.log = Some(FileWorldLog::on(&self.storage, &self.storage, clock)?);
         }
-        if self.gate.is_none() {
-            self.gate = Some(Gate::load_from(&self.storage, self.name.as_str())?);
-        }
-        match (&mut self.log, &self.gate) {
-            (Some(log), Some(gate)) => Ok((log, gate)),
-            _ => unreachable!("opened above"),
+        let gate = self.gate.current(&self.storage)?;
+        match &mut self.log {
+            Some(log) => Ok((log, gate)),
+            None => unreachable!("opened above"),
         }
     }
 
@@ -187,13 +191,10 @@ impl<S: Storage + Coordination> Node<S> {
         }
         let seen = auth::stored_permissions(&self.storage)?.map(|stored| stored.epoch);
         match admin::apply(&self.storage, &permissions) {
-            Ok(applied) => {
-                self.gate = None;
-                Ok(Response::json(
-                    200,
-                    json!({ "applied": applied, "epoch": permissions.epoch }),
-                ))
-            }
+            Ok(applied) => Ok(Response::json(
+                200,
+                json!({ "applied": applied, "epoch": permissions.epoch }),
+            )),
             Err(ApplyError::Refused(refusal)) => Ok(Response::json(
                 409,
                 json!({ "error": refusal.code, "seen": seen }),
@@ -207,8 +208,50 @@ impl<S: Storage + Coordination> Node<S> {
             return Ok(Response::error(400, "invalid_input", "malformed keys"));
         };
         admin::trust(&self.storage, &keys)?;
-        self.gate = None;
         Ok(Response::json(200, json!({ "trusted": true })))
+    }
+
+    fn budget(&mut self, body: &[u8]) -> Result<Response, ProtocolError> {
+        let replace = if body.is_empty() {
+            None
+        } else {
+            match budget::parse(body) {
+                Ok(budget) => Some(budget),
+                Err(error) => return Ok(Response::error(400, "invalid_input", error)),
+            }
+        };
+        if !self.storage.provisioned()? {
+            return Ok(Response::error(
+                409,
+                "not_provisioned",
+                "provision the repository first",
+            ));
+        }
+        if let Some(budget) = &replace {
+            admin::set_budget(&self.storage, budget)?;
+        }
+        let (log, _) = self.open()?;
+        if let Some(budget) = replace {
+            log.set_budget(budget);
+        }
+        let now = log.now();
+        let usage = budget::usage(log, now)?;
+        let meters: serde_json::Map<String, Value> = usage
+            .meters
+            .iter()
+            .map(|meter| {
+                (
+                    meter.budget.clone(),
+                    json!({ "used": meter.used, "limit": meter.limit }),
+                )
+            })
+            .collect();
+        let mut usage_json = Value::Object(meters);
+        usage_json["day"] = json!(usage.day);
+        Ok(Response::json(
+            200,
+            json!({ "budget": log.budget(), "usage": usage_json }),
+        ))
     }
 
     fn state(&mut self) -> Result<Response, ProtocolError> {

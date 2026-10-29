@@ -3,13 +3,14 @@
 //! copy, then the same provisioning steps as create, so a retry resumes where it stopped.
 
 use javelin::ObjectId;
-use javelin_collaboration::{RepositoryId, Role};
+use javelin_collaboration::RepositoryId;
 use javelin_identity::Scope;
 use javelin_node::fork::Origin;
 
 use crate::{
     ControlError, ControlPlane,
     control::{ForkPlan, authenticate},
+    members,
     repo::{CreateRequest, Created, created, initial_permissions, reserve, validate_request},
     state::{ForkOf, Phase},
 };
@@ -60,10 +61,11 @@ impl ControlPlane {
                     "the source repository is still provisioning".into(),
                 ));
             }
-            // The plane knows one role, the creator's: anyone else forks a public repository
-            // from outside it.
-            let reader = if source.creator == caller.principal {
-                Some(Role::Maintain)
+            // A member forks with their role's audiences; anyone else forks a public
+            // repository from outside it.
+            let reader = members::role_of(source, &caller.principal);
+            let reader = if reader.is_some() {
+                reader
             } else if source.public {
                 None
             } else {

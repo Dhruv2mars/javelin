@@ -15,12 +15,13 @@ use std::{
 };
 
 use javelin::{FileEntry, LayerId, ObjectId, OperationId, RepoPath, SparseChanges, VersionNumber};
-use javelin_collaboration::{PrincipalId, Role, Visibility};
+use javelin_collaboration::{AppliedPermissions, PrincipalId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
 use javelin_node::{
-    FileWorldLog,
+    FileWorldLog, admin,
     auth::{self, Gate},
-    bind_loopback, fork, serve,
+    bind_loopback, fork, serve, serve_live,
+    storage::Directory,
 };
 use javelin_protocol::{
     Message,
@@ -61,6 +62,12 @@ enum Who {
     Member,
     /// Maintain.
     Owner,
+}
+
+/// A step of a live session: a request, or a permissions push between requests.
+enum Step {
+    Ask(Who, Message),
+    Push(AppliedPermissions),
 }
 
 /// A node on a temporary directory, whose clock the test sets. Requests go over loopback
@@ -134,19 +141,40 @@ impl Node {
 
     /// Serves exactly `requests`, one connection each, and returns the replies.
     fn session(&mut self, requests: &[(Who, Message)]) -> Vec<Message> {
-        let gate = Gate::load(self.dir.path(), REPO).unwrap();
+        let steps: Vec<_> = requests
+            .iter()
+            .map(|(who, message)| Step::Ask(*who, message.clone()))
+            .collect();
+        self.live(&steps)
+    }
+
+    /// Serves `steps` as `javelin-node serve` does, reading the stored permissions for every
+    /// request, while the test pushes new permissions between requests as the control plane
+    /// would. Returns the replies to the requests.
+    fn live(&mut self, steps: &[Step]) -> Vec<Message> {
         let listener = bind_loopback("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut log = self.log.take().unwrap();
-        let count = requests.len();
+        let count = steps
+            .iter()
+            .filter(|step| matches!(step, Step::Ask(..)))
+            .count();
+        let dir = self.dir.path().to_path_buf();
         let server = thread::spawn(move || {
-            serve(&listener, REPO, &mut log, &gate, Some(count)).unwrap();
+            serve_live(&listener, REPO, &mut log, &dir, Some(count)).unwrap();
             log
         });
-        let replies = requests
-            .iter()
-            .map(|(who, message)| send(addr, self.token(*who).as_deref(), message))
-            .collect();
+        let mut replies = Vec::new();
+        for step in steps {
+            match step {
+                Step::Ask(who, message) => {
+                    replies.push(send(addr, self.token(*who).as_deref(), message));
+                }
+                Step::Push(permissions) => {
+                    admin::apply(&Directory::new(self.dir.path()), permissions).unwrap();
+                }
+            }
+        }
         self.log = Some(server.join().unwrap());
         replies
     }
@@ -785,4 +813,90 @@ fn an_outsider_forks_at_the_frontier_with_the_sources_ids() {
         member.head().unwrap().id,
         source.repo().version(v(2)).unwrap().id
     );
+}
+
+/// The permissions a push applies at `epoch`: the owner as Maintain, and `member` and
+/// `stranger` with the roles given.
+fn roles(epoch: u64, member: Option<Role>, stranger: Option<Role>) -> AppliedPermissions {
+    let mut permissions = permissions(REPO, Visibility::Public);
+    permissions.epoch = epoch;
+    for (name, role) in [("member", member), ("stranger", stranger)] {
+        if let Some(role) = role {
+            permissions
+                .roles
+                .insert(PrincipalId::parse(name).unwrap(), role);
+        }
+    }
+    permissions
+}
+
+#[test]
+fn a_role_change_moves_the_reader_never_the_frontier() {
+    let mut node = Node::new();
+    node.at(T0 + 10);
+    node.publish("fix", &[("src/a", b"patched\n")], Some(None));
+    let probe = Probe {
+        tree: node.log().repo().version(v(2)).unwrap().tree,
+        blob: ObjectId::for_blob(b"patched\n"),
+        checkpoint: match node.log().layer_state(&layer("fix")).unwrap() {
+            javelin::LayerState::Published { head, .. } => head.checkpoint().object(),
+            other => panic!("fix is not published: {other:?}"),
+        },
+    };
+    let resolve = || Message::Resolve { version: None };
+    let ask = |who, message| Step::Ask(who, message);
+    let mut steps = vec![
+        ask(Who::Member, resolve()),
+        ask(Who::Stranger, resolve()),
+        ask(Who::Anonymous, Message::ReadDisclosure),
+        // The member is removed while the node serves; the next request reads as an outsider.
+        Step::Push(roles(2, None, None)),
+        ask(Who::Member, resolve()),
+        ask(Who::Anonymous, Message::ReadDisclosure),
+    ];
+    for who in [Who::Member, Who::Stranger] {
+        steps.extend(battery(&probe).into_iter().map(|m| ask(who, m)));
+    }
+    // Both are members now: each reads the head, at once.
+    steps.extend([
+        Step::Push(roles(3, Some(Role::Read), Some(Role::Read))),
+        ask(Who::Member, resolve()),
+        ask(Who::Stranger, resolve()),
+        ask(Who::Anonymous, Message::ReadDisclosure),
+        ask(Who::Owner, Message::ReadDisclosure),
+    ]);
+    let mut replies = node.live(&steps).into_iter();
+    let mut next = || replies.next().unwrap();
+    let (member_head, outsider_head, public) = (next(), next(), next());
+    assert!(
+        matches!(member_head, Message::Resolved { number, .. } if number == v(2)),
+        "{member_head:?}"
+    );
+    assert!(
+        matches!(outsider_head, Message::Resolved { number, .. } if number == v(1)),
+        "{outsider_head:?}"
+    );
+
+    // Removed: the member's replies are an outsider's, byte for byte, and the frontier holds.
+    assert_eq!(next(), outsider_head);
+    assert_eq!(next(), public);
+    let count = battery(&probe).len();
+    let removed: Vec<_> = (0..count).map(|_| encode(&next()).unwrap()).collect();
+    let stranger: Vec<_> = (0..count).map(|_| encode(&next()).unwrap()).collect();
+    for (i, (a, b)) in removed.iter().zip(&stranger).enumerate() {
+        assert_eq!(
+            decode(a).unwrap(),
+            decode(b).unwrap(),
+            "reply {i} differs from a caller who was never a member"
+        );
+    }
+
+    // Granted: both read the head with the same IDs; outsiders still stop at the frontier.
+    assert_eq!(next(), member_head);
+    assert_eq!(next(), member_head);
+    assert_eq!(next(), public);
+    let Message::Disclosure(owner) = next() else {
+        panic!("expected a disclosure");
+    };
+    assert_eq!(owner.frontier, v(1));
 }

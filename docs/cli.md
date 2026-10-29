@@ -748,9 +748,53 @@ javelin-node serve ~/javelin-control/nodes/REPOSITORY REPOSITORY 127.0.0.1:7878 
 javelin attach http://127.0.0.1:7878/REPOSITORY ~/app
 ```
 
-`repo create` prints the `javelin-node serve` line with the repository's ID. The control plane
-has no membership API yet, so a second person cannot be given a role from the CLI; TASKS.md
-tracks it.
+`repo create` prints the `javelin-node serve` line with the repository's ID. To bring in a
+teammate, invite them, and they sign in with the code:
+
+```sh
+javelin member invite acme/app cora --role review   # prints a one-time code, valid 7 days
+javelin login --invite CODE                          # on cora's machine: signs in as cora
+javelin repo settings acme/app --required-approvals 1
+```
+
+### Members
+
+A repository's members and their roles (`read`, `review`, `maintain`) live in the control
+plane, which pushes every change to the repository's node. The node reads its permissions
+for each request, so a change decides the member's next request, with no restart, on a
+self-hosted node and on Cloudflare alike. REPOSITORY is `OWNER/NAME` or the repository's ID.
+The caller is this device's sign-in, or `JAVELIN_ADMIN_TOKEN`; changes need the maintain role,
+and any member may list.
+
+- `member list REPOSITORY` prints the members, the epoch the node applies, the approvals
+  Publish needs, and pending invites.
+- `member add REPOSITORY ACCOUNT [--role ROLE]` grants a role (default `read`) to an account
+  the control plane already has: one an invite made, a passkey's, or `admin`. An unknown name
+  is `not_found`; invite them instead. Adding someone who already holds that role changes
+  nothing.
+- `member role REPOSITORY ACCOUNT ROLE` changes a member's role.
+- `member remove REPOSITORY ACCOUNT` removes a member. Their tokens stop working at the node
+  with the next request (`forbidden`), and the control plane gives them no new ones. Work they
+  queued while the node was down is refused when it replays (`forbidden`) and stays in their
+  outbox; nothing of it reaches the node.
+- `member invite REPOSITORY ACCOUNT [--role ROLE]` prints a one-time code for a new account
+  named ACCOUNT. `javelin login --invite CODE` makes the account, signs that device in as it
+  and grants the role. A name that already has an account is refused (`conflict`): add it
+  instead. A new invite for the same name replaces the pending one, and `member remove`
+  cancels it. On a Cloudflare node, which only a maintainer's control plane reaches (with
+  `JAVELIN_NODE_ADMIN_TOKEN`), the invite still makes the account and the membership, and
+  `login --invite` says the node has not applied the role yet; the maintainer's next
+  `member add` for that account pushes it.
+- `repo settings REPOSITORY --required-approvals N` sets the approvals a Publish Request needs.
+
+A repository always keeps one `maintain` member, so the last one cannot be removed or
+lowered. Each change moves the epoch on by one; a command whose push did not reach the node
+is saved, and running it again pushes it. A role change moves which audiences a member reads
+and whether they read the head or the public frontier; it never changes a version ID or
+where the frontier is.
+
+A second device signs in with `javelin login`, approved from a device already signed in to
+the same account with `javelin control approve CODE` (no admin token).
 
 ## Output and exit status
 

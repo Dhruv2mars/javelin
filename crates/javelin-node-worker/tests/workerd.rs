@@ -46,6 +46,19 @@ fn workerd_node_serves_the_wire() {
     let wire = common::Wire::new(&url, &repository);
     let absent = RepositoryId::parse(&format!("{}_absent", repository.as_str())).expect("id");
     common::run_wire(&repository, &wire, &common::Wire::new(&url, &absent));
+    common::run_budget(&wire, &|value| {
+        node.budget(&repository, Some(value))
+            .expect("set the budget");
+    });
+    let state = node.budget(&repository, None).expect("read the budget");
+    assert_eq!(state["budget"]["storage_bytes"], 1_000_000_000u64);
+    assert!(
+        state["usage"]["storage_bytes"]["used"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "{state}"
+    );
 }
 
 #[test]

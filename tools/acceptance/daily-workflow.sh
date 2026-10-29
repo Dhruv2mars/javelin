@@ -9,6 +9,11 @@
 #   COLLAB_HOME or COLLAB_TOKEN     Review, a different person: authors and approves.
 #   DESKTOP_HOME or DESKTOP_TOKEN   Optional: the collaborator on a second device, for
 #                                   `layer take`. Without it that step is skipped.
+# To bring the collaborator in from nothing, set INVITE=ACCOUNT (a name with no account yet)
+# and give COLLAB_HOME (and DESKTOP_HOME) homes that are not signed in. The owner then runs
+# `javelin member invite REPOSITORY ACCOUNT --role review`, the collaborator signs in with
+# `javelin login --invite CODE`, and the second device runs `javelin login`, approved from the
+# first with `javelin control approve CODE`. Set JAVELIN_CONTROL_URL for all of them.
 # The node restart step needs one of:
 #   NODE_SERVE="javelin-node serve DIR REPOSITORY 127.0.0.1:PORT"
 #                                   The script starts this node, kills it mid-loop and starts
@@ -23,6 +28,7 @@
 set -u
 
 url=${1:?usage: daily-workflow.sh http(s)://HOST[:PORT]/REPOSITORY}
+repository=${url##*/}
 javelin=${JAVELIN:-javelin}
 run=$(date +%s)-$$
 work=${WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/javelin-daily.XXXXXX")}
@@ -128,6 +134,37 @@ if [ -n "${NODE_SERVE:-}" ]; then
   node_start
 elif [ -n "${NODE_STOP:-}" ] && [ -n "${NODE_START:-}" ]; then
   restart=yes
+fi
+
+if [ -n "${INVITE:-}" ]; then
+  bold "0. owner: invite the collaborator, who signs in with the code on two devices"
+  as owner --json member invite "$repository" "$INVITE" --role review
+  [ "$status" -eq 0 ] || fail "member invite exited $status"
+  code=$(printf '%s' "$out" | grep -o '"code":"[^"]*"' | cut -d'"' -f4)
+  [ -n "$code" ] || fail "member invite printed no code"
+  must collab login --invite "$code"
+  has "$INVITE"
+  if [ -n "${DESKTOP_HOME:-}" ]; then
+    # `javelin login` waits for its code to be approved, so it runs in the background while
+    # the collaborator's first device approves the code it prints.
+    printf 'desktop$ javelin login\n'
+    : >"$work/desktop-login.err"
+    env -u JAVELIN_TOKEN JAVELIN_HOME="$DESKTOP_HOME" "$javelin" login \
+      >"$work/desktop-login.out" 2>"$work/desktop-login.err" &
+    login_pid=$!
+    tries=0
+    until grep -q 'javelin control approve ' "$work/desktop-login.err"; do
+      tries=$((tries + 1))
+      [ "$tries" -lt 200 ] || fail "login printed no code: $(cat "$work/desktop-login.err")"
+      sleep 0.05
+    done
+    user_code=$(sed -n 's/.*javelin control approve \([A-Z0-9-]*\).*/\1/p' "$work/desktop-login.err" | head -n 1)
+    must collab control approve "$user_code"
+    wait "$login_pid" || fail "the second device's login failed: $(cat "$work/desktop-login.err")"
+    sed 's/^/  /' "$work/desktop-login.out"
+  fi
+  must owner member list "$repository"
+  has "$INVITE review"
 fi
 
 owner=$work/owner collab=$work/collab desktop=$work/desktop

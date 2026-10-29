@@ -66,15 +66,49 @@ pub fn handle(
                 "a browser origin may only send read messages",
             ));
         }
+        refuse_outsider_work(gate, token, now, &message)?;
+        // A direct Publish the caller's live role may not make is answered before the budget
+        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox.
+        if let Message::PublishLayer { layer, .. } = &message
+            && let Some(refused) = refuse_direct_publish(gate, token, now, layer)?
+        {
+            return Ok(Message::PublishOutcome(PublishOutcome::Refused {
+                code: refused.into(),
+            }));
+        }
+        // A write that would cross the owner's budget is refused before anything changes.
+        crate::budget::admit(log, gate, token, now, &message, body.len())?;
         // Every version is stamped, and every decided embargo tied to its version, before
         // anything is read, and again after a Publish, so the version's time is this request.
         crate::disclosure::stamp(log.records(), log.repo(), now)?;
         let reply = serve_one(log, gate, token, now, message);
         // A failure here leaves the stamp to the next request, which only delays disclosure.
         let _ = crate::disclosure::stamp(log.records(), log.repo(), now);
+        // The rows this request wrote count against today's budget. A failure leaves them
+        // uncounted; the reply is already decided.
+        let _ = crate::budget::meter(log, now);
         reply
     }) {
         Ok(reply) => reply,
+        Err(ProtocolError { code, detail }) if code == code::QUOTA_EXCEEDED => {
+            // The use and the limit describe the whole repository: only Maintain reads them.
+            let maintains = gate
+                .check(
+                    token,
+                    now,
+                    Need {
+                        scope: Scope::Read,
+                        layer: None,
+                    },
+                )
+                .is_ok_and(|grant| gate.reader(&grant).reads_all());
+            let detail = if maintains {
+                detail
+            } else {
+                crate::budget::redact(&detail)
+            };
+            Message::Error { code, detail }
+        }
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
     let body = match encode(&reply) {
@@ -106,14 +140,6 @@ fn serve_one(
     now: u64,
     message: Message,
 ) -> Result<Message, ProtocolError> {
-    refuse_outsider_work(gate, token, now, &message)?;
-    if let Message::PublishLayer { layer, .. } = &message
-        && let Some(refused) = refuse_direct_publish(gate, token, now, layer)?
-    {
-        return Ok(Message::PublishOutcome(PublishOutcome::Refused {
-            code: refused.into(),
-        }));
-    }
     match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
@@ -130,6 +156,7 @@ fn serve_one(
         | Message::SetDelay { .. }
         | Message::Embargo { .. }
         | Message::Release { .. } => return disclose(log, gate, token, now, &message),
+        Message::ReadUsage => return usage(log, gate, token, now),
         _ => {}
     }
     // Version negotiation reveals nothing about the repository, so it needs no grant.
@@ -328,6 +355,24 @@ fn disclose(
     )?))
 }
 
+/// `ReadUsage`: the node's use against its budget, for Maintain only. The numbers describe
+/// the whole repository, hidden content and work above the public frontier included.
+fn usage(
+    log: &FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+) -> Result<Message, ProtocolError> {
+    let grant = gate.check(token, now, need(&Message::ReadUsage))?;
+    if !gate.reader(&grant).reads_all() {
+        return Err(ProtocolError::new(
+            code::FORBIDDEN,
+            "only Maintain reads the node's use against its budget",
+        ));
+    }
+    Ok(Message::Usage(crate::budget::usage(log, now)?))
+}
+
 /// Refuses a write that would change a path outside the caller's audiences, before it
 /// reaches its handler: an append's staged changes over the Layer's base, the source of a
 /// Stack over the target's base, and the whole Layer for a Publish.
@@ -399,7 +444,7 @@ fn check_writes(
 /// Layer-limited token reaches only its own Layer there. Object uploads (`Want`, `Objects`)
 /// name none: they need `layer:write`, and change no reference, since objects are addressed
 /// by content. Everything else, replies sent as requests included, needs `read`.
-fn need(message: &Message) -> Need<'_> {
+pub(crate) fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
         Message::LayerAppend { layer, .. } | Message::LayerCreate { layer, .. } => {
             (Scope::LayerWrite, Some(layer))

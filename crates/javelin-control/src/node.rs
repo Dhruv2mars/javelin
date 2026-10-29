@@ -1,7 +1,9 @@
 //! The self-hosted node the control plane provisions in-process. Each repository gets a
 //! directory holding a native repository with World 0, its applied permissions and the
 //! keys it trusts, in the files `javelin_node::auth` reads when the node serves. The
-//! permissions are checked by the node's own gate, so the epoch rules are the node's.
+//! permissions are checked by the node's own gate, so the epoch rules are the node's. A
+//! serving `javelin-node` reads both files again for every request, so a push applies while
+//! it serves: pushes take their own lock, never the lock the serving node holds.
 
 use std::{
     fs::{self},
@@ -26,6 +28,9 @@ use crate::{
 };
 
 const LOCK_FILE: &str = "node.lock";
+/// Serializes the pushes to one repository. A serving node holds `node.lock` for its whole
+/// life, so a push that waited for it would wait until the node stopped.
+const PUSH_LOCK_FILE: &str = "push.lock";
 
 /// Self-hosted nodes under one directory: `root/<repository>/`.
 pub struct LocalNode {
@@ -54,13 +59,22 @@ impl LocalNode {
     /// Creates the repository's directory and takes its lock. Holding the lock is what keeps two
     /// retries of one create from racing on the node's files; the lock lasts until the guard drops.
     fn locked(&self, repository: &RepositoryId) -> Result<fs::File, ControlError> {
+        self.lock(repository, LOCK_FILE)
+    }
+
+    /// Takes the push lock of `repository`, which a serving node never holds.
+    fn push_locked(&self, repository: &RepositoryId) -> Result<fs::File, ControlError> {
+        self.lock(repository, PUSH_LOCK_FILE)
+    }
+
+    fn lock(&self, repository: &RepositoryId, file: &str) -> Result<fs::File, ControlError> {
         let dir = self.repository_dir(repository);
         fs::create_dir_all(&dir).map_err(node_error)?;
         let lock = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(dir.join(LOCK_FILE))
+            .open(dir.join(file))
             .map_err(node_error)?;
         lock.lock().map_err(node_error)?;
         Ok(lock)
@@ -73,9 +87,10 @@ impl LocalNode {
         auth::read_permissions(&self.repository_dir(repository)).map_err(read_error)
     }
 
-    /// Replaces the keys `repository`'s node trusts. A serving node reads them when it starts.
+    /// Replaces the keys `repository`'s node trusts. A serving node reads them for its next
+    /// request.
     pub fn trust_keys(&self, repository: &RepositoryId, keys: &KeySet) -> Result<(), ControlError> {
-        let _lock = self.locked(repository)?;
+        let _lock = self.push_locked(repository)?;
         auth::write_keys(&self.repository_dir(repository), keys).map_err(node_error)
     }
 }
@@ -126,7 +141,7 @@ impl NodeLink for LocalNode {
     }
 
     fn apply(&self, permissions: &AppliedPermissions) -> Result<(), ControlError> {
-        let _lock = self.locked(&permissions.repository)?;
+        let _lock = self.push_locked(&permissions.repository)?;
         let dir = Directory::new(self.repository_dir(&permissions.repository));
         match admin::apply(&dir, permissions) {
             Ok(_) => Ok(()),
