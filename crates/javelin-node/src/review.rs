@@ -224,7 +224,7 @@ pub(crate) fn handle_as(
             // World receipt. Other operations are refused as published.
             match decide(records, permissions, &review, &id, &command)? {
                 Decision::Replayed(reply) => {
-                    match embargo_with(records, repo, operation, *embargo)? {
+                    match crate::disclosure::carried(records, repo, operation, *embargo)? {
                         Some(refused_code) => Ok(publish_refused(refused_code)),
                         None => Ok(reply),
                     }
@@ -241,7 +241,9 @@ pub(crate) fn handle_as(
                     }
                     // The embargo is stored before the Publish runs, so its version is never
                     // disclosed early.
-                    if let Some(refused_code) = embargo_with(records, repo, operation, *embargo)? {
+                    if let Some(refused_code) =
+                        crate::disclosure::carried(records, repo, operation, *embargo)?
+                    {
                         return Ok(publish_refused(refused_code));
                     }
                     let room = room.as_ref().expect("read for PublishRequest");
@@ -295,25 +297,6 @@ pub(crate) fn handle_as(
             )?))
         }
         _ => Err(ProtocolError::new("malformed", "not a review message")),
-    }
-}
-
-/// Stores the embargo a `PublishRequest` carries, if any, for its operation. A Publish
-/// already decided keeps the embargo it was decided with: asking for another one is a
-/// reused operation.
-fn embargo_with(
-    records: &Connection,
-    repo: &Repository,
-    operation: &OperationId,
-    embargo: Option<Option<u64>>,
-) -> Result<Option<&'static str>, ProtocolError> {
-    let Some(until) = embargo else {
-        return Ok(None);
-    };
-    match crate::disclosure::embargo(records, repo, operation, until) {
-        Ok(()) => Ok(None),
-        Err(_) if repo.publication(operation)?.is_some() => Ok(Some(OPERATION_ID_REUSED)),
-        Err(error) => Err(error),
     }
 }
 

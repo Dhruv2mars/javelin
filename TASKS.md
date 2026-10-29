@@ -229,6 +229,11 @@ fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 4
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
   upload's completion instead of a clock.
 - [ ] The `closed_url()` port reuse above.
+- [ ] `crates/javelin-node/tests/wire_frontier.rs` resets a loopback connection on a loaded Mac
+  (`send`, line 285): the battery tests and `a_restricted_trace_of_a_held_version_is_absent_
+  outside_the_repository`, 3 of 4 runs on clean `main` `d8afcb6` on 2026-10-29 under load
+  average 40-85. `Node::live` serves `serve_live(.., Some(count))`, the `Some(n)` class trail 42
+  fixed elsewhere; move it to `serve_until_joined`.
 
 ## Daily workflow acceptance (2026-10-28)
 

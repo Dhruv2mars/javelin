@@ -235,6 +235,29 @@ pub fn embargo(
     Ok(())
 }
 
+/// Stores the embargo a Publish carries (`PublishRequest`'s `embargo`), before that Publish
+/// runs. A Publish that made a version keeps the embargo it was decided with: another one is
+/// `operation_id_reused`, the refusal code returned. One that made no version holds nothing,
+/// so its retry replays whatever it carries. The caller checks the Maintain role.
+pub(crate) fn carried(
+    records: &Connection,
+    repo: &Repository,
+    operation: &OperationId,
+    embargo: Option<Option<u64>>,
+) -> Result<Option<&'static str>, ProtocolError> {
+    let Some(until) = embargo else {
+        return Ok(None);
+    };
+    let Err(error) = self::embargo(records, repo, operation, until) else {
+        return Ok(None);
+    };
+    match repo.publication(operation)?.map(|receipt| receipt.outcome) {
+        Some(PublishOutcome::Published { .. }) => Ok(Some(code::OPERATION_ID_REUSED)),
+        Some(_) => Ok(None),
+        None => Err(error),
+    }
+}
+
 /// Releases the embargo on `version` at `now`. Releasing a released embargo changes
 /// nothing. The caller checks the Maintain role.
 pub fn release(

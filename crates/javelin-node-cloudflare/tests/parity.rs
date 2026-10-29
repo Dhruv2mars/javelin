@@ -1415,6 +1415,37 @@ fn outside_scenario(log: &mut FileWorldLog) -> Vec<String> {
     );
     assert_eq!(error_code(&reply), "forbidden");
 
+    // An operation ID is the stranger's own too: the owner's `append-fix` is not in its way.
+    let more = s.upload("stranger", &[("src/b", b"b2\n")]);
+    let reply = s.send(
+        Some("stranger"),
+        &Message::LayerAppend {
+            operation: op("append-fix"),
+            layer: layer("work"),
+            parent: Some(mine),
+            checkpoint: more,
+        },
+    );
+    let mine = match reply {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("{other:?}"),
+    };
+    // Its own checkpoint, named over a held or an absent version, is refused alike, before
+    // any policy is read.
+    for base in [2, 9] {
+        let reply = s.send(
+            Some("stranger"),
+            &Message::OpenRequest {
+                operation: op("stranger-open-above"),
+                request: RequestId::parse("pr-above").unwrap(),
+                layer: layer("work"),
+                checkpoint: mine,
+                base: v(base),
+            },
+        );
+        assert_eq!(error_code(&reply), "missing_version");
+    }
+
     let request = RequestId::parse("pr-1").unwrap();
     let opened = s.send(
         Some("stranger"),
@@ -1509,6 +1540,23 @@ fn outside_scenario(log: &mut FileWorldLog) -> Vec<String> {
         })
     );
 
+    let reply = s.send(
+        Some("owner"),
+        &Message::Revise {
+            operation: op("owner-revise"),
+            request: id.clone(),
+            expected_revision: 1,
+            checkpoint: owners,
+            base: v(2),
+        },
+    );
+    assert_eq!(
+        reply,
+        Message::ReviewOutcome(ReviewOutcome::Refused {
+            code: "layer_reserved".into()
+        })
+    );
+
     // Published with its embargo in one message: World 3 is held from the first moment, and
     // a retry with another embargo is a reused operation.
     let publish_theirs = |embargo| Message::PublishRequest {
@@ -1562,6 +1610,36 @@ fn outside_scenario(log: &mut FileWorldLog) -> Vec<String> {
         );
         assert_eq!(error_code(&reply), "missing_version");
     }
+    // A Publish that made no version holds nothing: its embargoed retry replays the conflict.
+    let clash = s.layer_with("clash", 1, &[("src/fix", b"other\n")]);
+    let clash_request = RequestId::parse("clash-1").unwrap();
+    s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-clash"),
+            request: clash_request.clone(),
+            layer: layer("clash"),
+            checkpoint: clash,
+            base: v(1),
+        },
+    );
+    let publish_clash = Message::PublishRequest {
+        operation: op("publish-clash"),
+        request: clash_request,
+        revision: 1,
+        base: v(1),
+        embargo: Some(None),
+    };
+    let first = s.send(Some("owner"), &publish_clash);
+    assert!(
+        matches!(
+            first,
+            Message::PublishOutcome(PublishOutcome::Conflict { .. })
+        ),
+        "{first:?}"
+    );
+    assert_eq!(s.send(Some("owner"), &publish_clash), first);
+
     // Released one by one, each version reaches the stranger.
     for n in [2, 3] {
         s.send(Some("owner"), &Message::Release { version: v(n) });

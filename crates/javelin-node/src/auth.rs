@@ -195,12 +195,18 @@ impl Gate {
 /// Refuses a write by `writer` whose `changes`, over World `base`, touch a path outside the
 /// caller's audiences (`Repository::check_writer`). The refusal is `forbidden` and names no
 /// path, so it does not reveal which hidden path matched.
+/// A base above a held writer's frontier is refused as a version the node does not hold.
 pub fn check_write(
     repo: &javelin::Repository,
     writer: &Reader,
     changes: &javelin::SparseChanges,
     base: javelin::VersionNumber,
 ) -> Result<(), ProtocolError> {
+    // A version above a held writer's frontier is one it does not know, so its policy is
+    // never read for it.
+    if !writer.sees(base) {
+        return Err(javelin::Error::MissingVersion(base).into());
+    }
     match repo.check_writer(changes, base, writer) {
         Err(javelin::Error::HiddenPath(_)) => Err(ProtocolError::new(
             "forbidden",

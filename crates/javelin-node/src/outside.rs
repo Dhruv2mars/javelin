@@ -5,11 +5,12 @@
 //! An outsider reads at the public frontier (`disclosure.rs`), and a Layer is work above
 //! every version, so its Layers and requests live in a namespace of its own. The node
 //! prefixes every Layer and request ID an outsider names with `outside-` and a hash of its
-//! principal, and strips the prefix from every reply. The stored ID records who created the
-//! Layer or request: the outsider reaches only its own, and an ID it picks never meets a
-//! member's, so no reply says whether anyone else's Layer or request exists. Only the
-//! outsider writes in its namespace: a member's Layer write, direct Publish or new request
-//! there is refused as `layer_reserved`. An outsider creates a Layer over a version at or
+//! principal, and strips the prefix from every reply; its operation IDs get the prefix too.
+//! The stored ID records who created the Layer or request: the outsider reaches only its
+//! own, and an ID it picks never meets anyone else's, so no reply says whether another
+//! Layer, request or operation exists. Only the outsider writes in its namespace: a member's
+//! Layer write, direct Publish, new request or revision there is refused as
+//! `layer_reserved`. An outsider creates a Layer over a version at or
 //! below the frontier, and reads its own Layers' checkpoints over it
 //! (`javelin::Reader::with_namespace`); everything above the frontier stays absent.
 //!
@@ -20,7 +21,7 @@
 //! or request ID that names nothing in the namespace is `forbidden` too, as before: the
 //! outsider reaches none but its own.
 
-use javelin::{LayerId, ObjectId, Reader};
+use javelin::{LayerId, ObjectId, OperationId, Reader};
 use javelin_identity::{Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
@@ -77,6 +78,10 @@ impl Namespace {
         LayerId::parse(&format!("{}{}", self.0, layer.as_str())).map_err(|_| too_long())
     }
 
+    fn operation(&self, operation: OperationId) -> Result<OperationId, ProtocolError> {
+        OperationId::parse(&format!("{}{}", self.0, operation.as_str())).map_err(|_| too_long())
+    }
+
     fn request(&self, request: RequestId) -> Result<RequestId, ProtocolError> {
         RequestId::parse(&format!("{}{}", self.0, request.as_str())).map_err(|_| too_long())
     }
@@ -110,7 +115,7 @@ impl Namespace {
                 parent,
                 checkpoint,
             } => Message::LayerAppend {
-                operation,
+                operation: self.operation(operation)?,
                 layer: self.layer(layer)?,
                 parent,
                 checkpoint,
@@ -119,7 +124,7 @@ impl Namespace {
                 layer: self.layer(layer)?,
             },
             Message::LayerTake { operation, layer } => Message::LayerTake {
-                operation,
+                operation: self.operation(operation)?,
                 layer: self.layer(layer)?,
             },
             Message::OpenRequest {
@@ -129,7 +134,7 @@ impl Namespace {
                 checkpoint,
                 base,
             } => Message::OpenRequest {
-                operation,
+                operation: self.operation(operation)?,
                 request: self.request(request)?,
                 layer: self.layer(layer)?,
                 checkpoint,
@@ -142,7 +147,7 @@ impl Namespace {
                 checkpoint,
                 base,
             } => Message::Revise {
-                operation,
+                operation: self.operation(operation)?,
                 request: self.request(request)?,
                 expected_revision,
                 checkpoint,
@@ -154,7 +159,7 @@ impl Namespace {
                 revision,
                 body,
             } => Message::Comment {
-                operation,
+                operation: self.operation(operation)?,
                 request: self.request(request)?,
                 revision,
                 body,
@@ -285,7 +290,8 @@ pub(crate) fn admit(
 }
 
 /// The refusal of a member's write in an outsider's namespace: Layer writes, a direct
-/// Publish, and a request opened there or from an outsider's Layer.
+/// Publish, a request opened there or from an outsider's Layer, and a revision of one, so
+/// nothing there is ever based above the outsider's frontier.
 fn reserved(message: &Message) -> Option<Message> {
     let outside = |id: &str| id.starts_with(PREFIX);
     let refused = || refusal::LAYER_RESERVED.to_string();
@@ -308,6 +314,11 @@ fn reserved(message: &Message) -> Option<Message> {
         Message::OpenRequest { request, layer, .. }
             if outside(request.as_str()) || outside(layer.as_str()) =>
         {
+            Some(Message::ReviewOutcome(ReviewOutcome::Refused {
+                code: refused(),
+            }))
+        }
+        Message::Revise { request, .. } if outside(request.as_str()) => {
             Some(Message::ReviewOutcome(ReviewOutcome::Refused {
                 code: refused(),
             }))
