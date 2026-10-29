@@ -338,9 +338,11 @@ by byte copy (`CopyFile`) is not flushed file by file.
   Layer (`layer_base` plus `create_layer`) takes another 13 s. This is pre-existing
   repository behavior and is tracked in `TASKS.md`.
 
-CI (`Workspace / <fs>` in `ci.yml`) runs the workspace tests on APFS, btrfs, XFS and
-ext4 loop or runner volumes, and on ReFS Dev Drive and NTFS. Each job asserts its
-expected strategy and records a 20k-file cold and warm measurement.
+Buildkite (`workspace on btrfs, XFS and ext4` in `.buildkite/pipeline.yml`) runs the
+workspace tests on btrfs, XFS and ext4 loop volumes and asserts each one's expected
+strategy. APFS runs only on the owner's Mac; ReFS Dev Drive and NTFS run nowhere since
+GitHub Actions stopped (the old `Workspace / <fs>` job also recorded a 20k-file cold and
+warm measurement).
 
 ## Sources
 

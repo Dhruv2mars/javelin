@@ -1,5 +1,5 @@
 # cargo-deny policy: licenses, advisories, banned crates and dependency sources.
-# Local: `cargo deny check`. CI: .github/workflows/licenses.yml.
+# Local: `cargo deny check`. CI: the `cargo deny` step in .buildkite/pipeline.yml.
 
 [graph]
 all-features = true

@@ -1,6 +1,9 @@
-# Buildkite CI (replaces .github/workflows now that this repo lives on Entire).
-# Runs on the free hosted linux-small queue; checkout comes from the Entire plugin Buildkite adds to every job.
-# Linux subset of ci.yml (fmt, clippy, tests, release build); macOS/Windows matrices need paid queues.
+# Buildkite CI, the repository's only CI now that it lives on Entire. Every step runs on the
+# free hosted linux-small queue; checkout comes from the Entire plugin Buildkite adds to every job.
+# Linux only: macOS and Windows need paid queues. The owner runs fmt, clippy and the tests on
+# macOS before handing off; Windows, and Gate 2 beyond its crash clause, run nowhere.
+# Steps that drive Javelin put a failing `git` first on PATH (.buildkite/git-shim.sh) and fail
+# when anything ran it, and run as an unprivileged user (.buildkite/as-ci.sh).
 steps:
   - label: ":rust: fmt, clippy, test"
     key: rust
@@ -14,9 +17,64 @@ steps:
       rustup component add rustfmt clippy
       cargo fmt --all -- --check
       cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      # tests assert read-only paths stay read-only, which root ignores: run them as a normal user
-      useradd -m ci && chown -R ci:ci . && chmod -R a+rwX /usr/local/cargo
-      su ci -c 'PATH=/usr/local/cargo/bin:$$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup cargo test --locked --workspace --all-targets --all-features'
+      sh .buildkite/git-shim.sh /tmp/git-shim
+      GIT_SHIM=/tmp/git-shim sh .buildkite/as-ci.sh 'cargo test --locked --workspace --all-targets --all-features'
+      test ! -e /tmp/git-shim/invoked
+
+  # Dependency licenses, RustSec advisories, banned crates and sources against deny.toml.
+  - label: ":scales: cargo deny"
+    key: deny
+    agents: { queue: linux-small }
+    timeout_in_minutes: 15
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+    command: |
+      curl -fsSL -o /tmp/deny.tar.gz https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz
+      echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  /tmp/deny.tar.gz" | sha256sum -c -
+      tar -xzf /tmp/deny.tar.gz -C /tmp
+      /tmp/cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny --all-features --log-level warn check
+
+  # Clone-backed Layers on each Linux filesystem, each a loop volume (hence privileged; only
+  # the volume setup uses root). btrfs takes snapshots, XFS reflinks files, ext4 copies.
+  - label: ":file_cabinet: workspace on btrfs, XFS and ext4"
+    key: workspace
+    agents: { queue: linux-small }
+    timeout_in_minutes: 45
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          privileged: true
+          environment: [CARGO_TERM_COLOR=never, RUST_BACKTRACE=1]
+    command: |
+      apt-get update -qq && apt-get install -y -qq xfsprogs btrfs-progs > /dev/null
+      sh .buildkite/as-ci.sh 'cargo test --release --locked -p javelin --test workspace_layers --no-run && cargo test --release --locked -p javelin-cli --test cli_workspace --no-run'
+      for volume in btrfs:snapshot xfs:file_clone ext4:copy; do
+        fs=$${volume%%:*}
+        echo "--- $$fs"
+        truncate -s 6G /tmp/$$fs.img
+        mkfs.$$fs -q $$([ $$fs = ext4 ] && echo -F) /tmp/$$fs.img > /dev/null
+        mkdir -p /mnt/$$fs && mount -o loop /tmp/$$fs.img /mnt/$$fs && chown ci:ci /mnt/$$fs
+        df -T /mnt/$$fs
+        JAVELIN_WORKSPACE_TEST_DIR=/mnt/$$fs/workspace JAVELIN_WORKSPACE_EXPECT=$${volume#*:} sh .buildkite/as-ci.sh 'mkdir -p "$$JAVELIN_WORKSPACE_TEST_DIR" && cargo test --release --locked -p javelin --test workspace_layers -- --nocapture && cargo test --release --locked -p javelin-cli --test cli_workspace'
+      done
+
+  # The forge's pages against a real `javelin-node serve` on loopback seeded with the CLI, and
+  # the CI workflow validator (docs/ci-execution.md section 10).
+  - label: ":spider_web: forge and CI validator"
+    key: forge
+    agents: { queue: linux-small }
+    timeout_in_minutes: 30
+    plugins:
+      - docker#v5.12.0:
+          image: rust:1.99.0
+          environment: [CARGO_TERM_COLOR=never]
+    command: |
+      curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
+      sh .buildkite/git-shim.sh /tmp/git-shim
+      sh .buildkite/as-ci.sh 'cd tools/ci-validate && bun install --frozen-lockfile && cd ../../apps/forge && bun install --frozen-lockfile && bun run typecheck && bun run build && cd ../.. && cargo build --locked -p javelin-cli -p javelin-node'
+      GIT_SHIM=/tmp/git-shim sh .buildkite/as-ci.sh 'cd tools/ci-validate && bun test && cd ../../apps/forge && JAVELIN_BIN_DIR=$$PWD/../../target/debug bun test'
+      test ! -e /tmp/git-shim/invoked
 
   # Gate 2's crash clause (tools/workspace-probe/README.md) on Linux; the container's
   # overlay volume takes the copy fallback. Unprivileged, like the tests.
@@ -35,20 +93,29 @@ steps:
       useradd -m ci && chown -R ci:ci .
       su ci -c '/usr/local/package/bin/bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin --seed target/release/examples/gate2_seed --dir /tmp/gate2 --fs overlay --expect copy --out /tmp/gate2.json --only crash'
 
-  - label: ":cloudflare: node core for wasm"
+  # The managed node (U13) on workerd, the Rust node core built to wasm with SQLite inside
+  # (clang and llvm-ar build it, wasm-bindgen writes the glue): its conformance suite and `repo
+  # create --provider cloudflare`, then the hosted acceptance suite (U14) against the
+  # self-hosted node and the Worker. Local only; no Cloudflare account or credentials.
+  - label: ":cloudflare: node on workerd"
     key: wasm
     agents: { queue: linux-small }
-    timeout_in_minutes: 30
+    timeout_in_minutes: 60
     plugins:
       - docker#v5.12.0:
           image: rust:1.99.0
-          environment: [CARGO_TERM_COLOR=never]
-    # The Cloudflare node's wasm module, SQLite included (clang and llvm-ar build it). The
-    # Worker glue (wasm-bindgen) and wrangler run where the node is deployed, not here.
+          environment: [CARGO_TERM_COLOR=never, AR_wasm32_unknown_unknown=llvm-ar, WRANGLER_SEND_METRICS=false]
     command: |
       apt-get update -qq && apt-get install -y -qq clang llvm > /dev/null
       rustup target add wasm32-unknown-unknown
-      AR_wasm32_unknown_unknown=llvm-ar cargo build --locked --release --target wasm32-unknown-unknown -p javelin-node-cloudflare
+      curl -fsSL -o /tmp/wasm-bindgen.tar.gz https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl.tar.gz
+      echo "82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e  /tmp/wasm-bindgen.tar.gz" | sha256sum -c -
+      tar -xzf /tmp/wasm-bindgen.tar.gz -C /tmp && cp /tmp/wasm-bindgen-0.2.129-x86_64-unknown-linux-musl/wasm-bindgen /usr/local/bin/
+      curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
+      sh .buildkite/git-shim.sh /tmp/git-shim
+      sh .buildkite/as-ci.sh 'cd tools/node-cloudflare && bun install --frozen-lockfile && bun run typecheck'
+      GIT_SHIM=/tmp/git-shim sh .buildkite/as-ci.sh 'cd tools/node-cloudflare && bun run test && bun run ../acceptance/run.ts'
+      test ! -e /tmp/git-shim/invoked
 
   # The release script's Linux targets (tools/release, docs/releases.md), cross-compiled with
   # zig against glibc 2.28 as the macOS release machine does, packed as npm packages.

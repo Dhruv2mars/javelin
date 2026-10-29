@@ -157,10 +157,11 @@ filesystem, and `gate2-controls.mjs` mutation-tests the harness by making it lie
 into the Layer, a lingering daemon, a torn discard, no refusal). Every lie must
 fail its own check.
 
-`.github/workflows/gate2.yml` runs all of this on APFS, ext4, XFS, btrfs, NTFS and
-a ReFS Dev Drive. Linux runs under `no_new_privs`; Windows runs through
-`deelevate.rs`, which drops the runner's administrator token to a standard-user,
-Medium-integrity token.
+The GitHub Actions workflow that ran all of this on APFS, ext4, XFS, btrfs, NTFS and a
+ReFS Dev Drive is gone with GitHub (its last version is `.github/workflows/gate2.yml` at
+`d8afcb6`). It ran Linux under `no_new_privs` and Windows through `deelevate.rs`, which
+drops the runner's administrator token to a standard-user, Medium-integrity token. Run
+it by hand with the commands above.
 
-`.buildkite/pipeline.yml` runs the `crash` clause on Linux, in a container whose overlay
-volume takes the copy fallback.
+`.buildkite/pipeline.yml` runs only the `crash` clause, on Linux, in a container whose
+overlay volume takes the copy fallback. The rest of Gate 2 runs nowhere automatically.
