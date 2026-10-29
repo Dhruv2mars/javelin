@@ -43,5 +43,6 @@ javelin-identity = { path = "crates/javelin-identity" }
 javelin-node = { path = "crates/javelin-node" }
 javelin-node-worker = { path = "crates/javelin-node-worker" }
 javelin-protocol = { path = "crates/javelin-protocol" }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 webauthn-authenticator-rs = { version = "=0.6.1-dev", default-features = false, features = ["softpasskey"] }
 webauthn-rs = { version = "=0.6.1-dev", default-features = false, features = ["danger-allow-state-serialisation"] }
