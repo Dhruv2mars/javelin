@@ -258,11 +258,17 @@ impl Site {
             .spawn()
             .unwrap();
         // It prints one line once it listens.
+        let mut stderr = BufReader::new(node.stderr.take().unwrap());
         let mut line = String::new();
-        BufReader::new(node.stderr.take().unwrap())
-            .read_line(&mut line)
-            .unwrap();
+        stderr.read_line(&mut line).unwrap();
         assert!(line.contains("javelin-node serving"), "node said: {line}");
+        // Keep reading: with its stderr closed, the node dies on its next line (a dropped
+        // connection, say), since printing to a broken pipe panics, and clients are refused.
+        thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                eprintln!("{line}");
+            }
+        });
         self.node = Some(node);
     }
 
