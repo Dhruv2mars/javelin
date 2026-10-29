@@ -14,24 +14,17 @@
 //! saw for the Layer, kept in `.javelin/requests.json`. `open`, `approve` and `comment` need a
 //! live answer and refuse with `node_unavailable`.
 
-use std::{
-    cell::RefCell,
-    ffi::OsString,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::{cell::RefCell, ffi::OsString, path::PathBuf};
 
 use javelin::{
-    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, RemoteHead, Repository,
-    VersionNumber,
+    Attachment, Error, LayerId, LayerState, ObjectId, OperationId, Repository, VersionNumber,
     outbox::{Fault, Kind as Record, Outbox},
 };
 use javelin_protocol::{
     Kind, Message,
     codec::{
-        PublishOutcome, RequestId, RequestStatus, ReviewDetail, ReviewOutcome, RevisionDetail,
-        code, decode, encode,
+        PublishOutcome, RequestId, RequestStatus, RequestSummary, ReviewDetail, ReviewOutcome,
+        RevisionDetail, code, decode, encode,
     },
 };
 use serde_json::{Value, json};
@@ -39,14 +32,16 @@ use serde_json::{Value, json};
 use crate::{
     CliError,
     cli::Output,
+    cli_changes::change_kinds,
     cli_remote::{Link, NodeTransport, RemoteError, call, parse_target, stale_appends, unexpected},
+    cli_store::{
+        load_record, queued_base, remember_bases, remember_listed, remembered_base, save_record,
+    },
+    cli_update::{latest, retire_published, retired_lines, unresolved, unresolved_error},
     cli_upload::{
         create_layer, derived, local_changes, node_checkpoint, node_head, upload, uploads,
     },
 };
-
-/// Where this clone keeps what it last saw of the requests it authored.
-const REQUESTS: &str = "requests.json";
 
 pub(crate) type Outcome = std::result::Result<Output, CliError>;
 
@@ -88,11 +83,11 @@ impl Options {
         Ok(parsed)
     }
 
-    fn get(&self, key: &str) -> Option<&str> {
+    pub(crate) fn get(&self, key: &str) -> Option<&str> {
         self.values.get(key).map(String::as_str)
     }
 
-    fn required(&self, key: &str) -> Result<&str, Error> {
+    pub(crate) fn required(&self, key: &str) -> Result<&str, Error> {
         self.get(key)
             .ok_or_else(|| Error::InvalidInput(format!("missing {key}")))
     }
@@ -132,7 +127,7 @@ pub(crate) struct Attached {
 }
 
 impl Attached {
-    fn open(root: PathBuf) -> Result<Self, CliError> {
+    pub(crate) fn open(root: PathBuf) -> Result<Self, CliError> {
         let repo = Repository::open(&root)?;
         let attachment = repo.attachment()?.ok_or_else(|| {
             Error::InvalidInput("this repository is not attached to a node; attach first".into())
@@ -150,7 +145,7 @@ impl Attached {
     }
 
     /// A session for writes, which never go out without a token.
-    fn writing(&self) -> Result<RefCell<Link>, CliError> {
+    pub(crate) fn writing(&self) -> Result<RefCell<Link>, CliError> {
         Ok(Link::writing(self.target()?))
     }
 
@@ -219,6 +214,7 @@ fn open(args: Vec<OsString>) -> Outcome {
     let operation = options.operation()?;
     let mut attached = Attached::open(options.root()?)?;
     let (capture, changes, base) = local_changes(&mut attached.repo, &layer)?;
+    refuse_unresolved(&attached, &layer)?;
     let link = attached.writing()?;
     let node = upload(&link, &attached.repo, &layer, &base, &changes, &operation)?;
     let reply = call(
@@ -234,6 +230,7 @@ fn open(args: Vec<OsString>) -> Outcome {
     .map_err(CliError::Remote)?;
     let revision = review_outcome(reply)?;
     save_record(&attached.root, &request, &layer, &base, &node.bytes)?;
+    remember_bases(&attached.root, &request, [(revision, base.number)])?;
     if let LayerState::Active { head } = attached.repo.layer_state(&layer)? {
         crate::cli_stream::remember(
             &attached.root,
@@ -283,12 +280,18 @@ fn revise(args: Vec<OsString>) -> Outcome {
     if !queued(&outbox, Record::Revise, &operation) {
         let record = load_record(&attached.root, &request)?;
         let link = attached.writing()?;
+        // Without --layer, the request's Layer, or the successor `layer update` moved its work
+        // to.
         let layer = match (options.get("--layer"), &record) {
             (Some(layer), _) => LayerId::parse(layer)?,
-            (None, Some(record)) => record.layer.clone(),
-            (None, None) => read_review(&link, &request, 0)?.summary.layer,
+            (None, Some(record)) => latest(&attached.root, &record.layer)?,
+            (None, None) => latest(
+                &attached.root,
+                &read_review(&link, &request, 0)?.summary.layer,
+            )?,
         };
         let (_, changes, base) = local_changes(&mut attached.repo, &layer)?;
+        refuse_unresolved(&attached, &layer)?;
         // The node's head for the Layer, read now, or as this clone last saw it. Earlier
         // queued records go first: until they are delivered, the node's head is not the one
         // this revision follows.
@@ -403,6 +406,9 @@ fn revise(args: Vec<OsString>) -> Outcome {
                 }
                 revision => revision?,
             };
+            if let Some(record) = load_record(&attached.root, &request)? {
+                remember_bases(&attached.root, &request, [(revision, record.base.number)])?;
+            }
             let mut value = base_value;
             value["ok"] = json!(true);
             value["queued"] = json!(false);
@@ -526,19 +532,25 @@ fn publish(args: Vec<OsString>) -> Outcome {
     let mut outbox = attached.outbox()?;
     if !queued(&outbox, Record::Publish, &operation) {
         // Every revision of a request shares its Layer's base.
+        // The revision's base as this clone last saw it, from `request show`, `list` or
+        // `sync`, else read now.
         let base = match options.number::<u64>("--base")? {
             Some(base) => base,
-            None => match load_record(&attached.root, &request)? {
-                Some(record) => record.base.number,
+            None => match remembered_base(&attached.root, &request, revision)?
+                .or_else(|| queued_base(&outbox, &request, revision))
+            {
+                Some(base) => base,
                 None => {
                     let detail = read_review(&attached.reading()?, &request, 0).map_err(|e| {
                         if e.code == code::NODE_UNAVAILABLE {
                             RemoteError::new(
                                 &e.code,
                                 format!(
-                                    "{}; pass --base WORLD (from `javelin request show`) to \
+                                    "{}; this clone has not seen revision {revision} of request \
+                                     {}, so pass --base WORLD (from `javelin request show`) to \
                                      queue the Publish",
-                                    e.detail
+                                    e.detail,
+                                    request.as_str()
                                 ),
                             )
                         } else {
@@ -594,11 +606,26 @@ fn publish(args: Vec<OsString>) -> Outcome {
         Message::PublishOutcome(PublishOutcome::Published { number, id, tree }) => {
             value["ok"] = json!(true);
             value["published"] = json!({"number": number, "id": id, "tree": tree});
-            let text = format!(
+            let mut text = format!(
                 "Published revision {revision} of request {} as remote World {number}. Run \
                  `javelin sync` to bring it here.",
                 request.as_str()
             );
+            // This clone's Layer for the request is published now: retire it here.
+            let mut attached = attached;
+            let link = attached.reading()?;
+            // The Publish is done; a node that cannot answer now leaves this to the next sync.
+            let retired = match read_review(&link, &request, u32::MAX) {
+                Ok(detail) => {
+                    retire_published(&link, &mut attached.repo, &attached.root, &[detail.summary])?
+                }
+                Err(_) => Vec::new(),
+            };
+            for line in retired_lines(&retired) {
+                text.push('\n');
+                text.push_str(&line);
+            }
+            value["retired"] = json!(retired);
             Ok((value, text, 0))
         }
         Message::PublishOutcome(PublishOutcome::Conflict { paths }) => {
@@ -608,9 +635,9 @@ fn publish(args: Vec<OsString>) -> Outcome {
             let names: Vec<_> = paths.iter().map(|path| path.as_str()).collect();
             let text = format!(
                 "Conflict: the World changed these paths since the revision's base: {}. The \
-                 author runs `javelin sync`, redoes the change in a Layer over the new head \
-                 (`javelin workspace create NEW`), and runs `javelin request revise {} \
-                 --revision {revision} --layer NEW --operation OP`.",
+                 author runs `javelin layer update LAYER` to move the work onto the node's \
+                 World, resolves any conflict markers it writes, and runs `javelin request \
+                 revise {} --revision {revision} --operation OP`.",
                 names.join(", "),
                 request.as_str()
             );
@@ -687,15 +714,24 @@ fn show(args: Vec<OsString>) -> Outcome {
         ) => {
             let bytes = node_checkpoint(&link, *checkpoint)?;
             let changes = Repository::foreign_checkpoint_changes(&bytes)?;
+            let kinds = change_kinds(&link, &attached.repo, revision.base, &changes)?;
             let paths: Vec<Value> = changes
                 .entries()
                 .iter()
-                .map(|(path, entry)| json!({"path": path, "deleted": entry.is_none()}))
+                .zip(kinds)
+                .map(|((path, entry), change)| {
+                    json!({"path": path, "change": change, "deleted": entry.is_none()})
+                })
                 .collect();
             json!({"revision": revision.index, "paths": paths})
         }
         None => Value::Null,
     };
+    remember_bases(
+        &attached.root,
+        &request,
+        detail.revisions.iter().map(|r| (r.index, r.base.get())),
+    )?;
     let summary = &detail.summary;
     let revisions: Vec<Value> = detail
         .revisions
@@ -753,7 +789,11 @@ fn show(args: Vec<OsString>) -> Outcome {
     if let Some(paths) = changes["paths"].as_array() {
         lines.push(format!("Revision {} changes:", changes["revision"]));
         for path in paths {
-            let mark = if path["deleted"] == true { "D" } else { "M" };
+            let mark = match path["change"].as_str() {
+                Some("added") => "A",
+                Some("deleted") => "D",
+                _ => "M",
+            };
             lines.push(format!("  {mark} {}", path["path"]));
         }
     }
@@ -774,21 +814,8 @@ fn list(args: Vec<OsString>) -> Outcome {
         return Err(Error::InvalidInput(format!("expected: {usage}")).into());
     }
     let attached = Attached::open(options.root()?)?;
-    let link = attached.reading()?;
-    let mut requests = Vec::new();
-    let mut after = None;
-    loop {
-        let (page, more) =
-            match call(&link, &Message::ListRequests { after }).map_err(CliError::Remote)? {
-                Message::RequestList { requests, more } => (requests, more),
-                _ => return Err(CliError::Remote(unexpected())),
-            };
-        after = page.last().map(|last| last.request.clone());
-        requests.extend(page);
-        if !more || after.is_none() {
-            break;
-        }
-    }
+    let requests = list_requests(&attached.reading()?).map_err(CliError::Remote)?;
+    remember_listed(&attached.root, &requests)?;
     let listed: Vec<Value> = requests
         .iter()
         .map(|r| {
@@ -798,6 +825,7 @@ fn list(args: Vec<OsString>) -> Outcome {
                 "author": r.author,
                 "state": state(r.state),
                 "revision": r.revision,
+                "base": r.base,
             })
         })
         .collect();
@@ -819,19 +847,47 @@ fn list(args: Vec<OsString>) -> Outcome {
     ))
 }
 
-fn queued(outbox: &Outbox, kind: Record, operation: &OperationId) -> bool {
+/// Every request on the node, page by page.
+pub(crate) fn list_requests(
+    link: &RefCell<Link>,
+) -> std::result::Result<Vec<RequestSummary>, RemoteError> {
+    let mut requests = Vec::new();
+    let mut after = None;
+    loop {
+        let (page, more) = match call(link, &Message::ListRequests { after })? {
+            Message::RequestList { requests, more } => (requests, more),
+            _ => return Err(unexpected()),
+        };
+        after = page.last().map(|last| last.request.clone());
+        requests.extend(page);
+        if !more || after.is_none() {
+            return Ok(requests);
+        }
+    }
+}
+
+/// Refuses to propose `layer` while files `layer update` marked still hold markers.
+pub(crate) fn refuse_unresolved(attached: &Attached, layer: &LayerId) -> Result<(), CliError> {
+    let left = unresolved(&attached.repo, &attached.root, layer)?;
+    match left.is_empty() {
+        true => Ok(()),
+        false => Err(unresolved_error(layer, &left)),
+    }
+}
+
+pub(crate) fn queued(outbox: &Outbox, kind: Record, operation: &OperationId) -> bool {
     outbox
         .entries()
         .any(|entry| entry.kind == kind && entry.operation == *operation)
 }
 
-enum Delivery {
+pub(crate) enum Delivery {
     Done(Message),
     Queued { fault: Fault, pending: usize },
 }
 
 /// Replays the outbox, then reads the outcome the node recorded for `operation`.
-fn deliver(
+pub(crate) fn deliver(
     attached: &Attached,
     outbox: &mut Outbox,
     kind: Record,
@@ -856,7 +912,12 @@ fn deliver(
     }
 }
 
-fn queued_output(mut value: Value, fault: &Fault, pending: usize, what: String) -> Output {
+pub(crate) fn queued_output(
+    mut value: Value,
+    fault: &Fault,
+    pending: usize,
+    what: String,
+) -> Output {
     value["ok"] = json!(true);
     value["queued"] = json!(true);
     value["code"] = json!(fault.code());
@@ -883,7 +944,7 @@ fn review_outcome(reply: Message) -> Result<u32, CliError> {
 }
 
 /// A node refusal with a message that says what to do about it.
-fn refusal(refused: &str) -> RemoteError {
+pub(crate) fn refusal(refused: &str) -> RemoteError {
     let detail = match refused {
         code::NOT_AUTHOR => "only the request's author submits revisions",
         code::SELF_APPROVAL => "the author cannot approve their own request",
@@ -902,7 +963,7 @@ fn refusal(refused: &str) -> RemoteError {
         "already_open" => "a request with this ID is already open",
         "already_approved" => "you already approved this revision",
         "unchanged_revision" => "the Layer has not changed since the current revision",
-        "insufficient_role" => "your role on the repository does not allow this",
+        code::INSUFFICIENT_ROLE => "your role on the repository does not allow this",
         "no_access" => "you have no role on this repository",
         _ => "the node refused the request",
     };
@@ -936,72 +997,4 @@ fn state(status: RequestStatus) -> &'static str {
 
 pub(crate) fn remote_error(error: javelin_protocol::ProtocolError) -> CliError {
     CliError::Remote(error.into())
-}
-
-/// What this clone last saw of a request it authored: its Layer, the remote World the
-/// Layer's base holds, and the bytes of the node's head checkpoint for that Layer, which name
-/// the node's next checkpoint for a queued revision.
-struct RequestRecord {
-    layer: LayerId,
-    base: RemoteHead,
-    head: Vec<u8>,
-}
-
-fn records_path(root: &Path) -> PathBuf {
-    root.join(".javelin").join(REQUESTS)
-}
-
-fn read_records(root: &Path) -> Result<serde_json::Map<String, Value>, CliError> {
-    match fs::read(records_path(root)) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(Value::Object(map)) => Ok(map),
-            _ => Err(Error::CorruptRepository(format!("{REQUESTS} is not a JSON object")).into()),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-        Err(error) => Err(Error::from(error).into()),
-    }
-}
-
-fn load_record(root: &Path, request: &RequestId) -> Result<Option<RequestRecord>, CliError> {
-    let records = read_records(root)?;
-    let Some(record) = records.get(request.as_str()) else {
-        return Ok(None);
-    };
-    let corrupt = || Error::CorruptRepository(format!("{REQUESTS}: bad record"));
-    let layer = LayerId::parse(record["layer"].as_str().ok_or_else(corrupt)?)?;
-    let base = serde_json::from_value(record["base"].clone()).map_err(|_| corrupt())?;
-    let head = record["head"]
-        .as_str()
-        .ok_or_else(corrupt)?
-        .as_bytes()
-        .to_vec();
-    Ok(Some(RequestRecord { layer, base, head }))
-}
-
-/// Records the request atomically: a temporary file, synced, then renamed.
-fn save_record(
-    root: &Path,
-    request: &RequestId,
-    layer: &LayerId,
-    base: &RemoteHead,
-    head: &[u8],
-) -> Result<(), CliError> {
-    let mut records = read_records(root)?;
-    let head = std::str::from_utf8(head)
-        .map_err(|_| Error::CorruptRepository("a node checkpoint is not UTF-8 JSON".into()))?;
-    records.insert(
-        request.as_str().into(),
-        json!({"layer": layer, "base": base, "head": head}),
-    );
-    let path = records_path(root);
-    let temporary = path.with_extension("json.tmp");
-    let write = || -> std::io::Result<()> {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(
-            &serde_json::to_vec_pretty(&Value::Object(records)).map_err(std::io::Error::other)?,
-        )?;
-        file.sync_all()?;
-        fs::rename(&temporary, &path)
-    };
-    write().map_err(|error| CliError::from(Error::from(error)))
 }

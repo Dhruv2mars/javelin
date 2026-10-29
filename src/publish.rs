@@ -102,6 +102,99 @@ impl PublicationReceipt {
     }
 }
 
+/// What a Publish is about to write: the bytes of its new tree and view chunks, how many
+/// objects and openings it inserts, and the paths its changeset touches, by count and by
+/// their bytes, which its changeset and blame each store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublishWrite {
+    pub bytes: u64,
+    pub objects: u64,
+    pub paths: u64,
+    pub path_bytes: u64,
+}
+
+impl PublishWrite {
+    /// Paths a write records and nothing else, such as a conflict's.
+    fn paths<'a>(paths: impl Iterator<Item = &'a RepoPath>) -> Self {
+        let (mut count, mut bytes) = (0, 0);
+        for path in paths {
+            count += 1;
+            bytes += path.as_str().len() as u64;
+        }
+        Self {
+            bytes: 0,
+            objects: 0,
+            paths: count,
+            path_bytes: bytes,
+        }
+    }
+
+    /// Both writes together.
+    fn and(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes + other.bytes,
+            objects: self.objects + other.objects,
+            paths: self.paths + other.paths,
+            path_bytes: self.path_bytes + other.path_bytes,
+        }
+    }
+
+    fn of(
+        chunks: &[(ObjectId, Vec<u8>)],
+        view_chunks: &[(ObjectId, Vec<u8>)],
+        openings: &[(crate::Opening, crate::Audience)],
+        plain: &SparseChanges,
+    ) -> Self {
+        Self {
+            bytes: chunks
+                .iter()
+                .chain(view_chunks)
+                .map(|(_, bytes)| bytes.len() as u64)
+                .sum(),
+            objects: (chunks.len() + view_chunks.len() + openings.len()) as u64,
+            paths: plain.entries().len() as u64,
+            path_bytes: plain
+                .entries()
+                .keys()
+                .map(|path| path.as_str().len() as u64)
+                .sum(),
+        }
+    }
+}
+
+/// What publishing `checkpoint` as the new Layer `layer` would write, without writing it: the
+/// clone and the Publish are prepared in a transaction that is rolled back. The clone records
+/// the checkpoint's paths; the Publish adds its chunks, or a conflict's paths.
+pub(crate) fn clone_write_in(
+    conn: &Connection,
+    layer: &LayerId,
+    checkpoint: crate::CheckpointId,
+    operation: &OperationId,
+    attribution: &PublishAttribution,
+) -> Result<PublishWrite> {
+    let head = crate::layer::clone_in(conn, layer, checkpoint)?;
+    let frozen = crate::layer::checkpoint_in(conn, checkpoint.object())?;
+    let clone = PublishWrite::paths(frozen.changes().entries().keys());
+    Ok(match prepare_in(conn, operation, &head, attribution)? {
+        Prepared::Advance(Plan {
+            composed:
+                Some(Ok(Candidate {
+                    plain,
+                    view_chunks,
+                    chunks,
+                    openings,
+                    ..
+                })),
+            ..
+        }) => clone.and(PublishWrite::of(&chunks, &view_chunks, &openings, &plain)),
+        Prepared::Advance(Plan {
+            composed: Some(Err(paths)),
+            ..
+        }) => clone.and(PublishWrite::paths(paths.iter())),
+        _ => clone,
+    })
+}
+
 impl Repository {
     /// Accepts the whole exact latest Active captured checkpoint. Compatible World
     /// advances compose without changing its immutable base. Work is O(change),
@@ -125,7 +218,27 @@ impl Repository {
     where
         F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
     {
+        self.publish_layer_bounded(operation, expected, attribution, guard, |_| Ok(()))
+    }
+
+    /// [`Repository::publish_layer`], with `bound` told what the new version will write
+    /// right after the guard, before any new writes. Refusing aborts the Publish as the
+    /// guard does: nothing is written and the operation stays free. A node holds the write
+    /// to its budget this way.
+    pub fn publish_layer_bounded<F, B>(
+        &mut self,
+        operation: &OperationId,
+        expected: &LayerHead,
+        attribution: &PublishAttribution,
+        guard: F,
+        bound: B,
+    ) -> Result<PublicationReceipt>
+    where
+        F: FnOnce(&WorldVersion, &SparseChanges) -> Result<()>,
+        B: FnOnce(&PublishWrite) -> Result<()>,
+    {
         let mut guard = Some(guard);
+        let mut bound = Some(bound);
         #[cfg(test)]
         let mut first = true;
         loop {
@@ -164,7 +277,12 @@ impl Repository {
                 None => PublishOutcome::LayerStale {
                     actual: actual.clone(),
                 },
-                Some(Err(paths)) => PublishOutcome::Conflict { paths },
+                Some(Err(paths)) => {
+                    // The receipt records every conflicting path.
+                    let bound = bound.take().expect("bound runs at most once");
+                    bound(&PublishWrite::paths(paths.iter()))?;
+                    PublishOutcome::Conflict { paths }
+                }
                 Some(Ok(Candidate {
                     plain,
                     view,
@@ -176,6 +294,8 @@ impl Repository {
                 })) => {
                     let guard = guard.take().expect("guard runs at most once");
                     guard(&against, &plain)?;
+                    let bound = bound.take().expect("bound runs at most once");
+                    bound(&PublishWrite::of(&chunks, &view_chunks, &openings, &plain))?;
                     let number = crate::repository::next_number(against.number)?;
                     tx.execute(
                         "INSERT INTO attempts(id,expected,accepted,result) VALUES(?1,?2,1,?3)",

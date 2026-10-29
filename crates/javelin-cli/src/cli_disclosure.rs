@@ -89,13 +89,13 @@ pub fn embargo(args: Vec<OsString>) -> Result<Output, CliError> {
 }
 
 /// The node and repository from `--node` and `--repository`, and the other arguments.
-struct Target {
-    node: String,
-    repository: String,
+pub(crate) struct Target {
+    pub(crate) node: String,
+    pub(crate) repository: String,
 }
 
 impl Target {
-    fn parse(args: Vec<OsString>, help: &str) -> Result<(Self, Vec<String>), CliError> {
+    pub(crate) fn parse(args: Vec<OsString>, help: &str) -> Result<(Self, Vec<String>), CliError> {
         let mut node = None;
         let mut repository = None;
         let mut rest = Vec::new();

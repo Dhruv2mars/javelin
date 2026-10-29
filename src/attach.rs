@@ -201,7 +201,12 @@ impl Repository {
     pub fn attach_head(&mut self, head: &RemoteHead) -> Result<()> {
         self.check_attach()?;
         let local = self.head()?;
-        if local.tree != head.tree {
+        // A remote World with the empty tree still gets its own World here, so it maps back;
+        // an interrupted attach that already holds this head does not advance again.
+        let holds = self
+            .recorded_remote(&local)?
+            .is_some_and(|remote| remote == *head);
+        if !holds && (local.tree != head.tree || head.number != 0) {
             let operation = remote_operation(ATTACH_PREFIX, head)?;
             match self.advance_to_tree(&operation, local.number, head.tree)? {
                 AdvanceOutcome::Accepted { .. } => {}
@@ -239,6 +244,21 @@ impl Repository {
         Ok(None)
     }
 
+    /// The local World that holds remote World `remote`, as attach and sync recorded it, or
+    /// `None` when this store does not hold it. Attached stores keep one local World per
+    /// attach or sync, so this reads that short history.
+    pub fn local_world(&self, remote: u64) -> Result<Option<VersionNumber>> {
+        for version in self.history()?.into_iter().rev() {
+            if self
+                .remote_world(version.number)?
+                .is_some_and(|head| head.number == remote)
+            {
+                return Ok(Some(version.number));
+            }
+        }
+        Ok(None)
+    }
+
     /// Moves the local World from `local`, a head [`Repository::follows_attachment`] accepted,
     /// to `head`, a verified remote head newer than the attached one whose tree is stored,
     /// then records it in `attach.json`. The advance is a compare-and-swap on `local`, so a
@@ -251,7 +271,12 @@ impl Repository {
         local: &WorldVersion,
         head: &RemoteHead,
     ) -> Result<()> {
-        if local.tree == head.tree {
+        // A remote advance that leaves the tree as it was still gets its own World, so every
+        // remote number this store reached maps back to a local World.
+        if self
+            .recorded_remote(local)?
+            .is_some_and(|remote| remote == *head)
+        {
             if self.head()?.number != local.number {
                 return Err(Error::InvalidInput(
                     "the local World moved during sync; nothing was changed".into(),

@@ -12,11 +12,12 @@
 //! is refused with `forbidden` before it is served, so a web page can never write through a
 //! visitor's browser.
 
-use javelin::LayerState;
+use javelin::{LayerId, LayerState};
+use javelin_collaboration::{PrincipalId, Role};
 use javelin_identity::{Need, Scope};
 use javelin_protocol::{
     Message, ProtocolError,
-    codec::{code, decode, encode},
+    codec::{PublishOutcome, code, decode, encode},
     handle_request_as,
     receiver::WorldLog,
 };
@@ -65,15 +66,51 @@ pub fn handle(
                 "a browser origin may only send read messages",
             ));
         }
+        refuse_outsider_work(gate, token, now, &message)?;
+        // A direct Publish the caller's live role may not make is answered before the budget
+        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox.
+        if let Message::PublishLayer { layer, .. } = &message
+            && let Some(refused) = refuse_direct_publish(gate, token, now, layer, || {
+                crate::budget::replays(log, &message)
+            })?
+        {
+            return Ok(Message::PublishOutcome(PublishOutcome::Refused {
+                code: refused.into(),
+            }));
+        }
+        // A write that would cross the owner's budget is refused before anything changes.
+        crate::budget::admit(log, gate, token, now, &message, body.len())?;
         // Every version is stamped, and every decided embargo tied to its version, before
         // anything is read, and again after a Publish, so the version's time is this request.
         crate::disclosure::stamp(log.records(), log.repo(), now)?;
         let reply = serve_one(log, gate, token, now, message);
         // A failure here leaves the stamp to the next request, which only delays disclosure.
         let _ = crate::disclosure::stamp(log.records(), log.repo(), now);
+        // The rows this request wrote count against today's budget. A failure leaves them
+        // uncounted; the reply is already decided.
+        let _ = crate::budget::meter(log, now);
         reply
     }) {
         Ok(reply) => reply,
+        Err(ProtocolError { code, detail }) if code == code::QUOTA_EXCEEDED => {
+            // The use and the limit describe the whole repository: only Maintain reads them.
+            let maintains = gate
+                .check(
+                    token,
+                    now,
+                    Need {
+                        scope: Scope::Read,
+                        layer: None,
+                    },
+                )
+                .is_ok_and(|grant| gate.reader(&grant).reads_all());
+            let detail = if maintains {
+                detail
+            } else {
+                crate::budget::redact(&detail)
+            };
+            Message::Error { code, detail }
+        }
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
     let body = match encode(&reply) {
@@ -105,7 +142,6 @@ fn serve_one(
     now: u64,
     message: Message,
 ) -> Result<Message, ProtocolError> {
-    refuse_outsider_work(gate, token, now, &message)?;
     match &message {
         Message::OpenRequest { .. }
         | Message::Revise { .. }
@@ -122,6 +158,7 @@ fn serve_one(
         | Message::SetDelay { .. }
         | Message::Embargo { .. }
         | Message::Release { .. } => return disclose(log, gate, token, now, &message),
+        Message::ReadUsage => return usage(log, gate, token, now),
         _ => {}
     }
     // Version negotiation reveals nothing about the repository, so it needs no grant.
@@ -227,7 +264,9 @@ fn refuse_outsider_work(
             Scope::ReviewWrite
         }
         Message::Approve { .. } => Scope::ReviewApprove,
-        Message::PublishRequest { .. } | Message::PublishLayer { .. } => Scope::Publish,
+        Message::PublishRequest { .. } => Scope::Publish,
+        // A member's direct Publish is answered by `refuse_direct_publish`.
+        Message::PublishLayer { .. } => Scope::LayerWrite,
         Message::CheckReport(_) => Scope::CheckReport,
         Message::Get(items) if crate::stack::all_checkpoints(items) => Scope::Read,
         _ => return Ok(()),
@@ -240,6 +279,59 @@ fn refuse_outsider_work(
         code::FORBIDDEN,
         "Layers, Publish Requests and check results need a role in the repository",
     ))
+}
+
+/// Direct Publish is for Maintain on a repository whose rules require no approvals. Any
+/// other member's `PublishLayer` is answered with a refusal outcome that says to open a Publish
+/// Request: `insufficient_role` for a role below Maintain, `review_required` when approvals
+/// are required, and `forbidden` for a token without the Publish scope. An outcome, not an
+/// error, so a queued Publish is decided rather than retried forever. The node records
+/// nothing, so the operation is not used up. A token limited to another Layer is refused by
+/// the gate, as before.
+///
+/// The approvals rule applies to new Publishes only: one already decided (`replays`) passes
+/// it, so a retry after a lost reply reads what happened even when the rules changed since.
+/// The role and the scope are checked first, whatever is stored, so a caller who may not
+/// publish learns nothing about which operations exist.
+fn refuse_direct_publish(
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    layer: &LayerId,
+    replays: impl FnOnce() -> Result<bool, ProtocolError>,
+) -> Result<Option<&'static str>, ProtocolError> {
+    let grant = gate.check(
+        token,
+        now,
+        Need {
+            scope: Scope::LayerWrite,
+            layer: Some(layer.as_str()),
+        },
+    )?;
+    let Some(permissions) = gate.permissions() else {
+        return Ok(None);
+    };
+    let role = grant
+        .principal
+        .as_deref()
+        .and_then(|principal| PrincipalId::parse(principal).ok())
+        .and_then(|principal| permissions.role(&principal));
+    if role < Some(Role::Maintain) {
+        return Ok(Some(code::INSUFFICIENT_ROLE));
+    }
+    let publish = Need {
+        scope: Scope::Publish,
+        layer: Some(layer.as_str()),
+    };
+    if let Err(error) = gate.check(token, now, publish)
+        && error.code == code::FORBIDDEN
+    {
+        return Ok(Some(code::FORBIDDEN));
+    }
+    if permissions.required_approvals > 0 && !replays()? {
+        return Ok(Some(code::REVIEW_REQUIRED));
+    }
+    Ok(None)
 }
 
 /// The disclosure messages. Anyone who may read the repository reads its disclosure, as
@@ -272,6 +364,24 @@ fn disclose(
     Ok(Message::Disclosure(crate::disclosure::state(
         records, repo, now, &reader,
     )?))
+}
+
+/// `ReadUsage`: the node's use against its budget, for Maintain only. The numbers describe
+/// the whole repository, hidden content and work above the public frontier included.
+fn usage(
+    log: &FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+) -> Result<Message, ProtocolError> {
+    let grant = gate.check(token, now, need(&Message::ReadUsage))?;
+    if !gate.reader(&grant).reads_all() {
+        return Err(ProtocolError::new(
+            code::FORBIDDEN,
+            "only Maintain reads the node's use against its budget",
+        ));
+    }
+    Ok(Message::Usage(crate::budget::usage(log, now)?))
 }
 
 /// Refuses a write that would change a path outside the caller's audiences, before it
@@ -345,7 +455,7 @@ fn check_writes(
 /// Layer-limited token reaches only its own Layer there. Object uploads (`Want`, `Objects`)
 /// name none: they need `layer:write`, and change no reference, since objects are addressed
 /// by content. Everything else, replies sent as requests included, needs `read`.
-fn need(message: &Message) -> Need<'_> {
+pub(crate) fn need(message: &Message) -> Need<'_> {
     let (scope, layer) = match message {
         Message::LayerAppend { layer, .. } | Message::LayerCreate { layer, .. } => {
             (Scope::LayerWrite, Some(layer))

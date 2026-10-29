@@ -605,18 +605,11 @@ fn sync_refuses_a_local_world_that_moved_and_a_chain_that_misses_the_anchor() {
         1
     );
 
-    // A Publish made in this clone moves its World away from the node's: sync refuses it.
+    // A Publish an older client made in this clone moves its World away from the node's:
+    // sync refuses it.
     ok(team.author(&["workspace", "create", "local", "--repo", s(&author)]));
     fs::write(author.join(".javelin/layers/local/b.txt"), "b\n").unwrap();
-    ok(team.author(&[
-        "workspace",
-        "publish",
-        "local",
-        "--operation",
-        "local-publish",
-        "--repo",
-        s(&author),
-    ]));
+    publish_locally(&author, "local", "local-publish");
     let head = Repository::open(&author).unwrap().head().unwrap();
     let attached = attachment(&author);
     let output = team.author(&["sync", "--repo", s(&author)]);
@@ -698,6 +691,130 @@ fn revisions_chain_through_queued_ones_and_sync_reports_a_refused_record() {
         &["request", "show", "pr-1", "--repo", s(&author)],
     ));
     assert_eq!(shown["revision"], 4, "{shown}");
+}
+
+#[test]
+fn a_direct_publish_queues_through_an_outage_and_sync_delivers_it() {
+    let team = Team::start(0);
+    let node = team.deployment.node_url.clone();
+    let author = team.attach("author", None);
+    let down = closed_url();
+    let publish = |layer: &str, operation: &str| {
+        team.author(&[
+            "workspace",
+            "publish",
+            layer,
+            "--operation",
+            operation,
+            "--repo",
+            s(&author),
+        ])
+    };
+
+    // A request opened from the Layer tells this clone the node's head for it.
+    ok(team.author(&["workspace", "create", "work", "--repo", s(&author)]));
+    let work = author.join(".javelin/layers/work");
+    fs::write(work.join("a.txt"), "1\n").unwrap();
+    ok(team.author(&[
+        "request",
+        "open",
+        "pr-1",
+        "--layer",
+        "work",
+        "--operation",
+        "open-1",
+        "--repo",
+        s(&author),
+    ]));
+
+    // A second Layer whose captures reached the node.
+    ok(team.author(&["workspace", "create", "late", "--repo", s(&author)]));
+    let late = author.join(".javelin/layers/late");
+    fs::write(late.join("c.txt"), "1\n").unwrap();
+    ok(team.author(&["checkpoint", "late", "--repo", s(&author)]));
+
+    // While the node is down the Publish queues; the Layer keeps its directory.
+    set_node(&author, &down);
+    fs::write(work.join("a.txt"), "2\n").unwrap();
+    let queued = ok(publish("work", "direct-1"));
+    assert_eq!(queued["queued"], true, "{queued}");
+    assert!(work.exists());
+    fs::write(late.join("c.txt"), "2\n").unwrap();
+    assert_eq!(ok(publish("late", "direct-late"))["queued"], true);
+    // An edit after the queued Publish is not part of it, and is never thrown away.
+    fs::write(late.join("c.txt"), "3\n").unwrap();
+    // A Layer the node has never seen cannot name its checkpoint there, so nothing queues.
+    ok(team.author(&["workspace", "create", "fresh", "--repo", s(&author)]));
+    fs::write(author.join(".javelin/layers/fresh/b.txt"), "b\n").unwrap();
+    let pending_before = pending(&author, &team.deployment.repository);
+    assert_eq!(
+        refused(publish("fresh", "direct-fresh")),
+        "node_unavailable"
+    );
+    assert_eq!(
+        pending(&author, &team.deployment.repository),
+        pending_before
+    );
+
+    // Sync delivers it, follows the node to World 1 and closes the Layer.
+    set_node(&author, &node);
+    let synced = ok(team.author(&["sync", "--repo", s(&author)]));
+    assert_eq!(synced["head"]["number"], 2, "{synced}");
+    assert_eq!(synced["closed"], serde_json::json!(["work"]), "{synced}");
+    assert!(!work.exists(), "a published Layer's directory is reclaimed");
+    assert_eq!(fs::read_to_string(late.join("c.txt")).unwrap(), "3\n");
+    // The operation names one Publish: another Layer cannot reuse it.
+    assert_eq!(refused(publish("late", "direct-1")), "operation_id_reused");
+    let head = Repository::open(&author).unwrap().head().unwrap();
+    assert_eq!(head.tree, team.deployment.node_repo().head().unwrap().tree);
+    // A retry replays the delivered Publish.
+    let replayed = ok(publish("work", "direct-1"));
+    assert_eq!(replayed["published"]["number"], 1, "{replayed}");
+    assert_eq!(replayed["closed"], true);
+    let history = ok(team.author(&["history", "--repo", s(&author)]));
+    assert_eq!(
+        history["versions"].as_array().unwrap().last().unwrap()["number"],
+        2
+    );
+}
+
+#[test]
+fn a_remote_advance_that_keeps_the_tree_still_has_its_number_here() {
+    let team = Team::start(0);
+    let author = team.attach("author", None);
+    let other = team.attach("other", None);
+    let at = |clone: &Path, args: &[&str]| {
+        let mut args = args.to_vec();
+        args.extend(["--repo", s(clone)]);
+        ok(team.author(&args))
+    };
+    let root = |created: Value| PathBuf::from(created["workspace"]["root"].as_str().unwrap());
+    // The other clone adds a file, then deletes it: World 2 holds World 0's tree.
+    let dir = root(at(&other, &["workspace", "create", "add"]));
+    fs::write(dir.join("a.txt"), "a\n").unwrap();
+    at(
+        &other,
+        &["workspace", "publish", "add", "--operation", "add"],
+    );
+    let dir = root(at(&other, &["workspace", "create", "remove"]));
+    fs::remove_file(dir.join("a.txt")).unwrap();
+    let removed = at(
+        &other,
+        &["workspace", "publish", "remove", "--operation", "remove"],
+    );
+    assert_eq!(removed["published"]["number"], 2, "{removed}");
+
+    assert_eq!(at(&author, &["sync"])["head"]["number"], 2);
+    let history = at(&author, &["history"]);
+    let last = history["versions"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["number"], 2, "{history}");
+    let created = at(&author, &["workspace", "create", "next", "--world", "2"]);
+    assert_eq!(created["workspace"]["base"]["version"], 2, "{created}");
 }
 
 #[test]
@@ -835,4 +952,22 @@ fn a_sync_stopped_before_attach_json_is_finished_by_the_next_sync() {
     assert_eq!(synced["advanced"], false);
     assert_eq!(attachment(&behind)["head"]["number"], 1);
     assert_eq!(Repository::open(&behind).unwrap().head().unwrap(), head);
+}
+
+/// A Publish into the local World of attached clone `root`, as a client did before Publish
+/// went to the node: the World then has a version the node lacks.
+fn publish_locally(root: &Path, layer: &str, operation: &str) {
+    let mut repo = Repository::open(root).unwrap();
+    let layer = javelin::LayerId::parse(layer).unwrap();
+    repo.capture_workspace(&layer).unwrap();
+    let javelin::LayerState::Active { head } = repo.layer_state(&layer).unwrap() else {
+        panic!("Layer is not active");
+    };
+    repo.publish_workspace(
+        &javelin::OperationId::parse(operation).unwrap(),
+        &head,
+        &javelin::PublishAttribution::Human,
+        |_, _| Ok(()),
+    )
+    .unwrap();
 }

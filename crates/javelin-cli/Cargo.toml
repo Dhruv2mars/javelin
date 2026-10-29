@@ -14,6 +14,7 @@ javelin = { path = "../.." }
 javelin-collaboration = { path = "../javelin-collaboration" }
 javelin-protocol = { path = "../javelin-protocol" }
 javelin-control = { path = "../javelin-control" }
+javelin-merge = { path = "../javelin-merge" }
 javelin-node = { path = "../javelin-node" }
 javelin-node-worker = { path = "../javelin-node-worker" }
 javelin-stack = { path = "../javelin-stack" }

@@ -6,7 +6,9 @@
 //! follow the caller's audiences (#99), a write refused for a hidden path, a Publish Request
 //! with its list, review and comment, a version held by an embargo until it is released, and
 //! the browser, anonymous and outsider refusals. Every reply must match, with object IDs masked:
-//! hidden entries are salted per store, so IDs over them differ between any two stores.
+//! hidden entries are salted per store, so IDs over them differ between any two stores. A
+//! second scenario pushes role changes while each node serves, through the Durable Object's
+//! own admin route, and the next request must be decided the same way on both.
 
 use std::{
     rc::Rc,
@@ -24,15 +26,16 @@ use javelin::{
 use javelin_collaboration::{AppliedPermissions, PrincipalId, RepositoryId, Role, Visibility};
 use javelin_identity::{Scope, test_keys};
 use javelin_node::{
-    FileWorldLog,
-    auth::Gate,
+    FileWorldLog, admin,
+    auth::{Gate, LiveGate},
+    budget::{Budget, LARGEST_OBJECT, ROWS_WRITTEN_PER_DAY, STORAGE_BYTES},
     storage::{Coordination, Directory, Storage},
     wire,
 };
-use javelin_node_cloudflare::{pages::MemPages, vfs::PageStorage};
+use javelin_node_cloudflare::{pages::MemPages, service, vfs::PageStorage};
 use javelin_protocol::{
     Message,
-    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, decode, encode},
+    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, Usage, decode, encode},
 };
 
 const REPO: &str = "acme-app";
@@ -74,8 +77,8 @@ fn gate() -> Gate {
     gate
 }
 
-fn token(sub: &str) -> String {
-    let now = now();
+/// A ten-minute token for `sub`, issued at `now` by the node's clock.
+fn token(sub: &str, now: u64) -> String {
     let scopes = [
         Scope::Read,
         Scope::LayerWrite,
@@ -124,14 +127,14 @@ struct Session<'a> {
 impl Session<'_> {
     /// Sends `message` as `caller` (`None` is anonymous), from a browser when `origin`.
     fn send_from(&mut self, caller: Option<&str>, origin: bool, message: &Message) -> Message {
-        let token = caller.map(token);
-        let body = encode(message).unwrap();
         let now = self.log.now();
+        let token = caller.map(|sub| token(sub, now));
+        let body = encode(message).unwrap();
         let answer =
             wire::handle(self.log, &self.gate, token.as_deref(), origin, now, &body).unwrap();
         let reply = decode(&answer.body).unwrap();
         self.seen
-            .push(format!("cors={} {}", answer.cors, masked(&reply)));
+            .push(format!("cors={} {}", answer.cors, masked_use(&reply)));
         reply
     }
 
@@ -462,4 +465,851 @@ fn a_second_connection_to_an_open_database_is_refused() {
         Some(rusqlite::ErrorCode::DatabaseBusy),
         "{error}"
     );
+}
+
+/// The permissions of private repository `REPO` at `epoch`: `owner` holds Maintain and
+/// `member` holds `member`, in the JSON layout the control plane pushes.
+fn private(epoch: u64, member: Option<Role>) -> AppliedPermissions {
+    let mut roles = vec![(PrincipalId::parse("owner").unwrap(), Role::Maintain)];
+    if let Some(role) = member {
+        roles.push((PrincipalId::parse("member").unwrap(), role));
+    }
+    AppliedPermissions {
+        repository: RepositoryId::parse(REPO).unwrap(),
+        epoch,
+        visibility: Visibility::Private,
+        roles: roles.into_iter().collect(),
+        required_approvals: 0,
+    }
+}
+
+fn permissions_json(permissions: &AppliedPermissions) -> Vec<u8> {
+    let roles: serde_json::Map<String, serde_json::Value> = permissions
+        .roles
+        .iter()
+        .map(|(principal, role)| (principal.as_str().to_string(), role.name().into()))
+        .collect();
+    serde_json::json!({
+        "repository": permissions.repository.as_str(),
+        "epoch": permissions.epoch,
+        "public": permissions.visibility == Visibility::Public,
+        "roles": roles,
+        "required_approvals": permissions.required_approvals,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// A node that serves while permissions are pushed to it.
+trait Serving {
+    /// The push's outcome: `applied`, or the refusal's code.
+    fn push(&mut self, permissions: &AppliedPermissions) -> String;
+    fn send(&mut self, caller: &str, message: &Message) -> String;
+}
+
+/// The self-hosted node: its data directory, read by `LiveGate` for each request, as
+/// `javelin-node serve` reads it, and pushed to with `admin::apply`, as `LocalNode` pushes.
+struct SelfHosted {
+    storage: Directory,
+    log: FileWorldLog,
+    gate: LiveGate,
+}
+
+impl Serving for SelfHosted {
+    fn push(&mut self, permissions: &AppliedPermissions) -> String {
+        match admin::apply(&self.storage, permissions) {
+            Ok(_) => "applied".into(),
+            Err(admin::ApplyError::Refused(refusal)) => refusal.code,
+            Err(admin::ApplyError::Storage(error)) => panic!("{error}"),
+        }
+    }
+
+    fn send(&mut self, caller: &str, message: &Message) -> String {
+        let gate = self.gate.current(&self.storage).unwrap();
+        let now = self.log.now();
+        let token = token(caller, now);
+        let answer = wire::handle(
+            &mut self.log,
+            gate,
+            Some(&token),
+            false,
+            now,
+            &encode(message).unwrap(),
+        )
+        .unwrap();
+        masked(&decode(&answer.body).unwrap())
+    }
+}
+
+/// The Durable Object's service, reached only through its admin routes and protocol
+/// version 2, as the Worker reaches it.
+struct DurableObject(service::Node<PageStorage>);
+
+impl Serving for DurableObject {
+    fn push(&mut self, permissions: &AppliedPermissions) -> String {
+        let answer = self.0.admin("permissions", &permissions_json(permissions));
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        match answer.status {
+            200 => "applied".into(),
+            _ => body["error"].as_str().unwrap().into(),
+        }
+    }
+
+    fn send(&mut self, caller: &str, message: &Message) -> String {
+        let authorization = format!("Bearer {}", token(caller, now()));
+        let answer = self
+            .0
+            .v2(Some(&authorization), false, &encode(message).unwrap());
+        assert_eq!(answer.status, 200, "{answer:?}");
+        masked(&decode(&answer.body).unwrap())
+    }
+}
+
+/// Requests and pushes, interleaved; the replies and push outcomes in order.
+fn role_changes(node: &mut dyn Serving) -> Vec<String> {
+    let mut seen = Vec::new();
+    let create = |name: &str| Message::LayerCreate {
+        layer: layer(name),
+        base: v(0),
+    };
+    let list = Message::ListRequests { after: None };
+    // Only Maintain sets the disclosure delay.
+    let maintain = Message::SetDelay { delay: 0 };
+    seen.push(node.push(&private(1, Some(Role::Read))));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &list));
+    seen.push(node.send("member", &create("member-a")));
+    // Removed while serving: refused from the next request on.
+    seen.push(node.push(&private(2, None)));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &list));
+    seen.push(node.send("member", &create("member-b")));
+    // A stale push is refused and changes nothing.
+    seen.push(node.push(&private(2, Some(Role::Maintain))));
+    seen.push(node.send("member", &list));
+    // Granted Maintain: the next request holds it.
+    seen.push(node.push(&private(3, Some(Role::Maintain))));
+    seen.push(node.send("member", &maintain));
+    seen.push(node.send("member", &create("member-c")));
+    seen.push(node.send("owner", &maintain));
+    seen
+}
+
+#[test]
+fn a_role_change_applies_from_the_next_request_on_both_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Directory::new(dir.path());
+    javelin_node::auth::store_keys(&storage, &test_keys::keys()).unwrap();
+    let log = FileWorldLog::on(&storage, &storage, Box::new(now)).unwrap();
+    let native = role_changes(&mut SelfHosted {
+        storage,
+        log,
+        gate: LiveGate::new(REPO),
+    });
+
+    let mut object = service::Node::new(
+        RepositoryId::parse(REPO).unwrap(),
+        PageStorage::new(Rc::new(MemPages::default())),
+        now,
+    );
+    let (id, tree) = admin::genesis();
+    let provision =
+        serde_json::json!({"genesis": {"id": id.to_string(), "tree": tree.to_string()}});
+    assert_eq!(
+        object
+            .admin("provision", provision.to_string().as_bytes())
+            .status,
+        200
+    );
+    assert_eq!(
+        object.admin("keys", &test_keys::keys().to_json()).status,
+        200
+    );
+    let durable = role_changes(&mut DurableObject(object));
+
+    assert_eq!(native[5], durable[5]);
+    assert!(native[5].contains("forbidden"), "{native:#?}");
+    assert_eq!(native[8], "stale_permissions");
+    assert!(native[1].contains("forbidden"), "{native:#?}");
+    assert!(native[11].contains("Disclosure"), "{native:#?}");
+    for (step, (a, b)) in native.iter().zip(&durable).enumerate() {
+        assert_eq!(a, b, "step {step} differs");
+    }
+    assert_eq!(native.len(), durable.len());
+}
+
+/// The reply with the digits of a budget's numbers masked: each store counts its own pages,
+/// so the use differs between stores while the decision must not.
+fn masked_use(reply: &Message) -> String {
+    let text = masked(reply);
+    let counted = match reply {
+        Message::Usage(_) => true,
+        Message::Error { code, .. } => code == "quota_exceeded",
+        _ => false,
+    };
+    if !counted {
+        return text;
+    }
+    let mut out = String::new();
+    let mut digits = false;
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            if !digits {
+                out.push('#');
+            }
+            digits = true;
+        } else {
+            digits = false;
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn usage_of(s: &mut Session<'_>) -> Usage {
+    match s.send(Some("owner"), &Message::ReadUsage) {
+        Message::Usage(usage) => usage,
+        other => panic!("usage refused: {other:?}"),
+    }
+}
+
+fn used(usage: &Usage, budget: &str) -> u64 {
+    usage
+        .meters
+        .iter()
+        .find(|meter| meter.budget == budget)
+        .and_then(|meter| meter.used)
+        .unwrap_or_else(|| panic!("no use for {budget}: {usage:?}"))
+}
+
+/// The owner replaces the budget, as the admin route does: stored, then applied.
+fn set(storage: &dyn Storage, s: &mut Session<'_>, budget: Budget) {
+    admin::set_budget(storage, &budget).unwrap();
+    s.log.set_budget(budget);
+}
+
+fn quota(reply: &Message) -> &str {
+    match reply {
+        Message::Error { code, detail } if code == "quota_exceeded" => detail,
+        other => panic!("expected quota_exceeded, got {other:?}"),
+    }
+}
+
+/// A budget a few KB above what the node holds refuses the crossing upload and Publish,
+/// changes nothing, names the budget to members and gives maintainers the numbers, and
+/// accepts the same writes once the owner raises it. A day's rows reset at midnight UTC.
+fn budget_scenario(
+    storage: &dyn Storage,
+    log: &mut FileWorldLog,
+    clock: &AtomicU64,
+) -> Vec<String> {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let seeded = s.layer_with("seed", 0, &[("src/a", b"a\n")]);
+    s.send(Some("owner"), &publish("seed", "publish-seed", seeded, 0));
+    let ready = s.layer_with("ready", 1, &[("src/b", b"b\n")]);
+
+    // Only Maintain reads the node's use.
+    let usage = usage_of(&mut s);
+    for caller in [Some("member"), Some("stranger"), None] {
+        let reply = s.send(caller, &Message::ReadUsage);
+        assert!(matches!(&reply, Message::Error { .. }), "{reply:?}");
+    }
+
+    // A few KB of storage left: the upload and the Publish are refused, and nothing changes.
+    let stored = used(&usage, STORAGE_BYTES);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            storage_bytes: stored + 4096,
+            ..Budget::default()
+        },
+    );
+    let big = vec![7u8; 16 << 10];
+    let blob = (Kind::Blob, ObjectId::for_blob(&big), big.clone());
+    let refused = s.send(Some("owner"), &Message::Objects(vec![blob.clone()]));
+    assert!(
+        quota(&refused).starts_with("storage_bytes: "),
+        "{refused:?}"
+    );
+    let refused = s.send(Some("member"), &Message::Objects(vec![blob.clone()]));
+    assert_eq!(quota(&refused), STORAGE_BYTES);
+    let anonymous = s.send(None, &Message::Objects(vec![blob.clone()]));
+    assert!(
+        matches!(&anonymous, Message::Error { code, .. } if code == "unauthorized"),
+        "{anonymous:?}"
+    );
+    let missing = s.send(Some("owner"), &Message::Want(vec![(blob.0, blob.1)]));
+    assert_eq!(missing, Message::Missing(vec![(blob.0, blob.1)]));
+    let refused = s.send(Some("owner"), &publish("ready", "publish-ready", ready, 1));
+    quota(&refused);
+    let head = s.send(Some("owner"), &Message::Resolve { version: None });
+    assert!(
+        format!("{head:?}").contains("number: VersionNumber(1)"),
+        "{head:?}"
+    );
+    assert_eq!(s.log.head().unwrap().number, v(1));
+    assert!(
+        s.log.publication(&op("publish-ready")).unwrap().is_none(),
+        "a refused Publish leaves no record"
+    );
+
+    // Raised: the same writes are accepted, the Publish under its first operation ID.
+    set(storage, &mut s, Budget::default());
+    let stored = s.send(Some("owner"), &Message::Objects(vec![blob.clone()]));
+    assert!(matches!(&stored, Message::Stored { .. }), "{stored:?}");
+    let published = s.send(Some("owner"), &publish("ready", "publish-ready", ready, 1));
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { number, .. }) if *number == v(2)
+        ),
+        "{published:?}"
+    );
+
+    // An object larger than the owner allows is refused whatever storage is left.
+    set(
+        storage,
+        &mut s,
+        Budget {
+            largest_object: 4096,
+            ..Budget::default()
+        },
+    );
+    let other = vec![8u8; 16 << 10];
+    let large = (Kind::Blob, ObjectId::for_blob(&other), other);
+    let refused = s.send(Some("owner"), &Message::Objects(vec![large.clone()]));
+    assert_eq!(
+        quota(&refused),
+        "largest_object: an object of 16384 bytes is larger than the 4096 allowed"
+    );
+    let refused = s.send(Some("member"), &Message::Objects(vec![large.clone()]));
+    assert_eq!(quota(&refused), LARGEST_OBJECT);
+
+    // Today's rows are spent: refused until midnight UTC, accepted the next day.
+    let rows = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY);
+    assert!(rows > 0, "the writes above were counted");
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: rows + 16,
+            ..Budget::default()
+        },
+    );
+    let create = Message::LayerCreate {
+        layer: layer("tomorrow"),
+        base: v(2),
+    };
+    let refused = s.send(Some("owner"), &create);
+    assert!(
+        quota(&refused).starts_with("rows_written_per_day: "),
+        "{refused:?}"
+    );
+    clock.fetch_add(86_400, Ordering::SeqCst);
+    let created = s.send(Some("owner"), &create);
+    assert!(
+        matches!(
+            &created,
+            Message::LayerOutcome(LayerOutcome::Accepted { .. })
+        ),
+        "{created:?}"
+    );
+    let usage = usage_of(&mut s);
+    assert!(used(&usage, ROWS_WRITTEN_PER_DAY) < rows, "{usage:?}");
+    s.seen
+}
+
+fn budget_on(storage: &(impl Storage + Coordination), start: u64) -> Vec<String> {
+    let clock = clock(start);
+    let mut log = open(storage, &clock);
+    budget_scenario(storage, &mut log, &clock)
+}
+
+#[test]
+fn both_nodes_refuse_a_write_that_crosses_the_budget_and_accept_it_once_raised() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = now();
+    let native: Vec<_> = budget_on(&Directory::new(dir.path()), start);
+    let object: Vec<_> = budget_on(&PageStorage::new(Rc::new(MemPages::default())), start);
+    assert_eq!(native.len(), object.len());
+    for (step, (a, b)) in native.iter().zip(&object).enumerate() {
+        assert_eq!(a, b, "reply {step} differs");
+    }
+}
+
+/// Page rows as a Durable Object writes them: every `put` and `set_size` is one row.
+#[derive(Default)]
+struct CountingPages {
+    pages: MemPages,
+    rows: std::cell::Cell<u64>,
+}
+
+impl javelin_node_cloudflare::pages::Pages for CountingPages {
+    fn size(&self, file: &str) -> javelin_node_cloudflare::pages::Result<Option<u64>> {
+        self.pages.size(file)
+    }
+    fn set_size(&self, file: &str, size: u64) -> javelin_node_cloudflare::pages::Result<()> {
+        self.rows.set(self.rows.get() + 1);
+        self.pages.set_size(file, size)
+    }
+    fn get(
+        &self,
+        file: &str,
+        index: u64,
+    ) -> javelin_node_cloudflare::pages::Result<Option<Vec<u8>>> {
+        self.pages.get(file, index)
+    }
+    fn put(
+        &self,
+        file: &str,
+        index: u64,
+        bytes: &[u8],
+    ) -> javelin_node_cloudflare::pages::Result<()> {
+        self.rows.set(self.rows.get() + 1);
+        self.pages.put(file, index, bytes)
+    }
+    fn remove(&self, file: &str) -> javelin_node_cloudflare::pages::Result<()> {
+        self.pages.remove(file)
+    }
+}
+
+/// The rows the node counts against its daily budget are the page rows the Durable Object
+/// writes, with at most a few more: never fewer, so the budget never lets the quota through.
+#[test]
+fn the_rows_counted_are_the_rows_the_object_writes() {
+    let pages = Rc::new(CountingPages::default());
+    let storage = PageStorage::new(pages.clone());
+    let clock = clock(now());
+    let mut log = open(&storage, &clock);
+    let mut s = Session {
+        log: &mut log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let before = pages.rows.get();
+    let seeded = s.layer_with("seed", 0, &[("src/a", b"a\n")]);
+    s.send(Some("owner"), &publish("seed", "publish-seed", seeded, 0));
+    let big = vec![7u8; 600 << 10];
+    let blob = (Kind::Blob, ObjectId::for_blob(&big), big);
+    s.send(Some("owner"), &Message::Objects(vec![blob]));
+    let written = pages.rows.get() - before;
+    let counted = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY);
+    assert!(
+        written <= counted && counted <= written + written / 4,
+        "counted {counted} rows for {written} written"
+    );
+    // One large upload on its own: each page that grows the file writes its size row too.
+    let before = (pages.rows.get(), counted);
+    let large = vec![9u8; 8 << 20];
+    let blob = (Kind::Blob, ObjectId::for_blob(&large), large);
+    s.send(Some("owner"), &Message::Objects(vec![blob]));
+    let written = pages.rows.get() - before.0;
+    let counted = used(&usage_of(&mut s), ROWS_WRITTEN_PER_DAY) - before.1;
+    assert!(
+        written <= counted && counted <= written + 8,
+        "counted {counted} rows for {written} written"
+    );
+}
+
+/// Files at `count` paths in nested directories, for a Publish that composes many trees.
+fn many_files(name: &str, count: usize, prefix: &str) -> Vec<(String, Vec<u8>)> {
+    (0..count)
+        .map(|i| {
+            (
+                format!("{prefix}d{}/e{}/{name}{i}.txt", i % 10, i % 7),
+                format!("{name} {i}\n").into_bytes(),
+            )
+        })
+        .collect()
+}
+
+fn as_refs(files: &[(String, Vec<u8>)]) -> Vec<(&str, &[u8])> {
+    files
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect()
+}
+
+/// A write the budget admits never ends past it: raising each limit from the use in growing
+/// steps, the first limit that admits a many-object upload or a many-file Publish holds what it wrote.
+/// A Publish replays its decided outcome however little budget is left.
+fn bounds_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    // Paths near the longest allowed, which the changeset and blame each store.
+    let long = format!("{}/", vec!["p".repeat(250); 15].join("/"));
+    for (meter, prefix) in [
+        (STORAGE_BYTES, ""),
+        (ROWS_WRITTEN_PER_DAY, ""),
+        (STORAGE_BYTES, long.as_str()),
+    ] {
+        // Fresh writes for each meter, prepared under the default budget.
+        set(storage, &mut s, Budget::default());
+        let name = format!("wide-{}-{}", meter.len(), prefix.len());
+        let files = many_files(&name, if prefix.is_empty() { 60 } else { 100 }, prefix);
+        let wide = s.layer_with(&name, 0, &as_refs(&files));
+        let blobs: Vec<_> = (0..60)
+            .map(|i| {
+                let bytes = format!("small {meter} {i}\n").into_bytes();
+                (Kind::Blob, ObjectId::for_blob(&bytes), bytes)
+            })
+            .collect();
+        let writes = [
+            Message::Objects(blobs),
+            publish(&name, &format!("publish-{name}"), wide, 0),
+        ];
+        let step = if meter == STORAGE_BYTES { 16 << 10 } else { 8 };
+        for write in writes {
+            let mut headroom = 0;
+            loop {
+                let limit = used(&usage_of(&mut s), meter) + headroom;
+                let mut budget = Budget::default();
+                if meter == STORAGE_BYTES {
+                    budget.storage_bytes = limit;
+                } else {
+                    budget.rows_written_per_day = limit;
+                }
+                set(storage, &mut s, budget);
+                let reply = s.send(Some("owner"), &write);
+                if matches!(&reply, Message::Error { code, .. } if code == "quota_exceeded") {
+                    headroom = (headroom + step).max(headroom * 3 / 2);
+                    continue;
+                }
+                assert!(!matches!(reply, Message::Error { .. }), "{reply:?}");
+                let after = used(&usage_of(&mut s), meter);
+                assert!(
+                    after <= limit,
+                    "{meter}: admitted at {limit}, ended at {after}"
+                );
+                break;
+            }
+        }
+        // With no budget left at all, the decided Publish replays, and a new Publish, even
+        // one that would only record a refusal, writes nothing.
+        set(
+            storage,
+            &mut s,
+            Budget {
+                rows_written_per_day: 0,
+                storage_bytes: 0,
+                ..Budget::default()
+            },
+        );
+        let replay = s.send(
+            Some("owner"),
+            &publish(&name, &format!("publish-{name}"), wide, 0),
+        );
+        assert!(
+            matches!(
+                &replay,
+                Message::PublishOutcome(PublishOutcome::Published { .. })
+            ),
+            "{replay:?}"
+        );
+        let before = usage_of(&mut s);
+        let unknown = s.send(Some("owner"), &publish("none", "publish-none", wide, 0));
+        quota(&unknown);
+        assert_eq!(usage_of(&mut s), before, "a refused Publish writes nothing");
+    }
+}
+
+/// A Publish Request refused by the budget leaves nothing behind, not even its revision's
+/// Layer, and publishes once the budget is raised.
+fn request_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let files = many_files("r", 100, "");
+    let checkpoint = s.layer_with("review", 0, &as_refs(&files));
+    let request = RequestId::parse("pr-budget").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-budget"),
+            request: request.clone(),
+            layer: layer("review"),
+            checkpoint,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let publish = Message::PublishRequest {
+        operation: op("publish-budget"),
+        request,
+        revision: 1,
+        base: v(0),
+    };
+    // Room for the request's own records (16 pages), not for a Publish (64 pages and more).
+    let usage = usage_of(&mut s);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            storage_bytes: used(&usage, STORAGE_BYTES) + 40 * page,
+            ..Budget::default()
+        },
+    );
+    let before = usage_of(&mut s);
+    let refused = s.send(Some("owner"), &publish);
+    quota(&refused);
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "a refused Publish Request writes nothing, its revision's Layer included"
+    );
+    set(storage, &mut s, Budget::default());
+    let published = s.send(Some("owner"), &publish);
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { .. })
+        ),
+        "{published:?}"
+    );
+}
+
+#[test]
+fn a_publish_request_past_the_budget_leaves_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    request_scenario(&native, &mut open(&native, &clock(now())), 4096);
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    request_scenario(&object, &mut open(&object, &clock(now())), 64 << 10);
+}
+
+#[test]
+fn an_admitted_write_ends_within_the_budget_and_a_publish_replays_past_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    bounds_scenario(&native, &mut open(&native, &clock(now())));
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    bounds_scenario(&object, &mut open(&object, &clock(now())));
+}
+
+/// Outcomes that record paths but make no version are bounded too: a Publish that conflicts
+/// over many long paths, directly or through a Publish Request whose revision Layer is new,
+/// is refused before anything is written, and recorded once the budget is raised. A fresh
+/// node's first Publish Request, refused, writes nothing either.
+fn conflict_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: 0,
+            storage_bytes: 0,
+            ..Budget::default()
+        },
+    );
+    // The first request stamps World 0's disclosure time, a read's only write.
+    usage_of(&mut s);
+    let before = usage_of(&mut s);
+    let first = Message::PublishRequest {
+        operation: op("publish-first"),
+        request: RequestId::parse("pr-none").unwrap(),
+        revision: 1,
+        base: v(0),
+    };
+    quota(&s.send(Some("owner"), &first));
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "a fresh node's refused request writes nothing"
+    );
+
+    set(storage, &mut s, Budget::default());
+    let long = format!("{}/", vec!["c".repeat(250); 15].join("/"));
+    let ours = many_files("x", 100, &long);
+    let theirs: Vec<_> = ours
+        .iter()
+        .map(|(path, _)| (path.clone(), b"theirs\n".to_vec()))
+        .collect();
+    let first = s.layer_with("ours", 0, &as_refs(&ours));
+    let second = s.layer_with("theirs", 0, &as_refs(&theirs));
+    let request = RequestId::parse("pr-conflict").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-conflict"),
+            request: request.clone(),
+            layer: layer("theirs"),
+            checkpoint: second,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let published = s.send(Some("owner"), &publish("ours", "publish-ours", first, 0));
+    assert!(
+        matches!(
+            &published,
+            Message::PublishOutcome(PublishOutcome::Published { .. })
+        ),
+        "{published:?}"
+    );
+
+    let conflicts = [
+        publish("theirs", "publish-theirs", second, 0),
+        Message::PublishRequest {
+            operation: op("publish-conflict"),
+            request,
+            revision: 1,
+            base: v(0),
+        },
+    ];
+    for conflict in conflicts {
+        // Room for the outcome's request (16 pages), not for its paths (64 pages and more).
+        let usage = usage_of(&mut s);
+        set(
+            storage,
+            &mut s,
+            Budget {
+                storage_bytes: used(&usage, STORAGE_BYTES) + 40 * page,
+                ..Budget::default()
+            },
+        );
+        let before = usage_of(&mut s);
+        quota(&s.send(Some("owner"), &conflict));
+        assert_eq!(
+            usage_of(&mut s),
+            before,
+            "a refused conflict writes nothing"
+        );
+        set(storage, &mut s, Budget::default());
+        let recorded = s.send(Some("owner"), &conflict);
+        assert!(
+            matches!(
+                &recorded,
+                Message::PublishOutcome(PublishOutcome::Conflict { .. })
+            ),
+            "{recorded:?}"
+        );
+    }
+}
+
+#[test]
+fn outcomes_without_a_version_are_bounded_before_they_are_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    conflict_scenario(&native, &mut open(&native, &clock(now())), 4096);
+    let object = PageStorage::new(Rc::new(MemPages::default()));
+    conflict_scenario(&object, &mut open(&object, &clock(now())), 64 << 10);
+}
+
+/// Layer `name` over World 0 with one shared file at each of `paths`, over the wire as
+/// `owner`: one blob, so a large Layer costs one upload.
+fn shared_layer(s: &mut Session<'_>, name: &str, paths: &[String]) -> ObjectId {
+    let create = Message::LayerCreate {
+        layer: layer(name),
+        base: v(0),
+    };
+    let Message::LayerOutcome(LayerOutcome::Accepted {
+        checkpoint: head, ..
+    }) = s.send(Some("owner"), &create)
+    else {
+        panic!("create refused");
+    };
+    let content = b"shared\n".to_vec();
+    let blob = ObjectId::for_blob(&content);
+    s.send(
+        Some("owner"),
+        &Message::Objects(vec![(Kind::Blob, blob, content)]),
+    );
+    let changes = SparseChanges::new(paths.iter().map(|path| {
+        (
+            RepoPath::parse(path).unwrap(),
+            Some(FileEntry::Regular {
+                content: blob,
+                executable: false,
+            }),
+        )
+    }))
+    .unwrap();
+    let bytes = changes.canonical_bytes();
+    let id = Kind::Checkpoint.id(&bytes);
+    s.send(
+        Some("owner"),
+        &Message::Objects(vec![(Kind::Checkpoint, id, bytes)]),
+    );
+    let append = Message::LayerAppend {
+        operation: op(&format!("append-{name}")),
+        layer: layer(name),
+        parent: Some(head),
+        checkpoint: id,
+    };
+    match s.send(Some("owner"), &append) {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("append refused: {other:?}"),
+    }
+}
+
+/// A Publish Request whose measured clone and Publish dirty more pages than the page cache
+/// holds is refused without writing any: the measurement never spills a page. The
+/// self-hosted node's 2 MB cache is the smallest, so its store shows it with the fewest
+/// paths; the measurement is the same root-crate code on every store.
+fn spill_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let long = format!("{}/", vec!["s".repeat(250); 15].join("/"));
+    let paths: Vec<String> = (0..500)
+        .map(|i| format!("{long}d{}/e{}/f{i}.txt", i % 10, i % 7))
+        .collect();
+    let checkpoint = shared_layer(&mut s, "big", &paths);
+    let request = RequestId::parse("pr-big").unwrap();
+    let opened = s.send(
+        Some("owner"),
+        &Message::OpenRequest {
+            operation: op("open-big"),
+            request: request.clone(),
+            layer: layer("big"),
+            checkpoint,
+            base: v(0),
+        },
+    );
+    assert!(matches!(&opened, Message::ReviewOutcome(_)), "{opened:?}");
+    let usage = usage_of(&mut s);
+    set(
+        storage,
+        &mut s,
+        Budget {
+            rows_written_per_day: used(&usage, ROWS_WRITTEN_PER_DAY) + 128,
+            ..Budget::default()
+        },
+    );
+    let before = usage_of(&mut s);
+    let publish = Message::PublishRequest {
+        operation: op("publish-big"),
+        request,
+        revision: 1,
+        base: v(0),
+    };
+    quota(&s.send(Some("owner"), &publish));
+    assert_eq!(
+        usage_of(&mut s),
+        before,
+        "the refused measurement wrote no page"
+    );
+}
+
+#[test]
+fn measuring_a_publish_larger_than_the_page_cache_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let native = Directory::new(dir.path());
+    spill_scenario(&native, &mut open(&native, &clock(now())));
 }

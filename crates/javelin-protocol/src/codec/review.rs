@@ -16,8 +16,9 @@ use crate::{
 /// Most requests in one `RequestList`. A longer list continues from the last one listed.
 pub const MAX_REQUESTS: usize = 1024;
 
-/// One Publish Request as `ListRequests` lists it: its Layer, author, state and latest
-/// revision number (0 before the first).
+/// One Publish Request as `ListRequests` lists it: its Layer, author, state, latest
+/// revision number (0 before the first) and the World that revision is over (0 before the
+/// first), which a client keeps to queue a Publish of it while the node is down.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RequestSummary {
     pub request: RequestId,
@@ -25,6 +26,7 @@ pub struct RequestSummary {
     pub author: String,
     pub state: RequestStatus,
     pub revision: u32,
+    pub base: VersionNumber,
 }
 
 /// One immutable revision and the principals that approved exactly it. `checkpoint` is
@@ -65,6 +67,7 @@ pub(super) fn put_summary(out: &mut Vec<u8>, summary: &RequestSummary) {
     put_short(out, &summary.author);
     out.push(summary.state.code());
     out.extend_from_slice(&summary.revision.to_be_bytes());
+    out.extend_from_slice(&summary.base.get().to_be_bytes());
 }
 
 pub(super) fn summary_len(summary: &RequestSummary) -> Result<usize, ProtocolError> {
@@ -72,7 +75,8 @@ pub(super) fn summary_len(summary: &RequestSummary) -> Result<usize, ProtocolErr
         + short(summary.layer.as_str())?
         + short(&summary.author)?
         + 1
-        + 4)
+        + 4
+        + 8)
 }
 
 pub(super) fn read_summary(r: &mut Reader<'_>) -> Result<RequestSummary, ProtocolError> {
@@ -82,6 +86,7 @@ pub(super) fn read_summary(r: &mut Reader<'_>) -> Result<RequestSummary, Protoco
         author: r.short_str()?.to_owned(),
         state: r.request_status()?,
         revision: r.u32()?,
+        base: r.version()?,
     })
 }
 

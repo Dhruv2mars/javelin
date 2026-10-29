@@ -5,7 +5,6 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    thread,
 };
 
 use javelin::{
@@ -17,7 +16,7 @@ use javelin_identity::{Scope, test_keys};
 use javelin_node::{
     FileWorldLog,
     auth::{self, Gate},
-    bind_loopback, serve,
+    bind_loopback,
 };
 use javelin_protocol::{
     Message,
@@ -73,20 +72,13 @@ fn seeded(dir: &TempDir, visibility: Visibility) -> (FileWorldLog, ObjectId, Obj
     (log, head, tree)
 }
 
-/// Serves `connections` connections with the gate stored in `dir`.
-fn start(
-    dir: &TempDir,
-    log: FileWorldLog,
-    connections: usize,
-) -> (SocketAddr, thread::JoinHandle<()>) {
+/// Serves with the gate stored in `dir` until the returned node is joined.
+fn start(dir: &TempDir, log: FileWorldLog) -> (SocketAddr, wire_support::Served) {
     let gate = Gate::load(dir.path(), REPO).unwrap();
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(&listener, REPO, &mut log, &gate, Some(connections)).unwrap();
-    });
-    (addr, server)
+    let served = wire_support::serve_until_joined(listener, REPO, log, gate);
+    (addr, served)
 }
 
 /// One message with `headers`, and the status and decoded reply.
@@ -140,7 +132,7 @@ const RESOLVE: Message = Message::Resolve { version: None };
 fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
     let dir = TempDir::new().unwrap();
     let (log, head, _) = seeded(&dir, Visibility::Public);
-    let (addr, server) = start(&dir, log, 4);
+    let (addr, server) = start(&dir, log);
 
     let (status, read) = send(addr, "", &RESOLVE);
     assert_eq!(status, 200);
@@ -150,10 +142,13 @@ fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
         "unauthorized",
         "an anonymous write"
     );
+    // A Read member's direct Publish is decided, not an error: it says to open a request.
     let reader = token_for("reader", REPO);
     assert_eq!(
-        error_code(send(addr, &bearer(&reader), &publish(head)).1),
-        "forbidden",
+        send(addr, &bearer(&reader), &publish(head)).1,
+        Some(Message::PublishOutcome(PublishOutcome::Refused {
+            code: "insufficient_role".into()
+        })),
         "the Read role cannot Publish"
     );
     let (_, published) = send(addr, &bearer(&token(REPO)), &publish(head));
@@ -164,11 +159,67 @@ fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
     server.join().unwrap();
 }
 
+/// A Publish whose reply was lost replays what the node decided, even after a live change to
+/// the rules would refuse it as new. The caller's role is still checked first, so it reveals
+/// nothing about which operations exist.
+#[test]
+fn a_decided_direct_publish_replays_after_the_rules_and_role_change() {
+    let dir = TempDir::new().unwrap();
+    let (log, head, _) = seeded(&dir, Visibility::Private);
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served =
+        wire_support::serve_live_until_joined(listener, REPO, log, dir.path().to_path_buf());
+    let owner = bearer(&token(REPO));
+    let published = send(addr, &owner, &publish(head)).1;
+    assert!(
+        matches!(
+            published,
+            Some(Message::PublishOutcome(PublishOutcome::Published { .. }))
+        ),
+        "{published:?}"
+    );
+
+    let mut changed = permissions(REPO, Visibility::Private);
+    changed
+        .roles
+        .insert(PrincipalId::parse("reader").unwrap(), Role::Read);
+    changed.epoch = 2;
+    changed.required_approvals = 1;
+    auth::write_permissions(dir.path(), &changed).unwrap();
+    assert_eq!(
+        send(addr, &owner, &publish(head)).1,
+        published,
+        "rules changed"
+    );
+    changed.epoch = 3;
+    changed.roles.insert(
+        PrincipalId::parse(wire_support::OWNER).unwrap(),
+        Role::Review,
+    );
+    auth::write_permissions(dir.path(), &changed).unwrap();
+    // The role is still decided now, before anything stored is consulted: a demoted caller,
+    // and a reader probing operation IDs, get the same answer for a decided one and a new one.
+    let refused = Some(Message::PublishOutcome(PublishOutcome::Refused {
+        code: "insufficient_role".into(),
+    }));
+    let reader = bearer(&token_for("reader", REPO));
+    let mut unknown = publish(head);
+    if let Message::PublishLayer { operation, .. } = &mut unknown {
+        *operation = op("publish-9");
+    }
+    for caller in [&reader, &owner] {
+        assert_eq!(send(addr, caller, &unknown).1, refused);
+        assert_eq!(send(addr, caller, &publish(head)).1, refused);
+    }
+    served.join().unwrap();
+}
+
 #[test]
 fn a_private_repository_refuses_callers_without_a_valid_token() {
     let dir = TempDir::new().unwrap();
     let (log, _, _) = seeded(&dir, Visibility::Private);
-    let (addr, server) = start(&dir, log, 6);
+    let (addr, server) = start(&dir, log);
 
     assert_eq!(error_code(send(addr, "", &RESOLVE).1), "unauthorized");
     let other = token("repo-2");
@@ -221,7 +272,7 @@ fn a_private_repository_refuses_callers_without_a_valid_token() {
 fn a_credential_that_is_not_one_bearer_token_is_a_bad_request() {
     let dir = TempDir::new().unwrap();
     let (log, _, _) = seeded(&dir, Visibility::Public);
-    let (addr, server) = start(&dir, log, 3);
+    let (addr, server) = start(&dir, log);
 
     assert_eq!(
         send(addr, "Authorization: Basic b3duZXI6cHc=\r\n", &RESOLVE).0,
@@ -238,7 +289,7 @@ fn a_node_without_permissions_refuses_everything() {
     let dir = TempDir::new().unwrap();
     auth::write_keys(dir.path(), &test_keys::keys()).unwrap();
     let log = FileWorldLog::open(dir.path()).unwrap();
-    let (addr, server) = start(&dir, log, 2);
+    let (addr, server) = start(&dir, log);
 
     assert_eq!(error_code(send(addr, "", &RESOLVE).1), "unauthorized");
     assert_eq!(
@@ -252,7 +303,7 @@ fn a_node_without_permissions_refuses_everything() {
 fn a_check_report_goes_over_the_wire_with_the_reporter_token() {
     let dir = TempDir::new().unwrap();
     let (log, _, tree) = seeded(&dir, Visibility::Private);
-    let (addr, server) = start(&dir, log, 3);
+    let (addr, server) = start(&dir, log);
     let t = now();
     let report = Message::CheckReport(CheckReport {
         operation: op("report-1"),
@@ -296,7 +347,7 @@ fn a_layer_limited_token_uploads_objects_but_writes_only_its_own_layer() {
         .roles
         .insert(PrincipalId::parse("agent").unwrap(), Role::Maintain);
     auth::write_permissions(dir.path(), &permissions).unwrap();
-    let (addr, server) = start(&dir, log, 6);
+    let (addr, server) = start(&dir, log);
     let t = now();
     let mut claims = test_keys::claims(
         "agent",

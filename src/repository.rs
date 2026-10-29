@@ -138,6 +138,50 @@ pub struct IntegrityReport {
     pub layers: usize,
 }
 
+/// What one SQLite database takes, for a node's budget (`crates/javelin-node/src/budget.rs`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DatabaseUse {
+    /// Bytes its pages take: the page count times the page size.
+    pub bytes: u64,
+    pub page_size: u64,
+}
+
+/// The size of the database on `conn`.
+pub fn database_use(conn: &Connection) -> Result<DatabaseUse> {
+    let pages: i64 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
+    let page_size: i64 = conn.pragma_query_value(None, "page_size", |r| r.get(0))?;
+    let (pages, page_size) = (pages.max(0) as u64, page_size.max(0) as u64);
+    Ok(DatabaseUse {
+        bytes: pages * page_size,
+        page_size,
+    })
+}
+
+/// Pages the connection wrote to storage since the previous call, or since it opened. A
+/// Durable Object keeps each page as one row (`crates/javelin-node-cloudflare`).
+pub fn take_pages_written(conn: &Connection) -> Result<u64> {
+    let (mut written, mut highest) = (0, 0);
+    // SAFETY: `handle` is this open connection's database, used on this thread only, and
+    // both outputs are valid for writes. The status is read and reset, nothing else.
+    let rc = unsafe {
+        rusqlite::ffi::sqlite3_db_status(
+            conn.handle(),
+            rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,
+            &mut written,
+            &mut highest,
+            1,
+        )
+    };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rc),
+            Some("database status".into()),
+        )
+        .into());
+    }
+    Ok(u64::try_from(written).unwrap_or(0))
+}
+
 /// One handle per caller. Independent processes use independent SQLite connections.
 /// The project root must exist. No parent-directory search or working-file ingestion.
 pub struct Repository {
@@ -283,6 +327,16 @@ impl Repository {
     /// record it in their checkpoints; None leaves them unattributed.
     pub fn set_provenance(&mut self, provenance: Option<crate::Provenance>) {
         self.provenance = provenance;
+    }
+
+    /// What the store's database takes (`database_use`).
+    pub fn database_use(&self) -> Result<DatabaseUse> {
+        database_use(&self.conn)
+    }
+
+    /// Pages the store wrote since the previous call (`take_pages_written`).
+    pub fn take_pages_written(&self) -> Result<u64> {
+        take_pages_written(&self.conn)
     }
 
     pub fn put_blob(&mut self, bytes: &[u8]) -> Result<ObjectId> {

@@ -5,14 +5,21 @@ use serde_json::{Value, json};
 
 mod cli;
 mod cli_auth;
+mod cli_changes;
 mod cli_check;
 mod cli_control;
 mod cli_disclosure;
+mod cli_member;
+mod cli_node;
+mod cli_publish;
 mod cli_remote;
 mod cli_request;
+mod cli_store;
 mod cli_stream;
 mod cli_sync;
+mod cli_update;
 mod cli_upload;
+mod cli_worlds;
 
 const HELP: &str = cli::HELP;
 
@@ -97,6 +104,14 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Native(error) => error.fmt(f),
             Self::Stack(error) => error.fmt(f),
+            Self::Remote(error) if error.code == javelin_protocol::codec::code::QUOTA_EXCEEDED => {
+                write!(
+                    f,
+                    "the node's budget refused this write ({})\n{}",
+                    error.detail,
+                    cli_node::quota_hint(&error.detail)
+                )
+            }
             Self::Remote(error) => write!(f, "{}", error.detail),
             Self::Control(error) => error.fmt(f),
         }
@@ -110,6 +125,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     }
     if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "refresh") {
         return cli_remote::layer_refresh(args.into_iter().skip(2).collect());
+    }
+    if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "update") {
+        return cli_update::layer_update(args.into_iter().skip(2).collect());
     }
     if args.first().is_some_and(|a| a == "layer") && args.get(1).is_some_and(|a| a == "take") {
         return cli_remote::layer_take(args.into_iter().skip(2).collect());
@@ -129,6 +147,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "embargo") {
         return cli_disclosure::embargo(args.into_iter().skip(1).collect());
     }
+    if args.first().is_some_and(|a| a == "node") {
+        return cli_node::node(args.into_iter().skip(1).collect());
+    }
     if args.first().is_some_and(|a| a == "request") {
         return cli_request::request(args.into_iter().skip(1).collect());
     }
@@ -144,6 +165,11 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     if args.first().is_some_and(|a| a == "outbox") && args.get(1).is_some_and(|a| a == "status") {
         return cli::outbox_status(args.into_iter().skip(2).collect()).map_err(Into::into);
     }
+    // `adopt PROJECT --repo DIR` imports into an attached repository; without --repo, adopt
+    // makes a new repository of the project directory.
+    if args.first().is_some_and(|a| a == "adopt") && args.iter().any(|a| a == "--repo") {
+        return cli_publish::adopt(args.into_iter().skip(1).collect());
+    }
     if args.first().is_some_and(|a| a == "adopt") {
         return cli::adopt(args.into_iter().skip(1).collect()).map_err(Into::into);
     }
@@ -152,6 +178,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         .is_some_and(|a| a == "login" || a == "control" || a == "repo")
     {
         return cli_control::run(args).map_err(CliError::Control);
+    }
+    if args.first().is_some_and(|a| a == "member") {
+        return cli_member::run(args.into_iter().skip(1).collect()).map_err(CliError::Control);
     }
     if args.first().is_some_and(|a| a == "check") && args.get(1).is_some_and(|a| a == "report") {
         return cli_check::report(args.into_iter().skip(2).collect()).map_err(Into::into);
@@ -163,7 +192,7 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
         .first()
         .is_some_and(|a| a == "layer" || a == "workspace")
     {
-        return cli::run(args).map_err(Into::into);
+        return cli::run(args);
     }
     run_repository(args)
         .map(|(value, text)| (value, text, 0))
@@ -210,12 +239,20 @@ fn run_repository(args: Vec<OsString>) -> Result<(Value, String)> {
     }
     let repo = Repository::open(&root)?;
     if command == "history" {
-        let versions = repo.history()?;
-        let text = versions
-            .iter()
-            .map(|v| format!("World {}  {}", v.number, v.id))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // An attached repository lists the node's numbers and IDs for the Worlds it holds.
+        let worlds = cli_worlds::Worlds::of(&repo)?;
+        let mut versions = Vec::new();
+        let mut lines = Vec::new();
+        for version in repo.history()? {
+            let shown = worlds.version(&version)?;
+            lines.push(format!(
+                "{}  {}",
+                worlds.label(version.number)?,
+                shown["id"].as_str().unwrap_or_default()
+            ));
+            versions.push(shown);
+        }
+        let text = lines.join("\n");
         Ok((
             json!({"ok": true, "command": "history", "versions": versions}),
             text,

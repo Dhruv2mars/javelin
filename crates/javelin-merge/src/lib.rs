@@ -1,13 +1,16 @@
-//! Pure three-way merge of native manifests for Stack and owner-controlled refresh.
-//! The caller loads content, stores merged bytes, and resolves every conflict.
+//! Pure three-way merge of native manifests for Stack, owner-controlled refresh and
+//! `layer update`. The caller loads content, stores merged bytes, and resolves every
+//! conflict; [`conflict_text`] writes a text conflict out for an owner to edit.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use javelin::Choice;
 use javelin::{FileEntry, Manifest, ObjectId, RepoPath};
 
+mod markers;
 mod matching;
 mod resources;
+pub use markers::{Labels, conflict_text, has_markers};
 use matching::matches;
 pub use resources::{MergeError, Resource, ResourceLimit, Usage};
 

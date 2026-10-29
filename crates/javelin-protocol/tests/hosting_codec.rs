@@ -252,6 +252,7 @@ fn summary(n: u32) -> RequestSummary {
         author: "alice".into(),
         state: RequestStatus::Open,
         revision: n,
+        base: version(u64::from(n) + 1),
     }
 }
 
@@ -773,4 +774,39 @@ fn disclosure_messages_round_trip_and_match_the_browser_codec() {
     let mut absent = expected.clone();
     absent[3 + 7] = 1;
     assert_eq!(refused(&absent), code::MALFORMED);
+}
+
+#[test]
+fn budget_messages_round_trip_with_one_encoding() {
+    use javelin_protocol::codec::{MAX_METERS, Meter, Usage};
+    roundtrip(Message::ReadUsage);
+    let usage = Usage {
+        day: 20_754,
+        meters: vec![
+            Meter {
+                budget: "storage_bytes".into(),
+                used: Some(4_128_768),
+                limit: 1_000_000_000,
+            },
+            Meter {
+                budget: "largest_object".into(),
+                used: None,
+                limit: 8 << 20,
+            },
+        ],
+    };
+    roundtrip(Message::Usage(usage.clone()));
+    assert_eq!(encode(&Message::ReadUsage).unwrap(), vec![0x4d]);
+    let bytes = encode(&Message::Usage(usage.clone())).unwrap();
+    assert_eq!(bytes[0], 0x4e);
+    // An absent use must be zero, so one message has one encoding.
+    let mut absent = bytes.clone();
+    let last = absent.len() - 9;
+    absent[last - 1] = 1;
+    assert_eq!(refused(&absent), code::MALFORMED);
+    let too_many = Usage {
+        day: 0,
+        meters: vec![usage.meters[0].clone(); MAX_METERS + 1],
+    };
+    assert!(encode(&Message::Usage(too_many)).is_err());
 }

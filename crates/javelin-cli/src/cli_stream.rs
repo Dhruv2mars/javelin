@@ -734,10 +734,11 @@ pub fn status(args: Vec<OsString>) -> Outcome {
         None => None,
     };
     let mut uploads = Uploads::load(&root)?;
+    let worlds = crate::cli_worlds::Worlds::of(&repo)?;
     let mut layers = Vec::new();
     let mut lines = vec![match &attachment {
         Some(attachment) => format!(
-            "Attached to {} at {} (remote World {}); {} records pending in the outbox.",
+            "Attached to {} at {} (World {}); {} records pending in the outbox.",
             attachment.repository,
             attachment.node,
             attachment.head.number,
@@ -782,13 +783,16 @@ pub fn status(args: Vec<OsString>) -> Outcome {
                 "its base is not a World fetched from the node, so it stays on this device".into(),
             ),
         };
+        let base = checkpoint.base().version();
         lines.push(format!(
-            "Layer {} (revision {}): {streamed}",
+            "Layer {} (revision {}, over {}): {streamed}",
             layer.as_str(),
-            head.revision()
+            head.revision(),
+            worlds.label(base)?
         ));
         let mut value = streamed.value(&layer);
         value["revision"] = json!(head.revision());
+        value["base"] = worlds.number(base)?;
         value["checkpoint"] = json!(head.checkpoint());
         layers.push(value);
     }

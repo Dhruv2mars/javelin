@@ -1,6 +1,6 @@
 //! The device-code flow (D5). `javelin login` starts a device code and prints its user code.
-//! The admin token, or a browser sign-in with a passkey, approves that code. The waiting login
-//! then polls and receives a session.
+//! The admin token, a browser sign-in with a passkey, or another device signed in to the same
+//! account approves that code. The waiting login then polls and receives a session.
 
 use crate::{
     ControlError, ControlPlane,
@@ -104,21 +104,31 @@ impl ControlPlane {
     }
 
     /// Approves a device code with whichever credential the caller holds: a browser sign-in
-    /// (a passkey, D5) or the admin token. The approval page calls this.
+    /// (a passkey, D5), the admin token, or the sign-in token of a device already signed in,
+    /// which approves the new device as the same account. The approval page calls this.
     pub fn device_approve_as(
         &self,
         bearer: &str,
         user_code: &str,
         now: u64,
     ) -> Result<(), ControlError> {
-        if !bearer.starts_with(BROWSER_PREFIX) {
-            return self.device_approve(bearer, user_code, now);
-        }
         let user_hash = user_code_hash(user_code)?;
         self.store.update(|state| {
-            let principal = browser_principal(state, bearer, now).ok_or(
-                ControlError::Unauthorized("sign in with your passkey first"),
-            )?;
+            let principal = if bearer.starts_with(BROWSER_PREFIX) {
+                browser_principal(state, bearer, now).ok_or(ControlError::Unauthorized(
+                    "sign in with your passkey first",
+                ))?
+            } else {
+                let caller = authenticate(state, bearer, now)?;
+                // A repository token reaches a node, so it never approves a device: only the
+                // sign-in token, which goes to the control plane alone, does.
+                if !caller.admin && caller.repo != "*" {
+                    return Err(ControlError::Forbidden(
+                        "approve with a sign-in, not a repository token",
+                    ));
+                }
+                caller.principal
+            };
             approve(state, principal, &user_hash, now)
         })
     }
@@ -144,23 +154,7 @@ impl ControlPlane {
                 return Ok(Poll::Pending);
             };
             record.redeemed = true;
-            let refresh_token = secret::token("jav_refresh_");
-            state.sessions.insert(
-                secret::hash(&refresh_token),
-                SessionRecord {
-                    principal: principal.clone(),
-                    device: device.clone(),
-                    expires_at: now + REFRESH_TTL,
-                },
-            );
-            let access_token = issue(state, &principal, &device, "*", now)?;
-            Ok(Poll::Approved(Session {
-                principal,
-                device,
-                access_token,
-                refresh_token,
-                expires_in: ACCESS_TTL,
-            }))
+            open_session(state, principal, device, now).map(Poll::Approved)
         })
     }
 
@@ -181,6 +175,33 @@ impl ControlPlane {
             })
         })
     }
+}
+
+/// Signs `device` in as `principal`: a refresh token, whose hash the state keeps, and a
+/// sign-in access token.
+pub(crate) fn open_session(
+    state: &mut State,
+    principal: String,
+    device: String,
+    now: u64,
+) -> Result<Session, ControlError> {
+    let refresh_token = secret::token("jav_refresh_");
+    state.sessions.insert(
+        secret::hash(&refresh_token),
+        SessionRecord {
+            principal: principal.clone(),
+            device: device.clone(),
+            expires_at: now + REFRESH_TTL,
+        },
+    );
+    let access_token = issue(state, &principal, &device, "*", now)?;
+    Ok(Session {
+        principal,
+        device,
+        access_token,
+        refresh_token,
+        expires_in: ACCESS_TTL,
+    })
 }
 
 /// The hash of a typed user code, canonical so that case and dashes do not matter.

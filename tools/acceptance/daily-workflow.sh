@@ -9,6 +9,11 @@
 #   COLLAB_HOME or COLLAB_TOKEN     Review, a different person: authors and approves.
 #   DESKTOP_HOME or DESKTOP_TOKEN   Optional: the collaborator on a second device, for
 #                                   `layer take`. Without it that step is skipped.
+# To bring the collaborator in from nothing, set INVITE=ACCOUNT (a name with no account yet)
+# and give COLLAB_HOME (and DESKTOP_HOME) homes that are not signed in. The owner then runs
+# `javelin member invite REPOSITORY ACCOUNT --role review`, the collaborator signs in with
+# `javelin login --invite CODE`, and the second device runs `javelin login`, approved from the
+# first with `javelin control approve CODE`. Set JAVELIN_CONTROL_URL for all of them.
 # The node restart step needs one of:
 #   NODE_SERVE="javelin-node serve DIR REPOSITORY 127.0.0.1:PORT"
 #                                   The script starts this node, kills it mid-loop and starts
@@ -23,6 +28,7 @@
 set -u
 
 url=${1:?usage: daily-workflow.sh http(s)://HOST[:PORT]/REPOSITORY}
+repository=${url##*/}
 javelin=${JAVELIN:-javelin}
 run=$(date +%s)-$$
 work=${WORKDIR:-$(mktemp -d "${TMPDIR:-/tmp}/javelin-daily.XXXXXX")}
@@ -130,6 +136,37 @@ elif [ -n "${NODE_STOP:-}" ] && [ -n "${NODE_START:-}" ]; then
   restart=yes
 fi
 
+if [ -n "${INVITE:-}" ]; then
+  bold "0. owner: invite the collaborator, who signs in with the code on two devices"
+  as owner --json member invite "$repository" "$INVITE" --role review
+  [ "$status" -eq 0 ] || fail "member invite exited $status"
+  code=$(printf '%s' "$out" | grep -o '"code":"[^"]*"' | cut -d'"' -f4)
+  [ -n "$code" ] || fail "member invite printed no code"
+  must collab login --invite "$code"
+  has "$INVITE"
+  if [ -n "${DESKTOP_HOME:-}" ]; then
+    # `javelin login` waits for its code to be approved, so it runs in the background while
+    # the collaborator's first device approves the code it prints.
+    printf 'desktop$ javelin login\n'
+    : >"$work/desktop-login.err"
+    env -u JAVELIN_TOKEN JAVELIN_HOME="$DESKTOP_HOME" "$javelin" login \
+      >"$work/desktop-login.out" 2>"$work/desktop-login.err" &
+    login_pid=$!
+    tries=0
+    until grep -q 'javelin control approve ' "$work/desktop-login.err"; do
+      tries=$((tries + 1))
+      [ "$tries" -lt 200 ] || fail "login printed no code: $(cat "$work/desktop-login.err")"
+      sleep 0.05
+    done
+    user_code=$(sed -n 's/.*javelin control approve \([A-Z0-9-]*\).*/\1/p' "$work/desktop-login.err" | head -n 1)
+    must collab control approve "$user_code"
+    wait "$login_pid" || fail "the second device's login failed: $(cat "$work/desktop-login.err")"
+    sed 's/^/  /' "$work/desktop-login.out"
+  fi
+  must owner member list "$repository"
+  has "$INVITE review"
+fi
+
 owner=$work/owner collab=$work/collab desktop=$work/desktop
 dir=daily-$run
 lib() { printf 'pub fn greet(name: &str) -> String {\n    %s\n}\n' "$1"; }
@@ -141,15 +178,22 @@ import=$owner/.javelin/layers/import-$run
 mkdir -p "$import/$dir/src"
 printf '# app\n\nGreets people.\n' >"$import/$dir/README.md"
 lib 'format!("hello {name}")' >"$import/$dir/src/lib.rs"
-must owner request open "$dir-import" --layer "import-$run" --operation "$run-import-open" --repo "$owner"
-must owner request show "$dir-import" --repo "$owner"
-need=$(required)
-echo "Publish needs ${need:-?} approval(s) on this repository."
-if [ "${need:-0}" -gt 0 ]; then
+# Maintain publishes directly when the repository requires no approvals; otherwise the node
+# says to open a request, and the import goes through one.
+as owner --json workspace publish "import-$run" --operation "$run-import" --repo "$owner"
+if [ "$status" -eq 0 ]; then
+  echo "Published directly: Maintain, and this repository requires no approvals."
+else
+  printf '%s' "$err" | grep -q '"code":"review_required"' ||
+    fail "a direct Publish exited $status without review_required"
+  must owner request open "$dir-import" --layer "import-$run" --operation "$run-import-open" --repo "$owner"
+  must owner request show "$dir-import" --repo "$owner"
+  need=$(required)
+  echo "Publish needs ${need:-?} approval(s) on this repository."
   must collab attach "$url" "$collab"
   must collab request approve "$dir-import" --revision 1 --operation "$run-import-approve" --repo "$collab"
+  must owner request publish "$dir-import" --revision 1 --operation "$run-import-publish" --repo "$owner"
 fi
-must owner request publish "$dir-import" --revision 1 --operation "$run-import-publish" --repo "$owner"
 must owner sync --repo "$owner"
 
 bold "2. collaborator: attach a second clone, edit a Layer as a plain directory, open a request"
@@ -181,7 +225,6 @@ bold "5. owner: the approval of revision 1 no longer counts; approve revision 2"
 must owner request show "$dir-feature" --repo "$owner"
 printf '%s' "$out" | grep -q "revision 2 over remote World [0-9]*: checkpoint [0-9a-f]*, no approvals" ||
   fail "revision 2 should start with no approvals"
-base=$(printf '%s' "$out" | sed -n 's/.*revision 2 over remote World \([0-9]*\):.*/\1/p')
 if [ "${need:-0}" -gt 0 ]; then
   refuses not_enough_approvals 1 owner request publish "$dir-feature" --revision 2 --operation "$run-early" --repo "$owner"
 fi
@@ -191,7 +234,8 @@ must owner request approve "$dir-feature" --revision 2 --operation "$run-approve
 bold "6. the node restarts mid-loop: the owner's Publish queues, then replays"
 if [ "$restart" = yes ]; then
   node_stop
-  must owner request publish "$dir-feature" --revision 2 --base "$base" --operation "$run-publish" --repo "$owner"
+  # The owner's clone saw revision 2's base in `request show`, so no --base is needed.
+  must owner request publish "$dir-feature" --revision 2 --operation "$run-publish" --repo "$owner"
   has "queued"
   refuses node_unavailable 1 collab request show "$dir-feature" --repo "$collab"
   node_start
@@ -232,13 +276,19 @@ must owner request publish "$dir-o-tweak" --revision 1 --operation "$run-o-publi
 refuses conflict 3 owner request publish "$dir-c-tweak" --revision 1 --operation "$run-c-publish" --repo "$owner"
 has "$dir/src/lib.rs"
 
-bold "9. collaborator: see the conflict, redo the change over the new World, revise"
+bold "9. collaborator: move the Layer onto the new World, resolve the markers, revise"
 must collab sync --repo "$collab"
 must collab layer radar "c-tweak-$run" --repo "$collab"
 has "$dir/src/lib.rs"
-must collab workspace create "c-tweak-2-$run" --repo "$collab"
-lib 'format!("Hello, {name}! hi!")' >"$collab/.javelin/layers/c-tweak-2-$run/$dir/src/lib.rs"
-must collab request revise "$dir-c-tweak" --revision 1 --layer "c-tweak-2-$run" --operation "$run-c-revise" --repo "$collab"
+as collab layer update "c-tweak-$run" --repo "$collab"
+[ "$status" -eq 3 ] || fail "layer update should report the conflict (exit 3), got $status"
+has "c-tweak-$run.2"
+updated=$collab/.javelin/layers/c-tweak-$run.2
+grep -q '^<<<<<<< Layer c-tweak' "$updated/$dir/src/lib.rs" || fail "the conflict was not marked"
+[ ! -e "$collab/.javelin/layers/c-tweak-$run" ] || fail "the old Layer's directory is still there"
+refuses unresolved_conflict 1 collab request revise "$dir-c-tweak" --revision 1 --operation "$run-c-revise" --repo "$collab"
+lib 'format!("Hello, {name}! hi!")' >"$updated/$dir/src/lib.rs"
+must collab request revise "$dir-c-tweak" --revision 1 --operation "$run-c-revise" --repo "$collab"
 must owner request approve "$dir-c-tweak" --revision 2 --operation "$run-o-approve-2" --repo "$owner"
 must owner request publish "$dir-c-tweak" --revision 2 --operation "$run-c-publish-2" --repo "$owner"
 

@@ -30,7 +30,7 @@ pub mod tree;
 mod workspace;
 
 #[cfg(feature = "fs")]
-pub use adopt::Adoption;
+pub use adopt::{Adoption, adoption_layer};
 #[cfg(feature = "fs")]
 pub use attach::{Attachment, RemoteHead};
 pub use audience::{Audience, MAX_POLICY_BYTES, MAX_RULES, POLICY_PATH, Policy, Reader};
@@ -45,9 +45,14 @@ pub use ignore::IgnoreRules;
 pub use layer::{
     CheckpointId, LayerBase, LayerCheckpoint, LayerHead, LayerId, LayerState, LayerUpdate, PathDiff,
 };
-pub use publish::{PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning};
+pub use publish::{
+    PublicationReceipt, PublishAttribution, PublishOutcome, PublishWarning, PublishWrite,
+};
 pub use radar::{LayerCollision, PathPair, Radar, WorldCollisions};
-pub use repository::{AdvanceOutcome, CheckpointSink, IntegrityReport, Repository, WorldVersion};
+pub use repository::{
+    AdvanceOutcome, CheckpointSink, DatabaseUse, IntegrityReport, Repository, WorldVersion,
+    database_use, take_pages_written,
+};
 pub use seal::{Opening, SALT_BYTES, SealedKind};
 #[cfg(feature = "fs")]
 pub use workspace::{

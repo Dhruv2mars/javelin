@@ -530,6 +530,24 @@ fn take_finds_the_base_world_by_tree_and_refuses_before_moving_the_lease() {
     );
 }
 
+/// A Publish into the local World of attached clone `root`, as a client did before Publish
+/// went to the node: the World then has a version the node lacks.
+fn publish_locally(root: &Path, layer: &str, operation: &str) {
+    let mut repo = Repository::open(root).unwrap();
+    let layer = javelin::LayerId::parse(layer).unwrap();
+    repo.capture_workspace(&layer).unwrap();
+    let javelin::LayerState::Active { head } = repo.layer_state(&layer).unwrap() else {
+        panic!("Layer is not active");
+    };
+    repo.publish_workspace(
+        &javelin::OperationId::parse(operation).unwrap(),
+        &head,
+        &javelin::PublishAttribution::Human,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+}
+
 #[test]
 fn take_never_overwrites_a_local_world_the_node_lacks() {
     let root = TempDir::new().unwrap();
@@ -539,21 +557,13 @@ fn take_never_overwrites_a_local_world_the_node_lacks() {
     let desktop = Device::attach(root.path(), "desktop", &node.url, wire_support::OWNER);
     let attached = Repository::open(&desktop.project).unwrap().head().unwrap();
 
-    // A local Publish in the attached repository: its World now has a version the node lacks.
+    // A local Publish in the attached repository, by an older client: its World now has a
+    // version the node lacks.
     let (code, created) = desktop.json(&["workspace", "create", "mine", "--repo", desktop.repo()]);
     assert_eq!(code, Some(0), "{created}");
     let dir = PathBuf::from(created["workspace"]["root"].as_str().unwrap());
     fs::write(dir.join("local.txt"), b"only here\n").unwrap();
-    let (code, published) = desktop.json(&[
-        "workspace",
-        "publish",
-        "mine",
-        "--operation",
-        "publish-local",
-        "--repo",
-        desktop.repo(),
-    ]);
-    assert_eq!(code, Some(0), "{published}");
+    publish_locally(&desktop.project, "mine", "publish-local");
     let local = Repository::open(&desktop.project).unwrap().head().unwrap();
     assert_eq!(local.number.get(), attached.number.get() + 1);
 

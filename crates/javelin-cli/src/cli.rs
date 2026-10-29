@@ -7,11 +7,13 @@ use javelin::{
 };
 use serde_json::{Value, json};
 
-pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory | --repo DIR] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  attach https://HOST[:PORT]/REPOSITORY [project-directory]\n                           Fetch a hosted repository's head into an empty repository (made\n                           when missing) and\n                           record the attachment in .javelin/attach.json. Retry is safe.\n  sync                     Deliver queued records, then fetch the node's new versions,\n                           verified from the attached head, and advance the local World\n                           and rolling base. Refused (local_world_diverged) when the local World\n                           was published here. Uploads any Layer checkpoint not queued yet\n  status                   Whether each Layer's checkpoints are all on the node, how many\n                           are queued, or why they stay on this device\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nControl plane (over HTTP at JAVELIN_CONTROL_URL when set, else in process):\n  control init             Create the control plane and print its admin token once\n  control serve IP:PORT [--origin URL]\n                           Serve the approval page and the control plane's HTTP API in\n                           plain HTTP. Bind a loopback IP; a non-loopback IP is refused\n                           unless a TLS-terminating proxy fronts it, named by\n                           --origin https://HOST. Clients need https, except to localhost\n  control approve USER-CODE\n                           Approve a `login` code; needs JAVELIN_ADMIN_TOKEN\n  login                    Sign this device in with a device code\n  repo create OWNER/NAME --operation ID [--visibility public|private]\n             [--publish direct|requests] [--provider self]\n                           Create a self-hosted repository (retry with the same ID)\n\nPublic frontier (on the node at --node https://HOST[:PORT], for --repository ID):\n  frontier                 The newest version readers outside the repository see; a\n                           member also sees the delay and unreleased embargoes\n  delay [DURATION]         Show the disclosure delay, or set it (Maintain): SECONDS, or\n                           N followed by s, m, h or d; 0 turns it off\n  embargo --operation ID [--until UNIX]\n                           Embargo the Publish with operation ID before sending it\n                           (Maintain): outsiders stay below its version until UNIX, or\n                           until it is released\n  embargo release VERSION  Release an embargoed version now (Maintain)\n\nChecks:\n  check report --repository ID --operation ID --tree HASH [--checkpoint HASH] --name NAME --conclusion CONCLUSION\n               --completed UNIX [--started UNIX]\n               [--node https://HOST[:PORT]]\n                           Post a completed check result to the repository's node; JAVELIN_TOKEN\n                           carries the reporter token. With --node it goes to the serving node;\n                           without, the node must not be serving. --tree must already be stored; with\n                           --checkpoint the node derives the tree and checks it matches.\n                           Retry with the same ID.\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first. In an attached\n                           repository every capture queues its checkpoint for the node\n                           and delivers it within a short budget; a node outage leaves\n                           it queued for the next command or sync. JAVELIN_UPLOAD_BUDGET_MS\n                           sets the budget (default 2000)\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID [--resolutions FILE]\n                           Stack a frozen source checkpoint into exact target revision N.\n                           Conflicts change nothing; resolve each path in FILE (JSON object:\n                           path -> \"ours\" | \"theirs\" | {\"file\": PATH, \"executable\": bool})\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n  refresh ID               Move the Layer to its head on the attached node (after a\n                           Stack there), then refresh its workspace. Refused when the\n                           local Layer holds captures the node lacks\n  take ID [--operation OP]  Move the Layer's writer lease on the attached node to this\n                           device, then bring the Layer and its workspace to the node's\n                           head. Only the Layer's owner can take it\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World\n  refresh ID [--resolutions FILE]
+use crate::cli_worlds::Worlds;
+
+pub const HELP: &str = "Javelin native repository foundation\n\nUsage:\n  javelin <init|history|check> [project-directory | --repo DIR] [--json]\n  javelin layer <command> ... [--repo DIR] [--json]\n  javelin checkpoint ID [--path DIR] [PROVENANCE] [--repo DIR] [--json]\n  javelin blame PATH [--world N] [--lines] [--repo DIR] [--json]\n  javelin workspace <command> ... [--repo DIR] [--json]\n\nRepository:\n  init                     Create empty World 0; existing files stay untouched\n  adopt [project-directory] --operation ID\n                           Create a repository whose World 1 holds the directory's files\n                           (.javelinignore applies; .git is never read). Retry with the same ID.\n  adopt PROJECT --repo DIR --operation ID\n                           Import PROJECT into DIR, an attached repository, as one Publish\n                           on its node (Maintain, no approvals required)\n  attach https://HOST[:PORT]/REPOSITORY [project-directory]\n                           Fetch a hosted repository's head into an empty repository (made\n                           when missing) and\n                           record the attachment in .javelin/attach.json. Retry is safe.\n  sync                     Deliver queued records, then fetch the node's new versions,\n                           verified from the attached head, and advance the local World\n                           and rolling base. Refused (local_world_diverged) when the local World\n                           was published here. Uploads any Layer checkpoint not queued yet\n  status                   Whether each Layer's checkpoints are all on the node, how many\n                           are queued, or why they stay on this device\n  history                  List accepted World versions\n  check                    Verify repository integrity\n  blame PATH [--world N] [--lines]\n                           Which World version, Layer checkpoint and session last\n                           changed PATH; --lines attributes each line\n\nControl plane (over HTTP at JAVELIN_CONTROL_URL when set, else in process):\n  control init             Create the control plane and print its admin token once\n  control serve IP:PORT [--origin URL]\n                           Serve the approval page and the control plane's HTTP API in\n                           plain HTTP. Bind a loopback IP; a non-loopback IP is refused\n                           unless a TLS-terminating proxy fronts it, named by\n                           --origin https://HOST. Clients need https, except to localhost\n  control approve USER-CODE\n                           Approve a `login` code; needs JAVELIN_ADMIN_TOKEN\n  login                    Sign this device in with a device code\n  repo create OWNER/NAME --operation ID [--visibility public|private]\n             [--publish direct|requests] [--provider self]\n                           Create a self-hosted repository (retry with the same ID)\n\nPublic frontier (on the node at --node https://HOST[:PORT], for --repository ID):\n  frontier                 The newest version readers outside the repository see; a\n                           member also sees the delay and unreleased embargoes\n  delay [DURATION]         Show the disclosure delay, or set it (Maintain): SECONDS, or\n                           N followed by s, m, h or d; 0 turns it off\n  embargo --operation ID [--until UNIX]\n                           Embargo the Publish with operation ID before sending it\n                           (Maintain): outsiders stay below its version until UNIX, or\n                           until it is released\n  embargo release VERSION  Release an embargoed version now (Maintain)\n\nNode budget (on the node at --node https://HOST[:PORT], for --repository ID):\n  node usage               Use against each budget the node's owner set (Maintain); a\n                           write that would cross one is refused with quota_exceeded\n\nChecks:\n  check report --repository ID --operation ID --tree HASH [--checkpoint HASH] --name NAME --conclusion CONCLUSION\n               --completed UNIX [--started UNIX]\n               [--node https://HOST[:PORT]]\n                           Post a completed check result to the repository's node; JAVELIN_TOKEN\n                           carries the reporter token. With --node it goes to the serving node;\n                           without, the node must not be serving. --tree must already be stored; with\n                           --checkpoint the node derives the tree and checks it matches.\n                           Retry with the same ID.\n\nCapture:\n  checkpoint ID [--path DIR]\n                           Capture the Layer directory (default: its workspace, else\n                           the current directory) when it differs from the head;\n                           agent lifecycle hook. Layer and workspace commands for an\n                           ID capture its workspace directory first. In an attached\n                           repository every capture queues its checkpoint for the node\n                           and delivers it within a short budget; a node outage leaves\n                           it queued for the next command or sync. JAVELIN_UPLOAD_BUDGET_MS\n                           sets the budget (default 2000)\n\nProvenance (recorded in every checkpoint a capture or stack writes):\n  --actor human|agent --agent NAME --session ID --reference REF\n                           Flags on checkpoint and layer stack; otherwise from\n                           JAVELIN_ACTOR, JAVELIN_AGENT, JAVELIN_SESSION and\n                           JAVELIN_REFERENCE. An agent name implies --actor agent.\n\nLayer:\n  create ID [--world N]     Create from World N, or current World head\n  state ID                 Read current native state\n  history ID               List retained revisions and checkpoint IDs\n  publication --operation ID\n                           Inspect an original durable Publish receipt\n  diff ID [--revision N]    Show checkpointed path changes against the base World\n  radar ID                 Paths that would make Publish conflict: World advances\n                           since the base, and each other live Layer if it\n                           published first\n  clone ID --checkpoint HASH\n                           Create from an immutable checkpoint\n  stack ID --revision N --source HASH --operation ID [--resolutions FILE]\n                           Stack a frozen source checkpoint into exact target revision N.\n                           Conflicts change nothing; resolve each path in FILE (JSON object:\n                           path -> \"ours\" | \"theirs\" | {\"file\": PATH, \"executable\": bool})\n  discard ID --revision N --operation ID\n                           Terminal discard using revision N as the CAS token\n  refresh ID               Move the Layer to its head on the attached node (after a\n                           Stack there), then refresh its workspace. Refused when the\n                           local Layer holds captures the node lacks\n  update ID [--as NEW]      Move the Layer's work onto the attached node's head as Layer\n                           ID.2 (or NEW), retiring ID; text conflicts are written between\n                           markers, which request revise refuses until they are edited out\n  take ID [--operation OP]  Move the Layer's writer lease on the attached node to this\n                           device, then bring the Layer and its workspace to the node's\n                           head. Only the Layer's owner can take it\n\nWorkspace (a plain Layer directory cloned from its World base; no mount or daemon):\n  create ID [--world N]     Create the Layer if needed and open its directory\n  open ID                  Open the directory of an existing active Layer\n  path ID                  Print the Layer directory and its base\n  discard ID --operation ID Discard the Layer; its directory goes to trash\n  publish ID --operation ID [--actor human|agent]\n             [--context HASH | --trace FILE] [--allow-missing-trace]\n                           Capture, then Publish the whole Layer onto the World; in an\n                           attached repository, on the node, which then is followed\n  refresh ID [--resolutions FILE]
                            Bring the directory to its head after Stack moved it, keeping
                            local edits; refuses without changing anything on conflict.
                            FILE resolves conflicting paths as for layer stack
-  recover                  Finish interrupted steps and reclaim all trash\n\nPublish Requests (on the attached node; every write takes an operation ID to retry with):\n  request open ID --layer LAYER --operation OP\n                           Upload the Layer's changes and open request ID with them\n  request revise ID --revision N --operation OP [--layer LAYER]\n                           Author only: submit the Layer's changes as revision N+1\n  request comment ID --body TEXT --operation OP [--revision N]\n  request approve ID --revision N --operation OP\n                           Approve exactly revision N; never the author's own\n  request show ID [--revision N]\n                           Revisions, approvals, comments and changed paths\n  request list             Every request on the node\n  request publish ID --revision N --operation OP [--base WORLD]\n                           Publish exactly revision N's checkpoint onto the World\n                           revise and publish queue while the node is down; open,\n                           comment and approve refuse with node_unavailable\n\nOutbox:\n  outbox status --remote NAME [--repo DIR]\n                           Queued records waiting for the node, and any damaged tail\n                           that was ignored when the journal was opened\n  outbox replay --remote NAME [--repo DIR]\n                           Deliver queued records to the attached node in order, with\n                           this device's token; a record that cannot go stays queued\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
+  recover                  Finish interrupted steps and reclaim all trash\n\nPublish Requests (on the attached node; every write takes an operation ID to retry with):\n  request open ID --layer LAYER --operation OP\n                           Upload the Layer's changes and open request ID with them\n  request revise ID --revision N --operation OP [--layer LAYER]\n                           Author only: submit the Layer's changes as revision N+1\n  request comment ID --body TEXT --operation OP [--revision N]\n  request approve ID --revision N --operation OP\n                           Approve exactly revision N; never the author's own\n  request show ID [--revision N]\n                           Revisions, approvals, comments and changed paths (A/M/D)\n  request list             Every request on the node\n  request publish ID --revision N --operation OP [--base WORLD]\n                           Publish exactly revision N's checkpoint onto the World;\n                           --base only for a revision this clone never saw\n                           revise and publish queue while the node is down; open,\n                           comment and approve refuse with node_unavailable\n\nOutbox:\n  outbox status --remote NAME [--repo DIR]\n                           Queued records waiting for the node, and any damaged tail\n                           that was ignored when the journal was opened\n  outbox replay --remote NAME [--repo DIR]\n                           Deliver queued records to the attached node in order, with\n                           this device's token; a record that cannot go stays queued\n\nIDs for create/clone and operation IDs for mutations must be reused on retry.\nDiff reads immutable checkpoints, not live files. Checkpoint before Publish.\nSee docs/cli.md for setup, retry, and cleanup details.";
 
 pub type Output = (Value, String, u8);
 
@@ -199,22 +201,20 @@ fn text(value: &OsString) -> Result<&str> {
         .ok_or_else(|| Error::InvalidInput("command, IDs, and option names must be UTF-8".into()))
 }
 
-pub fn run(mut args: Vec<OsString>) -> Result<Output> {
+pub fn run(mut args: Vec<OsString>) -> std::result::Result<Output, crate::CliError> {
     let group = args.remove(0);
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
         return Ok(success(json!({"ok": true, "help": HELP}), HELP.into()));
     }
     if args.is_empty() {
-        return Err(Error::InvalidInput(
-            "expected a subcommand; see javelin --help".into(),
-        ));
+        return Err(Error::InvalidInput("expected a subcommand; see javelin --help".into()).into());
     }
     let action = args.remove(0);
     let action = text(&action)?;
     if group == "workspace" {
         return cli_workspace::run(action, args);
     }
-    layer(action, args)
+    Ok(layer(action, args)?)
 }
 
 fn describe(state: &LayerState) -> String {
@@ -292,10 +292,7 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
     }
     let args = Args::parse(args, allowed, 1)?;
     let id = args.layer()?;
-    let world = args
-        .number("--world")?
-        .map(VersionNumber::new)
-        .transpose()?;
+    let world = args.number("--world")?;
     let revision = args.number("--revision")?;
     let checkpoint = if action == "clone" {
         Some(CheckpointId::parse(text(args.required("--checkpoint")?)?)?)
@@ -316,8 +313,9 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
             let head = if let Some(checkpoint) = checkpoint {
                 repo.clone_layer(&id, checkpoint)?
             } else {
+                // `--world N` is the node's number in an attached repository.
                 let version = match world {
-                    Some(version) => version,
+                    Some(number) => Worlds::of(&repo)?.local(number)?,
                     None => repo.head()?.number,
                 };
                 let base = repo.layer_base(version)?;
@@ -338,9 +336,10 @@ fn layer(action: &str, args: Vec<OsString>) -> Result<Output> {
         }
         "radar" => {
             let radar = repo.radar(&id)?;
+            let worlds = Worlds::of(&repo)?;
             success(
-                json!({"ok": true, "command": command, "clear": radar.clear(), "radar": radar}),
-                radar_text(&radar),
+                json!({"ok": true, "command": command, "clear": radar.clear(), "radar": radar_json(&radar, &worlds)?}),
+                radar_text(&radar, &worlds)?,
             )
         }
         "history" => {
@@ -542,10 +541,11 @@ pub fn checkpoint(args: Vec<OsString>) -> Result<Output> {
     // The lifecycle hook is the earliest point to warn about a future conflict.
     match repo.radar(&id) {
         Ok(radar) => {
+            let worlds = Worlds::of(&repo)?;
             if !radar.clear() {
-                output.1 = format!("{}\n{}", output.1, radar_text(&radar));
+                output.1 = format!("{}\n{}", output.1, radar_text(&radar, &worlds)?);
             }
-            output.0["radar"] = json!(radar);
+            output.0["radar"] = radar_json(&radar, &worlds)?;
         }
         // Published or discarded since the capture: nothing can conflict.
         Err(Error::InvalidInput(_)) => {}
@@ -558,13 +558,21 @@ fn quoted(path: &javelin::RepoPath) -> String {
     serde_json::to_string(path.as_str()).expect("path encoding")
 }
 
-fn radar_text(radar: &Radar) -> String {
+/// The radar as JSON, with its World numbers as the repository shows them.
+fn radar_json(radar: &Radar, worlds: &Worlds) -> Result<Value> {
+    let mut value = json!(radar);
+    value["base"] = worlds.number(radar.base)?;
+    value["world"]["version"] = worlds.number(radar.world.version)?;
+    Ok(value)
+}
+
+fn radar_text(radar: &Radar, worlds: &Worlds) -> Result<String> {
     let layer = radar.head.layer().as_str();
     if radar.clear() {
-        return format!(
-            "Radar clear: Layer {layer} has no World or Layer collisions at World {}",
-            radar.world.version
-        );
+        return Ok(format!(
+            "Radar clear: Layer {layer} has no World or Layer collisions at {}",
+            worlds.label(radar.world.version)?
+        ));
     }
     let mut lines = vec![format!(
         "Radar: Layer {layer} revision {} would conflict",
@@ -573,9 +581,9 @@ fn radar_text(radar: &Radar) -> String {
     if !radar.world.paths.is_empty() {
         let paths: Vec<_> = radar.world.paths.iter().map(quoted).collect();
         lines.push(format!(
-            "  World {} since base World {}: {}",
-            radar.world.version,
-            radar.base,
+            "  {} since base {}: {}",
+            worlds.label(radar.world.version)?,
+            worlds.label(radar.base)?,
             paths.join(", ")
         ));
     }
@@ -597,7 +605,7 @@ fn radar_text(radar: &Radar) -> String {
             pairs.join(", ")
         ));
     }
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 /// `javelin outbox status --remote NAME`: read-only view of the client outbox. Replay
