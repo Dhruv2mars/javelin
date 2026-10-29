@@ -42,6 +42,9 @@ const PUBLISH_RESERVE_ROWS: u64 = 64;
 const OBJECT_ROWS: u64 = 4;
 /// Bytes one object or changed path may add besides its own bytes (measured about 400).
 const OBJECT_BYTES: u64 = 512;
+/// Rows one forked version may write besides its paths: its version row, attempt and
+/// indexes, in a transaction of its own.
+const VERSION_ROWS: u64 = 16;
 /// Seconds in one UTC day. Cloudflare's daily quotas reset at 00:00 UTC.
 const DAY: u64 = 86_400;
 
@@ -132,6 +135,19 @@ pub fn usage(log: &FileWorldLog, now: u64) -> Result<Usage, ProtocolError> {
     })
 }
 
+/// What a fork writes into its target (`fork::Plan`): its objects (blobs, trees, openings and
+/// traces) and their bytes, the largest one, the versions after World 0, and the paths those
+/// versions change with their bytes.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ForkWrite {
+    pub objects: u64,
+    pub bytes: u64,
+    pub largest: u64,
+    pub versions: u64,
+    pub paths: u64,
+    pub path_bytes: u64,
+}
+
 /// What the budget leaves, read before a write starts: the budget, the bytes stored, today's
 /// rows and the repository's page size.
 pub(crate) struct Room {
@@ -161,6 +177,31 @@ impl Room {
         self.fits(
             bytes + PUBLISH_RESERVE_ROWS * self.page_size,
             2 * bytes.div_ceil(ROW) + write.objects + PUBLISH_RESERVE_ROWS,
+        )
+    }
+
+    /// Refuses a fork whose bound would cross the budget, before anything is written: an
+    /// object larger than the owner allows, or more bytes or rows than are left. Each version
+    /// is written by a transaction of its own, so each carries a Publish's reserve of rows.
+    pub(crate) fn fork(&self, write: &ForkWrite) -> Result<(), ProtocolError> {
+        if write.largest > self.budget.largest_object {
+            return Err(quota(
+                LARGEST_OBJECT,
+                format!(
+                    "an object of {} bytes is larger than the {} allowed",
+                    write.largest, self.budget.largest_object
+                ),
+            ));
+        }
+        let bytes = write.bytes
+            + 4 * write.path_bytes
+            + (write.objects + write.paths + write.versions) * OBJECT_BYTES;
+        self.fits(
+            2 * bytes + PUBLISH_RESERVE_ROWS * self.page_size,
+            2 * bytes.div_ceil(ROW)
+                + write.objects * OBJECT_ROWS
+                + write.versions * VERSION_ROWS
+                + PUBLISH_RESERVE_ROWS,
         )
     }
 

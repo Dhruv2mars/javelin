@@ -2,8 +2,11 @@
 // `crates/javelin-node-cloudflare` (`bun run build`); this file is only the runtime glue:
 //
 // - The Worker routes each repository to its own `RepositoryNode` Durable Object. It checks
-//   the admin token for `/admin/r/{repo}/{provision,permissions,keys,state,budget}` and passes
-//   protocol version 2 (`POST /v2/r/{repo}`) through with the caller's own token.
+//   the admin token for `/admin/r/{repo}/{provision,permissions,keys,state,budget,fork}` and
+//   passes protocol version 2 (`POST /v2/r/{repo}`) through with the caller's own token.
+// - A fork copies between two objects: the target says whether it already holds the fork, the
+//   source exports what the forker may read, and the target imports it in one transaction
+//   (`fork` below; the actions are in `crates/javelin-node-cloudflare/src/service.rs`).
 // - The object keeps the node's files as page rows in its SQLite storage and calls the core
 //   inside `transactionSync`, so each request's writes commit together or not at all.
 
@@ -24,7 +27,7 @@ const MAX_FRAME = maxFrame();
 let generation = 0;
 
 const REPO = /^[A-Za-z0-9._:-]{1,128}$/;
-const ADMIN = /^\/admin\/r\/([^/]+)\/(provision|permissions|keys|state|budget)$/;
+const ADMIN = /^\/admin\/r\/([^/]+)\/(provision|permissions|keys|state|budget|fork)$/;
 const V2 = /^\/v2\/r\/([^/]+)$/;
 const PREFLIGHT = {
   "access-control-allow-origin": "*",
@@ -91,11 +94,16 @@ export class RepositoryNode extends DurableObject {
   }
 
   // Runs one call on the node in one storage transaction. A failure rolls the request's
-  // writes back, and the node is dropped, since its caches may hold what was rolled back.
+  // writes back, and the node is dropped, since its caches may hold what was rolled back. A
+  // reply marked `rollback` is rolled back the same way, then answered.
   call(name, run) {
     let reply;
     try {
-      reply = this.ctx.storage.transactionSync(() => run(this.open(name)));
+      reply = this.ctx.storage.transactionSync(() => {
+        const answer = run(this.open(name));
+        if (answer.rollback) throw new Rollback(answer);
+        return answer;
+      });
     } catch (error) {
       const old = this.node;
       this.node = null;
@@ -106,7 +114,10 @@ export class RepositoryNode extends DurableObject {
       } else if (old?.generation === generation) {
         old.wasm.free();
       }
-      return json({ error: "node_unavailable", detail: String(error) }, 503);
+      if (!(error instanceof Rollback)) {
+        return json({ error: "node_unavailable", detail: String(error) }, 503);
+      }
+      reply = error.reply;
     }
     const headers = { "content-type": reply.json ? "application/json" : "application/octet-stream" };
     if (reply.cors) headers["access-control-allow-origin"] = "*";
@@ -151,6 +162,14 @@ export class RepositoryNode extends DurableObject {
   }
 }
 
+// Thrown inside `transactionSync` so the object rolls back a reply's writes.
+class Rollback extends Error {
+  constructor(reply) {
+    super("rolled back");
+    this.reply = reply;
+  }
+}
+
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
     status,
@@ -173,6 +192,37 @@ function forward(env, repository, path, init) {
   const stub = env.REPOSITORY_NODE.get(env.REPOSITORY_NODE.idFromName(repository));
   init.headers["x-javelin-repository"] = repository;
   return stub.fetch(new Request(`https://node${path}`, init));
+}
+
+function put(env, repository, action, body) {
+  return forward(env, repository, `/admin/${action}`, { method: "PUT", headers: {}, body });
+}
+
+// `PUT /admin/r/{target}/fork` with `{"source","at","reader"}`: copies `source` at version `at`
+// into `target` for a forker with role `reader` (`null` outside the source). A finished fork is
+// answered by the target alone; otherwise the source exports the bundle, which never leaves
+// Cloudflare, and the target imports it in one transaction, so it is untouched or complete.
+async function fork(env, target, request) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid_input", detail: "malformed fork request" }, 400);
+  }
+  const { source, at, reader } = body ?? {};
+  if (typeof source !== "string" || !REPO.test(source) || source === target) {
+    return json({ error: "invalid_input", detail: "source must name another repository" }, 400);
+  }
+  if (!Number.isSafeInteger(at) || at < 0 || !(reader === null || typeof reader === "string")) {
+    return json({ error: "invalid_input", detail: "needs at and reader" }, 400);
+  }
+  const finished = await put(env, target, "fork-finished", JSON.stringify({ source, at }));
+  if (!finished.ok) return finished;
+  const { forked } = await finished.json();
+  if (forked) return json(forked);
+  const bundle = await put(env, source, "fork-export", JSON.stringify({ at, reader }));
+  if (!bundle.ok) return bundle;
+  return put(env, target, "fork-import", await bundle.arrayBuffer());
 }
 
 export default {
@@ -208,6 +258,10 @@ export default {
     if (!REPO.test(repository)) return json({ error: "invalid_input" }, 400);
     if (!authorized(request, env.NODE_ADMIN_TOKEN)) {
       return json({ error: "unauthorized" }, 401);
+    }
+    if (action === "fork") {
+      if (request.method !== "PUT") return json({ error: "method_not_allowed" }, 405);
+      return fork(env, repository, request);
     }
     // `state` only reads and the pushes only write; `budget` reads with GET and replaces
     // the owner's budget with PUT.

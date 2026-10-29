@@ -60,6 +60,7 @@ pub fn run(node: &dyn NodeLink, repository: &RepositoryId, snapshot: &dyn Fn() -
     // Provision creates World 0 once; a repeat changes nothing.
     node.provision(repository).expect("provision");
     assert_eq!(snapshot().genesis, expected_genesis());
+    assert_eq!(node.head(repository).expect("head").get(), 0);
     node.provision(repository).expect("provision again");
     assert_eq!(snapshot().genesis, expected_genesis());
     assert_eq!(snapshot().permissions, None);
@@ -338,6 +339,12 @@ fn number(message: &Message) -> u64 {
 /// Creates Layer `name` over World `base` and appends one new file to it, as `admin`.
 /// Returns the Layer's head.
 fn layer_with(wire: &Wire, name: &str, base: u64, path: &str) -> javelin::ObjectId {
+    layer_files(wire, name, base, &[(path, format!("{name}\n").as_bytes())])
+}
+
+/// Creates Layer `name` over World `base` and appends `files` to it, as `admin`. Returns the
+/// Layer's head.
+fn layer_files(wire: &Wire, name: &str, base: u64, files: &[(&str, &[u8])]) -> javelin::ObjectId {
     let layer = javelin::LayerId::parse(name).expect("layer");
     let head = match wire.reply(
         Some("admin"),
@@ -349,19 +356,26 @@ fn layer_with(wire: &Wire, name: &str, base: u64, path: &str) -> javelin::Object
         Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
         other => panic!("create {name}: {other:?}"),
     };
-    let bytes = format!("{name}\n").into_bytes();
-    let blob = javelin::ObjectId::for_blob(&bytes);
-    wire.reply(
-        Some("admin"),
-        &Message::Objects(vec![(Kind::Blob, blob, bytes)]),
-    );
-    let changes = javelin::SparseChanges::new([(
-        javelin::RepoPath::parse(path).expect("path"),
-        Some(javelin::FileEntry::Regular {
-            content: blob,
-            executable: false,
-        }),
-    )])
+    let blobs = files
+        .iter()
+        .map(|(_, bytes)| {
+            (
+                Kind::Blob,
+                javelin::ObjectId::for_blob(bytes),
+                bytes.to_vec(),
+            )
+        })
+        .collect();
+    wire.reply(Some("admin"), &Message::Objects(blobs));
+    let changes = javelin::SparseChanges::new(files.iter().map(|(path, bytes)| {
+        (
+            javelin::RepoPath::parse(path).expect("path"),
+            Some(javelin::FileEntry::Regular {
+                content: javelin::ObjectId::for_blob(bytes),
+                executable: false,
+            }),
+        )
+    }))
     .expect("changes");
     let bytes = changes.canonical_bytes();
     let id = Kind::Checkpoint.id(&bytes);
@@ -568,4 +582,159 @@ pub fn run_budget(wire: &Wire, set: &dyn Fn(&serde_json::Value)) {
         Message::Stored { count: 1 }
     );
     assert!(used(&wire.reply(Some("admin"), &read), "rows_written_per_day") > 0);
+}
+
+/// Runs a closure with the protocol version 2 endpoint of a repository.
+pub type Serve<'a> = dyn Fn(&RepositoryId, &mut dyn FnMut(&Wire)) + 'a;
+
+/// A node the fork suite runs on.
+pub struct ForkNode<'a> {
+    pub node: &'a dyn NodeLink,
+    /// A repository name this node has never seen, from a suffix.
+    pub name: &'a dyn Fn(&str) -> RepositoryId,
+    /// Runs `run` with the protocol version 2 endpoint of `repository`. No fork runs meanwhile.
+    pub serve: &'a Serve<'a>,
+    /// Replaces the owner's budget of a repository, in the `budget.json` layout.
+    pub budget: &'a dyn Fn(&RepositoryId, &serde_json::Value),
+}
+
+const FORK_POLICY: &[u8] = b".env maintainers\ninternal/** members\n";
+const SECRET: &[u8] = b"TOKEN=2\n";
+
+/// Provisions `repository`, trusts the test keys and makes it public, `admin` holding
+/// Maintain and `reviewer` Review: what the control plane does around a create or a fork.
+fn ready(node: &dyn NodeLink, repository: &RepositoryId) {
+    node.provision(repository).expect("provision");
+    node.trust(repository, &test_keys::keys()).expect("trust");
+    node.apply(&permissions(repository, 1, Visibility::Public, true))
+        .expect("permissions");
+}
+
+fn resolved(wire: &Wire) -> (u64, javelin::ObjectId, javelin::ObjectId) {
+    match wire.reply(Some("admin"), &Message::Resolve { version: None }) {
+        Message::Resolved { number, id, tree } => (number.get(), id, tree),
+        other => panic!("resolve: {other:?}"),
+    }
+}
+
+/// The commitments of the hidden entries in root tree `tree`, read as `admin`.
+fn hidden_in(wire: &Wire, tree: javelin::ObjectId) -> Vec<javelin::ObjectId> {
+    let bytes = match wire.reply(Some("admin"), &Message::Get(vec![(Kind::Tree, tree)])) {
+        Message::Objects(mut objects) if objects.len() == 1 => objects.remove(0).2,
+        other => panic!("get the root tree: {other:?}"),
+    };
+    javelin::tree::Chunk::decode(&bytes)
+        .expect("root chunk")
+        .entries()
+        .filter_map(|(_, node)| match node {
+            javelin::tree::Node::File(javelin::FileEntry::Hidden { commitment, .. }) => {
+                Some(commitment)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Forks across two repositories on the node (two Durable Objects on Cloudflare): a source
+/// with a maintainers' `.env` and a members' `internal/`, forked at World 2 by a maintainer,
+/// a reviewer and an outsider. Each fork keeps the source's version IDs and every commitment,
+/// and holds an opening and its bytes only where its forker could read them. A retry returns
+/// the same fork; another fork point is refused. A fork that would cross the target's budget
+/// is refused with `quota_exceeded` and leaves the target at World 0; raised, it completes.
+pub fn run_fork(n: &ForkNode<'_>) {
+    let source = (n.name)("fork_source");
+    ready(n.node, &source);
+    let mut head = None;
+    (n.serve)(&source, &mut |wire| {
+        let one = layer_files(
+            wire,
+            "secrets",
+            0,
+            &[
+                (javelin::POLICY_PATH, FORK_POLICY),
+                (".env", b"TOKEN=1\n"),
+                ("internal/notes", b"notes\n"),
+                ("src/a", b"a\n"),
+            ],
+        );
+        let publish = publish_layer("secrets", "publish-secrets", one, 0);
+        assert_eq!(number(&wire.reply(Some("admin"), &publish)), 1);
+        let two = layer_files(wire, "update", 1, &[(".env", SECRET), ("src/a", b"b\n")]);
+        let publish = publish_layer("update", "publish-update", two, 1);
+        assert_eq!(number(&wire.reply(Some("admin"), &publish)), 2);
+        head = Some(resolved(wire));
+    });
+    let head = head.expect("source head");
+    let fork = |target: &RepositoryId, at: u64, reader: Option<Role>| {
+        n.node.fork(&javelin_control::ForkPlan {
+            source: source.clone(),
+            target: target.clone(),
+            at,
+            reader,
+        })
+    };
+
+    for (suffix, reader, opened, secret) in [
+        ("fork_maintain", Some(Role::Maintain), 2, true),
+        ("fork_review", Some(Role::Review), 1, false),
+        ("fork_outsider", None, 0, false),
+    ] {
+        let target = (n.name)(suffix);
+        n.node.provision(&target).expect("provision the target");
+        let forked = fork(&target, 2, reader).expect("fork");
+        assert_eq!(forked.origin.source, source.as_str());
+        assert_eq!(
+            (forked.origin.number.get(), forked.origin.version),
+            (2, head.1)
+        );
+        assert_eq!(fork(&target, 2, reader).expect("retry"), forked, "{suffix}");
+        let error = fork(&target, 1, reader).expect_err("another fork point");
+        assert_eq!(refused_code(&error), Some("invalid_input"), "{error}");
+        assert_eq!(n.node.head(&target).expect("head").get(), 2);
+
+        ready(n.node, &target);
+        (n.serve)(&target, &mut |wire| {
+            assert_eq!(resolved(wire), head, "{suffix}: the source's IDs");
+            let commitments = hidden_in(wire, head.2);
+            assert_eq!(
+                commitments.len(),
+                2,
+                "{suffix}: .env and internal stay committed"
+            );
+            match wire.reply(Some("admin"), &Message::Open(commitments)) {
+                Message::Opened(openings) => assert_eq!(openings.len(), opened, "{suffix}"),
+                other => panic!("open: {other:?}"),
+            }
+            let want = |bytes: &[u8]| {
+                let id = javelin::ObjectId::for_blob(bytes);
+                match wire.reply(Some("admin"), &Message::Want(vec![(Kind::Blob, id)])) {
+                    Message::Missing(missing) => missing.is_empty(),
+                    other => panic!("want: {other:?}"),
+                }
+            };
+            assert_eq!(want(SECRET), secret, "{suffix}: the maintainers' bytes");
+            assert_eq!(want(b"notes\n"), opened > 0, "{suffix}: the members' bytes");
+            assert!(want(b"b\n"), "{suffix}: public bytes are copied");
+        });
+    }
+
+    // Over the target's budget: refused before anything is written.
+    let target = (n.name)("fork_over_budget");
+    n.node.provision(&target).expect("provision the target");
+    (n.budget)(&target, &serde_json::json!({ "rows_written_per_day": 32 }));
+    let error = fork(&target, 2, Some(Role::Maintain)).expect_err("over the budget");
+    assert_eq!(refused_code(&error), Some("quota_exceeded"), "{error}");
+    assert!(
+        error.to_string().contains("rows_written_per_day"),
+        "{error}"
+    );
+    assert_eq!(n.node.head(&target).expect("head").get(), 0);
+    (n.budget)(&target, &serde_json::json!({ "largest_object": 4 }));
+    let error = fork(&target, 2, Some(Role::Maintain)).expect_err("an object too large");
+    assert_eq!(refused_code(&error), Some("quota_exceeded"), "{error}");
+    assert_eq!(n.node.head(&target).expect("head").get(), 0);
+    (n.budget)(&target, &serde_json::json!({}));
+    let forked = fork(&target, 2, Some(Role::Maintain)).expect("fork once raised");
+    assert_eq!(forked.origin.version, head.1);
+    assert_eq!(n.node.head(&target).expect("head").get(), 2);
 }

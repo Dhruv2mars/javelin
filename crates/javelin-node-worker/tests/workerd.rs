@@ -75,3 +75,20 @@ fn wrong_admin_token_is_refused() {
         "state reads need the admin token too"
     );
 }
+
+#[test]
+#[ignore = "needs a running node; run through tools/node-cloudflare"]
+fn workerd_node_forks_across_two_objects() {
+    let node = node();
+    let url = std::env::var("JAVELIN_NODE_URL").expect("JAVELIN_NODE_URL");
+    let prefix = repository().as_str().to_string();
+    common::run_fork(&common::ForkNode {
+        node: &node,
+        name: &|suffix| RepositoryId::parse(&format!("{prefix}_{suffix}")).expect("repository"),
+        serve: &|repository, run| run(&common::Wire::new(&url, repository)),
+        budget: &|repository, value| {
+            node.budget(repository, Some(value))
+                .expect("set the budget");
+        },
+    });
+}

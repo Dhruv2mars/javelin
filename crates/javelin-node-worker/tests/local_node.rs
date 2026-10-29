@@ -3,13 +3,23 @@
 
 mod common;
 
-use std::{fs, thread};
+use std::{
+    fs,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+};
 
 use javelin::Repository;
 use javelin_collaboration::RepositoryId;
 use javelin_control::{LocalNode, NodeLink};
 use javelin_identity::test_keys;
-use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, budget, serve, storage::Directory};
+use javelin_node::{
+    FileWorldLog, auth::Gate, bind_loopback, budget, serve, serve_live, storage::Directory,
+};
 use javelin_node_worker::Snapshot;
 
 #[test]
@@ -54,5 +64,49 @@ fn local_node_conforms() {
         // The node may have reread the budget before this write and be waiting for its next
         // connection: one read cycles it, so the request after this one sees the new budget.
         wire.reply(None, &javelin_protocol::Message::Resolve { version: None });
+    });
+}
+
+/// Serves the repository in `dir` while `run` runs, then stops and releases its lock, so a
+/// fork can open it next.
+fn served(dir: &Path, repository: &RepositoryId, run: &mut dyn FnMut(&common::Wire)) {
+    let listener = bind_loopback("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let base = format!("http://{addr}");
+    let stop = Arc::new(AtomicBool::new(false));
+    let server = thread::spawn({
+        let (dir, name, stop) = (
+            dir.to_path_buf(),
+            repository.as_str().to_string(),
+            stop.clone(),
+        );
+        move || {
+            let mut log = FileWorldLog::open(&dir).expect("node");
+            while !stop.load(Ordering::SeqCst) {
+                serve_live(&listener, &name, &mut log, &dir, Some(1)).expect("serve");
+            }
+        }
+    });
+    let wire = common::Wire::new(&base, repository);
+    run(&wire);
+    stop.store(true, Ordering::SeqCst);
+    // One last connection lets the server see the stop.
+    drop(std::net::TcpStream::connect(addr).expect("connect"));
+    server.join().expect("server");
+}
+
+#[test]
+fn local_node_forks() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let node = LocalNode::new(root.path().join("nodes"));
+    common::run_fork(&common::ForkNode {
+        node: &node,
+        name: &|suffix| RepositoryId::parse(suffix).expect("repository"),
+        serve: &|repository, run| served(&node.repository_dir(repository), repository, run),
+        budget: &|repository, value| {
+            let budget = budget::parse(value.to_string().as_bytes()).expect("budget");
+            budget::store(&Directory::new(node.repository_dir(repository)), &budget)
+                .expect("store budget.json");
+        },
     });
 }

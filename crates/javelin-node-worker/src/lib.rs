@@ -12,10 +12,11 @@
 
 use std::{collections::BTreeMap, sync::OnceLock, time::Duration};
 
-use javelin::Repository;
+use javelin::{ObjectId, Repository, VersionNumber};
 use javelin_collaboration::{AppliedPermissions, RepositoryId, Role, Visibility};
-use javelin_control::{ControlError, NodeLink};
+use javelin_control::{ControlError, ForkPlan, NodeLink};
 use javelin_identity::KeySet;
+use javelin_node::fork::{Forked, Origin};
 use javelin_protocol::ProtocolError;
 use serde_json::{Value, json};
 
@@ -140,6 +141,34 @@ impl CloudflareNode {
         answer_json(answer)
     }
 
+    /// The node's `state` for `repository`, as JSON.
+    fn state(&self, repository: &RepositoryId) -> Result<Value, ControlError> {
+        let answer = self
+            .agent
+            .get(&self.url(repository, "state"))
+            .header("authorization", &self.bearer())
+            .call();
+        answer_json(answer)
+    }
+
+    /// A version number field of the node's `state`.
+    fn number(
+        &self,
+        repository: &RepositoryId,
+        field: &str,
+    ) -> Result<VersionNumber, ControlError> {
+        let state = self.state(repository)?;
+        state
+            .get(field)
+            .and_then(Value::as_u64)
+            .and_then(|number| VersionNumber::new(number).ok())
+            .ok_or_else(|| {
+                ControlError::Node(format!(
+                    "node state has no {field}; is the repository provisioned?"
+                ))
+            })
+    }
+
     fn url(&self, repository: &RepositoryId, action: &str) -> String {
         format!("{}/admin/r/{}/{action}", self.base, repository.as_str())
     }
@@ -202,6 +231,93 @@ impl NodeLink for CloudflareNode {
             .map_err(|error| ControlError::Storage(error.to_string()))?;
         self.put(&self.url(repository, "keys"), &keys)
     }
+
+    fn head(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        self.number(repository, "head")
+    }
+
+    fn frontier(&self, repository: &RepositoryId) -> Result<VersionNumber, ControlError> {
+        self.number(repository, "frontier")
+    }
+
+    /// Each repository is its own Durable Object, so the Worker copies between the two: the
+    /// source exports only what `plan.reader` may read, and the target imports it in one
+    /// transaction after its budget admits it. A refusal, `quota_exceeded` among them, is
+    /// `ControlError::Refused` with the node's code, and leaves the target as it was.
+    fn fork(&self, plan: &ForkPlan) -> Result<Forked, ControlError> {
+        let body = json!({
+            "source": plan.source.as_str(),
+            "at": plan.at,
+            "reader": plan.reader.map(role_name),
+        });
+        let answer = self
+            .agent
+            .put(&self.url(&plan.target, "fork"))
+            .header("authorization", &self.bearer())
+            .header("content-type", "application/json")
+            .send(body.to_string());
+        forked(&answer_refusable(answer)?)
+    }
+}
+
+/// `answer_json`, with a `409` that carries the node's code and detail kept as
+/// `ControlError::Refused`.
+fn answer_refusable(
+    answer: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<Value, ControlError> {
+    let mut answer =
+        answer.map_err(|error| ControlError::Node(format!("node unreachable: {error}")))?;
+    if answer.status().as_u16() != 409 {
+        return answer_json(Ok(answer));
+    }
+    let text = answer
+        .body_mut()
+        .read_to_string()
+        .map_err(|error| ControlError::Node(format!("node answer unreadable: {error}")))?;
+    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
+    match (field("error"), field("detail")) {
+        (Some(code), detail) => Err(ControlError::Refused(ProtocolError::new(
+            &code,
+            detail.unwrap_or_default(),
+        ))),
+        _ => Err(ControlError::Node("node answered 409".into())),
+    }
+}
+
+/// A fork as the node reports it: `{"origin":{"source","number","version"},"omitted":[...]}`.
+fn forked(value: &Value) -> Result<Forked, ControlError> {
+    let malformed = || ControlError::Node("node answered a malformed fork".into());
+    let origin = value.get("origin").ok_or_else(malformed)?;
+    let id = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .and_then(|text| ObjectId::parse(text).ok())
+            .ok_or_else(malformed)
+    };
+    let omitted = value
+        .get("omitted")
+        .and_then(Value::as_array)
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|trace| id(Some(trace)))
+        .collect::<Result<_, _>>()?;
+    Ok(Forked {
+        origin: Origin {
+            source: origin
+                .get("source")
+                .and_then(Value::as_str)
+                .ok_or_else(malformed)?
+                .into(),
+            number: origin
+                .get("number")
+                .and_then(Value::as_u64)
+                .and_then(|number| VersionNumber::new(number).ok())
+                .ok_or_else(malformed)?,
+            version: id(origin.get("version"))?,
+        },
+        omitted,
+    })
 }
 
 /// World 0 of an empty repository, as `(id, tree)`. It is the same value a node computes for

@@ -95,7 +95,19 @@ CI left open. Work from it, in roughly this order:
     the Durable Object; parity and the wire conformance cover a request loop and a held
     version.
   - [ ] Rerun the hosted acceptance `target_*` now that `LayerCreate` reaches a remote node.
-  - [ ] Fork on the Cloudflare node (`NodeLink::fork` across two objects).
+  - [x] Fork on the Cloudflare node (`NodeLink::fork` across two objects; `feat/cf-fork`).
+    `fork::plan` reads what the forker may read, `fork::apply` checks the target's head and
+    budget before its first write; the Worker's `PUT /admin/r/{target}/fork` has the target
+    answer a finished fork, the source export a bundle (32 MiB cap) and the target import it in
+    one transaction (a refused or failed import is rolled back). `CloudflareNode` gains `head`,
+    `frontier` and `fork`. Evidence: `crates/javelin-node-cloudflare/tests/fork_parity.rs`
+    (self-hosted vs two `PageStorage` objects: hidden paths per reader, traces, budget refusal
+    with no page written, injected storage failures and a tampered bundle rolled back, the
+    budget bound against the use), conformance `run_fork` on `LocalNode` and `wrangler dev`.
+    - [ ] `javelin fork` in the CLI: there is no command yet; fork is `ControlPlane::
+      fork_repository` only.
+    - [ ] A fork larger than 32 MiB on Cloudflare (staged import over several requests); the
+      self-hosted fork has no such cap.
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
 - [x] Forge live on Vercel at https://javelin-codes.vercel.app (Hobby, CLI deploys with
@@ -207,6 +219,10 @@ reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopb
 `wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
 fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
 
+- [ ] `tests/capture.rs` `settled_entries_are_reused_and_edits_after_settling_are_seen` failed
+  once on macOS (2026-10-29, `feat/cf-fork`, full workspace run: 14 cache hits where 20 were
+  expected, line 281) and passed alone; the branch changes no root crate code. Likely the
+  settling window under a loaded machine.
 - [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
   `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the

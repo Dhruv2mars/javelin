@@ -1,7 +1,8 @@
 //! The node as the Durable Object sees it, through wasm-bindgen. `worker.js` gives each
 //! object's `WasmNode` its page rows (`JsPages`) and calls it inside `transactionSync`, so a
 //! request's page writes commit together. A call that fails in storage, or traps, throws: the
-//! object rolls the request back and opens a new node, whose caches start empty.
+//! object rolls the request back and opens a new node, whose caches start empty. A reply marked
+//! `rollback` is rolled back the same way, and still answered.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -109,6 +110,12 @@ impl Reply {
     #[wasm_bindgen(getter)]
     pub fn cors(&self) -> bool {
         self.0.cors
+    }
+
+    /// The call's writes must not commit: `worker.js` throws inside the transaction.
+    #[wasm_bindgen(getter)]
+    pub fn rollback(&self) -> bool {
+        self.0.rollback
     }
 }
 

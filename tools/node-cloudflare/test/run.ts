@@ -69,7 +69,7 @@ try {
     { JAVELIN_NODE_URL: base, JAVELIN_NODE_ADMIN_TOKEN: adminToken },
   );
   if (suite.code !== 0) throw new Error(`conformance failed:\n${suite.stdout}\n${suite.stderr}`);
-  check(/3 passed/.test(suite.stdout), "Rust conformance suite passes against workerd");
+  check(/4 passed/.test(suite.stdout), "Rust conformance suite passes against workerd, fork across two objects included");
 
   // 2. `repo create` end to end with the javelin CLI.
   const build = await run(["cargo", "build", "--locked", "-p", "javelin-cli"], repoRoot);
