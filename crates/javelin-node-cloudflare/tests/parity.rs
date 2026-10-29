@@ -363,7 +363,7 @@ fn scenario(log: &mut FileWorldLog, clock: &AtomicU64) -> Vec<String> {
             version: Some(v(3)),
         },
     );
-    // A signed-in caller without a role is refused Layer work before anything is looked up.
+    // A signed-in caller without a role creates its own Layer at the frontier.
     s.send(
         Some("stranger"),
         &Message::LayerCreate {

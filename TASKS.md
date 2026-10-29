@@ -37,11 +37,28 @@ CI left open. Work from it, in roughly this order:
   - [x] Trail 3's `ListRequests`, `ReadReview` and `LayerCreate` refuse callers without a
     role before any lookup; signed-out `attach` and `sync` stop at the frontier
     (`wire_frontier.rs`, `crates/javelin-cli/tests/frontier.rs`).
-  - [ ] Outside contributors (signed in, no role) are refused every Layer, Publish Request and
-    check message so none can name a held version. Let them reach their own Layers, based
-    at or below the frontier, once a Layer records who created it.
-  - [ ] `--embargo` on `javelin request publish`; until then `javelin embargo --operation ID`
-    precedes the Publish.
+  - [x] Outside contributors (signed in, no role) create, append to, read and take their own
+    Layers, based at or below the frontier, and open, revise, comment on, read and list
+    Publish Requests from them (`feat/outside-contributors`, `crates/javelin-node/src/
+    outside.rs`). The node keeps their IDs under `outside-<hash of principal>.`, so the
+    stored ID records the creator and no reply shows anyone else's Layer or request; Stack,
+    Approve, both Publishes and check reports stay `forbidden`, and members' writes there
+    are `layer_reserved`. A held reader reads only its own Layers' checkpoints, and
+    visibility and write checks stop at the frontier's policy. Evidence: `crates/javelin-cli/
+    tests/outside_contributors.rs` (end to end), parity `an_outside_contributor_works_alike_
+    on_both_nodes` (`Directory` and `PageStorage`); every earlier refusal test unchanged.
+    macOS and Linux (Buildkite) only; Windows unverified.
+  - [x] `--embargo UNIX|release` on `javelin request publish`: `PublishRequest` carries an
+    optional embargo (encoded only when set; an older node refuses it as malformed), stored
+    with the Publish and queued with it in the outbox. Evidence: `outside_contributors.rs`
+    (through an outage), parity scenario above, `hosting_codec.rs`.
+  - [ ] An outside contributor's `sync` retires their local Layer once their request is
+    published, even while its version is held above the frontier. Nothing is lost (the
+    revision is on the node, and the Layer goes to trash), but the work vanishes locally
+    until the version is disclosed. Retire only once the clone's World reaches it.
+  - [ ] A Layer-limited token (D26) names the contributor's own Layer ID, while the node
+    checks it against the namespaced ID, so such a token reaches none of an outsider's
+    Layers. Map the claim into the namespace too.
 - [x] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit
   (feat/node-budget). `budget.json` (storage bytes, rows written per UTC day, largest object;
   Free-plan defaults), enforced in `wire::handle` before any state changes on both nodes;

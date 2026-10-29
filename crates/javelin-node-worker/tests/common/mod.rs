@@ -439,23 +439,27 @@ fn commit_review_and_hold(wire: &Wire) {
     );
     assert_eq!(number(&published), 2);
 
-    // A signed-in caller without a role is refused requests and Layers.
+    // A signed-in caller without a role reaches no one else's requests or Layers: its list
+    // holds only its own, and its Layer `feature` is its own, not the member's.
     let list = Message::ListRequests { after: None };
-    assert_eq!(
-        code(&wire.reply(Some("stranger"), &list)),
-        Some("forbidden")
-    );
+    match wire.reply(Some("stranger"), &list) {
+        Message::RequestList { requests, .. } => assert!(requests.is_empty(), "{requests:?}"),
+        other => panic!("list: {other:?}"),
+    }
     assert_eq!(
         code(&wire.reply(Some("stranger"), &review)),
         Some("forbidden")
     );
     let create = Message::LayerCreate {
-        layer: javelin::LayerId::parse("outside").expect("layer"),
+        layer: javelin::LayerId::parse("feature").expect("layer"),
         base: javelin::VersionNumber::new(2).expect("version"),
     };
-    assert_eq!(
-        code(&wire.reply(Some("stranger"), &create)),
-        Some("forbidden")
+    assert!(
+        matches!(
+            wire.reply(Some("stranger"), &create),
+            Message::LayerOutcome(javelin_protocol::codec::LayerOutcome::Accepted { seq: 0, .. })
+        ),
+        "an outside contributor creates its own Layer at the frontier"
     );
 
     // An embargoed World 3 is held from outsiders until it is released; members read it.
