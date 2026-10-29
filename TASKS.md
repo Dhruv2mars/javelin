@@ -219,6 +219,11 @@ reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopb
 `wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
 fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
 
+- [ ] `crates/javelin-node/tests/wire_frontier.rs` resets connections on macOS: `send` (line
+  285) gets `ConnectionReset` from `read_to_end`, a different test each run. Reproduced on
+  main `d8afcb6` (3 of 4 runs alone, load average about 15) and on `feat/cf-fork`, which does
+  not touch the wire. Trail 42 fixed the same class in `loopback.rs`, `wire_auth.rs` and
+  `wire_hidden.rs`; this file's raw-socket helper was not covered.
 - [ ] `tests/capture.rs` `settled_entries_are_reused_and_edits_after_settling_are_seen` failed
   once on macOS (2026-10-29, `feat/cf-fork`, full workspace run: 14 cache hits where 20 were
   expected, line 281) and passed alone; the branch changes no root crate code. Likely the
