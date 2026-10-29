@@ -6,7 +6,8 @@
 //! Every message passes the node's gate (`auth.rs`) with the request's bearer token, or as an
 //! anonymous caller without one, so an anonymous caller can only read a public repository.
 //! Refusals are `Error` replies. A caller outside the repository reads at the public frontier
-//! (`disclosure.rs`), so it holds no Layer or Publish Request it could see. Replies to the
+//! (`disclosure.rs`), and reaches only the Layers and Publish Requests in its own namespace
+//! (`outside.rs`), so it sees no one else's work. Replies to the
 //! read messages (`Resolve`, `Get`, `Changeset`, `Attribution`, `ReadDisclosure`) may be read
 //! by any browser origin; any other message sent with an `Origin`
 //! is refused with `forbidden` before it is served, so a web page can never write through a
@@ -25,7 +26,9 @@ use javelin_protocol::{
 use crate::{
     FileWorldLog,
     auth::{self, Gate},
-    checks, lease, review,
+    checks, lease,
+    outside::{self, Admission},
+    review,
 };
 
 /// One reply: an encoded message, which a browser may read when `cors` is set.
@@ -56,6 +59,7 @@ pub fn handle(
     body: &[u8],
 ) -> Result<Answer, ProtocolError> {
     let mut cors = false;
+    let mut namespace = None;
     let reply = match decode(body).and_then(|message| {
         cors = is_read(&message);
         // Refused before the gate or the handler sees it: a page in a visitor's browser
@@ -66,7 +70,11 @@ pub fn handle(
                 "a browser origin may only send read messages",
             ));
         }
-        refuse_outsider_work(gate, token, now, &message)?;
+        let message = match outside::admit(gate, token, now, &message)? {
+            Admission::Any => message,
+            Admission::Reserved(refusal) => return Ok(refusal),
+            Admission::Outside(outsider) => namespace.insert(outsider).enter(message)?,
+        };
         // A direct Publish the caller's live role may not make is answered before the budget
         // is consulted: the refusal writes nothing, and an outcome never stalls an outbox.
         if let Message::PublishLayer { layer, .. } = &message
@@ -83,7 +91,11 @@ pub fn handle(
         // Every version is stamped, and every decided embargo tied to its version, before
         // anything is read, and again after a Publish, so the version's time is this request.
         crate::disclosure::stamp(log.records(), log.repo(), now)?;
-        let reply = serve_one(log, gate, token, now, message);
+        let outsider = namespace
+            .as_ref()
+            .map(|namespace| namespace.reader(log, gate, token, now))
+            .transpose()?;
+        let reply = serve_one(log, gate, token, now, message, outsider.as_ref());
         // A failure here leaves the stamp to the next request, which only delays disclosure.
         let _ = crate::disclosure::stamp(log.records(), log.repo(), now);
         // The rows this request wrote count against today's budget. A failure leaves them
@@ -113,6 +125,10 @@ pub fn handle(
         }
         Err(ProtocolError { code, detail }) => Message::Error { code, detail },
     };
+    let reply = match &namespace {
+        Some(namespace) => namespace.leave(reply),
+        None => reply,
+    };
     let body = match encode(&reply) {
         Ok(bytes) => bytes,
         Err(ProtocolError { code, detail }) => encode(&Message::Error { code, detail })?,
@@ -134,13 +150,15 @@ fn is_read(message: &Message) -> bool {
 
 /// One message through the gate and the trace guard, then its handler. The review
 /// partition and check reports authorize inside their handlers, because what they need
-/// depends on stored state, such as the Layer a request belongs to.
+/// depends on stored state, such as the Layer a request belongs to. `outsider` is the
+/// reader of an outside contributor, whose message names its own namespace.
 fn serve_one(
     log: &mut FileWorldLog,
     gate: &Gate,
     token: Option<&str>,
     now: u64,
     message: Message,
+    outsider: Option<&javelin::Reader>,
 ) -> Result<Message, ProtocolError> {
     match &message {
         Message::OpenRequest { .. }
@@ -150,7 +168,9 @@ fn serve_one(
         | Message::PublishRequest { .. }
         | Message::ReadRequest { .. }
         | Message::ListRequests { .. }
-        | Message::ReadReview { .. } => return review::handle(log, gate, token, now, &message),
+        | Message::ReadReview { .. } => {
+            return review::handle_as(log, gate, token, now, &message, outsider);
+        }
         Message::CheckReport(report) => {
             return checks::report(log, gate, token, now, report).map(Message::CheckOutcome);
         }
@@ -171,7 +191,10 @@ fn serve_one(
         .as_ref()
         .map_or_else(javelin::Reader::outsider, |grant| gate.reader(grant));
     // Outside the repository, the World ends at the public frontier.
-    let reader = crate::disclosure::hold(log.records(), log.repo(), now, reader)?;
+    let reader = match outsider {
+        Some(outsider) => outsider.clone(),
+        None => crate::disclosure::hold(log.records(), log.repo(), now, reader)?,
+    };
     if grant.is_some() {
         check_writes(log, &reader, &message)?;
     }
@@ -226,6 +249,10 @@ fn serve_one(
             &operation,
             &layer,
         )?)),
+        // A version above the reader's frontier is refused as one the node does not hold.
+        Message::LayerCreate { base, .. } if !reader.sees(base) => Ok(Message::LayerOutcome(
+            crate::layer::refused(code::INVALID_INPUT),
+        )),
         Message::LayerCreate { layer, base } => Ok(Message::LayerOutcome(crate::layer::create(
             log.parts().0,
             &layer,
@@ -236,49 +263,6 @@ fn serve_one(
         }
         message => handle_request_as(log, message, &reader),
     }
-}
-
-/// Refuses a caller without a role in the repository any message about Layers, Publish
-/// Requests or check results, before anything stored is looked up. A Layer is work above
-/// every version: its state, base and checkpoints, a request's state, or a check's subject
-/// could each name a version above the public frontier, and whether one exists must not
-/// show. A public repository grants every signed-in caller Read, which carries the write
-/// scopes, so this holds whatever the token carries. The token is checked first, with no
-/// Layer named, so that refusal does not depend on stored state either.
-fn refuse_outsider_work(
-    gate: &Gate,
-    token: Option<&str>,
-    now: u64,
-    message: &Message,
-) -> Result<(), ProtocolError> {
-    let scope = match message {
-        Message::LayerHead { .. }
-        | Message::ReadRequest { .. }
-        | Message::ListRequests { .. }
-        | Message::ReadReview { .. } => Scope::Read,
-        Message::LayerAppend { .. }
-        | Message::LayerStack { .. }
-        | Message::LayerTake { .. }
-        | Message::LayerCreate { .. } => Scope::LayerWrite,
-        Message::OpenRequest { .. } | Message::Revise { .. } | Message::Comment { .. } => {
-            Scope::ReviewWrite
-        }
-        Message::Approve { .. } => Scope::ReviewApprove,
-        Message::PublishRequest { .. } => Scope::Publish,
-        // A member's direct Publish is answered by `refuse_direct_publish`.
-        Message::PublishLayer { .. } => Scope::LayerWrite,
-        Message::CheckReport(_) => Scope::CheckReport,
-        Message::Get(items) if crate::stack::all_checkpoints(items) => Scope::Read,
-        _ => return Ok(()),
-    };
-    let grant = gate.check(token, now, Need { scope, layer: None })?;
-    if gate.reader(&grant).is_member() {
-        return Ok(());
-    }
-    Err(ProtocolError::new(
-        code::FORBIDDEN,
-        "Layers, Publish Requests and check results need a role in the repository",
-    ))
 }
 
 /// Direct Publish is for Maintain on a repository whose rules require no approvals. Any

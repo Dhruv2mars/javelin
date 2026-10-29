@@ -35,7 +35,7 @@ use javelin_node::{
 use javelin_node_cloudflare::{pages::MemPages, service, vfs::PageStorage};
 use javelin_protocol::{
     Message,
-    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, Usage, decode, encode},
+    codec::{Kind, LayerOutcome, PublishOutcome, RequestId, ReviewOutcome, Usage, decode, encode},
 };
 
 const REPO: &str = "acme-app";
@@ -305,6 +305,7 @@ fn scenario(log: &mut FileWorldLog, clock: &AtomicU64) -> Vec<String> {
             request,
             revision: 1,
             base: v(1),
+            embargo: None,
         },
     );
     s.send(None, &Message::Resolve { version: None });
@@ -1048,6 +1049,7 @@ fn request_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
         request,
         revision: 1,
         base: v(0),
+        embargo: None,
     };
     // Room for the request's own records (16 pages), not for a Publish (64 pages and more).
     let usage = usage_of(&mut s);
@@ -1123,6 +1125,7 @@ fn conflict_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
         request: RequestId::parse("pr-none").unwrap(),
         revision: 1,
         base: v(0),
+        embargo: None,
     };
     quota(&s.send(Some("owner"), &first));
     assert_eq!(
@@ -1168,6 +1171,7 @@ fn conflict_scenario(storage: &dyn Storage, log: &mut FileWorldLog, page: u64) {
             request,
             revision: 1,
             base: v(0),
+            embargo: None,
         },
     ];
     for conflict in conflicts {
@@ -1298,6 +1302,7 @@ fn spill_scenario(storage: &dyn Storage, log: &mut FileWorldLog) {
         request,
         revision: 1,
         base: v(0),
+        embargo: None,
     };
     quota(&s.send(Some("owner"), &publish));
     assert_eq!(
@@ -1312,4 +1317,272 @@ fn measuring_a_publish_larger_than_the_page_cache_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let native = Directory::new(dir.path());
     spill_scenario(&native, &mut open(&native, &clock(now())));
+}
+
+/// The code of an `Error` reply.
+fn error_code(reply: &Message) -> &str {
+    match reply {
+        Message::Error { code, .. } => code,
+        other => panic!("expected an error, got {other:?}"),
+    }
+}
+
+/// An outside contributor, signed in with no role in this public repository: World 2 is held
+/// above the frontier by an embargo, and the owner has a Layer `work` over it. `stranger`
+/// creates its own `work` at the frontier, appends, reads its checkpoint and opens `pr-1`
+/// from it; it reaches nothing of the owner's, sees no held version, and can neither stack,
+/// approve nor publish. The owner sees the request in the stranger's namespace, cannot write
+/// there, and publishes it with an embargo carried by the Publish itself.
+fn outside_scenario(log: &mut FileWorldLog) -> Vec<String> {
+    let mut s = Session {
+        log,
+        gate: gate(),
+        seen: Vec::new(),
+    };
+    let seed = s.layer_with("seed", 0, &[("src/a", b"a\n")]);
+    s.send(Some("owner"), &publish("seed", "publish-seed", seed, 0));
+    let fix = s.layer_with("fix", 1, &[("src/fix", b"patched\n")]);
+    s.send(
+        Some("owner"),
+        &Message::Embargo {
+            operation: op("publish-fix"),
+            until: None,
+        },
+    );
+    s.send(Some("owner"), &publish("fix", "publish-fix", fix, 1));
+    let owners = s.layer_with("work", 2, &[("src/w", b"w\n")]);
+
+    // A Layer over a held version is refused as one over a version the node never had.
+    let create = |base| Message::LayerCreate {
+        layer: layer("work"),
+        base: v(base),
+    };
+    for base in [2, 9] {
+        let reply = s.send(Some("stranger"), &create(base));
+        assert_eq!(
+            reply,
+            Message::LayerOutcome(LayerOutcome::Refused {
+                code: "invalid_input".into()
+            })
+        );
+    }
+    // At the frontier, `work` is the stranger's own: the owner's `work` is not in its way.
+    let head = match s.send(Some("stranger"), &create(1)) {
+        Message::LayerOutcome(LayerOutcome::Accepted { seq: 0, checkpoint }) => checkpoint,
+        other => panic!("{other:?}"),
+    };
+    let state = s.send(
+        Some("stranger"),
+        &Message::LayerHead {
+            layer: layer("work"),
+        },
+    );
+    assert!(
+        matches!(&state, Message::LayerState { layer: l, base, seq: 0, .. }
+            if l.as_str() == "work" && *base == v(1)),
+        "{state:?}"
+    );
+    let changes = s.upload("stranger", &[("src/b", b"b\n")]);
+    let mine = match s.send(
+        Some("stranger"),
+        &Message::LayerAppend {
+            operation: op("stranger-append"),
+            layer: layer("work"),
+            parent: Some(head),
+            checkpoint: changes,
+        },
+    ) {
+        Message::LayerOutcome(LayerOutcome::Accepted { checkpoint, .. }) => checkpoint,
+        other => panic!("{other:?}"),
+    };
+    let get = |id| Message::Get(vec![(Kind::Checkpoint, id)]);
+    assert!(matches!(s.send(Some("stranger"), &get(mine)), Message::Objects(o) if o.len() == 1));
+    // A checkpoint's bytes name the store's own repository identity.
+    s.seen.pop();
+    s.seen.push("the stranger's checkpoint".into());
+    // The owner's checkpoints, over the held version or not, stay absent.
+    for theirs in [owners, fix, seed] {
+        let reply = s.send(Some("stranger"), &get(theirs));
+        assert!(!matches!(reply, Message::Objects(_)), "{reply:?}");
+        s.seen.pop();
+        s.seen.push(format!("absent: {}", error_code(&reply)));
+    }
+    let reply = s.send(
+        Some("stranger"),
+        &Message::LayerHead {
+            layer: layer("fix"),
+        },
+    );
+    assert_eq!(error_code(&reply), "forbidden");
+
+    let request = RequestId::parse("pr-1").unwrap();
+    let opened = s.send(
+        Some("stranger"),
+        &Message::OpenRequest {
+            operation: op("stranger-open"),
+            request: request.clone(),
+            layer: layer("work"),
+            checkpoint: mine,
+            base: v(1),
+        },
+    );
+    assert_eq!(
+        opened,
+        Message::ReviewOutcome(ReviewOutcome::Accepted { revision: 1 })
+    );
+    let Message::RequestList { requests, .. } =
+        s.send(Some("stranger"), &Message::ListRequests { after: None })
+    else {
+        panic!("no list");
+    };
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0].request, request);
+    assert_eq!(requests[0].layer.as_str(), "work");
+    assert_eq!(requests[0].author, "stranger");
+    let Message::ReviewDetail(detail) = s.send(
+        Some("stranger"),
+        &Message::ReadReview {
+            request: request.clone(),
+            comments_from: 0,
+        },
+    ) else {
+        panic!("no review");
+    };
+    assert_eq!(detail.summary.request, request);
+    assert_eq!(detail.revisions[0].checkpoint, Some(mine));
+
+    // Stack, approvals and both Publishes need a role.
+    for message in [
+        Message::LayerStack {
+            operation: op("stranger-stack"),
+            target: layer("work"),
+            target_head: mine,
+            source: mine,
+        },
+        Message::Approve {
+            operation: op("stranger-approve"),
+            request: request.clone(),
+            revision: 1,
+        },
+        Message::PublishRequest {
+            operation: op("stranger-publish"),
+            request: request.clone(),
+            revision: 1,
+            base: v(1),
+            embargo: None,
+        },
+        publish("work", "stranger-direct", mine, 1),
+    ] {
+        assert_eq!(error_code(&s.send(Some("stranger"), &message)), "forbidden");
+    }
+
+    // The owner sees the request in the stranger's namespace, and may not write there.
+    let Message::RequestList { requests, .. } =
+        s.send(Some("owner"), &Message::ListRequests { after: None })
+    else {
+        panic!("no list");
+    };
+    let theirs = requests
+        .iter()
+        .find(|r| r.author == "stranger")
+        .expect("the owner lists the stranger's request");
+    assert!(
+        theirs.request.as_str().starts_with("outside-"),
+        "{theirs:?}"
+    );
+    assert!(theirs.request.as_str().ends_with(".pr-1"), "{theirs:?}");
+    assert!(theirs.layer.as_str().ends_with(".work"), "{theirs:?}");
+    let (id, their_layer) = (theirs.request.clone(), theirs.layer.clone());
+    let reply = s.send(
+        Some("owner"),
+        &Message::LayerAppend {
+            operation: op("owner-append"),
+            layer: their_layer,
+            parent: Some(mine),
+            checkpoint: changes,
+        },
+    );
+    assert_eq!(
+        reply,
+        Message::LayerOutcome(LayerOutcome::Refused {
+            code: "layer_reserved".into()
+        })
+    );
+
+    // Published with its embargo in one message: World 3 is held from the first moment, and
+    // a retry with another embargo is a reused operation.
+    let publish_theirs = |embargo| Message::PublishRequest {
+        operation: op("publish-theirs"),
+        request: id.clone(),
+        revision: 1,
+        base: v(1),
+        embargo,
+    };
+    let published = s.send(Some("owner"), &publish_theirs(Some(None)));
+    assert!(
+        matches!(published, Message::PublishOutcome(PublishOutcome::Published { number, .. }) if number == v(3)),
+        "{published:?}"
+    );
+    assert_eq!(
+        s.send(Some("owner"), &publish_theirs(Some(None))),
+        published
+    );
+    assert_eq!(s.send(Some("owner"), &publish_theirs(None)), published);
+    assert_eq!(
+        s.send(Some("owner"), &publish_theirs(Some(Some(1)))),
+        Message::PublishOutcome(PublishOutcome::Refused {
+            code: "operation_id_reused".into()
+        })
+    );
+    let Message::Disclosure(disclosure) = s.send(Some("owner"), &Message::ReadDisclosure) else {
+        panic!("no disclosure");
+    };
+    let held: Vec<_> = disclosure.embargoes.iter().map(|e| e.version).collect();
+    assert_eq!(held, [v(2), v(3)]);
+
+    // The stranger learns its request was published, and reads neither held version.
+    let state = s.send(
+        Some("stranger"),
+        &Message::ReadRequest {
+            request: request.clone(),
+        },
+    );
+    assert!(format!("{state:?}").contains("Published"), "{state:?}");
+    let head = s.send(Some("stranger"), &Message::Resolve { version: None });
+    assert!(
+        matches!(head, Message::Resolved { number, .. } if number == v(1)),
+        "{head:?}"
+    );
+    for n in [2, 3] {
+        let reply = s.send(
+            Some("stranger"),
+            &Message::Resolve {
+                version: Some(v(n)),
+            },
+        );
+        assert_eq!(error_code(&reply), "missing_version");
+    }
+    // Released one by one, each version reaches the stranger.
+    for n in [2, 3] {
+        s.send(Some("owner"), &Message::Release { version: v(n) });
+        let head = s.send(Some("stranger"), &Message::Resolve { version: None });
+        assert!(
+            matches!(head, Message::Resolved { number, .. } if number == v(n)),
+            "{head:?}"
+        );
+    }
+    s.seen
+}
+
+#[test]
+fn an_outside_contributor_works_alike_on_both_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    let start = now();
+    let native = outside_scenario(&mut open(&Directory::new(dir.path()), &clock(start)));
+    let pages = PageStorage::new(Rc::new(MemPages::default()));
+    let object = outside_scenario(&mut open(&pages, &clock(start)));
+    assert_eq!(native.len(), object.len());
+    for (step, (a, b)) in native.iter().zip(&object).enumerate() {
+        assert_eq!(a, b, "reply {step} differs");
+    }
 }

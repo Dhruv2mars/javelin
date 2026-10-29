@@ -163,6 +163,7 @@ fn publish(operation: &str, revision: u32) -> Message {
         request: request(),
         revision,
         base: v(0),
+        embargo: None,
     }
 }
 

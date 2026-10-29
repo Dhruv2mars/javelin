@@ -53,6 +53,20 @@ pub fn handle(
     now: u64,
     message: &Message,
 ) -> Result<Message, ProtocolError> {
+    handle_as(log, gate, token, now, message, None)
+}
+
+/// `handle` for a caller whose reader the wire decided. `outsider` is the reader of an
+/// outside contributor (`outside.rs`), whose message names its own namespace: it reads its
+/// revisions' checkpoints at the frontier, and lists only its own requests.
+pub(crate) fn handle_as(
+    log: &mut FileWorldLog,
+    gate: &Gate,
+    token: Option<&str>,
+    now: u64,
+    message: &Message,
+    outsider: Option<&javelin::Reader>,
+) -> Result<Message, ProtocolError> {
     // What the budget leaves for a Publish, read before the partition's writes start.
     let room = match message {
         Message::PublishRequest { .. } => Some(crate::budget::Room::now(log, now)?),
@@ -60,6 +74,7 @@ pub fn handle(
     };
     let (repo, records) = log.parts();
     ensure_schema(records)?;
+    let reader = |grant: &Grant| outsider.cloned().unwrap_or_else(|| gate.reader(grant));
     match message {
         Message::OpenRequest {
             operation,
@@ -72,16 +87,11 @@ pub fn handle(
                 authorize(gate, token, now, Scope::ReviewWrite, Some(layer.as_str()))?;
             let actor = principal(&grant)?;
             let id = review_id(request)?;
-            crate::auth::check_checkpoint_write(
-                repo,
-                &gate.reader(&grant),
-                *checkpoint,
-                Some(*base),
-            )?;
+            crate::auth::check_checkpoint_write(repo, &reader(&grant), *checkpoint, Some(*base))?;
             if repo.layer_state(layer).is_err() {
                 return Ok(review_refused(refusal::UNKNOWN_LAYER));
             }
-            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
+            let revision = match revision_ref(repo, &reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -113,13 +123,8 @@ pub fn handle(
                 target(records, gate, token, now, Scope::ReviewWrite, &id)?;
             let review = settled(repo, review)?;
             let actor = principal(&grant)?;
-            crate::auth::check_checkpoint_write(
-                repo,
-                &gate.reader(&grant),
-                *checkpoint,
-                Some(*base),
-            )?;
-            let revision = match revision_ref(repo, &gate.reader(&grant), *checkpoint, *base)? {
+            crate::auth::check_checkpoint_write(repo, &reader(&grant), *checkpoint, Some(*base))?;
+            let revision = match revision_ref(repo, &reader(&grant), *checkpoint, *base)? {
                 Ok(revision) => revision,
                 Err(refused_code) => return Ok(review_refused(refused_code)),
             };
@@ -189,6 +194,7 @@ pub fn handle(
             request,
             revision,
             base,
+            embargo,
         } => {
             let id = review_id(request)?;
             let (grant, permissions, review) =
@@ -202,7 +208,7 @@ pub fn handle(
             }
             crate::auth::check_checkpoint_write(
                 repo,
-                &gate.reader(&grant),
+                &reader(&grant),
                 pinned.checkpoint(),
                 Some(*base),
             )?;
@@ -217,7 +223,12 @@ pub fn handle(
             // A lost record is completed by the same operation: `publish_checkpoint` finds its
             // World receipt. Other operations are refused as published.
             match decide(records, permissions, &review, &id, &command)? {
-                Decision::Replayed(reply) => Ok(reply),
+                Decision::Replayed(reply) => {
+                    match embargo_with(records, repo, operation, *embargo)? {
+                        Some(refused_code) => Ok(publish_refused(refused_code)),
+                        None => Ok(reply),
+                    }
+                }
                 Decision::Refused(refused_code) => Ok(publish_refused(refused_code)),
                 Decision::Accepted(_) => {
                     // A lost record is completed, not re-judged: a receipt means the World
@@ -227,6 +238,11 @@ pub fn handle(
                             checks::gate_tree(records, pinned.tree(), Some(permissions))?
                     {
                         return Ok(publish_refused(refusal));
+                    }
+                    // The embargo is stored before the Publish runs, so its version is never
+                    // disclosed early.
+                    if let Some(refused_code) = embargo_with(records, repo, operation, *embargo)? {
+                        return Ok(publish_refused(refused_code));
                     }
                     let room = room.as_ref().expect("read for PublishRequest");
                     let reply = publish_checkpoint(repo, room, operation, &id, *revision, &pinned)?;
@@ -254,7 +270,8 @@ pub fn handle(
         }
         Message::ListRequests { after } => {
             let (_, permissions) = authorize(gate, token, now, Scope::Read, None)?;
-            list(repo, records, permissions, after.as_ref())
+            let namespace = outsider.and_then(javelin::Reader::namespace);
+            list(repo, records, permissions, after.as_ref(), namespace)
         }
         Message::ReadReview {
             request,
@@ -269,7 +286,7 @@ pub fn handle(
             let review = settled(repo, restore(records, &permissions.repository, &id)?)?;
             Ok(Message::ReviewDetail(detail(
                 repo,
-                &gate.reader(&grant),
+                &reader(&grant),
                 request,
                 &layer,
                 &review,
@@ -281,26 +298,49 @@ pub fn handle(
     }
 }
 
+/// Stores the embargo a `PublishRequest` carries, if any, for its operation. A Publish
+/// already decided keeps the embargo it was decided with: asking for another one is a
+/// reused operation.
+fn embargo_with(
+    records: &Connection,
+    repo: &Repository,
+    operation: &OperationId,
+    embargo: Option<Option<u64>>,
+) -> Result<Option<&'static str>, ProtocolError> {
+    let Some(until) = embargo else {
+        return Ok(None);
+    };
+    match crate::disclosure::embargo(records, repo, operation, until) {
+        Ok(()) => Ok(None),
+        Err(_) if repo.publication(operation)?.is_some() => Ok(Some(OPERATION_ID_REUSED)),
+        Err(error) => Err(error),
+    }
+}
+
 /// Most comment bytes in one `ReviewDetail`, so a reply always fits a frame.
 const COMMENT_BUDGET: usize = MAX_FRAME / 2;
 
-/// `ListRequests`: up to `MAX_REQUESTS` requests in ID order after `after`.
+/// `ListRequests`: up to `MAX_REQUESTS` requests in ID order after `after`, only those whose
+/// ID starts with `namespace` when one is given.
 fn list(
     repo: &Repository,
     records: &Connection,
     permissions: &AppliedPermissions,
     after: Option<&javelin_protocol::codec::RequestId>,
+    namespace: Option<&str>,
 ) -> Result<Message, ProtocolError> {
     let mut statement = records
         .prepare(
-            "SELECT request, layer FROM review_requests WHERE request > ?1 ORDER BY request LIMIT ?2",
+            "SELECT request, layer FROM review_requests WHERE request > ?1 \
+             AND substr(request,1,length(?3))=?3 ORDER BY request LIMIT ?2",
         )
         .map_err(storage)?;
     let rows = statement
         .query_map(
             params![
                 after.map_or("", |after| after.as_str()),
-                MAX_REQUESTS as i64 + 1
+                MAX_REQUESTS as i64 + 1,
+                namespace.unwrap_or("")
             ],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )

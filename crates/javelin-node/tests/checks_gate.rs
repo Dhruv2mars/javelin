@@ -230,6 +230,7 @@ fn publish_request(
         request: request(),
         revision: 1,
         base: v(0),
+        embargo: None,
     };
     match handle(log, gate, Some(&maintainer), NOW, &message).unwrap() {
         Message::PublishOutcome(outcome) => outcome,

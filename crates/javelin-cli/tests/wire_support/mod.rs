@@ -70,6 +70,17 @@ impl Deployment {
         required_approvals: u32,
         seed: impl FnOnce(&mut FileWorldLog) -> Vec<(String, ObjectId)>,
     ) -> Self {
+        Self::start_as(Visibility::Private, roles, required_approvals, seed)
+    }
+
+    /// `start_with` for a repository of `visibility`: a public one lets every signed-in
+    /// caller in, without a role.
+    pub fn start_as(
+        visibility: Visibility,
+        roles: &[(&str, Role)],
+        required_approvals: u32,
+        seed: impl FnOnce(&mut FileWorldLog) -> Vec<(String, ObjectId)>,
+    ) -> Self {
         let temp = TempDir::new().unwrap();
         let control = temp.path().join("control");
         let plane = ControlPlane::open(&control).unwrap();
@@ -121,7 +132,7 @@ impl Deployment {
             .apply(&AppliedPermissions {
                 repository: id.clone(),
                 epoch: 2,
-                visibility: Visibility::Private,
+                visibility,
                 roles: applied.into_iter().collect(),
                 required_approvals,
             })

@@ -70,7 +70,7 @@ javelin request comment ID --body TEXT --operation OP [--revision N]
 javelin request approve ID --revision N --operation OP
 javelin request show ID [--revision N]
 javelin request list
-javelin request publish ID --revision N --operation OP [--base WORLD]
+javelin request publish ID --revision N --operation OP [--embargo UNIX|release] [--base WORLD]
 ```
 
 All `checkpoint`, `layer`, `workspace`, `request`, `sync` and `status` commands accept
@@ -669,6 +669,22 @@ to exactly one revision; a new revision needs new approvals.
   the node is down without `--base WORLD` (a remote number from `request show`), which is
   needed only when this clone has never seen the revision. After a Publish, the Layer this
   clone proposed the request from is retired (see "Retired Layers").
+  `--embargo UNIX` embargoes the version the Publish makes until Unix time UNIX, and
+  `--embargo release` until a maintainer runs `embargo release VERSION`. The embargo travels
+  in the Publish itself, queued with it, so the node never decides the Publish without it
+  and no separate `embargo --operation OP` has to come first. Retrying a decided Publish
+  with another embargo is refused as `operation_id_reused`; a node that predates the flag
+  refuses the message whole, so nothing is published unembargoed.
+
+An outside contributor, signed in to a public repository where they hold no role, attaches
+and works as anyone else does, at the public frontier: `request open` from a Layer of theirs,
+`revise`, `comment`, `show` and `list`. The node keeps their Layers and requests in a
+namespace of their own, named `outside-HASH.ID` where members see them (`request list`
+shows the ID to approve and publish), and the contributor names them by their own IDs. They
+reach no one else's Layers or requests, and only those IDs name anything for them; a Layer
+must be based at or below the frontier. They cannot approve or publish; a member reviews
+and publishes their request. Its state shows them when it is published, while the version
+stays hidden from them until it is disclosed.
 
 Every write takes an operation ID. A retry with the same ID returns the original outcome,
 including after a lost reply; the node refuses the same ID with different input as

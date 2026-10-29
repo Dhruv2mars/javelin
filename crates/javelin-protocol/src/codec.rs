@@ -282,12 +282,16 @@ pub enum Message {
         attribution: PublishAttribution,
     },
     PublishOutcome(PublishOutcome),
-    /// Publish revision `revision` of a Request, over `base`.
+    /// Publish revision `revision` of a Request, over `base`. `embargo`, when set, embargoes
+    /// the version it makes as `Embargo` with that `until` would, stored with the Publish so
+    /// it is never decided without it. Encoded after `base` only when set, so a frame without
+    /// one is the frame before embargoes, and a node that predates them refuses one with.
     PublishRequest {
         operation: OperationId,
         request: RequestId,
         revision: u32,
         base: VersionNumber,
+        embargo: Option<Option<u64>>,
     },
     /// Fetch: the version to read, or the head.
     Resolve {
@@ -618,12 +622,16 @@ pub fn encode(message: &Message) -> Result<Vec<u8>, ProtocolError> {
             request,
             revision,
             base,
+            embargo,
         } => {
             out.push(PUBLISH_REQUEST);
             put_short(&mut out, operation.as_str());
             put_short(&mut out, request.as_str());
             out.extend_from_slice(&revision.to_be_bytes());
             out.extend_from_slice(&base.get().to_be_bytes());
+            if let Some(until) = embargo {
+                disclosure::put_optional_u64(&mut out, *until);
+            }
         }
         Message::Resolve { version } => {
             out.push(RESOLVE);
@@ -901,8 +909,17 @@ fn encoded_len(message: &Message) -> Result<usize, ProtocolError> {
             PublishOutcome::Refused { code } => 2 + short(code)?,
         },
         Message::PublishRequest {
-            operation, request, ..
-        } => 1 + short(operation.as_str())? + short(request.as_str())? + 4 + 8,
+            operation,
+            request,
+            embargo,
+            ..
+        } => {
+            1 + short(operation.as_str())?
+                + short(request.as_str())?
+                + 4
+                + 8
+                + if embargo.is_some() { 9 } else { 0 }
+        }
         Message::Resolve { .. } => 10,
         Message::Resolved { .. } => 73,
         Message::Changeset { .. } => 17,
@@ -1142,6 +1159,10 @@ pub fn decode(body: &[u8]) -> Result<Message, ProtocolError> {
             request: r.request()?,
             revision: r.u32()?,
             base: r.version()?,
+            embargo: match r.0.is_empty() {
+                true => None,
+                false => Some(disclosure::read_optional_u64(&mut r)?),
+            },
         },
         RESOLVE => {
             let flag = r.u8()?;

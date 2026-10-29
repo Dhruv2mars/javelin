@@ -514,13 +514,13 @@ fn approve(args: Vec<OsString>) -> Outcome {
     Ok((value, text, 0))
 }
 
-/// `request publish ID --revision N --operation OP [--base WORLD]`: publishes exactly
-/// revision N's checkpoint. Queued while the node is unavailable.
+/// `request publish ID --revision N --operation OP [--embargo UNIX|release] [--base WORLD]`:
+/// publishes exactly revision N's checkpoint. Queued while the node is unavailable.
 fn publish(args: Vec<OsString>) -> Outcome {
-    let usage = "javelin request publish ID --revision N --operation OP [--base WORLD] [--repo DIR] [--json]";
+    let usage = "javelin request publish ID --revision N --operation OP [--embargo UNIX|release] [--base WORLD] [--repo DIR] [--json]";
     let options = Options::parse(
         args,
-        &["--revision", "--operation", "--base", "--repo"],
+        &["--revision", "--operation", "--embargo", "--base", "--repo"],
         usage,
     )?;
     let request = request_id(&options, usage)?;
@@ -528,8 +528,46 @@ fn publish(args: Vec<OsString>) -> Outcome {
         .number("--revision")?
         .ok_or_else(|| Error::InvalidInput("missing --revision".into()))?;
     let operation = options.operation()?;
+    // The embargo travels in the Publish itself, so the node never decides one without it:
+    // until Unix time UNIX, or until a maintainer releases it.
+    let embargo = match options.get("--embargo") {
+        None => None,
+        Some("release") => Some(None),
+        Some(_) => Some(Some(
+            options
+                .number::<u64>("--embargo")
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    Error::InvalidInput(format!(
+                        "--embargo needs a Unix time or `release`; expected: {usage}"
+                    ))
+                })?,
+        )),
+    };
     let attached = Attached::open(options.root()?)?;
     let mut outbox = attached.outbox()?;
+    // A retry delivers what was queued, so it reports the embargo the record carries.
+    let recorded = outbox
+        .entries()
+        .filter(|entry| entry.kind == Record::Publish && entry.operation == operation)
+        .find_map(|entry| match decode(&entry.payload).ok()? {
+            Message::PublishRequest { embargo, .. } => Some(embargo),
+            _ => None,
+        });
+    let embargo = match recorded {
+        Some(recorded) if embargo.is_some() && embargo != recorded => {
+            return Err(CliError::Remote(RemoteError::new(
+                code::OPERATION_ID_REUSED,
+                format!(
+                    "the Publish {} was queued with another embargo; use a new operation ID",
+                    operation.as_str()
+                ),
+            )));
+        }
+        Some(recorded) => recorded,
+        None => embargo,
+    };
     if !queued(&outbox, Record::Publish, &operation) {
         // Every revision of a request shares its Layer's base.
         // The revision's base as this clone last saw it, from `request show`, `list` or
@@ -576,6 +614,7 @@ fn publish(args: Vec<OsString>) -> Outcome {
             request: request.clone(),
             revision,
             base: VersionNumber::new(base)?,
+            embargo,
         })
         .map_err(remote_error)?;
         outbox.enqueue(Record::Publish, request.as_str(), &operation, &payload)?;
@@ -587,6 +626,9 @@ fn publish(args: Vec<OsString>) -> Outcome {
         "revision": revision,
         "operation": operation,
     });
+    if let Some(until) = embargo {
+        value["embargo"] = json!({ "until": until });
+    }
     let reply = match delivered {
         Delivery::Queued { fault, pending } => {
             return Ok(queued_output(
@@ -611,6 +653,16 @@ fn publish(args: Vec<OsString>) -> Outcome {
                  `javelin sync` to bring it here.",
                 request.as_str()
             );
+            match embargo {
+                Some(Some(until)) => text.push_str(&format!(
+                    "\nWorld {number} is embargoed until Unix time {until}."
+                )),
+                Some(None) => text.push_str(&format!(
+                    "\nWorld {number} is embargoed until a maintainer releases it \
+                     (`javelin embargo release {number} --node URL --repository ID`)."
+                )),
+                None => {}
+            }
             // This clone's Layer for the request is published now: retire it here.
             let mut attached = attached;
             let link = attached.reading()?;

@@ -484,6 +484,7 @@ pub fn publish_request(operation: &str, id: &str, revision: u32, base: u64) -> M
         request: request(id),
         revision,
         base: v(base),
+        embargo: None,
     }
 }
 

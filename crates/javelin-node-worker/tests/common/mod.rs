@@ -434,6 +434,7 @@ fn commit_review_and_hold(wire: &Wire) {
             request,
             revision: 1,
             base: javelin::VersionNumber::new(1).expect("version"),
+            embargo: None,
         },
     );
     assert_eq!(number(&published), 2);

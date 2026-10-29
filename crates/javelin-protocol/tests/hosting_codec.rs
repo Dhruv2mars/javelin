@@ -187,6 +187,7 @@ fn every_hosting_message_round_trips() {
             request: request(),
             revision: 2,
             base: version(3),
+            embargo: None,
         },
         Message::OpenRequest {
             operation: op("open-1"),
@@ -809,4 +810,31 @@ fn budget_messages_round_trip_with_one_encoding() {
         meters: vec![usage.meters[0].clone(); MAX_METERS + 1],
     };
     assert!(encode(&Message::Usage(too_many)).is_err());
+}
+
+#[test]
+fn a_publish_request_carries_its_embargo_only_when_set() {
+    let publish = |embargo| Message::PublishRequest {
+        operation: op("request-publish-1"),
+        request: request(),
+        revision: 2,
+        base: version(3),
+        embargo,
+    };
+    for embargo in [Some(None), Some(Some(1_900_000_000)), Some(Some(0))] {
+        roundtrip(publish(embargo));
+    }
+    // Without one, the frame is the frame from before embargoes, and the embargo adds the
+    // nine bytes of an optional time.
+    let plain = encode(&publish(None)).unwrap();
+    let held = encode(&publish(Some(None))).unwrap();
+    assert_eq!(held.len(), plain.len() + 9);
+    assert_eq!(&held[..plain.len()], &plain[..]);
+    // A cut or padded embargo is malformed.
+    for body in [
+        &held[..held.len() - 1],
+        &[held.as_slice(), &[0]].concat()[..],
+    ] {
+        assert_eq!(refused(body), "malformed");
+    }
 }

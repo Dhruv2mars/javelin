@@ -538,21 +538,35 @@ impl Repository {
     /// Whether checkpoint `id`'s bytes may go to `reader`. A checkpoint is plain: it names
     /// paths and content IDs. It is served only when every path it changes is visible under
     /// every policy from its base through the head, which covers the version that published
-    /// it and any version its content reached through Stack. A reader held at a frontier
-    /// reads no checkpoint: a Layer's work is above every version.
+    /// it and any version its content reached through Stack. A Layer's work is above every
+    /// version, so a reader held at a frontier reads only the checkpoints a Layer in its own
+    /// namespace holds, over a base at or below its frontier, and under the policies up to it.
     pub fn checkpoint_visible(&self, id: crate::CheckpointId, reader: &Reader) -> Result<bool> {
         if reader.reads_all() {
             return Ok(true);
         }
-        if reader.frontier().is_some() {
-            return Ok(false);
-        }
         let checkpoint = {
             let tx = self.conn.unchecked_transaction()?;
+            if let Some(prefix) = reader.frontier().and(reader.namespace()) {
+                let owned = tx
+                    .prepare_cached(
+                        "SELECT 1 FROM layer_heads WHERE checkpoint=?1 \
+                         AND substr(layer,1,length(?2))=?2",
+                    )?
+                    .exists(params![id.object().to_string(), prefix])?;
+                if !owned {
+                    return Ok(false);
+                }
+            } else if reader.frontier().is_some() {
+                return Ok(false);
+            }
             let checkpoint = crate::layer::checkpoint_in(&tx, id.object())?;
             tx.commit()?;
             checkpoint
         };
+        if !reader.sees(checkpoint.base().version()) {
+            return Ok(false);
+        }
         self.visible(
             checkpoint.changes().entries().keys(),
             checkpoint.base().version(),
@@ -561,8 +575,9 @@ impl Repository {
     }
 
     /// Refuses a Layer change that `writer` may not make: one at or below a path hidden
-    /// from the writer under the policy of its base or of the current head, or a change
-    /// to the policy file by anyone but a maintainer. `hidden_path` otherwise.
+    /// from the writer under the policy of its base or of the current head (its frontier,
+    /// for a writer held at one), or a change to the policy file by anyone but a
+    /// maintainer. `hidden_path` otherwise.
     pub fn check_writer(
         &self,
         changes: &SparseChanges,
@@ -574,7 +589,12 @@ impl Repository {
                 crate::audience::POLICY_PATH.into(),
             )));
         }
-        for version in [base, self.head()?.number] {
+        // A reader held at a frontier writes under the policies it can see.
+        let head = self.head()?.number;
+        let head = writer
+            .frontier()
+            .map_or(head, |frontier| frontier.min(head));
+        for version in [base, head] {
             let policy = self.policy(version)?;
             for path in changes.entries().keys() {
                 if policy
@@ -872,7 +892,12 @@ pub(crate) fn visible_in<'a>(
     if reader.reads_all() {
         return Ok(true);
     }
+    // A reader held at a frontier is judged by the policies it can see, so a held version's
+    // policy never shows through.
     let head = head_in(conn)?.number;
+    let head = reader
+        .frontier()
+        .map_or(head, |frontier| frontier.min(head));
     let mut versions = vec![from.min(head)];
     versions.extend(
         conn.prepare_cached(

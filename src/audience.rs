@@ -133,6 +133,9 @@ pub struct Reader {
     /// The newest World version the reader may see, when it is held below the head: the
     /// public frontier, for a reader outside the repository. `None` sees every version.
     frontier: Option<crate::VersionNumber>,
+    /// The prefix of the Layer IDs this reader owns, for a reader held at a frontier that
+    /// still reads the work of its own Layers: an outside contributor's.
+    namespace: Option<String>,
 }
 
 impl Reader {
@@ -149,6 +152,7 @@ impl Reader {
             groups: groups.into_iter().collect(),
             principal: None,
             frontier: None,
+            namespace: None,
         }
     }
 
@@ -161,6 +165,7 @@ impl Reader {
             groups: BTreeSet::new(),
             principal: None,
             frontier: None,
+            namespace: None,
         }
     }
 
@@ -184,6 +189,20 @@ impl Reader {
             frontier: Some(frontier),
             ..self
         }
+    }
+
+    /// The same reader, owning the Layers whose IDs start with `prefix`. Held at a frontier,
+    /// it reads their checkpoints over a base it sees, and no other Layer's.
+    pub fn with_namespace(self, prefix: impl Into<String>) -> Self {
+        Self {
+            namespace: Some(prefix.into()),
+            ..self
+        }
+    }
+
+    /// The prefix of the Layer IDs this reader owns, if any.
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
     }
 
     /// The version this reader is held at, if any.
