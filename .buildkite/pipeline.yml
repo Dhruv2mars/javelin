@@ -1,106 +1,98 @@
-# Buildkite CI (replaces .github/workflows now that this repo lives on Entire).
-# Runs on the free hosted linux-small queue; checkout comes from the Entire plugin Buildkite adds to every job.
-# Linux subset of ci.yml (fmt, clippy, tests, release build); macOS/Windows matrices need paid queues.
-steps:
-  - label: ":rust: fmt, clippy, test"
-    key: rust
-    agents: { queue: linux-small }
-    timeout_in_minutes: 60
-    plugins:
-      - docker#v5.12.0:
-          image: rust:1.99.0
-          environment: [CARGO_TERM_COLOR=never, RUST_BACKTRACE=1]
-    command: |
-      rustup component add rustfmt clippy
-      cargo fmt --all -- --check
-      cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      # tests assert read-only paths stay read-only, which root ignores: run them as a normal user
-      useradd -m ci && chown -R ci:ci . && chmod -R a+rwX /usr/local/cargo
-      su ci -c 'PATH=/usr/local/cargo/bin:$$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup cargo test --locked --workspace --all-targets --all-features'
+# Buildkite CI for Javelin (docs/ci.md). Every step runs on the self-hosted `mac` queue: three
+# agents on Dhruv's Mac, a launchd user service (tools/ci/setup-mac-agents.sh). CI runs only
+# while that Mac is on and awake; queued builds wait for it. The steps live in .buildkite/ci.sh.
+#
+# - macOS natively: fmt, clippy -D warnings, tests (with a failing git first on PATH), the
+#   Linux release build (cargo-zigbuild, as the release machine does) and the forge.
+# - Linux in Colima (arm64, .buildkite/linux.Dockerfile): clippy, tests, Gate 2's crash
+#   clause, the wasm node core; the install proof runs linux/amd64 under Rosetta.
+# - Warm caches: one checkout path and one cargo target dir per concurrency group, so cargo
+#   rebuilds only what changed. A group runs one job at a time across builds.
+# - if_changed skips steps a change cannot affect: docs and Markdown skip everything, the forge
+#   runs for apps/forge, packages and the wire protocol. Main diffs against its first parent.
+# - The pipeline settings upload this file from the `mac` queue and cancel superseded branch
+#   builds (not main's).
+# Windows has no runner; the rest of Gate 2 and the workspace probes run nowhere automatically.
 
-  # Gate 2's crash clause (tools/workspace-probe/README.md) on Linux; the container's
-  # overlay volume takes the copy fallback. Unprivileged, like the tests.
-  - label: ":boom: Gate 2 crash clause"
+agents: { queue: mac }
+
+steps:
+  - label: ":mac: fmt, clippy, test (macOS)"
+    key: mac
+    command: .buildkite/ci.sh mac
+    # Everything but docs, Markdown and the TypeScript apps.
+    if_changed: &rust
+      include: ["**"]
+      exclude: ["*.md", "**/*.md", "docs/**", "apps/**", "packages/**", ".github/**", "LICENSE*"]
+    concurrency: 1
+    concurrency_group: javelin/mac
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-mac" }
+    priority: 2
+    timeout_in_minutes: 45
+    # An agent lost mid-job (the Mac slept or restarted) retries once.
+    retry: &retry
+      automatic: [{ exit_status: -1, limit: 1 }]
+
+  - label: ":linux: clippy, test (Linux)"
+    key: linux
+    command: .buildkite/ci.sh linux
+    if_changed: *rust
+    concurrency: 1
+    concurrency_group: javelin/linux
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-linux" }
+    priority: 2
+    timeout_in_minutes: 45
+    retry: *retry
+
+  - label: ":boom: Gate 2 crash clause (Linux)"
     key: gate2-crash
-    agents: { queue: linux-small }
-    timeout_in_minutes: 60
-    plugins:
-      - docker#v5.12.0:
-          image: rust:1.99.0
-          environment: [CARGO_TERM_COLOR=never]
-    command: |
-      cargo build --locked --release -p javelin-cli
-      cargo build --locked --release -p javelin --example gate2_seed
-      curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
-      useradd -m ci && chown -R ci:ci .
-      su ci -c '/usr/local/package/bin/bun tools/workspace-probe/gate2.mjs --javelin target/release/javelin --seed target/release/examples/gate2_seed --dir /tmp/gate2 --fs overlay --expect copy --out /tmp/gate2.json --only crash'
+    command: .buildkite/ci.sh gate2
+    if_changed: *rust
+    concurrency: 1
+    concurrency_group: javelin/linux-release
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-linux-release" }
+    priority: 1
+    timeout_in_minutes: 30
+    retry: *retry
 
   - label: ":cloudflare: node core for wasm"
     key: wasm
-    agents: { queue: linux-small }
-    timeout_in_minutes: 30
-    plugins:
-      - docker#v5.12.0:
-          image: rust:1.99.0
-          environment: [CARGO_TERM_COLOR=never]
-    # The Cloudflare node's wasm module, SQLite included (clang and llvm-ar build it). The
-    # Worker glue (wasm-bindgen) and wrangler run where the node is deployed, not here.
-    command: |
-      apt-get update -qq && apt-get install -y -qq clang llvm > /dev/null
-      rustup target add wasm32-unknown-unknown
-      AR_wasm32_unknown_unknown=llvm-ar cargo build --locked --release --target wasm32-unknown-unknown -p javelin-node-cloudflare
+    command: .buildkite/ci.sh wasm
+    if_changed: *rust
+    concurrency: 1
+    concurrency_group: javelin/linux-release
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-linux-release" }
+    timeout_in_minutes: 20
+    retry: *retry
 
-  # The release script's Linux targets (tools/release, docs/releases.md), cross-compiled with
-  # zig against glibc 2.28 as the macOS release machine does, packed as npm packages.
   - label: ":package: release build (Linux)"
     key: release-linux
-    agents: { queue: linux-small }
-    timeout_in_minutes: 45
-    plugins:
-      - docker#v5.12.0:
-          image: rust:1.99.0
-          environment: [CARGO_TERM_COLOR=never]
+    command: .buildkite/ci.sh release
+    if_changed: *rust
+    concurrency: 1
+    concurrency_group: javelin/release
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-release" }
     artifact_paths: "release-linux.tar"
-    command: |
-      apt-get update -qq && apt-get install -y -qq xz-utils > /dev/null
-      curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
-      echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" | sha256sum -c -
-      tar -xJf /tmp/zig.tar.xz -C /opt
-      curl -fsSL https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.4.3.tgz | tar -xz -C /usr/local
-      export PATH=/opt/zig-x86_64-linux-0.16.0:/usr/local/package/bin:$$PATH
-      cargo install --locked cargo-zigbuild --version 0.24.0
-      rustup target add aarch64-unknown-linux-gnu
-      git config --global --add safe.directory '*'
-      bun tools/release/release.ts build --version 0.1.0-ci --targets x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
-      tar -cf release-linux.tar dist/npm
+    priority: 1
+    timeout_in_minutes: 30
+    retry: *retry
 
-  # A new developer on Linux, three ways, each from a loopback npm registry serving those
-  # packages (`release.ts serve`): `npm i -g` in node:24-slim, `bun add -g` in
-  # oven/bun:1-slim (no Node), and the curl installer in ubuntu:24.04. Each runs
-  # tools/release/proof.sh as a non-root user with a fresh HOME and a git stand-in.
-  # arm64 runs under qemu user emulation.
   - label: ":penguin: release install proof (Linux)"
     key: release-linux-proof
     depends_on: release-linux
-    agents: { queue: linux-small }
-    timeout_in_minutes: 30
-    command: |
-      buildkite-agent artifact download release-linux.tar . && tar -xf release-linux.tar
-      docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3 --install arm64
-      docker run -d --name registry --network host -v "$$PWD:/w:ro" -w /w oven/bun:1-slim bun tools/release/release.ts serve
-      trap 'docker rm -f registry > /dev/null' EXIT
-      for i in $$(seq 30); do docker logs registry 2>&1 | grep -q "npm registry" && break; sleep 1; done
-      docker logs registry
-      proof='sh /w/tools/release/proof.sh'
-      for platform in linux/amd64 linux/arm64; do
-        echo "--- npm i -g on node:24-slim $$platform"
-        docker run --rm --network host --platform "$$platform" --user node -v "$$PWD:/w:ro" node:24-slim \
-          $$proof npm http://127.0.0.1:4873 0.1.0
-        echo "--- bun add -g on oven/bun:1-slim $$platform"
-        docker run --rm --network host --platform "$$platform" --user bun -v "$$PWD:/w:ro" oven/bun:1-slim \
-          $$proof bun http://127.0.0.1:4873 0.1.0
-        echo "--- curl installer on ubuntu:24.04 $$platform"
-        docker run --rm --network host --platform "$$platform" -v "$$PWD:/w:ro" ubuntu:24.04 sh -c "
-          apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null &&
-          su ubuntu -c '$$proof curl http://127.0.0.1:4873 0.1.0'"
-      done
+    command: .buildkite/ci.sh proof
+    if_changed: *rust
+    concurrency: 1
+    concurrency_group: javelin/proof
+    timeout_in_minutes: 20
+    retry: *retry
+
+  - label: ":globe_with_meridians: forge"
+    key: forge
+    command: .buildkite/ci.sh forge
+    if_changed: ["apps/forge/**", "packages/**", "crates/javelin-protocol/**", ".buildkite/**"]
+    concurrency: 1
+    concurrency_group: javelin/mac
+    env: { BUILDKITE_BUILD_CHECKOUT_PATH: "${HOME}/.buildkite-agent/builds/javelin-mac" }
+    timeout_in_minutes: 20
+    retry: *retry
