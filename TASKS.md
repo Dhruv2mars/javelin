@@ -187,9 +187,14 @@ every push (`.buildkite/pipeline.yml`).
     checks the registry's `dist.integrity`. `npm i -g`, `bun add -g` and curl proved on macOS
     arm64 and, on Buildkite, Linux amd64 and arm64 (`tools/release/proof.sh`). macOS x86_64
     built, never run.
-  - [ ] First publish (go-ahead given 2026-10-29): `0.1.0-alpha.2` on `latest`, macOS and Linux
-    only. The owner held Windows back, so `win32-x64` builds only with `--targets` and is not
-    released. Then `INSTALLERS_PUBLISHED = true`, deploy the forge, rerun the proofs against npm.
+  - [x] First publish, 2026-10-29: `0.1.0-alpha.2` on `latest`, built at `d6e46eb`, macOS and
+    Linux only (the owner held Windows back; `win32-x64` builds only with `--targets`). The
+    account uses npm staged publishing and 2FA: each package needs a web OTP, and npm adds a
+    `0.0.0-stage` placeholder version. Forge redeployed with the installers shown; `proof.sh`
+    npm, bun and curl (via the live forge) pass against registry.npmjs.org on macOS arm64.
+  - [ ] Rerun the Linux proofs against registry.npmjs.org once CI is back.
+  - [ ] Make the next publish non-interactive: `release.ts publish` cannot answer npm's web
+    OTP (it pipes npm's output), so this one ran through a one-off driver.
 - [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
   runner exists. Decided 2026-10-28.
 - [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
