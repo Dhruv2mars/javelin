@@ -256,7 +256,7 @@ pub(crate) fn hold(
 /// Whether `message` is a Publish already decided, which replays its recorded outcome
 /// however little budget is left. A new one is admitted here for the records any outcome
 /// writes, and bounded again once prepared (`Room::publish`).
-fn replays(log: &FileWorldLog, message: &Message) -> Result<bool, ProtocolError> {
+pub(crate) fn replays(log: &FileWorldLog, message: &Message) -> Result<bool, ProtocolError> {
     Ok(match message {
         Message::PublishLayer { operation, .. } => {
             log.decided(operation)?.is_some() || log.repo().publication(operation)?.is_some()

@@ -159,6 +159,61 @@ fn a_public_repository_reads_anonymously_and_writes_with_a_token() {
     server.join().unwrap();
 }
 
+/// A Publish whose reply was lost replays what the node decided, even after a live change to
+/// the rules would refuse it as new. The caller's role is still checked now, and a new
+/// operation is decided under the new rules.
+#[test]
+fn a_decided_direct_publish_replays_after_the_rules_and_role_change() {
+    let dir = TempDir::new().unwrap();
+    let (log, head, _) = seeded(&dir, Visibility::Private);
+    let listener = bind_loopback("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let served =
+        wire_support::serve_live_until_joined(listener, REPO, log, dir.path().to_path_buf());
+    let owner = bearer(&token(REPO));
+    let published = send(addr, &owner, &publish(head)).1;
+    assert!(
+        matches!(
+            published,
+            Some(Message::PublishOutcome(PublishOutcome::Published { .. }))
+        ),
+        "{published:?}"
+    );
+
+    let mut changed = permissions(REPO, Visibility::Private);
+    changed.epoch = 2;
+    changed.required_approvals = 1;
+    auth::write_permissions(dir.path(), &changed).unwrap();
+    assert_eq!(
+        send(addr, &owner, &publish(head)).1,
+        published,
+        "rules changed"
+    );
+    changed.epoch = 3;
+    changed.roles.insert(
+        PrincipalId::parse(wire_support::OWNER).unwrap(),
+        Role::Review,
+    );
+    auth::write_permissions(dir.path(), &changed).unwrap();
+    // Authorization is still decided now: a caller whose role lost the Publish scope is refused.
+    assert_eq!(
+        error_code(send(addr, &owner, &publish(head)).1),
+        "forbidden"
+    );
+
+    let mut again = publish(head);
+    if let Message::PublishLayer { operation, .. } = &mut again {
+        *operation = op("publish-2");
+    }
+    assert_eq!(
+        send(addr, &owner, &again).1,
+        Some(Message::PublishOutcome(PublishOutcome::Refused {
+            code: "insufficient_role".into()
+        }))
+    );
+    served.join().unwrap();
+}
+
 #[test]
 fn a_private_repository_refuses_callers_without_a_valid_token() {
     let dir = TempDir::new().unwrap();

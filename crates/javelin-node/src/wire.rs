@@ -68,8 +68,11 @@ pub fn handle(
         }
         refuse_outsider_work(gate, token, now, &message)?;
         // A direct Publish the caller's live role may not make is answered before the budget
-        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox.
+        // is consulted: the refusal writes nothing, and an outcome never stalls an outbox. One
+        // already decided replays its recorded outcome instead, so a retry after a lost reply
+        // reads what happened even when the role or the rules changed since.
         if let Message::PublishLayer { layer, .. } = &message
+            && !crate::budget::replays(log, &message)?
             && let Some(refused) = refuse_direct_publish(gate, token, now, layer)?
         {
             return Ok(Message::PublishOutcome(PublishOutcome::Refused {
