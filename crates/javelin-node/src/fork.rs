@@ -200,12 +200,14 @@ impl Plan {
             match item {
                 Item::Blob { id, size } => {
                     write.grants += 1;
+                    write.access_rows += 1;
                     if !repo.has_blob(*id)? {
                         object(&mut write, *size);
                     }
                 }
                 Item::Tree { id, size } => {
                     write.grants += 1;
+                    write.access_rows += 1;
                     if !repo.has_tree(*id)? {
                         object(&mut write, *size);
                     }
@@ -213,10 +215,12 @@ impl Plan {
                 Item::Opening {
                     opening, grants, ..
                 } => {
+                    write.access_rows += grants;
                     let stored = repo.openings(&[opening.commitment()], &Reader::maintainer())?;
                     if stored.is_empty() {
                         object(&mut write, 0);
                         write.grants += grants;
+                        write.openings.push(*grants);
                     }
                 }
             }
@@ -227,6 +231,7 @@ impl Plan {
             write.path_bytes += version.path_bytes;
         }
         for inherited in &self.traces {
+            write.access_rows += u64::from(inherited.copy.is_some());
             if let Some(copied) = inherited.copy
                 && !repo.has_blob(inherited.trace)?
             {

@@ -45,6 +45,9 @@ const OBJECT_BYTES: u64 = 512;
 /// Bytes one `object_access` row may take: an object ID, an audience and a version, in a
 /// table keyed by both (measured about 160 with its B-tree).
 const GRANT_BYTES: u64 = 192;
+/// Pages one opening's transaction may write besides its `object_access` leaves: its seal, the
+/// pages above the leaves and the header.
+const OPENING_PAGES: u64 = 8;
 /// Rows one forked version may write besides its paths: its version row, attempt and
 /// indexes, in a transaction of its own.
 const VERSION_ROWS: u64 = 16;
@@ -141,12 +144,16 @@ pub fn usage(log: &FileWorldLog, now: u64) -> Result<Usage, ProtocolError> {
 /// What a fork still writes into its target (`fork::Plan`): its objects (blobs, trees,
 /// openings and traces) and their bytes, the largest one, the `object_access` rows they add,
 /// the versions past the target's head, and the paths those versions change with their bytes.
-#[derive(Clone, Copy, Debug, Default)]
+/// `openings` holds the rows each opening still to write adds, and `access_rows` the rows the
+/// whole fork leaves in `object_access`.
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ForkWrite {
     pub objects: u64,
     pub bytes: u64,
     pub largest: u64,
     pub grants: u64,
+    pub openings: Vec<u64>,
+    pub access_rows: u64,
     pub versions: u64,
     pub paths: u64,
     pub path_bytes: u64,
@@ -187,6 +194,8 @@ impl Room {
     /// Refuses a fork whose bound would cross the budget, before anything is written: an
     /// object larger than the owner allows, or more bytes or rows than are left. Each version
     /// is written by a transaction of its own, so each carries a Publish's reserve of rows.
+    /// Each opening is one too, and rewrites every `object_access` page it inserts into: at
+    /// most one per row it adds, never more than the table's leaves, plus the pages above.
     pub(crate) fn fork(&self, write: &ForkWrite) -> Result<(), ProtocolError> {
         if write.largest > self.budget.largest_object {
             return Err(quota(
@@ -201,9 +210,16 @@ impl Room {
             + 4 * write.path_bytes
             + (write.objects + write.paths + write.versions) * OBJECT_BYTES
             + write.grants * GRANT_BYTES;
+        let leaves = (write.access_rows * GRANT_BYTES).div_ceil(self.page_size) + 1;
+        let opening_pages: u64 = write
+            .openings
+            .iter()
+            .map(|grants| (*grants).min(leaves) + OPENING_PAGES)
+            .sum();
         self.fits(
             2 * bytes + PUBLISH_RESERVE_ROWS * self.page_size,
             2 * bytes.div_ceil(ROW)
+                + (opening_pages * self.page_size).div_ceil(ROW)
                 + write.objects * OBJECT_ROWS
                 + write.versions * VERSION_ROWS
                 + PUBLISH_RESERVE_ROWS,

@@ -696,17 +696,18 @@ fn a_resumed_fork_is_charged_only_for_what_it_still_writes() {
     fork_under(high, true).expect("the resumed fork fits where the whole one did");
 }
 
-/// A fork into many audiences: 32 hidden directories hold the same files under 32 groups, so
-/// each object gets an `object_access` row per group, far more rows than objects. On the
+/// A fork into many audiences: 128 hidden directories hold the same files under 128 groups,
+/// so each object gets an `object_access` row per group, far more rows than objects, and each
+/// opening's transaction rewrites the table's pages. On the
 /// self-hosted node, whose small pages leave little reserve, a budget one byte or row short of
 /// what the fork adds refuses it.
 #[test]
 fn a_fork_into_many_audiences_is_bounded_by_its_access_rows() {
     let src_dir = tempfile::tempdir().unwrap();
     let mut src = FileWorldLog::open(src_dir.path()).unwrap();
-    let policy: String = (0..32).map(|g| format!("h{g}/** group:g{g}\n")).collect();
+    let policy: String = (0..128).map(|g| format!("h{g}/** group:g{g}\n")).collect();
     let mut files = vec![(POLICY_PATH.to_string(), policy.into_bytes())];
-    for g in 0..32 {
+    for g in 0..128 {
         files.extend((0..300).map(|i| {
             (
                 format!("h{g}/d{}/f{i}", i % 7),
