@@ -160,12 +160,12 @@ test("the install section says installers are coming until a release is publishe
   const pending = landing.installSection(false);
   expect(pending).toContain("installers for macOS, Linux and Windows are coming");
   expect(pending).not.toContain("install.sh");
-  expect(landing.installSection()).toBe(pending);
+  expect(landing.installSection()).toBe(landing.installSection(true));
 
   const published = landing.installSection(true);
   expect(published).toContain("npm i -g @dhruv2mars/javelin");
   expect(published).toContain("bun add -g @dhruv2mars/javelin");
   expect(published).toContain("curl -fsSL https://javelin-codes.vercel.app/install.sh | sh");
-  expect(published).toContain("irm https://javelin-codes.vercel.app/install.ps1 | iex");
-  expect(published).toContain("experimental");
+  expect(published).not.toContain("install.ps1");
+  expect(published).toContain("Windows has no release yet");
 });

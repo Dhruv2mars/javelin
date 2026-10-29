@@ -23,13 +23,15 @@ const GLIBC = "2.28";
 const BINARIES = ["javelin", "javelin-node"];
 const REGISTRY = "https://registry.npmjs.org";
 
-type Target = { platform: string; os: string; cpu: string; zig: boolean; experimental?: boolean };
+// `held` targets build only when named with --targets and are not part of a release: the
+// owner held Windows back from the first publish on 2026-10-29.
+type Target = { platform: string; os: string; cpu: string; zig: boolean; experimental?: boolean; held?: boolean };
 const TARGETS: Record<string, Target> = {
   "aarch64-apple-darwin": { platform: "darwin-arm64", os: "darwin", cpu: "arm64", zig: false },
   "x86_64-apple-darwin": { platform: "darwin-x64", os: "darwin", cpu: "x64", zig: false },
   "x86_64-unknown-linux-gnu": { platform: "linux-x64", os: "linux", cpu: "x64", zig: true },
   "aarch64-unknown-linux-gnu": { platform: "linux-arm64", os: "linux", cpu: "arm64", zig: true },
-  "x86_64-pc-windows-gnu": { platform: "win32-x64", os: "win32", cpu: "x64", zig: true, experimental: true },
+  "x86_64-pc-windows-gnu": { platform: "win32-x64", os: "win32", cpu: "x64", zig: true, experimental: true, held: true },
 };
 
 class Fail extends Error {}
@@ -89,7 +91,7 @@ async function build(flags: Map<string, string>): Promise<void> {
   const pkgVersion = await checkVersion(version);
   const out = resolve(flags.get("out") ?? join(ROOT, "dist/npm"));
   const darwin = process.platform === "darwin";
-  const names = flags.get("targets")?.split(",") ?? Object.keys(TARGETS).filter((t) => darwin || !t.endsWith("darwin"));
+  const names = flags.get("targets")?.split(",") ?? Object.keys(TARGETS).filter((t) => !TARGETS[t]!.held && (darwin || !t.endsWith("darwin")));
   for (const t of names) {
     if (!TARGETS[t]) throw new Fail(`unknown target ${t}; known: ${Object.keys(TARGETS).join(", ")}`);
     if (t.endsWith("darwin") && !darwin) throw new Fail(`${t} builds only on macOS`);
@@ -292,7 +294,7 @@ async function publish(flags: Map<string, string>): Promise<void> {
   await checkVersion(version);
 
   // Every platform package and the wrapper, unchanged since they were packed.
-  const want = [...Object.values(TARGETS).map((t) => `${SCOPE}/javelin-${t.platform}`), WRAPPER];
+  const want = [...Object.values(TARGETS).filter((t) => !t.held).map((t) => `${SCOPE}/javelin-${t.platform}`), WRAPPER];
   const names = packages.map((p) => p.name);
   if (want.some((n) => !names.includes(n)) || names.length !== want.length) {
     throw new Fail(`a release needs all of ${want.join(", ")}; ${dir} has ${names.join(", ")}`);

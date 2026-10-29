@@ -187,8 +187,9 @@ every push (`.buildkite/pipeline.yml`).
     checks the registry's `dist.integrity`. `npm i -g`, `bun add -g` and curl proved on macOS
     arm64 and, on Buildkite, Linux amd64 and arm64 (`tools/release/proof.sh`). macOS x86_64
     built, never run.
-  - [ ] First publish: `publish --tag latest`, `INSTALLERS_PUBLISHED = true`, deploy the
-    forge, rerun the proofs against npm.
+  - [ ] First publish (go-ahead given 2026-10-29): `0.1.0-alpha.2` on `latest`, macOS and Linux
+    only. The owner held Windows back, so `win32-x64` builds only with `--targets` and is not
+    released. Then `INSTALLERS_PUBLISHED = true`, deploy the forge, rerun the proofs against npm.
 - [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
   runner exists. Decided 2026-10-28.
 - [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest

@@ -1,8 +1,7 @@
 # Install and upgrade Javelin
 
-Javelin is pre-GA, and **no release is published yet**: the commands below work once the
-first release is on npm ([releases.md](releases.md)). Until then, build from source as the
-[quickstart](quickstart.md) describes.
+Javelin is pre-GA. Releases are on npm for macOS and Linux ([releases.md](releases.md));
+Windows has no release yet.
 
 Every install method below installs two commands: `javelin`, the CLI, and `javelin-node`,
 which hosts repositories.
@@ -40,19 +39,10 @@ Options, after `sh -s --` (or as environment variables):
 - `--install-dir DIR` (`JAVELIN_INSTALL_DIR`) installs elsewhere.
 - `--registry URL` (`JAVELIN_NPM_REGISTRY`) reads another npm registry, such as a mirror.
 
-## Windows (experimental)
+## Windows
 
-Windows builds are published but have never run: there is no Windows test machine. In
-Windows PowerShell 5.1 or PowerShell 7:
-
-```powershell
-irm https://javelin-codes.vercel.app/install.ps1 | iex
-javelin --version
-```
-
-This installs `javelin.exe` and `javelin-node.exe` into `%USERPROFILE%\.javelin\bin` and
-prints how to add it to your user `PATH`. `npm i -g` on Windows installs the binaries too,
-but its commands go through a `sh` shim, so they need a `sh` on `PATH`.
+Windows has no release yet. The Windows build is held back until it has a machine to run
+on; build from source as the [quickstart](quickstart.md) describes if you need it now.
 
 ## Platforms
 
@@ -62,7 +52,6 @@ but its commands go through a `sh` shim, so they need a `sh` on `PATH`.
 | macOS, Intel | `@dhruv2mars/javelin-darwin-x64` | macOS 11 or newer | GA, untested |
 | Linux, x86_64 | `@dhruv2mars/javelin-linux-x64` | glibc 2.28 or newer | GA |
 | Linux, arm64 | `@dhruv2mars/javelin-linux-arm64` | glibc 2.28 or newer | GA |
-| Windows, x86_64 | `@dhruv2mars/javelin-win32-x64` | Windows 10 or newer | experimental, untested |
 
 musl systems such as Alpine have no build. [releases.md](releases.md) says where each build
 runs and what has been tested on it.

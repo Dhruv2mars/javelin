@@ -4,13 +4,13 @@ GitHub releases are gone with the GitHub account. Javelin's binaries ship as npm
 instead, and npm's registry is the only host: `npm i -g`, `bun add -g` and the curl
 installer all read the same packages. [install.md](install.md) is the user-facing side.
 
-**State on 2026-10-28: nothing is published.** The release script, installers and proofs
-exist; the first publish waits for the owner's go-ahead and npm login. Until then the
-landing page says installers are coming (`INSTALLERS_PUBLISHED` in
-`apps/forge/src/landing.ts`).
+**State on 2026-10-29:** the first release, `0.1.0-alpha.2` on the `latest` tag, publishes
+the wrapper and the four macOS and Linux packages. The landing page shows the installers
+(`INSTALLERS_PUBLISHED` in `apps/forge/src/landing.ts`).
 
-GA platforms are macOS and Linux. Windows is experimental: it is built and published, never
-run.
+GA platforms are macOS and Linux. Windows is held back (owner's call, 2026-10-29): the target
+still builds with `--targets x86_64-pc-windows-gnu`, but it is not part of a release, and
+`install.ps1` has no package to read until it is.
 
 ## Packages
 
@@ -23,7 +23,7 @@ All at one version, published together:
 | `@dhruv2mars/javelin-darwin-x64` | both binaries; `os: darwin`, `cpu: x64` |
 | `@dhruv2mars/javelin-linux-x64` | both binaries; `os: linux`, `cpu: x64`, `libc: glibc` (2.28 or newer) |
 | `@dhruv2mars/javelin-linux-arm64` | both binaries; `os: linux`, `cpu: arm64`, `libc: glibc` (2.28 or newer) |
-| `@dhruv2mars/javelin-win32-x64` | `javelin.exe` and `javelin-node.exe`; experimental |
+| `@dhruv2mars/javelin-win32-x64` | `javelin.exe` and `javelin-node.exe`; held back, not published |
 
 This is the esbuild and Biome pattern. npm and bun install only the platform package whose
 `os`, `cpu` and `libc` match. npm also runs the wrapper's `postinstall` (`install.js`), which
@@ -39,7 +39,7 @@ The curl installer (`scripts/install.sh`, served by the forge at `/install.sh`) 
 `REGISTRY/@dhruv2mars/javelin-PLATFORM/VERSION` (default `latest`), downloads that version's
 tarball from the same registry, and checks it against the registry's `dist.integrity`
 (SHA-512) before it writes anything. Then it installs both binaries into `~/.javelin/bin`.
-`install.ps1` does the same on Windows and is experimental. Both trust the registry over HTTPS
+`install.ps1` is the Windows counterpart, unused until Windows has a release. Both trust the registry over HTTPS
 as npm itself does. Packages are not signed and carry no npm provenance (that needs a CI
 publisher with OIDC).
 
@@ -57,7 +57,7 @@ pinned Rust 1.99.0, cargo-zigbuild 0.24.0 and zig 0.16.0.
 | `darwin-x64` | Mac, cargo | none: no Intel Mac and no Rosetta here |
 | `linux-x64` | Mac and Buildkite, cargo-zigbuild | Buildkite: npm (`node:24-slim`), bun (`oven/bun:1-slim`), curl (`ubuntu:24.04`) |
 | `linux-arm64` | Mac and Buildkite, cargo-zigbuild | Buildkite: the same three, under qemu |
-| `win32-x64` | Mac, cargo-zigbuild | none: Windows has no runner |
+| `win32-x64` | Mac, cargo-zigbuild, only with `--targets` | none: Windows has no runner; not released |
 
 Each proof runs under a fresh `HOME`, as a non-root user on Linux, with a git stand-in first
 on PATH. It installs, runs `javelin --version`, `javelin-node --version`, `javelin init` and a
@@ -70,9 +70,9 @@ testing the Mac's own tarballs, which come out byte-identical on rebuild from th
 
     bun tools/release/release.ts build --version 0.1.0-alpha.2
 
-builds every target this machine can (all five on macOS), refuses a dirty worktree or a version
+builds every released target this machine can (all four on macOS), refuses a dirty worktree or a version
 whose number differs from `crates/javelin-cli`, runs the host binaries' `--version`, and packs
-the six tarballs with `bun pm pack` into `dist/npm/`, with `manifest.json`. On a subset of
+the five tarballs with `bun pm pack` into `dist/npm/`, with `manifest.json`. On a subset of
 targets the wrapper names only those platform packages, and `publish` refuses the set. To try
 the packages as a user would:
 
@@ -85,7 +85,7 @@ the packages as a user would:
 
     bun tools/release/release.ts publish --tag TAG [--dry-run]
 
-`publish` needs all six tarballs, unchanged since they were packed. It runs `npm publish` on
+`publish` needs all five released tarballs, unchanged since they were packed. It runs `npm publish` on
 each, platform packages first and the wrapper last, with `--access public --tag TAG`. With
 `--dry-run` it runs `npm publish --dry-run` and prints what would publish. A real run needs
 `npm whoami` to succeed (`npm login`, or an automation token in `~/.npmrc`). After a partial

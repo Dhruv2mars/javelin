@@ -129,7 +129,7 @@ function repositoryList(config: Config, storage: Storage | null) {
  * Whether a release is published on npm (docs/releases.md). Until it is, the section says
  * installers are coming; the commands would find no package.
  */
-export const INSTALLERS_PUBLISHED = false;
+export const INSTALLERS_PUBLISHED = true;
 const SITE = "https://javelin-codes.vercel.app";
 
 /** The install section: the one-line installers once a release is published. */
@@ -159,7 +159,7 @@ export function installSection(published = INSTALLERS_PUBLISHED): string {
           <p>Without either (macOS and Linux, x86_64 or arm64, glibc 2.28 or newer):</p>
           <pre class="install-command"><code>curl -fsSL ${SITE}/install.sh | sh</code></pre>
           <p>The installer fetches the same package from the npm registry, checks it against the registry's SHA-512 before it writes anything, and puts both programs in <code>~/.javelin/bin</code>. It tells you how to add that to your <code>PATH</code> and never edits your shell profile. Then run <code>javelin --version</code> and <code>javelin init</code> in a project.</p>
-          <p class="coming">Windows is experimental and untested: <code>irm ${SITE}/install.ps1 | iex</code>. Javelin is pre-release; read <a href="${SOURCE}">the source on Entire</a>.</p>
+          <p class="coming">Windows has no release yet. Javelin is pre-release; read <a href="${SOURCE}">the source on Entire</a>.</p>
         </div>
       </section>`;
 }

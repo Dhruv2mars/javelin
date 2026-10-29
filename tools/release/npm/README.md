@@ -20,7 +20,6 @@ commands run its binaries directly, without Node.
 | macOS, Intel | `@dhruv2mars/javelin-darwin-x64` | supported |
 | Linux x86_64, glibc 2.28+ | `@dhruv2mars/javelin-linux-x64` | supported |
 | Linux arm64, glibc 2.28+ | `@dhruv2mars/javelin-linux-arm64` | supported |
-| Windows x86_64 | `@dhruv2mars/javelin-win32-x64` | experimental, untested |
 
 Do not install with `--omit=optional` or `--no-optional`: that leaves the commands with no
-binary to run. Javelin is pre-release. Source: https://entire.com/et/dhruv2mars/javelin
+binary to run. Windows has no release yet. Javelin is pre-release. Source: https://entire.com/et/dhruv2mars/javelin

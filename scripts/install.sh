@@ -56,7 +56,7 @@ case "$os-$arch" in
   Darwin-x86_64) PLATFORM=darwin-x64 ;;
   Linux-x86_64|Linux-amd64) PLATFORM=linux-x64 ;;
   Linux-aarch64|Linux-arm64) PLATFORM=linux-arm64 ;;
-  *) die "no Javelin build for $os $arch (macOS and Linux on x86_64 or arm64; on Windows use install.ps1)" ;;
+  *) die "no Javelin build for $os $arch (macOS and Linux on x86_64 or arm64; Windows has no release yet)" ;;
 esac
 if [ "$os" = Linux ] && ldd --version 2>&1 | grep -qi musl; then
   die "the Linux builds need glibc 2.28 or newer; this system uses musl"
