@@ -397,6 +397,7 @@ impl Control for RemoteControl {
             created: value["created"]
                 .as_bool()
                 .ok_or_else(|| malformed("created"))?,
+            node_url: value["node_url"].as_str().map(str::to_owned),
         })
     }
 

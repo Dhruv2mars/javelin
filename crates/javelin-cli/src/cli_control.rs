@@ -23,7 +23,7 @@ use serde_json::json;
 
 use crate::cli::Output;
 
-const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin https://HOST]   (non-loopback IP only behind TLS)\n  javelin control approve USER-CODE   (JAVELIN_ADMIN_TOKEN, or this device's sign-in)\n  javelin login [--invite CODE]\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]\n  javelin repo settings REPOSITORY --required-approvals N";
+const USAGE: &str = "usage:\n  javelin control init\n  javelin control serve IP:PORT [--origin https://HOST] [--provider self|cloudflare] [--node-url URL]   (non-loopback IP only behind TLS)\n  javelin control approve USER-CODE   (JAVELIN_ADMIN_TOKEN, or this device's sign-in)\n  javelin login [--invite CODE]\n  javelin repo create OWNER/NAME --operation ID [--visibility public|private] [--publish direct|requests] [--provider self|cloudflare] [--node-url URL]\n  javelin repo settings REPOSITORY --required-approvals N";
 
 pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
     let args = args
@@ -39,8 +39,7 @@ pub fn run(args: Vec<OsString>) -> Result<Output, ControlError> {
         ["login"] => login(),
         ["login", "--invite", code] => login_invite(code),
         ["control", "init"] => control_init(),
-        ["control", "serve", addr] => control_serve(addr, None),
-        ["control", "serve", addr, "--origin", origin] => control_serve(addr, Some(origin)),
+        ["control", "serve", addr, flags @ ..] => control_serve(addr, flags),
         ["control", "approve", code] => control_approve(code),
         ["repo", "create", slug, flags @ ..] => repo_create(slug, flags),
         [
@@ -71,8 +70,30 @@ fn control_init() -> Result<Output, ControlError> {
 /// Serves the approval page and the HTTP API on `addr` until the process is stopped. The
 /// passkey origin defaults to `http://localhost:PORT`. The server speaks plain HTTP, so it
 /// binds a non-loopback address only behind a TLS-terminating proxy, named by an https
-/// `--origin`; otherwise tokens would cross the network in clear.
-fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlError> {
+/// `--origin`; otherwise tokens would cross the network in clear. With `--provider cloudflare
+/// --node-url URL` it creates repositories on that node and pushes their members there, with
+/// `JAVELIN_NODE_ADMIN_TOKEN`, as `repo create --provider cloudflare` does in process.
+fn control_serve(addr: &str, flags: &[&str]) -> Result<Output, ControlError> {
+    let mut origin = None;
+    let mut provider = None;
+    let mut node_url = None;
+    let mut flags = flags.iter();
+    while let Some(flag) = flags.next() {
+        let value = flags
+            .next()
+            .copied()
+            .ok_or_else(|| ControlError::InvalidInput(format!("{flag} needs a value")))?;
+        match *flag {
+            "--origin" => origin = Some(value),
+            "--provider" => provider = Some(value),
+            "--node-url" => node_url = Some(value),
+            other => {
+                return Err(ControlError::InvalidInput(format!(
+                    "unknown flag {other}\n{USAGE}"
+                )));
+            }
+        }
+    }
     let parsed: std::net::SocketAddr = addr
         .parse()
         .map_err(|_| ControlError::InvalidInput(format!("expected IP:PORT, got {addr}")))?;
@@ -86,7 +107,8 @@ fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlErro
             "{addr} is not a loopback address, and this server speaks plain HTTP: bind 127.0.0.1, or put it behind a TLS-terminating proxy and pass that proxy's address as --origin https://HOST"
         )));
     }
-    let plane = ControlPlane::open(&control_dir()?)?;
+    let cloudflare = parse_provider(provider)?;
+    let plane = plane_on(cloudflare, node_url)?;
     let listener = std::net::TcpListener::bind(addr)
         .map_err(|error| ControlError::InvalidInput(format!("cannot listen on {addr}: {error}")))?;
     let local = listener
@@ -97,7 +119,11 @@ fn control_serve(addr: &str, origin: Option<&str>) -> Result<Output, ControlErro
         None => format!("http://localhost:{}", local.port()),
     };
     let rp = RelyingParty::new(&origin)?;
-    eprintln!("javelin control plane serving on {local} (passkey origin {origin})");
+    let node = match node_url {
+        Some(url) if cloudflare => format!("; repositories on the cloudflare node at {url}"),
+        _ => String::new(),
+    };
+    eprintln!("javelin control plane serving on {local} (passkey origin {origin}{node})");
     javelin_control::serve(&plane, &rp, &listener)
         .map_err(|error| ControlError::InvalidInput(error.to_string()))?;
     Ok((
@@ -220,6 +246,42 @@ pub(crate) fn bearer(plane: &dyn Control, now: u64) -> Result<String, ControlErr
     }
 }
 
+/// Whether `--provider` names Cloudflare: `self` (the default) or `cloudflare`.
+fn parse_provider(provider: Option<&str>) -> Result<bool, ControlError> {
+    match provider {
+        None | Some("self") => Ok(false),
+        Some("cloudflare") => Ok(true),
+        Some(other) => Err(ControlError::InvalidInput(format!(
+            "--provider is self or cloudflare, got {other}"
+        ))),
+    }
+}
+
+/// The control plane in `control_dir()`, pushing to the Cloudflare node at `node_url` with
+/// `JAVELIN_NODE_ADMIN_TOKEN` when `cloudflare`, else to self-hosted nodes under its directory.
+fn plane_on(cloudflare: bool, node_url: Option<&str>) -> Result<ControlPlane, ControlError> {
+    if !cloudflare {
+        if node_url.is_some() {
+            return Err(ControlError::InvalidInput(
+                "--node-url needs --provider cloudflare".into(),
+            ));
+        }
+        return ControlPlane::open(&control_dir()?);
+    }
+    let url = node_url.ok_or_else(|| {
+        ControlError::InvalidInput("--provider cloudflare needs --node-url URL".into())
+    })?;
+    let token = env::var("JAVELIN_NODE_ADMIN_TOKEN").map_err(|_| {
+        ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
+    })?;
+    let node = CloudflareNode::new(url, &token)?;
+    ControlPlane::with_node(
+        &control_dir()?,
+        Box::new(node),
+        NodeTarget::cloudflare(url),
+    )
+}
+
 fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
     let (owner, name) = slug
         .split_once('/')
@@ -255,15 +317,7 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
                     ControlError::InvalidInput("--publish is direct or requests".into())
                 })?;
             }
-            "--provider" => match value()? {
-                "self" => cloudflare = false,
-                "cloudflare" => cloudflare = true,
-                other => {
-                    return Err(ControlError::InvalidInput(format!(
-                        "--provider is self or cloudflare, got {other}"
-                    )));
-                }
-            },
+            "--provider" => cloudflare = parse_provider(Some(value()?))?,
             "--node-url" => node_url = Some(value()?.to_owned()),
             other => {
                 return Err(ControlError::InvalidInput(format!(
@@ -283,25 +337,9 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             "the control plane at JAVELIN_CONTROL_URL chooses the provider; drop --provider and --node-url".into(),
         ));
     }
-    let plane: Box<dyn Control> = if cloudflare {
-        let url = node_url.ok_or_else(|| {
-            ControlError::InvalidInput("--provider cloudflare needs --node-url URL".into())
-        })?;
-        let token = env::var("JAVELIN_NODE_ADMIN_TOKEN").map_err(|_| {
-            ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
-        })?;
-        let node = CloudflareNode::new(&url, &token)?;
-        Box::new(ControlPlane::with_node(
-            &control_dir()?,
-            Box::new(node),
-            NodeTarget::cloudflare(&url),
-        )?)
+    let plane: Box<dyn Control> = if cloudflare || node_url.is_some() {
+        Box::new(plane_on(cloudflare, node_url.as_deref())?)
     } else {
-        if node_url.is_some() {
-            return Err(ControlError::InvalidInput(
-                "--node-url needs --provider cloudflare".into(),
-            ));
-        }
         control()?
     };
     let now = now()?;
@@ -326,7 +364,12 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             created.epoch
         );
         // A self-hosted repository lives in the control plane's directory until it is served.
-        if !cloudflare {
+        if let Some(url) = &created.node_url {
+            text.push_str(&format!(
+                "\nAttach with `javelin attach {url}/{} DIR`.",
+                created.repository
+            ));
+        } else {
             let id = &created.repository;
             let dir = if remote {
                 format!("CONTROL_DIR/nodes/{id}")
@@ -356,6 +399,7 @@ fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {
             "publish": created.publish.as_str(),
             "epoch": created.epoch,
             "created": created.created,
+            "node_url": created.node_url,
         }),
         text,
         0,

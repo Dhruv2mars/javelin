@@ -62,6 +62,8 @@ pub struct Created {
     pub epoch: u64,
     /// False when the operation had already created this repository.
     pub created: bool,
+    /// The node's URL when it is not self-hosted, so the caller can attach to it.
+    pub node_url: Option<String>,
 }
 
 impl ControlPlane {
@@ -223,6 +225,10 @@ pub(crate) fn created(repository: &str, record: &RepositoryRecord, inserted: boo
         },
         epoch: record.epoch,
         created: inserted,
+        node_url: match record.provider.as_str() {
+            "" | "self" => None,
+            _ => record.node_url.clone(),
+        },
     }
 }
 

@@ -361,6 +361,7 @@ fn api_create(plane: &ControlPlane, request: &Request, now: u64) -> Result<Reply
             "publish": created.publish.as_str(),
             "epoch": created.epoch,
             "created": created.created,
+            "node_url": created.node_url,
         }),
     ))
 }
