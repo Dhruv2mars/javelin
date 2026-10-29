@@ -169,10 +169,13 @@ every push (`.buildkite/pipeline.yml`).
   `wire_support::serve_until_joined`, which stops on a flag between connections like the
   `checkpoints` and `stack` nodes, and the proxy forwards only requests for the node
   (`fix/flaky-tests`).
-- [ ] Tests that dial `closed_url()` (`attach`, `wire_support`, `daily_support`) bind a port,
-  drop it and dial it, so another test's listener can get that port and the connection. A
-  stray `POST /v2/r/demo` from one of them still counts against a `Some(n)` node serving
-  `demo`. Dial a port no test can be handed instead.
+- [x] Tests that dial `closed_url()` (`attach`, `wire_support`, `daily_support`) bound a port,
+  dropped it and dialed it, so another test's listener could get that port and the
+  connection. They now dial `127.0.0.1:1`: every test port comes from the system's ephemeral
+  range (macOS 49152 up, Linux 32768 up), so no test is handed port 1, and a dial is refused
+  at once. A held socket does not work: macOS drops SYNs to a bound socket that never listens
+  (the dial times out), and lets `bind(0)` reuse a port held only by a connected socket
+  (`fix/test-infra`).
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
@@ -191,14 +194,21 @@ every push (`.buildkite/pipeline.yml`).
     forge, rerun the proofs against npm.
 - [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
   runner exists. Decided 2026-10-28.
-- [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
-  of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
+- [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14) and the
+  workspace tests on btrfs, XFS and ext4; the rest of Gate 2 (every filesystem, the negative
+  controls, macOS and Windows) and the workspace tests on APFS, NTFS and ReFS run nowhere
+  automatically. The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
 - [ ] Delete the temporary `diag/windows-layer-busy` branch from origin once the parked
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
-- [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
-  drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+- [x] `.github/workflows/` is deleted (`fix/test-infra`). Buildkite, all on `linux-small`, now
+  also runs cargo deny, the workspace tests on btrfs, XFS and ext4 loop volumes, the forge
+  with the CI validator, and the Cloudflare node on workerd with the hosted acceptance suite;
+  its Javelin steps run with a failing `git` first on PATH, as `ci.yml` did. Dropped: the
+  layer and storage benches (measurement only; run `tools/*-bench` by hand), native
+  packaging (superseded by `tools/release`), Gate 2's filesystem matrix, and every macOS and
+  Windows job.
 
 ## Merge rule for flaky tests (2026-10-28)
 
@@ -207,11 +217,18 @@ reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopb
 `wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
 fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
 
-- [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
-  `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
-  loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
-  upload's completion instead of a clock.
-- [ ] The `closed_url()` port reuse above.
+- [x] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
+  `35f0905`, `feat/attached-publish`): an upload ran past the CLI's 2 s upload budget on the
+  loaded runner, and `layer_refresh.rs` did the same under local load. The wire tests' CLI
+  runners now set `JAVELIN_UPLOAD_BUDGET_MS` to 60 s, so "uploaded" waits on the upload and
+  a hung node still fails; the silent-node check keeps the CLI's own budget (`fix/test-infra`).
+- [x] The `closed_url()` port reuse above.
+- [x] `daily_workflow.rs` and `members.rs` failed under load with `node_unavailable:
+  Connection refused`: `start_node` closed the node's stderr after its first line, so the
+  node's next line (a dropped connection) panicked on the broken pipe and the node exited.
+  The tests now keep reading it (`fix/test-infra`).
+
+No known flake remains once `fix/test-infra` lands; the hub can then retire this rule.
 
 ## Daily workflow acceptance (2026-10-28)
 
