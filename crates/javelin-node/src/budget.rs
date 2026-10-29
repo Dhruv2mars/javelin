@@ -42,6 +42,9 @@ const PUBLISH_RESERVE_ROWS: u64 = 64;
 const OBJECT_ROWS: u64 = 4;
 /// Bytes one object or changed path may add besides its own bytes (measured about 400).
 const OBJECT_BYTES: u64 = 512;
+/// Bytes one `object_access` row may take: an object ID, an audience and a version, in a
+/// table keyed by both (measured about 160 with its B-tree).
+const GRANT_BYTES: u64 = 192;
 /// Rows one forked version may write besides its paths: its version row, attempt and
 /// indexes, in a transaction of its own.
 const VERSION_ROWS: u64 = 16;
@@ -135,14 +138,15 @@ pub fn usage(log: &FileWorldLog, now: u64) -> Result<Usage, ProtocolError> {
     })
 }
 
-/// What a fork writes into its target (`fork::Plan`): its objects (blobs, trees, openings and
-/// traces) and their bytes, the largest one, the versions after World 0, and the paths those
-/// versions change with their bytes.
+/// What a fork still writes into its target (`fork::Plan`): its objects (blobs, trees,
+/// openings and traces) and their bytes, the largest one, the `object_access` rows they add,
+/// the versions past the target's head, and the paths those versions change with their bytes.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ForkWrite {
     pub objects: u64,
     pub bytes: u64,
     pub largest: u64,
+    pub grants: u64,
     pub versions: u64,
     pub paths: u64,
     pub path_bytes: u64,
@@ -195,7 +199,8 @@ impl Room {
         }
         let bytes = write.bytes
             + 4 * write.path_bytes
-            + (write.objects + write.paths + write.versions) * OBJECT_BYTES;
+            + (write.objects + write.paths + write.versions) * OBJECT_BYTES
+            + write.grants * GRANT_BYTES;
         self.fits(
             2 * bytes + PUBLISH_RESERVE_ROWS * self.page_size,
             2 * bytes.div_ceil(ROW)

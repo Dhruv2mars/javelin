@@ -505,7 +505,8 @@ fn an_import_that_fails_part_way_leaves_the_target_untouched() {
     // versions, then refuses, and the whole call is rolled back.
     let mut tampered = bundle.clone();
     let origin = 5 + 8 + SOURCE.len() + 8;
-    let last = origin + 32 + 16 + 8 + 64 * 3;
+    // Each version is its ID, tree, path count and path bytes.
+    let last = origin + 32 + 8 + 80 * 3;
     tampered[origin] ^= 1;
     tampered[last] ^= 1;
     let refused = dst.call("fork-import", &tampered);
@@ -592,25 +593,27 @@ fn a_finished_fork_is_answered_by_the_target_and_another_is_refused() {
 /// long (many versions of one deep path).
 #[test]
 fn an_admitted_fork_ends_within_the_targets_budget() {
-    admitted_within(12, 40);
-    admitted_within(60, 1);
+    let files = |version: usize, count: usize| -> Vec<(String, Vec<u8>)> {
+        (0..count)
+            .map(|i| {
+                (
+                    format!("src/d{}/e{}/f{i}.txt", i % 5, i % 3),
+                    format!("version {version} file {i}\n")
+                        .repeat(version + 1)
+                        .into_bytes(),
+                )
+            })
+            .collect()
+    };
+    admitted_within((0..12).map(|version| files(version, 40)).collect());
+    admitted_within((0..60).map(|version| files(version, 1)).collect());
 }
 
-fn admitted_within(versions: usize, paths: usize) {
+fn admitted_within(versions: Vec<Vec<(String, Vec<u8>)>>) {
     let src = Object::new(SOURCE);
     {
         let mut log = src.log();
-        for version in 0..versions {
-            let files: Vec<(String, Vec<u8>)> = (0..paths)
-                .map(|i| {
-                    (
-                        format!("src/d{}/e{}/f{i}.txt", i % 5, i % 3),
-                        format!("version {version} file {i}\n")
-                            .repeat(version + 1)
-                            .into_bytes(),
-                    )
-                })
-                .collect();
+        for (version, files) in versions.iter().enumerate() {
             let refs: Vec<(&str, &[u8])> = files
                 .iter()
                 .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
@@ -618,6 +621,8 @@ fn admitted_within(versions: usize, paths: usize) {
             publish(&mut log, &format!("v{version}"), &refs, None);
         }
     }
+    let shape = format!("{}x{}", versions.len(), versions[0].len());
+    let versions = versions.len();
     let bundle = export(&src, versions as u64, Some(Role::Maintain)).body;
     let fork_under = |budget: &Value| {
         let dst = Object::new(TARGET);
@@ -650,6 +655,94 @@ fn admitted_within(versions: usize, paths: usize) {
             ended <= high,
             "{meter}: admitted at {high}, ended at {ended}"
         );
-        println!("{versions}x{paths} {meter}: used {used}, tightest admitted limit {high}");
+        println!("{shape} {meter}: used {used}, tightest admitted limit {high}");
     }
+}
+
+/// A self-hosted fork interrupted after storing an object is charged, when it resumes, only
+/// for what it still writes: at the tightest budget that admitted the whole fork, the resumed
+/// one is admitted too.
+#[test]
+fn a_resumed_fork_is_charged_only_for_what_it_still_writes() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let mut src = FileWorldLog::open(src_dir.path()).unwrap();
+    let large = vec![7u8; 1 << 20];
+    publish(&mut src, "large", &[("large.bin", &large)], None);
+    let fork_under = |storage_bytes: u64, stored: bool| {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Directory::new(dir.path());
+        let mut repository = target.repository().unwrap();
+        if stored {
+            repository.put_blob(&large).unwrap();
+        }
+        drop(repository);
+        let budget = Budget {
+            storage_bytes,
+            ..Budget::default()
+        };
+        admin::set_budget(&target, &budget).unwrap();
+        let mut dst = FileWorldLog::on(&target, &target, Box::new(now)).unwrap();
+        fork::fork_for(&src, SOURCE, &mut dst, v(1), Some(Role::Maintain)).map(|_| ())
+    };
+    let (mut low, mut high) = (0, 64 << 20);
+    while low + 1 < high {
+        let limit = (low + high) / 2;
+        match fork_under(limit, false) {
+            Ok(()) => high = limit,
+            Err(refusal) if refusal.code == "quota_exceeded" => low = limit,
+            Err(other) => panic!("{other:?}"),
+        }
+    }
+    fork_under(high, true).expect("the resumed fork fits where the whole one did");
+}
+
+/// A fork into many audiences: 32 hidden directories hold the same files under 32 groups, so
+/// each object gets an `object_access` row per group, far more rows than objects. On the
+/// self-hosted node, whose small pages leave little reserve, a budget one byte or row short of
+/// what the fork adds refuses it.
+#[test]
+fn a_fork_into_many_audiences_is_bounded_by_its_access_rows() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let mut src = FileWorldLog::open(src_dir.path()).unwrap();
+    let policy: String = (0..32).map(|g| format!("h{g}/** group:g{g}\n")).collect();
+    let mut files = vec![(POLICY_PATH.to_string(), policy.into_bytes())];
+    for g in 0..32 {
+        files.extend((0..300).map(|i| {
+            (
+                format!("h{g}/d{}/f{i}", i % 7),
+                format!("{i}\n").into_bytes(),
+            )
+        }));
+    }
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
+        .collect();
+    publish(&mut src, "grouped", &refs, None);
+    // The use before and after a fork under `budget`, or the refusal.
+    let fork_under = |budget: Budget| {
+        let dir = tempfile::tempdir().unwrap();
+        let target = Directory::new(dir.path());
+        target.repository().unwrap();
+        admin::set_budget(&target, &budget).unwrap();
+        let mut dst = FileWorldLog::on(&target, &target, Box::new(now)).unwrap();
+        let used = |log: &FileWorldLog| {
+            let usage = javelin_node::budget::usage(log, now()).unwrap();
+            [0, 1].map(|meter| usage.meters[meter].used.unwrap())
+        };
+        let before = used(&dst);
+        fork::fork_for(&src, SOURCE, &mut dst, v(1), Some(Role::Maintain))
+            .map(|_| (before, used(&dst)))
+    };
+    let (before, after) = fork_under(Budget::default()).unwrap();
+    let short = Budget {
+        storage_bytes: after[0] - 1,
+        ..Budget::default()
+    };
+    assert_eq!(fork_under(short).unwrap_err().code, "quota_exceeded");
+    let short = Budget {
+        rows_written_per_day: after[1] - before[1] - 1,
+        ..Budget::default()
+    };
+    assert_eq!(fork_under(short).unwrap_err().code, "quota_exceeded");
 }

@@ -125,9 +125,31 @@ pub fn finished(
 /// opening, and a tree's contents and children before the tree.
 #[derive(Clone, Debug)]
 enum Item {
-    Blob { id: ObjectId, size: u64 },
-    Tree { id: ObjectId, size: u64 },
-    Opening(Opening, Audience),
+    Blob {
+        id: ObjectId,
+        size: u64,
+    },
+    Tree {
+        id: ObjectId,
+        size: u64,
+    },
+    /// `grants` counts the objects the opening first makes readable to its audience, each one
+    /// row in the target's `object_access`.
+    Opening {
+        opening: Opening,
+        audience: Audience,
+        grants: u64,
+    },
+}
+
+/// One version of the plan, with the paths it changes and their bytes: what the target's
+/// change set and blame store for it.
+#[derive(Clone, Copy, Debug)]
+struct Version {
+    id: ObjectId,
+    tree: ObjectId,
+    paths: u64,
+    path_bytes: u64,
 }
 
 /// A trace the fork inherits, with the earliest version that named it: copied when `copy` is
@@ -151,14 +173,10 @@ struct Copied {
 #[derive(Clone, Debug)]
 pub struct Plan {
     origin: Origin,
-    /// Each version's `(id, tree)`, by number from World 0.
-    versions: Vec<(ObjectId, ObjectId)>,
+    /// Every version, by number from World 0.
+    versions: Vec<Version>,
     items: Vec<Item>,
     traces: Vec<Inherited>,
-    /// The paths the versions after World 0 change, and their bytes: what the target's change
-    /// sets and blame store for them.
-    paths: u64,
-    path_bytes: u64,
 }
 
 impl Plan {
@@ -166,27 +184,57 @@ impl Plan {
         &self.origin
     }
 
-    /// What applying the plan to an empty target writes, for the budget.
-    pub(crate) fn write(&self) -> ForkWrite {
-        let mut write = ForkWrite {
-            versions: self.versions.len() as u64 - 1,
-            paths: self.paths,
-            path_bytes: self.path_bytes,
-            ..ForkWrite::default()
+    /// What applying the plan to `target`, at World `start`, still writes, for the budget:
+    /// the objects and openings it lacks, the versions past `start`, and the `object_access`
+    /// rows they add. Every object is counted one public row, since a version may first reach
+    /// one an interrupted fork already stored. Reads only.
+    fn remaining(&self, target: &FileWorldLog, start: u64) -> Result<ForkWrite, ProtocolError> {
+        let repo = target.repo();
+        let mut write = ForkWrite::default();
+        let object = |write: &mut ForkWrite, size: u64| {
+            write.objects += 1;
+            write.bytes += size;
+            write.largest = write.largest.max(size);
         };
         for item in &self.items {
-            write.objects += 1;
-            if let Item::Blob { size, .. } | Item::Tree { size, .. } = item {
-                write.bytes += size;
-                write.largest = write.largest.max(*size);
+            match item {
+                Item::Blob { id, size } => {
+                    write.grants += 1;
+                    if !repo.has_blob(*id)? {
+                        object(&mut write, *size);
+                    }
+                }
+                Item::Tree { id, size } => {
+                    write.grants += 1;
+                    if !repo.has_tree(*id)? {
+                        object(&mut write, *size);
+                    }
+                }
+                Item::Opening {
+                    opening, grants, ..
+                } => {
+                    let stored = repo.openings(&[opening.commitment()], &Reader::maintainer())?;
+                    if stored.is_empty() {
+                        object(&mut write, 0);
+                        write.grants += grants;
+                    }
+                }
             }
         }
-        for copied in self.traces.iter().filter_map(|inherited| inherited.copy) {
-            write.objects += 1;
-            write.bytes += copied.size;
-            write.largest = write.largest.max(copied.size);
+        for version in &self.versions[start as usize + 1..] {
+            write.versions += 1;
+            write.paths += version.paths;
+            write.path_bytes += version.path_bytes;
         }
-        write
+        for inherited in &self.traces {
+            if let Some(copied) = inherited.copy
+                && !repo.has_blob(inherited.trace)?
+            {
+                object(&mut write, copied.size);
+                write.grants += 1;
+            }
+        }
+        Ok(write)
     }
 }
 
@@ -234,20 +282,27 @@ pub fn plan(
         trees: HashSet::new(),
         blobs: HashSet::new(),
         openings: HashSet::new(),
+        granted: HashSet::new(),
         items: Vec::new(),
     };
-    let (mut versions, mut paths, mut path_bytes) = (Vec::new(), 0, 0);
+    let mut versions = Vec::new();
     for number in 0..=upto.get() {
         let number = VersionNumber::new(number)?;
-        let version = source.repo().version(number)?;
+        let stored = source.repo().version(number)?;
+        let mut version = Version {
+            id: stored.id,
+            tree: stored.tree,
+            paths: 0,
+            path_bytes: 0,
+        };
         if number.get() > 0 {
             walk.tree(version.tree)?;
             for path in source.repo().changeset(number)?.entries().keys() {
-                paths += 1;
-                path_bytes += path.as_str().len() as u64;
+                version.paths += 1;
+                version.path_bytes += path.as_str().len() as u64;
             }
         }
-        versions.push((version.id, version.tree));
+        versions.push(version);
     }
     let items = walk.items;
     let traces = plan_traces(source, upto, role.unwrap_or(Role::Read))?;
@@ -255,13 +310,11 @@ pub fn plan(
         origin: Origin {
             source: source_name.into(),
             number: upto,
-            version: versions[upto.get() as usize].0,
+            version: versions[upto.get() as usize].id,
         },
         versions,
         items,
         traces,
-        paths,
-        path_bytes,
     })
 }
 
@@ -282,12 +335,13 @@ pub fn apply(
     let matches = plan
         .versions
         .get(start.number.get() as usize)
-        .is_some_and(|(id, _)| *id == start.id);
+        .is_some_and(|version| version.id == start.id);
     if !matches {
         return Err(refused("target does not match the source at its head"));
     }
     let now = target.now();
-    crate::budget::Room::now(target, now)?.fork(&plan.write())?;
+    let write = plan.remaining(target, start.number.get())?;
+    crate::budget::Room::now(target, now)?.fork(&write)?;
 
     for item in &plan.items {
         let to = WorldLog::repository(target);
@@ -298,13 +352,15 @@ pub fn apply(
                     to.put_tree(&objects.tree(*id)?)?;
                 }
             }
-            Item::Opening(opening, audience) => {
+            Item::Opening {
+                opening, audience, ..
+            } => {
                 to.put_opening(opening, audience)?;
             }
         }
     }
     for number in start.number.get() + 1..=origin.number.get() {
-        let (id, tree) = plan.versions[number as usize];
+        let Version { id, tree, .. } = plan.versions[number as usize];
         let advanced = WorldLog::repository(target).advance_to_tree(
             &OperationId::parse(&format!("fork-{number}"))?,
             VersionNumber::new(number - 1)?,
@@ -529,6 +585,8 @@ struct Walk<'a> {
     trees: HashSet<ObjectId>,
     blobs: HashSet<ObjectId>,
     openings: HashSet<ObjectId>,
+    /// The `(audience, object)` rows the openings listed so far add to `object_access`.
+    granted: HashSet<(Audience, ObjectId)>,
     items: Vec<Item>,
 }
 
@@ -548,7 +606,12 @@ impl Walk<'_> {
                             None => self.tree(opening.content)?,
                         }
                         if self.openings.insert(commitment) {
-                            self.items.push(Item::Opening(opening, audience));
+                            let grants = self.grants(&opening, &audience)?;
+                            self.items.push(Item::Opening {
+                                opening,
+                                audience,
+                                grants,
+                            });
                         }
                     }
                 }
@@ -568,6 +631,39 @@ impl Walk<'_> {
             size: bytes.len() as u64,
         });
         Ok(())
+    }
+
+    /// The rows `opening` adds to `object_access` that no earlier opening added: its blob, or
+    /// for a directory every chunk and plain blob under it, not following nested hidden
+    /// entries, as `put_opening` grants them.
+    fn grants(&mut self, opening: &Opening, audience: &Audience) -> Result<u64, ProtocolError> {
+        if opening.kind != SealedKind::Directory {
+            let new = self.granted.insert((audience.clone(), opening.content));
+            return Ok(u64::from(new));
+        }
+        let (mut grants, mut pending) = (0, vec![opening.content]);
+        while let Some(tree) = pending.pop() {
+            if !self.granted.insert((audience.clone(), tree)) {
+                continue;
+            }
+            grants += 1;
+            let chunk = Chunk::decode(&self.from.tree_bytes_bounded(tree, MAX_CHUNK)?)?;
+            for (_, node) in chunk.entries() {
+                match node {
+                    Node::File(FileEntry::Hidden { .. }) => {}
+                    Node::File(entry) => {
+                        if let Some(blob) = entry.content()
+                            && self.granted.insert((audience.clone(), blob))
+                        {
+                            grants += 1;
+                        }
+                    }
+                    Node::Dir(child) => pending.push(child),
+                }
+            }
+            pending.extend(chunk.children());
+        }
+        Ok(grants)
     }
 
     fn blob(&mut self, id: ObjectId) -> Result<(), ProtocolError> {
@@ -610,9 +706,9 @@ const RESTRICTED: u8 = 2;
 /// copy for `role`, so a hidden entry the reader may not read leaves the source as its
 /// commitment alone. Over `MAX_BUNDLE` it is refused with `limit_exceeded`.
 ///
-/// Layout: `JVFK1`; the origin (source name, number, version ID); the path count and bytes;
-/// each version's `(id, tree)` from World 0; each object in write order, tagged blob or tree
-/// (length and bytes) or opening (salt, kind, content, audience); each trace (ID, number, and
+/// Layout: `JVFK1`; the origin (source name, number, version ID); each version's ID, tree,
+/// path count and path bytes from World 0; each object in write order, tagged blob or tree
+/// (length and bytes) or opening (salt, kind, content, audience, grants); each trace (ID, number, and
 /// omitted, or copied or restricted with length and bytes). Integers are big-endian.
 pub fn export(
     source: &FileWorldLog,
@@ -626,12 +722,12 @@ pub fn export(
     out.text(&plan.origin.source)?;
     out.u64(plan.origin.number.get());
     out.id(plan.origin.version);
-    out.u64(plan.paths);
-    out.u64(plan.path_bytes);
     out.u64(plan.versions.len() as u64);
-    for (id, tree) in &plan.versions {
-        out.id(*id);
-        out.id(*tree);
+    for version in &plan.versions {
+        out.id(version.id);
+        out.id(version.tree);
+        out.u64(version.paths);
+        out.u64(version.path_bytes);
     }
     out.u64(plan.items.len() as u64);
     for item in &plan.items {
@@ -644,12 +740,17 @@ pub fn export(
                 out.0.push(TREE);
                 out.bytes(&from.tree_bytes_bounded(*id, MAX_CHUNK)?)?;
             }
-            Item::Opening(opening, audience) => {
+            Item::Opening {
+                opening,
+                audience,
+                grants,
+            } => {
                 out.0.push(OPENING);
                 out.0.extend_from_slice(&opening.salt);
                 out.0.push(opening.kind as u8);
                 out.id(opening.content);
                 out.text(&audience.as_str())?;
+                out.u64(*grants);
             }
         }
     }
@@ -696,12 +797,17 @@ impl Bundle {
         let source = r.text()?;
         let number = VersionNumber::new(r.u64()?)?;
         let version = r.id()?;
-        let (paths, path_bytes) = (r.u64()?, r.u64()?);
         let mut versions = Vec::new();
         for _ in 0..r.count()? {
-            versions.push((r.id()?, r.id()?));
+            versions.push(Version {
+                id: r.id()?,
+                tree: r.id()?,
+                paths: r.u64()?,
+                path_bytes: r.u64()?,
+            });
         }
-        if versions.len() as u64 != number.get() + 1 || versions[number.get() as usize].0 != version
+        if versions.len() as u64 != number.get() + 1
+            || versions[number.get() as usize].id != version
         {
             return Err(malformed("fork bundle versions do not end at its origin"));
         }
@@ -734,7 +840,11 @@ impl Bundle {
                         kind,
                         content: r.id()?,
                     };
-                    items.push(Item::Opening(opening, Audience::parse(&r.text()?)?));
+                    items.push(Item::Opening {
+                        opening,
+                        audience: Audience::parse(&r.text()?)?,
+                        grants: r.u64()?,
+                    });
                 }
                 _ => return Err(malformed("unknown fork bundle object")),
             }
@@ -778,8 +888,6 @@ impl Bundle {
                 versions,
                 items,
                 traces,
-                paths,
-                path_bytes,
             },
             trees,
             blobs,
