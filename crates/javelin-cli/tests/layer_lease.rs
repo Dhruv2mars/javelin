@@ -35,6 +35,11 @@ mod wire_support;
 
 const REPO: &str = "demo";
 
+/// An upload budget a loaded machine cannot spend against a node that answers, so a capture
+/// that should upload waits on the upload instead of the CLI's 2 s default. A node that hangs
+/// still fails the test: the budget runs out and the upload queues.
+const PATIENT_BUDGET: (&str, &str) = ("JAVELIN_UPLOAD_BUDGET_MS", "60000");
+
 fn op(s: &str) -> OperationId {
     OperationId::parse(s).unwrap()
 }
@@ -97,6 +102,7 @@ impl Device {
             .current_dir(&self.project)
             .env("JAVELIN_HOME", &self.home)
             .env("JAVELIN_TOKEN", &self.token)
+            .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
             .env_remove("JAVELIN_CONTROL_URL")
             .arg("--json")
             .args(args)
@@ -511,6 +517,7 @@ fn take_finds_the_base_world_by_tree_and_refuses_before_moving_the_lease() {
     let text = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .env("JAVELIN_HOME", &laptop.home)
         .env("JAVELIN_TOKEN", &laptop.token)
+        .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
         .args([
             "layer",
             "take",
@@ -610,6 +617,7 @@ fn a_take_stopped_between_the_sync_and_attach_json_is_finished_by_the_next_take(
     let stopped = Command::new(env!("CARGO_BIN_EXE_javelin"))
         .env("JAVELIN_HOME", &desktop.home)
         .env("JAVELIN_TOKEN", &desktop.token)
+        .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
         .env("JAVELIN_FAILPOINT", "sync_after_advance")
         .args(["--json", "layer", "take", "newer", "--repo", desktop.repo()])
         .output()

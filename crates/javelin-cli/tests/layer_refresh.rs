@@ -161,6 +161,11 @@ impl Read for Link {
     }
 }
 
+/// An upload budget a loaded machine cannot spend against a node that answers, so a capture
+/// that should upload waits on the upload instead of the CLI's 2 s default. A node that hangs
+/// still fails the test: the budget runs out and the upload queues.
+const PATIENT_BUDGET: (&str, &str) = ("JAVELIN_UPLOAD_BUDGET_MS", "60000");
+
 fn javelin(cwd: &Path, args: &[&str]) -> Output {
     // The owner's token: a Layer is work above the public frontier, so reading its head
     // needs a role in the repository.
@@ -171,6 +176,7 @@ fn javelin(cwd: &Path, args: &[&str]) -> Output {
             std::env::temp_dir().join("javelin-test-signed-out"),
         )
         .env("JAVELIN_TOKEN", wire_support::token("demo"))
+        .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
         .args(args)
         .output()
         .unwrap()

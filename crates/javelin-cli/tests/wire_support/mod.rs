@@ -39,13 +39,17 @@ pub fn layer(s: &str) -> LayerId {
     LayerId::parse(s).unwrap()
 }
 
-/// A URL with nothing listening behind it: an unreachable control plane or node.
+/// A URL with nothing listening behind it: an unreachable control plane or node. Port 1
+/// lies below every system's ephemeral range, where each test's listener gets its port, so no
+/// test can be handed it, as it can a port that was bound and let go; a dial is refused.
 pub fn closed_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}")
+    "http://127.0.0.1:1".into()
 }
+
+/// An upload budget a loaded machine cannot spend against a node that answers, so a capture
+/// that should upload waits on the upload instead of the CLI's 2 s default. A node that hangs
+/// still fails the test: the budget runs out and the upload queues.
+pub const PATIENT_BUDGET: (&str, &str) = ("JAVELIN_UPLOAD_BUDGET_MS", "60000");
 
 pub struct Deployment {
     pub temp: TempDir,
@@ -182,16 +186,21 @@ impl Deployment {
 
     /// Runs the CLI with this device's home and the control plane at `control_url`.
     pub fn javelin(&self, control_url: &str, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_javelin"))
+        self.command(control_url).args(args).output().unwrap()
+    }
+
+    /// [`Deployment::javelin`] before its arguments, for a test that adds to its environment.
+    pub fn command(&self, control_url: &str) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_javelin"));
+        command
             .current_dir(self.temp.path())
             .env("JAVELIN_HOME", self.home())
             .env("JAVELIN_CONTROL_URL", control_url)
+            .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
             .env_remove("JAVELIN_TOKEN")
             .env_remove("JAVELIN_ADMIN_TOKEN")
-            .arg("--json")
-            .args(args)
-            .output()
-            .unwrap()
+            .arg("--json");
+        command
     }
 
     /// A token the node accepts for `principal`, signed with the public test key.
@@ -225,6 +234,7 @@ impl Deployment {
             .env("JAVELIN_HOME", home)
             .env("JAVELIN_CONTROL_URL", closed_url())
             .env("JAVELIN_TOKEN", token)
+            .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
             .env_remove("JAVELIN_ADMIN_TOKEN")
             .arg("--json");
         command

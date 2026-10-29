@@ -24,7 +24,7 @@ use serde_json::Value;
 
 mod wire_support;
 
-use wire_support::{Deployment, closed_url, stdout};
+use wire_support::{Deployment, PATIENT_BUDGET, closed_url, stdout};
 
 const DEVICE: &[Scope] = &[Scope::Read, Scope::LayerWrite];
 const MAINTAINER: &[Scope] = &[
@@ -84,6 +84,16 @@ impl Owner {
     /// Runs the CLI on the laptop, the device signed in through the control plane.
     fn laptop(&self, args: &[&str]) -> Output {
         self.deployment.javelin(&self.deployment.control_url, args)
+    }
+
+    /// [`Owner::laptop`] with the CLI's own upload budget (2 s), not the tests' patient one.
+    fn laptop_within_budget(&self, args: &[&str]) -> Output {
+        let mut command = self.deployment.command(&self.deployment.control_url);
+        command
+            .env_remove(PATIENT_BUDGET.0)
+            .args(args)
+            .output()
+            .unwrap()
     }
 
     fn desktop(&self, args: &[&str]) -> Output {
@@ -414,7 +424,10 @@ fn a_node_outage_queues_captures_and_they_replay() {
     );
     fs::write(work.join("a.txt"), "5\n").unwrap();
     let started = Instant::now();
-    assert_eq!(checkpoint(laptop, &laptop_dir, "work")["status"], "queued");
+    assert_eq!(
+        checkpoint(|args| owner.laptop_within_budget(args), &laptop_dir, "work")["status"],
+        "queued"
+    );
     let waited = started.elapsed();
     assert!(
         waited < Duration::from_secs(10),

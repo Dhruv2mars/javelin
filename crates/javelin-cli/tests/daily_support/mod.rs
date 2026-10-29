@@ -23,6 +23,11 @@ use tempfile::TempDir;
 
 pub const JAVELIN: &str = env!("CARGO_BIN_EXE_javelin");
 
+/// An upload budget a loaded machine cannot spend against a node that answers, so a capture
+/// that should upload waits on the upload instead of the CLI's 2 s default. A node that hangs
+/// still fails the test: the budget runs out and the upload queues.
+const PATIENT_BUDGET: (&str, &str) = ("JAVELIN_UPLOAD_BUDGET_MS", "60000");
+
 pub fn step(text: &str) {
     eprintln!("\n== {text}");
 }
@@ -372,6 +377,7 @@ impl Person {
             .env("PATH", &self.path)
             .env("JAVELIN_HOME", &self.home)
             .env("JAVELIN_CONTROL_URL", &self.control_url)
+            .env(PATIENT_BUDGET.0, PATIENT_BUDGET.1)
             .env_remove("JAVELIN_ADMIN_TOKEN")
             .env_remove("JAVELIN_CONTROL_DIR")
             .env_remove("JAVELIN_TOKEN")
