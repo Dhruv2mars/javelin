@@ -32,6 +32,7 @@ workspaces.
 ```text
 javelin init [project-directory | --repo DIR] [--json]
 javelin adopt [project-directory] --operation ID [--json]
+javelin adopt PROJECT --repo DIR --operation ID [--json]
 javelin history [project-directory | --repo DIR] [--json]
 javelin check [project-directory | --repo DIR] [--json]
 javelin blame PATH [--world N] [--lines]
@@ -92,7 +93,8 @@ is never written. Later edits reach a World only through a Layer, such as
 completed adoption replays its receipt for that ID. Any other existing repository, or
 an adoption under a different ID, is refused (exit 2) with no change. Files that change
 during capture stop the adoption before Publish, so nothing is published from a
-moving directory. Layer capture is unchanged: a `.git` directory that appears inside a
+moving directory. `adopt PROJECT --repo DIR` imports into DIR, an attached repository,
+instead: see "Publish in an attached repository". Layer capture is unchanged: a `.git` directory that appears inside a
 Layer is still captured. `layer create` uses the
 current World head unless `--world N` selects an exact version. A Layer ID and
 an operation ID each contain 1 to 128 ASCII letters, digits, `-`, `_`, or `.`.
@@ -342,6 +344,58 @@ reports `exists: false`. Further work needs a new Layer (`workspace create`, or
 `layer clone --checkpoint HASH` then `workspace open`). Publishing it again under
 a new operation ID records a `layer_stale` receipt.
 
+## Publish in an attached repository
+
+In an attached repository the node's World is the World. `workspace publish` uploads the
+Layer to the node as `request open` does (created there over the remote World its base holds,
+then the blobs and changes the node lacks) and publishes it there with `PublishLayer`. The
+local World never moves on its own: afterwards the clone follows the node to its head, as
+`javelin sync` does, so it is at the new World and `sync` has nothing to refuse. The Layer is
+then closed here: its directory is reclaimed, and `layer state` reads it as discarded, since
+the World that published it is the node's.
+
+The node publishes directly when the caller's role and the repository's rules allow it:
+Maintain, on a repository that requires no approvals. Otherwise nothing is published and
+the command exits 1 with `insufficient_role` (Read or Review) or `review_required` (approvals
+required), naming `javelin request open ID --layer LAYER --operation OP`. The Layer keeps
+its directory, so it can be proposed as it is. A token without the Publish scope gets
+`forbidden`. These refusals are outcomes, so a queued Publish they answer leaves the outbox
+instead of waiting there. Retrying the same operation replays the refusal; once the rules
+allow it, publish with a new operation.
+
+`javelin adopt PROJECT --repo DIR --operation ID` imports the project directory into the
+attached repository DIR as one Publish under the same rules, through the reserved
+`adoption-<hash>` Layer that `adopt` uses. Root `.javelinignore` applies, `.git` is never
+read, and PROJECT is never written. A first import needs a World that holds no files, so it
+only adds them; for a repository with files, use a workspace. A retry with the same ID
+delivers or replays the first attempt. JSON adds `project` and `files`.
+
+The Publish goes through the outbox (D7). JSON reports `published` (the node's `number`, `id`
+and `tree`), `head` (the node's head the clone followed to), and `closed`. While the node is
+down the Publish is queued, exit 0 with `queued: true`, when this clone knows the node's head
+for the Layer (from its uploaded captures, see Streaming checkpoints, or a request opened
+from it here); `javelin sync` delivers it, follows the node and closes the Layer. A Layer the
+node has not seen from this clone cannot be queued, as its captures cannot, and is refused
+with `node_unavailable`. A conflict with the node's World exits 3
+with `paths`: `javelin layer update LAYER` moves the work onto the node's head as a successor
+Layer (see "Moving a Layer onto a newer World"); edit out any markers and publish that. Retry
+an uncertain result with the same operation.
+
+### World numbers in an attached repository
+
+Every command in an attached repository shows the node's World numbers and IDs, so clones
+of one repository agree on them: `history`, `workspace create` and `path` (`Base World N`),
+`status`, `layer radar`, `checkpoint`, `sync`, the Publish above and `request` output. `--world N` on
+`layer create` and `workspace create` is the node's number, and must be a World this clone
+holds. The local store keeps its own sequence, one World per attach or sync, and records the
+remote version each one holds in that World's operation (`attach-<number>-<id>`,
+`sync-<number>-<id>`), written in the same transaction as the advance, so the map is as
+crash-safe as the World. `history` lists the Worlds this clone holds, each with the node's
+`number` and `id`, its `tree`, and its local number under `local`; a World published here by
+an older client, which the node lacks, shows `number: null`. Local World IDs are not the
+node's: attach keeps a bounded cache, not the history before it, so the local chain cannot
+hash to the node's IDs. Outside an attached repository nothing changes.
+
 ## Retry and discard
 
 Reuse the same Layer ID and explicit `--world N`, or the same clone ID and
@@ -405,7 +459,7 @@ refreshed when it exists. The base is found by its tree, not its number, since t
 repository numbers its Worlds from its attach; a newer base is fetched first, and an older one
 this repository lacks is refused with `invalid_input`. The node is the World's authority, so
 the fetch never overwrites local divergence: when this repository's World head is not the
-attached head (for example after a local `workspace publish`), the take is refused with
+attached head (a clone that published locally with an older client), the take is refused with
 `local_world_diverged`, naming both heads; take the Layer from a fresh `javelin attach`
 directory. A take that stopped after the World followed the node but before
 `attach.json` recorded it is finished by the next take or sync: a head made by
@@ -459,7 +513,7 @@ node serves them to nobody outside the path's audience.
 `javelin status` reads, without contacting the node, where each active Layer's checkpoints
 are: `uploaded` (the node holds the latest), `queued` with a count, `not_uploaded`,
 `layer_stale`, a refusal code, or `local`. JSON lists them under `layers` with the Layer's
-`revision` and `checkpoint`, beside the `attachment` and the outbox's `pending` count.
+`revision`, `checkpoint` and `base` (its World, in the node's numbers), beside the `attachment` and the outbox's `pending` count.
 
 A per-Layer stat cache under `.javelin/capture/` lets a rescan hash only entries
 whose size, mtime, ctime, inode or mode changed, plus racy entries modified within
@@ -529,11 +583,9 @@ sees it. A refusal exits 1 with the node's code.
 
 `javelin attach` fetches a hosted repository's head into an empty repository and records
 it in `.javelin/attach.json`. Like a clone, it makes the project directory when it is missing,
-once the node has answered. From then on the node is the World's authority. Local World
-numbers are not the node's: each World that attach or sync brings here is recorded under
-`attach-<number>-<id>` or `sync-<number>-<id>`, naming the remote version it holds, and
-JSON output reports remote numbers. A Layer created over one of those Worlds can be
-proposed to the node.
+once the node has answered. From then on the node is the World's authority, and commands
+show its World numbers (see "World numbers in an attached repository"). A Layer created over
+one of those Worlds can be published to the node or proposed to it.
 
 Credentials come from `javelin login` (the device's sign-in, refreshed through the control
 plane) or `JAVELIN_TOKEN`. Reads of a public repository's Worlds (attach, sync) need
@@ -569,9 +621,11 @@ returns exit 1 with its `code`, after the fetch. A node that cannot be reached i
 `node_unavailable`, and nothing changes.
 
 Sync never replaces local history. The local head must be a World that attach or sync took
-from the node, holding the attached tree, with no Publish receipt. If the local World moved
-away from the attachment, because `workspace publish` ran in this attached repository, sync
-refuses with `local_world_diverged` and exit 1, before the outbox replays. The message names the published Layer's last checkpoint:
+from the node, holding the attached tree, with no Publish receipt. `workspace publish` in an
+attached repository publishes on the node, so only a clone that published locally with an
+older client moved away from the attachment; sync refuses it with `local_world_diverged`
+and exit 1, before the outbox replays. A delivered direct Publish closes its Layer, as
+`workspace publish` does; JSON lists those Layers under `closed`. The message names the published Layer's last checkpoint:
 `javelin layer clone NEW --checkpoint HASH` makes a Layer from it, and `javelin request open`
 proposes that Layer to the node. To follow the node again, attach a fresh directory.
 
@@ -624,7 +678,7 @@ What waits for the node follows the outage rules (`docs/online-design.md`, D7):
 
 | Command | Node unavailable |
 | --- | --- |
-| `request revise`, `request publish` | Queued in the outbox: exit 0 with `queued: true` and `code: node_unavailable`. `javelin sync` or `outbox replay` delivers it. |
+| `request revise`, `request publish`, attached `workspace publish` and `adopt --repo` | Queued in the outbox: exit 0 with `queued: true` and `code: node_unavailable`. `javelin sync` or `outbox replay` delivers it. |
 | `request open`, `approve`, `comment`, `show`, `list` | Refused with `node_unavailable` (exit 1). Nothing is queued. |
 
 A queued revision names the checkpoint the node will record for it, computed from the
@@ -636,8 +690,10 @@ operation ID delivers what was queued, unchanged; later edits need a new operati
 
 Refusals print the node's code: `not_author`, `self_approval`, `stale_revision`,
 `unknown_revision`, `not_enough_approvals`, `not_open`, `already_approved`,
-`unchanged_revision`, `insufficient_role`. `request open` and `revise` also refuse with
-`unresolved_conflict` (exit 1) while a file `layer update` marked still holds markers.
+`unchanged_revision`, `insufficient_role`. A direct Publish adds `review_required` (see
+"Publish in an attached repository"). `request open` and `revise` also refuse with
+`unresolved_conflict` (exit 1) while a file `layer update` marked still holds markers, as
+does a direct `workspace publish`.
 
 ### Moving a Layer onto a newer World
 
@@ -667,8 +723,9 @@ the World's lines
 Other conflicts (binary files, a path one side deleted, a file and a symlink) keep the Layer's
 side. Every conflict is listed by path with its kind and how it was written; the command then
 exits 3 with `ok: false` and `code: conflict`, and exits 0 when the merge was clean. Resolve
-by editing the files; the next command for the Layer captures them. `request open` and `request
-revise` refuse with `unresolved_conflict` while a marked file still holds a marker line. A
+by editing the files; the next command for the Layer captures them. `request open`, `request
+revise` and a direct `workspace publish` refuse with `unresolved_conflict` while a marked file
+still holds a marker line. A
 conflict that cannot be written at all, because the paths would collide as a file and a
 directory whichever side is kept, refuses with `invalid_input` and changes no Layer. A Layer
 already over the node's head reports `status: current` and changes nothing.
@@ -703,7 +760,10 @@ request's revisions, since another person's Layer may share its ID. Its director
 first, so edits made after the published revision stay in its history, then the Layer is
 discarded and its directory trashed and reclaimed. It leaves `layer radar`, and `layer history`
 still reads it. JSON lists each under `retired` with `later_work: true` when it held work
-after the published revision; `javelin layer clone NEW --checkpoint HEAD` keeps that work.
+after the published revision; `javelin layer clone NEW --checkpoint HEAD` keeps that work. A
+Layer published directly with `workspace publish` is closed by that command instead (see
+"Publish in an attached repository").
+
 
 ### Worked example
 
@@ -731,7 +791,7 @@ javelin request revise greet-1 --revision 1 --operation ada-revise-1
 # Ben: approve exactly revision 2, publish it, and sync.
 javelin request approve greet-1 --revision 2 --operation ben-approve-2
 javelin request publish greet-1 --revision 2 --operation ben-publish-2
-javelin sync                           # remote World 1 is now the local head
+javelin sync                           # World 1 is now this clone's head
 javelin workspace create next          # next/hello.txt reads HELLO
 
 # Ada: sync too.
@@ -771,9 +831,53 @@ javelin-node serve ~/javelin-control/nodes/REPOSITORY REPOSITORY 127.0.0.1:7878 
 javelin attach http://127.0.0.1:7878/REPOSITORY ~/app
 ```
 
-`repo create` prints the `javelin-node serve` line with the repository's ID. The control plane
-has no membership API yet, so a second person cannot be given a role from the CLI; TASKS.md
-tracks it.
+`repo create` prints the `javelin-node serve` line with the repository's ID. To bring in a
+teammate, invite them, and they sign in with the code:
+
+```sh
+javelin member invite acme/app cora --role review   # prints a one-time code, valid 7 days
+javelin login --invite CODE                          # on cora's machine: signs in as cora
+javelin repo settings acme/app --required-approvals 1
+```
+
+### Members
+
+A repository's members and their roles (`read`, `review`, `maintain`) live in the control
+plane, which pushes every change to the repository's node. The node reads its permissions
+for each request, so a change decides the member's next request, with no restart, on a
+self-hosted node and on Cloudflare alike. REPOSITORY is `OWNER/NAME` or the repository's ID.
+The caller is this device's sign-in, or `JAVELIN_ADMIN_TOKEN`; changes need the maintain role,
+and any member may list.
+
+- `member list REPOSITORY` prints the members, the epoch the node applies, the approvals
+  Publish needs, and pending invites.
+- `member add REPOSITORY ACCOUNT [--role ROLE]` grants a role (default `read`) to an account
+  the control plane already has: one an invite made, a passkey's, or `admin`. An unknown name
+  is `not_found`; invite them instead. Adding someone who already holds that role changes
+  nothing.
+- `member role REPOSITORY ACCOUNT ROLE` changes a member's role.
+- `member remove REPOSITORY ACCOUNT` removes a member. Their tokens stop working at the node
+  with the next request (`forbidden`), and the control plane gives them no new ones. Work they
+  queued while the node was down is refused when it replays (`forbidden`) and stays in their
+  outbox; nothing of it reaches the node.
+- `member invite REPOSITORY ACCOUNT [--role ROLE]` prints a one-time code for a new account
+  named ACCOUNT. `javelin login --invite CODE` makes the account, signs that device in as it
+  and grants the role. A name that already has an account is refused (`conflict`): add it
+  instead. A new invite for the same name replaces the pending one, and `member remove`
+  cancels it. On a Cloudflare node, which only a maintainer's control plane reaches (with
+  `JAVELIN_NODE_ADMIN_TOKEN`), the invite still makes the account and the membership, and
+  `login --invite` says the node has not applied the role yet; the maintainer's next
+  `member add` for that account pushes it.
+- `repo settings REPOSITORY --required-approvals N` sets the approvals a Publish Request needs.
+
+A repository always keeps one `maintain` member, so the last one cannot be removed or
+lowered. Each change moves the epoch on by one; a command whose push did not reach the node
+is saved, and running it again pushes it. A role change moves which audiences a member reads
+and whether they read the head or the public frontier; it never changes a version ID or
+where the frontier is.
+
+A second device signs in with `javelin login`, approved from a device already signed in to
+the same account with `javelin control approve CODE` (no admin token).
 
 ## Output and exit status
 

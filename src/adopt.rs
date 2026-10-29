@@ -103,6 +103,51 @@ impl Repository {
         repo.adoption_result(layer, receipt)
     }
 
+    /// Stages an import of project directory `root` into this existing repository, for a
+    /// Publish on its node: the reserved Layer for `operation` is created over the current
+    /// head, then the directory is captured into it, as adoption captures. The Layer is
+    /// returned with its state; the caller publishes its head. A first import needs a World
+    /// that holds no files, so the import only adds them; a retry finds its Layer and captures
+    /// again, which records nothing when the directory is unchanged. Files that keep changing
+    /// return `busy`. The directory is never written, and `.git` is never read.
+    pub fn stage_import(
+        &mut self,
+        root: impl AsRef<Path>,
+        operation: &OperationId,
+    ) -> Result<(LayerId, LayerState)> {
+        let root = fs::canonicalize(root)?;
+        if !root.is_dir() {
+            return Err(Error::InvalidInput(
+                "project root must be a directory".into(),
+            ));
+        }
+        let layer = adoption_layer(operation)?;
+        if !self.layer_exists(&layer)? {
+            let head = self.head()?;
+            if !self.manifest_at(head.number)?.entries().is_empty() {
+                return Err(Error::InvalidInput(
+                    "adopt imports into a repository whose World holds no files yet; for one \
+                     with files, create a workspace and copy the files into it"
+                        .into(),
+                ));
+            }
+            let base = self.layer_base(head.number)?;
+            self.create_layer(&layer, &base)?;
+        }
+        if !matches!(self.layer_state(&layer)?, LayerState::Active { .. }) {
+            return Ok((layer.clone(), self.layer_state(&layer)?));
+        }
+        let capture = self.capture_project(&layer, &root)?;
+        if !capture.uncertain.is_empty() {
+            let paths: Vec<_> = capture.uncertain.iter().map(|p| p.as_str()).collect();
+            return Err(Error::Busy(format!(
+                "project files kept changing during the import: {}",
+                paths.join(", ")
+            )));
+        }
+        Ok((layer.clone(), self.layer_state(&layer)?))
+    }
+
     fn adopted(&self, operation: &OperationId, layer: &LayerId) -> Result<Adoption> {
         let receipt = self.publication(operation)?.ok_or_else(|| {
             Error::CorruptRepository("adopted Layer has no publication receipt".into())

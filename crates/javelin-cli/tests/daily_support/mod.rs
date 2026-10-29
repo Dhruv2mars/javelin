@@ -1,6 +1,9 @@
 //! The daily workflow's deployment: a control plane and a self-hosted node, each a process of the
-//! real binaries, and the people who use them. Every product process runs with a failing `git`
-//! first on PATH; [`Site::assert_no_git`] checks that none of them ran it.
+//! real binaries, and the people who use them, each signed in through the control plane. Every
+//! product process runs with a failing `git` first on PATH; [`Site::assert_no_git`] checks that
+//! none of them ran it.
+
+#![allow(dead_code)] // each test binary uses a different subset
 
 use std::{
     collections::BTreeMap,
@@ -11,33 +14,14 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use javelin::Repository;
-use javelin_collaboration::{PrincipalId, Role};
-use javelin_control::{LocalNode, NodeLink};
-use javelin_identity::{Scope, test_keys};
-use javelin_node::auth;
 use serde_json::Value;
 use tempfile::TempDir;
 
 pub const JAVELIN: &str = env!("CARGO_BIN_EXE_javelin");
-
-/// What a collaborator's token carries: read, write their Layers, comment and approve.
-const COLLABORATOR: &[Scope] = &[
-    Scope::Read,
-    Scope::LayerWrite,
-    Scope::ReviewWrite,
-    Scope::ReviewApprove,
-];
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-}
 
 pub fn step(text: &str) {
     eprintln!("\n== {text}");
@@ -235,22 +219,16 @@ impl Site {
         format!("http://127.0.0.1:{}/{}", self.node_port, self.repository)
     }
 
-    /// The owner, signed in through the control plane.
+    /// The owner, who signs in through the control plane.
     pub fn owner(&self) -> Person {
-        Person {
-            home: self.dir("owner-home"),
-            token: None,
-            control_url: self.control_url.clone(),
-            path: self.path.clone(),
-        }
+        self.person("owner-home")
     }
 
-    /// `principal` on `device`, with a token the node accepts.
-    pub fn member(&self, principal: &str, device: &str) -> Person {
+    /// Someone on one device, with their own `JAVELIN_HOME` named `home`, not signed in yet.
+    pub fn person(&self, home: &str) -> Person {
         Person {
-            home: self.dir(&format!("{principal}-{device}-home")),
-            token: Some(self.token(principal, device)),
-            control_url: closed_url(),
+            home: self.dir(home),
+            control_url: self.control_url.clone(),
             path: self.path.clone(),
         }
     }
@@ -288,41 +266,6 @@ impl Site {
         node.wait().unwrap();
     }
 
-    /// The operator's stand-in for a membership API: with the node stopped, trust the key that
-    /// signs `principal`'s tokens, grant `role`, and require `required_approvals`.
-    pub fn invite(&mut self, principal: &str, role: Role, required_approvals: u32) {
-        self.stop_node();
-        let dir = self.node_dir();
-        let mut keys = auth::read_keys(&dir).unwrap();
-        keys.trust(test_keys::KID, test_keys::signing_key(1).verifying_key())
-            .unwrap();
-        auth::write_keys(&dir, &keys).unwrap();
-        let mut permissions = auth::read_permissions(&dir).unwrap().unwrap();
-        permissions.epoch += 1;
-        permissions
-            .roles
-            .insert(PrincipalId::parse(principal).unwrap(), role);
-        permissions.required_approvals = required_approvals;
-        LocalNode::new(self.control_dir.join("nodes"))
-            .apply(&permissions)
-            .unwrap();
-        self.start_node();
-    }
-
-    /// A token the node accepts for `principal` on `device`.
-    pub fn token(&self, principal: &str, device: &str) -> String {
-        let mut claims = test_keys::claims(
-            principal,
-            &self.repository,
-            COLLABORATOR,
-            now(),
-            now() + 3600,
-            &format!("{principal}-{device}"),
-        );
-        claims.dev = device.into();
-        test_keys::issuer().issue(&claims).unwrap()
-    }
-
     /// The node's head, read from its directory.
     pub fn node_head(&self) -> javelin::WorldVersion {
         Repository::open(self.node_dir()).unwrap().head().unwrap()
@@ -336,6 +279,40 @@ impl Drop for Site {
             let _ = child.wait();
         }
     }
+}
+
+/// `javelin control init|serve`, the owner's `javelin login`, `javelin repo create` for a
+/// private repository that takes Publish Requests, and `javelin-node serve` for it.
+pub fn owner_site() -> (Site, Person) {
+    let mut site = Site::start();
+    let owner = site.owner();
+    owner.login(&site);
+    let create = [
+        "repo",
+        "create",
+        "acme/app",
+        "--operation",
+        "create-app",
+        "--visibility",
+        "private",
+        "--publish",
+        "requests",
+    ];
+    // The text says how to serve the new repository; a retry returns the same one.
+    let text = owner.command().args(create).output().unwrap();
+    assert!(text.status.success(), "{}", describe(&text));
+    let text = String::from_utf8_lossy(&text.stdout).to_string();
+    let created = ok(owner.run(&create));
+    site.repository = created["repository"].as_str().unwrap().to_string();
+    assert!(
+        text.contains(&format!(
+            "javelin-node serve CONTROL_DIR/nodes/{0} {0}",
+            site.repository
+        )),
+        "{text}"
+    );
+    site.start_node();
+    (site, owner)
 }
 
 /// A `git` that leaves a marker and fails, first on PATH, after a positive control proves it
@@ -358,7 +335,17 @@ fn git_stand_in(dir: &Path) -> (OsString, PathBuf) {
         let path =
             std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited)))
                 .unwrap();
-        let control = Command::new("git").env("PATH", &path).status().unwrap();
+        // Linux refuses to run a file another thread's fork still holds open for writing
+        // (ETXTBSY) until that child execs, so the positive control retries briefly.
+        let control = (0..200)
+            .find_map(|_| match Command::new("git").env("PATH", &path).status() {
+                Err(error) if error.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    None
+                }
+                status => Some(status.unwrap()),
+            })
+            .expect("the git stand-in stayed busy");
         assert_eq!(control.code(), Some(99), "the git stand-in did not run");
         assert!(marker.exists());
         fs::remove_file(&marker).unwrap();
@@ -368,11 +355,9 @@ fn git_stand_in(dir: &Path) -> (OsString, PathBuf) {
     (inherited, marker)
 }
 
-/// One person on one device: their own `JAVELIN_HOME`, and either a control-plane sign-in or
-/// a token.
+/// One person on one device: their own `JAVELIN_HOME`, signed in through the control plane.
 pub struct Person {
     pub home: PathBuf,
-    token: Option<String>,
     control_url: String,
     path: OsString,
 }
@@ -386,11 +371,9 @@ impl Person {
             .env("JAVELIN_HOME", &self.home)
             .env("JAVELIN_CONTROL_URL", &self.control_url)
             .env_remove("JAVELIN_ADMIN_TOKEN")
-            .env_remove("JAVELIN_CONTROL_DIR");
-        match &self.token {
-            Some(token) => command.env("JAVELIN_TOKEN", token),
-            None => command.env_remove("JAVELIN_TOKEN"),
-        };
+            .env_remove("JAVELIN_CONTROL_DIR")
+            .env_remove("JAVELIN_TOKEN")
+            .env_remove("JAVELIN_NODE_ADMIN_TOKEN");
         command
     }
 
@@ -407,6 +390,39 @@ impl Person {
 
     /// `javelin login`, approved with `javelin control approve` and the admin token.
     pub fn login(&self, site: &Site) {
+        self.login_approved(|code| {
+            self.command()
+                .args(["control", "approve", code])
+                .env("JAVELIN_ADMIN_TOKEN", &site.admin)
+                .output()
+                .unwrap()
+        });
+    }
+
+    /// `javelin login` on this device, approved by `other`, a device already signed in to the
+    /// same account, with `javelin control approve` and no admin token.
+    pub fn login_from(&self, other: &Person) {
+        self.login_approved(|code| {
+            other
+                .command()
+                .args(["control", "approve", code])
+                .output()
+                .unwrap()
+        });
+    }
+
+    /// `javelin login --invite CODE`: the invite makes the account and signs this device in.
+    pub fn accept(&self, code: &str) -> Value {
+        ok(self.run(&["login", "--invite", code]))
+    }
+
+    /// `javelin member invite REPOSITORY ACCOUNT --role ROLE`, returning the one-time code.
+    pub fn invite(&self, repository: &str, account: &str, role: &str) -> String {
+        let invited = ok(self.run(&["member", "invite", repository, account, "--role", role]));
+        invited["code"].as_str().unwrap().to_string()
+    }
+
+    fn login_approved(&self, approve: impl FnOnce(&str) -> Output) {
         let mut login = self
             .command()
             .arg("login")
@@ -426,12 +442,7 @@ impl Person {
                 break code.to_string();
             }
         };
-        let approved = self
-            .command()
-            .args(["control", "approve", &code])
-            .env("JAVELIN_ADMIN_TOKEN", &site.admin)
-            .output()
-            .unwrap();
+        let approved = approve(&code);
         assert!(approved.status.success(), "{}", describe(&approved));
         assert!(login.wait().unwrap().success(), "login failed");
     }

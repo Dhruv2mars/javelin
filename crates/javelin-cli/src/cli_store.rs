@@ -161,6 +161,22 @@ pub(crate) fn load_record(
     Ok(Some(RequestRecord { layer, base, head }))
 }
 
+/// The node's head checkpoint for `layer` as this clone last saw it, from a request opened
+/// or revised from that Layer here: what a queued append for it follows.
+pub(crate) fn known_layer_head(root: &Path, layer: &LayerId) -> Result<Option<Vec<u8>>, CliError> {
+    for request in read_records(root)?.keys() {
+        let Ok(id) = RequestId::parse(request) else {
+            continue;
+        };
+        if let Some(record) = load_record(root, &id)?
+            && record.layer == *layer
+        {
+            return Ok(Some(record.head));
+        }
+    }
+    Ok(None)
+}
+
 /// Records the request atomically: a temporary file, synced, then renamed.
 pub(crate) fn save_record(
     root: &Path,

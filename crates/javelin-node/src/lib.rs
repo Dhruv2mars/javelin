@@ -14,6 +14,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod budget;
 pub mod checks;
 pub mod disclosure;
 pub mod fork;
@@ -29,7 +30,7 @@ pub mod wire;
 mod world_log;
 
 #[cfg(feature = "native")]
-pub use server::{bind_loopback, serve};
+pub use server::{bind_loopback, serve, serve_live};
 pub use stack::MERGE_LIMIT;
 pub use trace::{TraceVisibility, Traces};
 pub use world_log::FileWorldLog;

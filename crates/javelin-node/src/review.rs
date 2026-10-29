@@ -53,6 +53,11 @@ pub fn handle(
     now: u64,
     message: &Message,
 ) -> Result<Message, ProtocolError> {
+    // What the budget leaves for a Publish, read before the partition's writes start.
+    let room = match message {
+        Message::PublishRequest { .. } => Some(crate::budget::Room::now(log, now)?),
+        _ => None,
+    };
     let (repo, records) = log.parts();
     ensure_schema(records)?;
     match message {
@@ -223,7 +228,8 @@ pub fn handle(
                     {
                         return Ok(publish_refused(refusal));
                     }
-                    let reply = publish_checkpoint(repo, operation, &id, *revision, &pinned)?;
+                    let room = room.as_ref().expect("read for PublishRequest");
+                    let reply = publish_checkpoint(repo, room, operation, &id, *revision, &pinned)?;
                     if matches!(reply, PublishOutcome::Published { .. }) {
                         let message = Message::PublishOutcome(reply.clone());
                         persist(records, &id, &command, permissions.epoch, &message, None)?;
@@ -500,6 +506,7 @@ fn settled(repo: &Repository, review: Review) -> Result<Review, ProtocolError> {
 /// finds the receipt by operation and answers with the same version.
 fn publish_checkpoint(
     repo: &mut Repository,
+    room: &crate::budget::Room,
     operation: &OperationId,
     id: &RequestId,
     index: u32,
@@ -514,6 +521,7 @@ fn publish_checkpoint(
         }
         return outcome(receipt.outcome);
     }
+    let mut fresh = false;
     let head = match repo.layer_state(&layer) {
         // The Layer must hold the approved checkpoint, not whatever head it was created with.
         Ok(LayerState::Active { head }) if head.checkpoint().object() == revision.checkpoint() => {
@@ -522,13 +530,37 @@ fn publish_checkpoint(
         Ok(LayerState::Active { .. }) => return Ok(refused(code::LAYER_STALE)),
         Ok(LayerState::Published { .. }) => return Ok(refused(code::LAYER_PUBLISHED)),
         Ok(LayerState::Discarded { .. }) => return Ok(refused(refusal::LAYER_DISCARDED)),
+        // The revision's Layer is made here, so the clone and the Publish are bounded
+        // together first, measured without writing: a refusal leaves nothing.
         Err(Error::InvalidInput(_)) => {
             let checkpoint = CheckpointId::parse(&revision.checkpoint().to_string())?;
+            let attribution = PublishAttribution::Human;
+            room.publish(&repo.clone_publish_write(
+                &layer,
+                checkpoint,
+                operation,
+                &attribution,
+            )?)?;
+            fresh = true;
             repo.clone_layer(&layer, checkpoint)?
         }
         Err(error) => return Err(error.into()),
     };
-    match repo.publish_layer(operation, &head, &PublishAttribution::Human, |_, _| Ok(())) {
+    let mut crossed = None;
+    let published = repo.publish_layer_bounded(
+        operation,
+        &head,
+        &PublishAttribution::Human,
+        |_, _| Ok(()),
+        |write| match fresh {
+            true => Ok(()),
+            false => crate::budget::hold(room, write, &mut crossed),
+        },
+    );
+    if let Some(refusal) = crossed {
+        return Err(refusal);
+    }
+    match published {
         Ok(receipt) => outcome(receipt.outcome),
         Err(error) => match error.code() {
             "operation_id_reused"
@@ -696,6 +728,15 @@ fn link(prev: &str, epoch: u64, command: &[u8], reply: &[u8]) -> String {
     ObjectId::for_blob(&input).to_string()
 }
 
+/// Whether the review partition recorded `operation`, so a retry of it replays. Reads only:
+/// the tables exist from when the node opened.
+pub(crate) fn is_recorded(
+    conn: &Connection,
+    operation: &OperationId,
+) -> Result<bool, ProtocolError> {
+    Ok(recorded(conn, operation)?.is_some())
+}
+
 fn recorded(conn: &Connection, operation: &OperationId) -> Result<Option<Recorded>, ProtocolError> {
     conn.query_row(
         "SELECT command, reply FROM review_rows WHERE operation = ?1",
@@ -716,9 +757,8 @@ fn request_layer(conn: &Connection, id: &RequestId) -> Result<Option<String>, Pr
     .map_err(storage)
 }
 
-fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS review_requests (
+/// The review partition's tables, which the node creates when it opens.
+pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS review_requests (
             request TEXT PRIMARY KEY,
             layer TEXT NOT NULL
         );
@@ -731,9 +771,10 @@ fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
             reply BLOB NOT NULL,
             chain TEXT NOT NULL,
             PRIMARY KEY (request, seq)
-        );",
-    )
-    .map_err(storage)
+        );";
+
+fn ensure_schema(conn: &Connection) -> Result<(), ProtocolError> {
+    conn.execute_batch(SCHEMA).map_err(storage)
 }
 
 /// The canonical bytes of a command: one space-separated line, so a stored command

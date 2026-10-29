@@ -518,7 +518,11 @@ messages that name none are decided by scope and role alone (`Want` and `Objects
 - If the node cannot hear about a revocation, the token still stops working at `exp`, because
   refresh needs the control plane. So the lag is at most the access TTL.
 - Role changes are epoch-ordered by the control plane. The node accepts only newer epochs
-  (`stale_permissions` otherwise). During a control-plane outage, a role removal is not applied
+  (`stale_permissions` otherwise), and decides each request with the permissions stored
+  when it arrives, so a change applies from the next request with no restart (`LiveGate`,
+  self-hosted and Durable Object alike). Members change with `javelin member`; a new person
+  joins through a one-time invite code (`javelin login --invite`), which makes their account
+  (2026-10-28). During a control-plane outage, a role removal is not applied
   until the plane returns or the token expires (D8).
 
 **Login (D5).** No email. Bootstrap: the first admin token is printed once when a node or

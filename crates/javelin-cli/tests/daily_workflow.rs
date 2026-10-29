@@ -1,19 +1,23 @@
 //! GA's promise in one test: a developer does their daily work with the `javelin` CLI and a
 //! self-hosted node instead of Git and GitHub. Everything a user would type runs through the
-//! real binaries: `javelin control init|serve|approve`, `javelin login`, `javelin repo create`,
+//! real binaries: `javelin control init|serve|approve`, `javelin login`, `javelin repo
+//! create|settings`, `javelin member invite`,
 //! `javelin-node serve` as its own process, and the `javelin` commands of the daily loop.
 //!
-//! Two people, each with their own clone. The owner is signed in through the control plane.
-//! The collaborator holds a token signed with a key the node trusts, because the control plane
-//! has no membership API yet: inviting them is the one step done here as an operator, by
-//! pushing permissions into the node's directory while it is stopped (TASKS.md lists it).
+//! Two people, each with their own clone, both signed in through the control plane. The owner
+//! invites the collaborator with `javelin member invite`; the collaborator signs in with
+//! `javelin login --invite CODE` and works at once, with the node still serving. Their second
+//! device signs in with `javelin login`, approved from the first.
 //!
-//! The loop: the owner creates the repository, imports a project and publishes World 1. The
-//! collaborator attaches, edits a Layer as a plain directory and opens a Publish Request. The
-//! owner reads, comments and approves; the collaborator revises, the old approval stops
-//! counting, the owner approves again, and the node restarts while that Publish is queued.
+//! The loop: the owner creates the repository, imports a project straight onto the node as
+//! World 1 and publishes a Layer directly as World 2 (Maintain, no approvals required). Once
+//! Publish needs an approval, a direct Publish says to open a request. The collaborator
+//! attaches, edits a Layer as a plain directory and opens a Publish Request. The owner reads,
+//! comments and approves; the collaborator revises, the old approval stops counting, the
+//! owner approves again, and the node restarts while that Publish is queued.
 //! A concurrent change to the same lines conflicts cleanly, `layer take` moves a Layer to
-//! the collaborator's other device, and every clone ends at the node's World, byte for byte.
+//! the collaborator's other device, and every clone ends at the node's World, byte for byte,
+//! printing the same World numbers and IDs.
 //!
 //! `tools/acceptance/daily-workflow.sh` is the same loop for a human against any node URL;
 //! the last test here runs it against this node on Unix.
@@ -26,13 +30,12 @@ use std::{
 };
 
 use javelin::Repository;
-use javelin_collaboration::Role;
 use serde_json::Value;
 
 mod daily_support;
 
 use daily_support::{
-    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, refused, step,
+    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, owner_site, refused, step,
 };
 
 fn write(dir: &Path, path: &str, text: &str) {
@@ -75,98 +78,92 @@ fn kinds(changes: &Value) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `javelin control init|serve`, the owner's `javelin login`, `javelin repo create` for a
-/// private repository that takes Publish Requests, and `javelin-node serve` for it.
-fn owner_site() -> (Site, Person) {
-    let mut site = Site::start();
-    let owner = site.owner();
-    owner.login(&site);
-    let create = [
-        "repo",
-        "create",
-        "acme/app",
-        "--operation",
-        "create-app",
-        "--visibility",
-        "private",
-        "--publish",
-        "requests",
-    ];
-    // The text says how to serve the new repository; a retry returns the same one.
-    let text = owner.command().args(create).output().unwrap();
-    assert!(text.status.success(), "{}", describe(&text));
-    let text = String::from_utf8_lossy(&text.stdout).to_string();
-    let created = ok(owner.run(&create));
-    site.repository = created["repository"].as_str().unwrap().to_string();
-    assert!(
-        text.contains(&format!(
-            "javelin-node serve CONTROL_DIR/nodes/{0} {0}",
-            site.repository
-        )),
-        "{text}"
-    );
-    site.start_node();
-    (site, owner)
-}
-
 #[test]
 fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     step("owner: control plane, sign-in, repository, node");
     let (mut site, owner) = owner_site();
 
-    step("owner: attach, import the project, publish World 1");
+    step("owner: attach, import the project straight onto the node as World 1");
     let ours = owner.attach(&site, "owner");
-    let import = owner.layer(&ours, "import");
-    project(&import);
-    let opened = ok(owner.at(
-        &ours,
-        &[
-            "request",
-            "open",
-            "import",
-            "--layer",
-            "import",
-            "--operation",
-            "import-open",
-        ],
-    ));
-    let mut imported = kinds(&ok(owner.at(&ours, &["request", "show", "import"]))["changes"]);
+    let source = site.dir("app-before-javelin");
+    project(&source);
+    let import = ["adopt", source.to_str().unwrap(), "--operation", "import"];
+    let imported = ok(owner.at(&ours, &import));
+    assert_eq!(imported["published"]["number"], 1, "{imported}");
+    assert_eq!(imported["head"]["number"], 1, "the clone follows the node");
+    assert_eq!(imported["files"], 5, "build output is ignored: {imported}");
+    assert_eq!(site.node_head().number.get(), 1);
+    // A retry replays the import; the project directory was never written.
+    let again = ok(owner.at(&ours, &import));
+    assert_eq!(again["published"], imported["published"]);
+    assert!(source.join("target/debug/app").exists());
+    let mut imported: Vec<_> = files(&owner.layer(&ours, "look")).into_keys().collect();
     imported.sort();
-    let added = |path: &str| (path.to_string(), "added".to_string());
     assert_eq!(
         imported,
         [
-            added(".javelinignore"),
-            added("Cargo.toml"),
-            added("README.md"),
-            added("src/lib.rs"),
-            added("src/main.rs")
+            ".javelinignore",
+            "Cargo.toml",
+            "README.md",
+            "src/lib.rs",
+            "src/main.rs"
         ],
-        "build output is ignored, and every path is new"
+        "build output is ignored"
     );
-    let published = ok(owner.at(
+
+    step("owner: edit a Layer and publish it directly: Maintain, no approvals required");
+    let readme = owner.layer(&ours, "readme");
+    write(&readme, "README.md", "# app\n\nGreets people by name.\n");
+    let direct = ok(owner.at(
         &ours,
-        &[
-            "request",
-            "publish",
-            "import",
-            "--revision",
-            "1",
-            "--operation",
-            "import-publish",
-        ],
+        &["workspace", "publish", "readme", "--operation", "readme-1"],
     ));
-    assert_eq!(published["published"]["number"], 1, "{opened} {published}");
-    // The owner's import Layer is published, so it is retired here: its directory is gone,
-    // its history stays.
-    assert_eq!(published["retired"][0]["layer"], "import", "{published}");
-    assert!(!import.exists());
-    ok(owner.at(&ours, &["layer", "history", "import"]));
-    assert_eq!(owner.sync(&ours)["head"]["number"], 1);
+    assert_eq!(direct["published"]["number"], 2, "{direct}");
+    assert_eq!(direct["head"]["number"], 2, "{direct}");
+    assert_eq!(direct["closed"], true, "{direct}");
+    assert!(
+        !readme.exists(),
+        "a published Layer's directory is reclaimed"
+    );
+    // The local World follows the node, so sync has nothing to refuse.
+    let synced = owner.sync(&ours);
+    assert_eq!(synced["head"]["number"], 2, "{synced}");
+    assert_eq!(synced["advanced"], false);
 
     step("owner: invite cora as a reviewer; Publish now needs one approval");
-    site.invite("cora", Role::Review, 1);
-    let cora = site.member("cora", "cora-laptop");
+    let code = owner.invite("acme/app", "cora", "review");
+    let settings = ok(owner.run(&["repo", "settings", "acme/app", "--required-approvals", "1"]));
+    assert_eq!(settings["required_approvals"], 1, "{settings}");
+    let cora = site.person("cora-laptop-home");
+    let accepted = cora.accept(&code);
+    assert_eq!(
+        (&accepted["principal"], &accepted["role"]),
+        (&"cora".into(), &"review".into()),
+        "{accepted}"
+    );
+    assert_eq!(accepted["node_error"], Value::Null, "{accepted}");
+    let members = ok(owner.run(&["member", "list", "acme/app"]));
+    assert_eq!(members["members"].as_array().unwrap().len(), 2, "{members}");
+    assert_eq!(members["epoch"], 3, "{members}");
+
+    step("owner: a direct Publish now says to open a request");
+    let blocked = owner.layer(&ours, "owner-direct");
+    write(&blocked, "CHANGELOG.md", "- greet by name\n");
+    let refusal = owner.at(
+        &ours,
+        &[
+            "workspace",
+            "publish",
+            "owner-direct",
+            "--operation",
+            "od-1",
+        ],
+    );
+    let message = String::from_utf8_lossy(&refusal.stderr).to_string();
+    assert_eq!(refused(refusal), "review_required", "{message}");
+    assert!(message.contains("javelin request open"), "{message}");
+    assert!(blocked.exists(), "a refused Layer keeps its directory");
+    assert_eq!(site.node_head().number.get(), 2);
 
     step("cora: attach a second clone, edit a Layer as a plain directory, open a request");
     let theirs = cora.attach(&site, "cora");
@@ -185,6 +182,20 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         "pub fn greet(name: &str) -> String {\n    format!(\"hello, {name}!\")\n}\n",
     );
     write(&feature, "docs/usage.md", "Run `app`.\n");
+    // A reviewer does not publish directly either.
+    let refusal = cora.at(
+        &theirs,
+        &[
+            "workspace",
+            "publish",
+            "greeting",
+            "--operation",
+            "cora-direct",
+        ],
+    );
+    let message = String::from_utf8_lossy(&refusal.stderr).to_string();
+    assert_eq!(refused(refusal), "insufficient_role", "{message}");
+    assert!(message.contains("javelin request open"), "{message}");
     let opened = ok(cora.at(
         &theirs,
         &[
@@ -329,7 +340,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         ],
     ));
     assert_eq!(stale["code"], "stale_revision");
-    assert_eq!(site.node_head().number.get(), 1);
+    assert_eq!(site.node_head().number.get(), 2);
     ok(owner.at(
         &ours,
         &[
@@ -370,7 +381,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         "{synced}"
     );
     assert_eq!(synced["outbox"]["pending"], 0);
-    assert_eq!(synced["head"]["number"], 2, "{synced}");
+    assert_eq!(synced["head"]["number"], 3, "{synced}");
     // Nothing the node acknowledged before the restart was lost.
     let shown = ok(cora.at(&theirs, &["request", "show", "greeting"]));
     assert_eq!(shown["state"], "published", "{shown}");
@@ -390,11 +401,11 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "owner-publish-2",
         ],
     ));
-    assert_eq!(replayed["published"]["number"], 2, "{replayed}");
+    assert_eq!(replayed["published"]["number"], 3, "{replayed}");
 
-    step("both clones sync to World 2, byte for byte");
+    step("both clones sync to World 3, byte for byte, and number their Worlds alike");
     let synced = cora.sync(&theirs);
-    assert_eq!(synced["head"]["number"], 2);
+    assert_eq!(synced["head"]["number"], 3);
     // Cora's sync saw the publish: her greeting Layer is retired in her clone too.
     assert_eq!(synced["retired"][0]["layer"], "greeting", "{synced}");
     assert!(!feature.exists());
@@ -405,6 +416,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         "after-greeting",
     );
     assert_eq!(world["docs/usage.md"], b"Run `app` to greet the world.\n");
+    same_numbers(&[(&owner, &ours), (&cora, &theirs)], 3);
 
     step("a concurrent change to the same lines conflicts cleanly");
     let mine = owner.layer(&ours, "owner-tweak");
@@ -472,7 +484,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "o-publish",
         ],
     ));
-    assert_eq!(first["published"]["number"], 3);
+    assert_eq!(first["published"]["number"], 4);
     let conflict = exit3(owner.at(
         &ours,
         &[
@@ -489,7 +501,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert_eq!(conflict["paths"], serde_json::json!(["src/lib.rs"]));
     assert_eq!(
         site.node_head().number.get(),
-        3,
+        4,
         "a conflict publishes nothing"
     );
     // The text names the way out; a retry with the same operation replays the conflict.
@@ -513,7 +525,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
         describe(&text)
     );
 
-    step("cora: see the conflict coming, move the Layer onto World 3, resolve, revise");
+    step("cora: see the conflict coming, move the Layer onto World 4, resolve, revise");
     cora.sync(&theirs);
     let radar = ok(cora.at(&theirs, &["layer", "radar", "cora-tweak"]));
     assert_eq!(radar["clear"], false);
@@ -526,7 +538,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     let updated = exit3(cora.at(&theirs, &["layer", "update", "cora-tweak"]));
     assert_eq!(updated["code"], "conflict");
     assert_eq!(updated["successor"], "cora-tweak.2", "{updated}");
-    assert_eq!(updated["base"]["number"], 3);
+    assert_eq!(updated["base"]["number"], 4);
     assert_eq!(
         updated["conflicts"],
         serde_json::json!([{"path": "src/lib.rs", "kind": "content", "written": "markers"}])
@@ -539,8 +551,8 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert_eq!(
         marked,
         "pub fn greet(name: &str) -> String {\n<<<<<<< Layer cora-tweak\n    \
-         format!(\"hi {name}\")\n||||||| remote World 2\n    format!(\"hello, {name}!\")\n\
-         =======\n    format!(\"Hello, {name}!\")\n>>>>>>> remote World 3\n}\n"
+         format!(\"hi {name}\")\n||||||| remote World 3\n    format!(\"hello, {name}!\")\n\
+         =======\n    format!(\"Hello, {name}!\")\n>>>>>>> remote World 4\n}\n"
     );
     assert_eq!(
         fs::read_to_string(redo.join("docs/usage.md")).unwrap(),
@@ -580,7 +592,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     ));
     assert_eq!(revised["revision"], 2, "{revised}");
     let shown = ok(owner.at(&ours, &["request", "show", "cora-tweak"]));
-    assert_eq!(shown["revisions"][1]["base"], 3, "{shown}");
+    assert_eq!(shown["revisions"][1]["base"], 4, "{shown}");
     assert_eq!(kinds(&shown["changes"]), [change("src/lib.rs", "modified")]);
     ok(owner.at(
         &ours,
@@ -606,7 +618,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "o-publish-2",
         ],
     ));
-    assert_eq!(second["published"]["number"], 4, "{second}");
+    assert_eq!(second["published"]["number"], 5, "{second}");
 
     step("cora: layer take moves a Layer from the laptop to the desktop");
     cora.sync(&theirs);
@@ -624,7 +636,9 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "notes-open",
         ],
     ));
-    let desktop = site.member("cora", "cora-desktop");
+    // Cora's second device signs in as cora, approved from the first.
+    let desktop = site.person("cora-desktop-home");
+    desktop.login_from(&cora);
     let other = desktop.attach(&site, "cora-desktop");
     // Only the Layer's owner can take it.
     let code = refused(owner.at(&ours, &["layer", "take", "notes", "--operation", "o-take"]));
@@ -726,14 +740,14 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
             "o-publish-notes",
         ],
     ));
-    assert_eq!(third["published"]["number"], 5, "{third}");
+    assert_eq!(third["published"]["number"], 6, "{third}");
 
     step("every clone syncs and holds the node's World, byte for byte");
     let clones = [(&owner, &ours), (&cora, &theirs), (&desktop, &other)];
     let mut retired = Vec::new();
     for (person, clone) in clones {
         let synced = person.sync(clone);
-        assert_eq!(synced["head"]["number"], 5);
+        assert_eq!(synced["head"]["number"], 6);
         retired.push(synced["retired"].clone());
     }
     // The notes Layer is retired on both of cora's devices. The laptop's copy held its late
@@ -745,6 +759,7 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     assert!(!notes.exists() && !moved.exists());
     let radar = ok(cora.at(&theirs, &["layer", "radar", "notes-laptop"]));
     assert_eq!(radar["radar"]["layers"], serde_json::json!([]), "{radar}");
+    same_numbers(&clones, 6);
     let world = same_world(&site, &clones, "final");
     assert_eq!(
         world["NOTES.md"],
@@ -752,15 +767,62 @@ fn two_people_do_a_days_work_with_javelin_and_a_self_hosted_node() {
     );
     assert_eq!(world["docs/usage.md"], b"Run `app` to greet the world.\n");
     assert!(!world.contains_key("target/debug/app"));
-    // History reads the clone like every other command, with --repo.
+    // History reads the clone like every other command, with --repo, in the node's IDs.
     let history = ok(owner.at(&ours, &["history"]));
-    assert!(
-        history
-            .to_string()
-            .contains(&site.node_head().tree.to_string()),
-        "{history}"
-    );
+    let node = site.node_head();
+    let last = history["versions"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["number"], node.number.get(), "{history}");
+    assert_eq!(last["id"], node.id.to_string(), "{history}");
+    assert_eq!(last["tree"], node.tree.to_string(), "{history}");
     site.assert_no_git();
+}
+
+/// Clones of one repository agree on World numbers: `history` gives every World a clone holds
+/// the node's number and ID, the same in each clone, and ends at the node's head `head`; a
+/// Layer created in each says it is over that World.
+fn same_numbers(clones: &[(&Person, &PathBuf)], head: u64) {
+    let mut seen: BTreeMap<u64, String> = BTreeMap::new();
+    for (person, clone) in clones {
+        let history = ok(person.at(clone, &["history"]));
+        let versions = history["versions"].as_array().unwrap();
+        assert_eq!(versions.last().unwrap()["number"], head, "{history}");
+        for version in versions {
+            let number = version["number"].as_u64().expect("a node number");
+            let id = version["id"].as_str().unwrap().to_string();
+            assert_eq!(
+                seen.entry(number).or_insert_with(|| id.clone()),
+                &id,
+                "{history}"
+            );
+        }
+        let text = person
+            .command()
+            .args(["workspace", "create", &format!("numbers-{head}")])
+            .args(["--repo", clone.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&text.stdout).to_string();
+        assert!(text.contains(&format!("Base World {head}:")), "{text}");
+        let lines = person
+            .command()
+            .args(["history", "--repo", clone.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let lines = String::from_utf8_lossy(&lines.stdout).to_string();
+        assert!(
+            lines
+                .lines()
+                .last()
+                .unwrap()
+                .starts_with(&format!("World {head}  ")),
+            "{lines}"
+        );
+    }
 }
 
 /// Every clone is attached at the node's head and holds its tree, and a Layer opened over it
@@ -834,6 +896,7 @@ fn a_crash_mid_update_loses_nothing() {
             ],
         ));
         assert_eq!(published["queued"], false, "{published}");
+        published
     };
     publish("import");
     owner.sync(&ours);
@@ -844,7 +907,12 @@ fn a_crash_mid_update_loses_nothing() {
     write(&mine, "src/extra.rs", "// mine\n");
     write(&theirs, "README.md", "# app\n\nGreets the world.\n");
     write(&theirs, "CHANGELOG.md", "- greet the world\n");
-    publish("theirs");
+    // Its author published it, so the Layer is retired here at once: directory gone, history
+    // kept.
+    let published = publish("theirs");
+    assert_eq!(published["retired"][0]["layer"], "theirs", "{published}");
+    assert!(!theirs.exists());
+    ok(owner.at(&ours, &["layer", "history", "theirs"]));
 
     let crashed = owner
         .command()
@@ -886,25 +954,25 @@ fn a_crash_mid_update_loses_nothing() {
     let again = exit3(owner.at(&ours, &["layer", "update", "mine"]));
     assert_eq!(again["successor"], "mine.2");
     assert_eq!(again["head"], updated["head"]);
-    // Resolved, the successor's request opens over World 3.
+    // Markers keep the successor from being published directly too; resolved, it publishes
+    // on the node as World 3 and is closed like any directly published Layer.
+    let direct = [
+        "workspace",
+        "publish",
+        "mine.2",
+        "--operation",
+        "mine-direct",
+    ];
+    assert_eq!(refused(owner.at(&ours, &direct)), "unresolved_conflict");
     write(
         &moved,
         "README.md",
         "# app\n\nGreets everyone in the world.\n",
     );
-    let opened = ok(owner.at(
-        &ours,
-        &[
-            "request",
-            "open",
-            "mine",
-            "--layer",
-            "mine.2",
-            "--operation",
-            "mine-open",
-        ],
-    ));
-    assert_eq!(opened["base"]["number"], 2, "{opened}");
+    let published = ok(owner.at(&ours, &direct));
+    assert_eq!(published["published"]["number"], 3, "{published}");
+    assert_eq!(published["closed"], true, "{published}");
+    assert!(!moved.exists());
     site.assert_no_git();
 }
 
@@ -990,12 +1058,13 @@ fn retirement_waits_for_edits_a_capture_cannot_record() {
 }
 
 /// `tools/acceptance/daily-workflow.sh` runs the same loop against this node, restarting it
-/// through `NODE_SERVE`, with a second device for `layer take`. It never runs Git either.
+/// through `NODE_SERVE`: it invites the collaborator itself (`INVITE`), signs in their second
+/// device for `layer take`, and never runs Git either.
 #[cfg(unix)]
 #[test]
 fn the_shell_version_runs_the_same_loop_against_a_node() {
     let (mut site, owner) = owner_site();
-    site.invite("cora", Role::Review, 1);
+    ok(owner.run(&["repo", "settings", "acme/app", "--required-approvals", "1"]));
     // The script starts and restarts the node itself.
     site.stop_node();
     let script =
@@ -1015,8 +1084,9 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
         .env("WORKDIR", site.dir("script"))
         .env("OWNER_HOME", &owner.home)
         .env("JAVELIN_CONTROL_URL", &site.control_url)
-        .env("COLLAB_TOKEN", site.token("cora", "cora-laptop"))
-        .env("DESKTOP_TOKEN", site.token("cora", "cora-desktop"))
+        .env("INVITE", "cora")
+        .env("COLLAB_HOME", site.dir("script-cora-laptop"))
+        .env("DESKTOP_HOME", site.dir("script-cora-desktop"))
         .env("NODE_SERVE", serve)
         .env_remove("JAVELIN_TOKEN")
         .env_remove("JAVELIN_ADMIN_TOKEN")
@@ -1028,6 +1098,7 @@ fn the_shell_version_runs_the_same_loop_against_a_node() {
     assert_eq!(output.status.code(), Some(0), "{printed}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("== PASS"), "{printed}");
+    assert!(stdout.contains("== 0. owner: invite"), "{printed}");
     assert!(!stdout.contains("SKIP"), "{printed}");
     site.assert_no_git();
 }

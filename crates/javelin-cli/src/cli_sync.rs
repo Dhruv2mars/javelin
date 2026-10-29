@@ -96,6 +96,20 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     }
     // A queued record the node refused was delivered, but did not do what it asked.
     let mut refused = None;
+    // Direct Publishes the node accepted, delivered now or before: their Layers that are
+    // still active close here once the World follows.
+    let published: Vec<_> = outbox
+        .entries()
+        .filter_map(|entry| {
+            let (layer, node) =
+                crate::cli_publish::published_layer(&entry.payload, entry.outcome.as_ref()?)?;
+            let active = matches!(
+                repo.layer_state(&layer),
+                Ok(javelin::LayerState::Active { .. })
+            );
+            active.then(|| (layer, entry.operation.clone(), node))
+        })
+        .collect();
     let delivered: Vec<Value> = replay
         .iter()
         .flat_map(|replay| &replay.delivered)
@@ -134,20 +148,32 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     remember_listed(&root, &listed)?;
     let retired = retire_published(&link, &mut repo, &root, &listed)?;
     let local = repo.head()?;
+    let mut closed = Vec::new();
+    for (layer, operation, node) in &published {
+        if crate::cli_publish::close(&link, &mut repo, layer, operation, *node).unwrap_or(false) {
+            closed.push(layer.clone());
+        }
+    }
     let mut text = if advanced {
         format!(
-            "Synced {} from remote World {} to {} (local World {}).",
-            attachment.repository, attachment.head.number, head.number, local.number
+            "Synced {} from World {} to World {}.",
+            attachment.repository, attachment.head.number, head.number
         )
     } else {
         format!(
-            "{} is current at remote World {} (local World {}).",
-            attachment.repository, head.number, local.number
+            "{} is current at World {}.",
+            attachment.repository, head.number
         )
     };
     for line in retired_lines(&retired) {
         text.push('\n');
         text.push_str(&line);
+    }
+    for layer in &closed {
+        text.push_str(&format!(
+            "\nLayer {} was published on the node; its directory was reclaimed.",
+            layer.as_str()
+        ));
     }
     if replay.is_some() {
         text.push_str(&format!(
@@ -165,10 +191,9 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
     let (stall, mut code, mut exit) = match stalled {
         Some(stall) => {
             text.push_str(&format!(
-                "\nRecord {} waits: {}: {}",
+                "\nRecord {} waits: {}",
                 stall.seq,
-                stall.fault.code(),
-                stall.fault.detail()
+                crate::cli_node::refusal_text(stall.fault.code(), stall.fault.detail())
             ));
             (
                 json!({"seq": stall.seq, "code": stall.fault.code(), "detail": stall.fault.detail()}),
@@ -198,6 +223,7 @@ pub fn sync(args: Vec<OsString>) -> Outcome {
         "base": base,
         "outbox": {"delivered": delivered, "stalled": stall, "pending": pending},
         "retired": retired,
+        "closed": closed,
         "uploads": uploads,
         "code": code,
     });

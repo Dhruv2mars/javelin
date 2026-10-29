@@ -42,7 +42,21 @@ CI left open. Work from it, in roughly this order:
     at or below the frontier, once a Layer records who created it.
   - [ ] `--embargo` on `javelin request publish`; until then `javelin embargo --operation ID`
     precedes the Publish.
-- [ ] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit.
+- [x] Node budget: refuse with `quota_exceeded` before a write crosses a free-tier limit
+  (feat/node-budget). `budget.json` (storage bytes, rows written per UTC day, largest object;
+  Free-plan defaults), enforced in `wire::handle` before any state changes on both nodes;
+  `ReadUsage`/`Usage` and numbers in the refusal for Maintain only; `PUT /admin/r/{repo}/budget`
+  on Cloudflare; `javelin node usage`. Evidence: parity budget scenario on `Directory` and
+  `PageStorage`, conformance `run_budget` on loopback and `wrangler dev`, `crates/javelin-cli/
+  tests/budget.rs`.
+  - [ ] Budget rows across repositories on one Cloudflare account (the daily quota is per
+    account; each repository counts only its own), and admin pushes.
+  - [ ] A CLI for the owner to change the budget (today: the admin route, or `budget.json`
+    and a restart on a self-hosted node).
+  - [x] Deployed as version `c17e6ce3` on Workers Free; conformance 3 passed against it.
+- [ ] The deployed `repo_conformance_20261026` (provisioned at repository format 10) no longer
+  opens: format 11 shipped without a migration, so its `state` is `unsupported repository format
+  10`. Migrate format 10 stores, or retire that test repository.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
   list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,
@@ -119,10 +133,43 @@ every push (`.buildkite/pipeline.yml`).
   requests and sync (trail 3), public frontier (trail 19), node core on wasm (trail 18).
 - [ ] End-to-end daily-workflow acceptance: two clones, Layers, request, review, publish and
   sync against a self-hosted node (`test/daily-workflow-acceptance`, in progress).
-- [ ] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
+- [x] `tests/native_object_access.rs::concurrent_row_replacement_never_mixes_metadata_and_payload`
   flaked once on Linux (Buildkite build 25 on main `686a470`: `repo.has_blob(id).is_ok()`
   failed); the rebuild (32) and the same commit's branch build (22) passed. Find what
-  `has_object` returns there.
+  `has_object` returns there. It was `Busy`, not a torn read: the suite took 7.60s against
+  1.2-1.5s in passing builds, the 5s busy timeout, and a reader held off that long gets
+  `Busy("database is locked")`. The read transaction holds its shared lock from the row
+  lookup through the blob reads, so a writer cannot commit between them. The test now
+  accepts `Busy` and still fails on any other error (`fix/flaky-tests`).
+- [x] `crates/javelin-node/tests/loopback.rs::browsers_may_read_but_never_write` reset 2 of 8
+  runs on macOS. A stray local connection to the reused ephemeral port (another worktree's
+  `javelin attach` retrying a dead node, or T3 Code's port probe) used one of the server's
+  `Some(7)` connections, so it closed the listener under the test's last request. The server
+  read and drained every body; the test now serves until the process exits
+  (`fix/flaky-tests`).
+- [x] `crates/javelin-cli/tests/attach.rs::attach_leaves_a_store_another_writer_created_alone`
+  failed about 1 run in 6 on macOS. T3 Code probes every new loopback listener (`GET /`, a TLS
+  hello); the probe panicked the fake node's thread, attach's next request was refused, and
+  the fake "other writer" never ran. Attach deleted nothing. The fake node now handles each
+  connection on its own thread and drops one that is not a request; the test sends both
+  probes itself (`fix/flaky-tests`).
+- [x] On a loaded Mac, `loopback.rs` `publish_layer_over_loopback_replays_the_recorded_outcome`,
+  `wire_auth.rs` `a_layer_limited_token_uploads_objects_but_writes_only_its_own_layer` and
+  `wire_hidden.rs` `an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back`
+  reset, and `outbox_replay.rs` counted 2 forwards for 1. Not a server reset and not a
+  duplicate send: every one of 14 failures under load had T3 Code's port probe (`GET /` or a
+  TLS hello) in it. The probe used one of `serve`'s `Some(n)` connections, so the listener
+  closed under the test's last request; at the outbox proxy it was counted as a forward.
+  Load only widens the window. The server reads and drains every request, and an outbox
+  write is never resent on a reset (`retry_reset: false`); a record left queued is resent
+  under the same operation ID, whose outcome the node replays. These tests now serve with
+  `wire_support::serve_until_joined`, which stops on a flag between connections like the
+  `checkpoints` and `stack` nodes, and the proxy forwards only requests for the node
+  (`fix/flaky-tests`).
+- [ ] Tests that dial `closed_url()` (`attach`, `wire_support`, `daily_support`) bind a port,
+  drop it and dial it, so another test's listener can get that port and the connection. A
+  stray `POST /v2/r/demo` from one of them still counts against a `Some(n)` node serving
+  `demo`. Dial a port no test can be handed instead.
 - [x] Forge deploys to Vercel from the CLI (`bun run deploy` in `apps/forge` from `main`),
   since Vercel's Git integration cannot follow Entire. The landing page says installers are
   coming instead of pointing at GitHub releases. Production redeployed from `c675585`.
@@ -174,22 +221,44 @@ Rough edges hit on the way. Fixed in this trail:
 
 Open:
 
-- [ ] No membership: the control plane serves repository tokens only to the creator and admin,
-  and nothing grants a second person a role. The test invites by writing `permissions.json`
-  and `keys.json` into the stopped node's directory and signing the collaborator's tokens with
-  the test key. Belongs with the forge's accounts and members.
-- [ ] A serving `javelin-node` reads permissions and trusted keys only at start, so a role
-  change needs a node restart.
-- [ ] `javelin login` approved with the admin token signs the device in as principal `admin`; a
-  second person needs the browser passkey page, and then still has no role (above).
-- [ ] No direct Publish to the node from the CLI. Importing a project means opening a request
-  of your own and publishing it, which on a repository that requires approvals needs someone
-  else's approval first. `workspace publish` in an attached clone publishes locally and then
-  `sync` refuses `local_world_diverged`.
-- [ ] No import into an attached repository: `adopt` makes a new local repository only.
-- [ ] Local World numbers and IDs differ between clones of the same repository (one remote World
-  5 was local World 4, 5 and 2 in three clones). `history` and `workspace create` ("Base World
-  N") print local numbers; only `sync`, `attach` and request output show the node's.
+- [x] No membership: the control plane serves repository tokens only to the creator and admin,
+  and nothing grants a second person a role. Now `javelin member list|add|role|remove|invite`
+  and `repo settings --required-approvals`; the daily test and script invite the collaborator
+  with `member invite` and `login --invite`, with no file written by hand.
+- [x] A serving `javelin-node` reads permissions and trusted keys only at start, so a role
+  change needs a node restart. The node and the Durable Object now read them per request
+  (`LiveGate`); a change decides the next request.
+- [x] `javelin login` approved with the admin token signs the device in as principal `admin`; a
+  second person needs the browser passkey page, and then still has no role (above). An invite
+  makes the second person's account, and `control approve` from a signed-in device signs in
+  their other devices.
+- [ ] An invited account has no passkey: a device signs in through an invite or another of its
+  devices only. Enrolling a passkey still needs the admin token or a passkey sign-in.
+- [ ] The forge shows no members; showing them read-only waits for a members page.
+- [ ] On macOS the loopback wire tests (`wire_frontier`, `wire_hidden`, `outbox_replay`) fail
+  now and then with `ConnectionReset` / a duplicated forward, on main too (wire_frontier 1 in
+  4 runs, outbox_replay 1 in 3, 2026-10-28), more often under load. The node logs `Broken pipe`
+  on the same connection, so something resets it from outside the node; not diagnosed.
+- [x] No direct Publish to the node from the CLI. `workspace publish` in an attached clone now
+  publishes on the node (`PublishLayer` through the outbox, D7) when the caller is Maintain and
+  the repository requires no approvals; otherwise the node answers `insufficient_role` or
+  `review_required` (recorded outcomes, so a queued one never stalls) and the message names
+  `request open`. The clone then follows the node and closes the Layer, so the local World
+  never diverges. Evidence: `daily_workflow.rs`. Windows: not run.
+  - [ ] A Layer the node has not seen from this clone cannot queue its direct Publish while the
+    node is down (`node_unavailable`), as its captures cannot (`not_queued`): nothing names
+    the node's revision 0 for it yet.
+  - [ ] A closed Layer's local state reads `discarded`: the library has no "published on the
+    node" state.
+- [x] Import into an attached repository: `javelin adopt PROJECT --repo DIR --operation OP`
+  arrives as one Publish under the same rules, into a World with no files yet.
+- [x] Local World numbers and IDs differ between clones: every command in an attached clone
+  (`history`, `workspace create|path`, `layer radar`, `checkpoint`, `sync`, Publish, requests)
+  shows the node's numbers and IDs, and `--world N` takes the node's number. The map is each
+  local World's own `attach-`/`sync-<number>-<id>` operation, written with the advance.
+  `daily_workflow.rs` asserts two and three clones print the same numbers and IDs.
+  - [ ] `history` lists only the Worlds a clone holds (one per attach or sync), not the node's
+    whole history; `blame` in an attached clone still has no origins from the node.
 - [x] `request show` marks every changed path `M`, added files included: the node's sparse
   changes do not say whether the base had the path. It now marks `A`, `M` and `D` (JSON
   `change`), reading the base's tree down to each path from local chunks or the node's `Get`,

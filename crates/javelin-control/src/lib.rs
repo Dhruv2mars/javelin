@@ -1,5 +1,6 @@
 //! The control plane, minimum slice: admin-token bootstrap, the device-code API, idempotent
-//! repository create, and the applied-permission and key push to the node. It runs in process
+//! repository create, membership and invites, and the applied-permission and key push to the
+//! node. It runs in process
 //! or behind its HTTP API, which `RemoteControl` calls. State
 //! lives in one directory that every process using it shares; each call holds an exclusive
 //! lock on that directory. Passkeys sign the browser approval page in (U8b), which `browser`
@@ -12,6 +13,7 @@ mod credentials;
 mod device;
 mod error;
 mod fork;
+mod members;
 mod node;
 mod passkey;
 mod repo;
@@ -26,6 +28,7 @@ pub use credentials::Credentials;
 pub use device::{AccessToken, DeviceStart, Poll, Session};
 pub use error::ControlError;
 pub use fork::{ForkRequest, ForkedRepository};
+pub use members::{Invite, Member, MemberChange, Members, PendingInvite, Redeemed};
 pub use node::LocalNode;
 pub use passkey::{BrowserSession, RelyingParty};
 pub use repo::{CreateRequest, Created, Publish};

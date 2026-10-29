@@ -87,7 +87,7 @@ impl Options {
         self.values.get(key).map(String::as_str)
     }
 
-    fn required(&self, key: &str) -> Result<&str, Error> {
+    pub(crate) fn required(&self, key: &str) -> Result<&str, Error> {
         self.get(key)
             .ok_or_else(|| Error::InvalidInput(format!("missing {key}")))
     }
@@ -127,7 +127,7 @@ pub(crate) struct Attached {
 }
 
 impl Attached {
-    fn open(root: PathBuf) -> Result<Self, CliError> {
+    pub(crate) fn open(root: PathBuf) -> Result<Self, CliError> {
         let repo = Repository::open(&root)?;
         let attachment = repo.attachment()?.ok_or_else(|| {
             Error::InvalidInput("this repository is not attached to a node; attach first".into())
@@ -145,7 +145,7 @@ impl Attached {
     }
 
     /// A session for writes, which never go out without a token.
-    fn writing(&self) -> Result<RefCell<Link>, CliError> {
+    pub(crate) fn writing(&self) -> Result<RefCell<Link>, CliError> {
         Ok(Link::writing(self.target()?))
     }
 
@@ -867,7 +867,7 @@ pub(crate) fn list_requests(
 }
 
 /// Refuses to propose `layer` while files `layer update` marked still hold markers.
-fn refuse_unresolved(attached: &Attached, layer: &LayerId) -> Result<(), CliError> {
+pub(crate) fn refuse_unresolved(attached: &Attached, layer: &LayerId) -> Result<(), CliError> {
     let left = unresolved(&attached.repo, &attached.root, layer)?;
     match left.is_empty() {
         true => Ok(()),
@@ -875,19 +875,19 @@ fn refuse_unresolved(attached: &Attached, layer: &LayerId) -> Result<(), CliErro
     }
 }
 
-fn queued(outbox: &Outbox, kind: Record, operation: &OperationId) -> bool {
+pub(crate) fn queued(outbox: &Outbox, kind: Record, operation: &OperationId) -> bool {
     outbox
         .entries()
         .any(|entry| entry.kind == kind && entry.operation == *operation)
 }
 
-enum Delivery {
+pub(crate) enum Delivery {
     Done(Message),
     Queued { fault: Fault, pending: usize },
 }
 
 /// Replays the outbox, then reads the outcome the node recorded for `operation`.
-fn deliver(
+pub(crate) fn deliver(
     attached: &Attached,
     outbox: &mut Outbox,
     kind: Record,
@@ -912,7 +912,12 @@ fn deliver(
     }
 }
 
-fn queued_output(mut value: Value, fault: &Fault, pending: usize, what: String) -> Output {
+pub(crate) fn queued_output(
+    mut value: Value,
+    fault: &Fault,
+    pending: usize,
+    what: String,
+) -> Output {
     value["ok"] = json!(true);
     value["queued"] = json!(true);
     value["code"] = json!(fault.code());
@@ -939,7 +944,7 @@ fn review_outcome(reply: Message) -> Result<u32, CliError> {
 }
 
 /// A node refusal with a message that says what to do about it.
-fn refusal(refused: &str) -> RemoteError {
+pub(crate) fn refusal(refused: &str) -> RemoteError {
     let detail = match refused {
         code::NOT_AUTHOR => "only the request's author submits revisions",
         code::SELF_APPROVAL => "the author cannot approve their own request",
@@ -958,7 +963,7 @@ fn refusal(refused: &str) -> RemoteError {
         "already_open" => "a request with this ID is already open",
         "already_approved" => "you already approved this revision",
         "unchanged_revision" => "the Layer has not changed since the current revision",
-        "insufficient_role" => "your role on the repository does not allow this",
+        code::INSUFFICIENT_ROLE => "your role on the repository does not allow this",
         "no_access" => "you have no role on this repository",
         _ => "the node refused the request",
     };
