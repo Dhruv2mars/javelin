@@ -19,7 +19,10 @@
 #                                   The script starts this node, kills it mid-loop and starts
 #                                   it again, then stops it at exit. Start nothing yourself.
 #   NODE_STOP="..." NODE_START="..." Commands that stop and start a node you run elsewhere.
-# Without either, the restart step is skipped.
+# Without either, the restart step is skipped. A node you cannot stop, such as a deployed
+# Cloudflare Worker, can stand behind `bun tools/acceptance/relay.ts https://NODE 127.0.0.1:PORT`:
+# attach to http://127.0.0.1:PORT/REPOSITORY, and let NODE_STOP and NODE_START kill and start
+# the relay.
 # Optional: JAVELIN (the binary, default `javelin` on PATH), WORKDIR (default a new temporary
 # directory; the clones stay there for inspection).
 #
