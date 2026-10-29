@@ -14,6 +14,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod budget;
 pub mod checks;
 pub mod disclosure;
 pub mod fork;

@@ -427,10 +427,16 @@ fn concurrent_row_replacement_never_mixes_metadata_and_payload() {
     for _ in 0..128 {
         // Every committed state either has the exact object or lacks it.
         // A hash error would expose metadata from one state and another payload.
-        assert!(repo.has_blob(id).is_ok());
+        // `Busy` reads no state at all: the writer commits back to back, which can hold
+        // the reader off past its busy timeout on a slow disk.
+        match repo.has_blob(id) {
+            Ok(_) | Err(Error::Busy(_)) => {}
+            result => panic!("mixed snapshot: {result:?}"),
+        }
         match repo.read_blob_bounded(id, bytes.len()) {
             Ok(actual) => assert_eq!(actual, bytes),
             Err(Error::MissingObject(missing)) => assert_eq!(missing, id),
+            Err(Error::Busy(_)) => {}
             result => panic!("mixed snapshot: {result:?}"),
         }
     }

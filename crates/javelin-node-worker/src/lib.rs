@@ -113,6 +113,33 @@ impl CloudflareNode {
         })
     }
 
+    /// The repository's budget and its use (`{"budget","usage"}`), after replacing the
+    /// budget with `budget` (the `budget.json` layout) when one is given. Only the node's
+    /// owner, who holds the admin token, sets it.
+    pub fn budget(
+        &self,
+        repository: &RepositoryId,
+        budget: Option<&Value>,
+    ) -> Result<Value, ControlError> {
+        let url = self.url(repository, "budget");
+        let request = || {
+            self.agent
+                .get(&url)
+                .header("authorization", &self.bearer())
+                .call()
+        };
+        let answer = match budget {
+            None => request(),
+            Some(body) => self
+                .agent
+                .put(&url)
+                .header("authorization", &self.bearer())
+                .header("content-type", "application/json")
+                .send(body.to_string()),
+        };
+        answer_json(answer)
+    }
+
     fn url(&self, repository: &RepositoryId, action: &str) -> String {
         format!("{}/admin/r/{}/{action}", self.base, repository.as_str())
     }

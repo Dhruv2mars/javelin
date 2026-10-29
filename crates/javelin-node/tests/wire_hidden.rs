@@ -5,7 +5,6 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    thread,
 };
 
 use javelin::{
@@ -17,7 +16,7 @@ use javelin_identity::test_keys;
 use javelin_node::{
     FileWorldLog, admin,
     auth::{self, Gate},
-    bind_loopback, serve, serve_live,
+    bind_loopback,
     storage::Directory,
 };
 use javelin_protocol::{
@@ -114,38 +113,22 @@ fn node(dir: &TempDir) -> FileWorldLog {
     log
 }
 
-fn start(
-    dir: &TempDir,
-    log: FileWorldLog,
-    connections: usize,
-) -> (SocketAddr, thread::JoinHandle<FileWorldLog>) {
+fn start(dir: &TempDir, log: FileWorldLog) -> (SocketAddr, wire_support::Served) {
     let gate = Gate::load(dir.path(), REPO).unwrap();
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve(&listener, REPO, &mut log, &gate, Some(connections)).unwrap();
-        log
-    });
-    (addr, server)
+    let served = wire_support::serve_until_joined(listener, REPO, log, gate);
+    (addr, served)
 }
 
 /// `start`, serving as `javelin-node serve` does: the stored permissions decide each request,
 /// so a push between requests applies to the next one.
-fn start_live(
-    dir: &TempDir,
-    log: FileWorldLog,
-    connections: usize,
-) -> (SocketAddr, thread::JoinHandle<FileWorldLog>) {
+fn start_live(dir: &TempDir, log: FileWorldLog) -> (SocketAddr, wire_support::Served) {
     let listener = bind_loopback("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let path = dir.path().to_path_buf();
-    let server = thread::spawn(move || {
-        let mut log = log;
-        serve_live(&listener, REPO, &mut log, &path, Some(connections)).unwrap();
-        log
-    });
-    (addr, server)
+    let served =
+        wire_support::serve_live_until_joined(listener, REPO, log, dir.path().to_path_buf());
+    (addr, served)
 }
 
 /// Pushes the repository's permissions at `epoch` with `member` holding `role`, as the control
@@ -209,7 +192,7 @@ fn reads_follow_the_callers_role() {
     let public_edit = append(&mut log, "public", &[("src/a", Some(b"b\n"))]);
     let (owner, member) = (token(REPO), token_for("member", REPO));
     let stranger = token_for("stranger", REPO);
-    let (addr, server) = start(&dir, log, 17);
+    let (addr, server) = start(&dir, log);
     let open = Message::Open(vec![env, internal]);
     let opened = |reply: Message| match reply {
         Message::Opened(openings) => openings.into_iter().map(|(c, _)| c).collect::<Vec<_>>(),
@@ -321,7 +304,7 @@ fn an_edit_made_while_hidden_stays_hidden_after_the_rule_is_removed() {
             .is_empty()
     );
     let member = token_for("member", REPO);
-    let (addr, server) = start(&dir, log, 4);
+    let (addr, server) = start(&dir, log);
     let never = ObjectId::for_checkpoint(b"{}never");
     let (code, detail) = error(send(
         addr,
@@ -372,7 +355,7 @@ fn writes_outside_the_callers_audiences_are_forbidden() {
     );
     let maintainer_layer = append(&mut log, "owner", &[]);
     let (owner, member) = (token(REPO), token_for("member", REPO));
-    let (addr, server) = start(&dir, log, 18);
+    let (addr, server) = start(&dir, log);
     // Each writer uploads its own blobs and changes, as a client does.
     let upload = |token: &str, files: &[(&str, &[u8])]| {
         let blobs = files
@@ -550,7 +533,7 @@ fn an_upload_never_confirms_a_hidden_object_but_its_uploader_reads_it_back() {
     let mut log = node(&dir);
     let mine_layer = append(&mut log, "mine", &[]);
     let (member, stranger) = (token_for("member", REPO), token_for("stranger", REPO));
-    let (addr, server) = start(&dir, log, 13);
+    let (addr, server) = start(&dir, log);
     let upload = |token: &str, kind: Kind, id: ObjectId, bytes: Vec<u8>| {
         send(
             addr,
@@ -664,7 +647,7 @@ fn a_probe_of_another_kind_confirms_nothing() {
     let dir = TempDir::new().unwrap();
     let log = node(&dir);
     let member = token_for("member", REPO);
-    let (addr, server) = start(&dir, log, 4);
+    let (addr, server) = start(&dir, log);
     let secret = ObjectId::for_blob(SECRET);
     let never = ObjectId::for_blob(b"TOKEN=guess\n");
     // Asking for the hidden blob as a tree or a checkpoint answers as for an absent one.
@@ -700,7 +683,7 @@ fn an_append_cannot_drop_an_edit_the_writer_cannot_see() {
     // A maintainer's Layer edits `.env`; a member's empty append against it would drop it.
     let shared = append(&mut log, "shared", &[(".env", Some(b"TOKEN=2\n"))]);
     let member = token_for("member", REPO);
-    let (addr, server) = start(&dir, log, 3);
+    let (addr, server) = start(&dir, log);
     let empty = SparseChanges::default().canonical_bytes();
     let changes = ObjectId::for_checkpoint(&empty);
     assert!(matches!(
@@ -745,7 +728,7 @@ fn a_role_change_moves_the_audiences_from_the_next_request_and_never_an_id() {
     let (env, internal) = (commitment(&log, ".env"), commitment(&log, "internal"));
     let (secret, notes) = (ObjectId::for_blob(SECRET), ObjectId::for_blob(NOTES));
     let member = token_for("member", REPO);
-    let (addr, server) = start_live(&dir, log, 16);
+    let (addr, server) = start_live(&dir, log);
     let open = Message::Open(vec![env, internal]);
     let opened = |reply: Message| match reply {
         Message::Opened(openings) => openings.into_iter().map(|(c, _)| c).collect::<Vec<_>>(),

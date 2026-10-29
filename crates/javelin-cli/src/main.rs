@@ -9,6 +9,7 @@ mod cli_check;
 mod cli_control;
 mod cli_disclosure;
 mod cli_member;
+mod cli_node;
 mod cli_remote;
 mod cli_request;
 mod cli_stream;
@@ -98,6 +99,14 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Native(error) => error.fmt(f),
             Self::Stack(error) => error.fmt(f),
+            Self::Remote(error) if error.code == javelin_protocol::codec::code::QUOTA_EXCEEDED => {
+                write!(
+                    f,
+                    "the node's budget refused this write ({})\n{}",
+                    error.detail,
+                    cli_node::quota_hint(&error.detail)
+                )
+            }
             Self::Remote(error) => write!(f, "{}", error.detail),
             Self::Control(error) => error.fmt(f),
         }
@@ -129,6 +138,9 @@ fn run(args: Vec<OsString>) -> std::result::Result<cli::Output, CliError> {
     }
     if args.first().is_some_and(|a| a == "embargo") {
         return cli_disclosure::embargo(args.into_iter().skip(1).collect());
+    }
+    if args.first().is_some_and(|a| a == "node") {
+        return cli_node::node(args.into_iter().skip(1).collect());
     }
     if args.first().is_some_and(|a| a == "request") {
         return cli_request::request(args.into_iter().skip(1).collect());

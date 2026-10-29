@@ -6,7 +6,10 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     process::{Command, Output},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
 };
 
@@ -240,37 +243,45 @@ fn attach_runs_without_git() {
     assert!(!marker.exists(), "attach invoked git");
 }
 
-/// Reads one HTTP request and returns its body.
-fn read_request(stream: &mut TcpStream) -> Vec<u8> {
+/// Reads one HTTP request and returns its body, or `None` for anything that is not a
+/// request with a `Content-Length`.
+fn read_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
-        stream.read_exact(&mut byte).unwrap();
+        stream.read_exact(&mut byte).ok()?;
         head.push(byte[0]);
     }
     // Header names are case-insensitive.
-    let text = String::from_utf8(head).unwrap().to_ascii_lowercase();
+    let text = String::from_utf8(head).ok()?.to_ascii_lowercase();
     let length: usize = text
         .lines()
-        .find_map(|line| line.strip_prefix("content-length:"))
-        .unwrap()
+        .find_map(|line| line.strip_prefix("content-length:"))?
         .trim()
         .parse()
-        .unwrap();
+        .ok()?;
     let mut body = vec![0; length];
-    stream.read_exact(&mut body).unwrap();
-    body
+    stream.read_exact(&mut body).ok()?;
+    Some(body)
 }
 
-/// A node that runs `answer` on each request. Returns its URL.
-fn fake_node(answer: impl Fn(&mut TcpStream, &[u8]) + Send + 'static) -> String {
+/// A node that runs `answer` on each request. Returns its URL. Other local processes
+/// probe new loopback listeners (a `GET /`, a TLS hello), so each connection gets its own
+/// thread and one that is not a request is dropped: a probe neither stops the node nor
+/// holds up the client.
+fn fake_node(answer: impl Fn(&mut TcpStream, &[u8]) + Send + Sync + 'static) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let answer = Arc::new(answer);
     thread::spawn(move || {
         for stream in listener.incoming() {
-            let mut stream = stream.unwrap();
-            let body = read_request(&mut stream);
-            answer(&mut stream, &body);
+            let Ok(mut stream) = stream else { continue };
+            let answer = answer.clone();
+            thread::spawn(move || {
+                if let Some(body) = read_request(&mut stream) {
+                    answer(&mut stream, &body);
+                }
+            });
         }
     });
     format!("http://{addr}/demo")
@@ -339,8 +350,18 @@ fn attach_leaves_a_store_another_writer_created_alone() {
             std::fs::write(other.join(".javelin/keep.txt"), b"theirs").unwrap();
         }
     });
+    // Probes like the ones other local processes send to a new listener: one request
+    // without a length, and one that never finishes its head, held open through the attach.
+    let addr = url.trim_start_matches("http://").trim_end_matches("/demo");
+    TcpStream::connect(addr)
+        .unwrap()
+        .write_all(b"GET / HTTP/1.1\r\n\r\n")
+        .unwrap();
+    let mut stalled = TcpStream::connect(addr).unwrap();
+    stalled.write_all(b"GET / HTTP/1.1\r\n").unwrap();
 
     let error = attach(root.path(), &url, 1);
+    drop(stalled);
     assert_eq!(error["error"]["code"], "node_unavailable");
     assert_eq!(
         std::fs::read(project.join(".javelin/keep.txt")).unwrap(),

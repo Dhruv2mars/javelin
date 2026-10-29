@@ -9,7 +9,7 @@ use javelin::Repository;
 use javelin_collaboration::RepositoryId;
 use javelin_control::{LocalNode, NodeLink};
 use javelin_identity::test_keys;
-use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, serve};
+use javelin_node::{FileWorldLog, auth::Gate, bind_loopback, budget, serve, storage::Directory};
 use javelin_node_worker::Snapshot;
 
 #[test]
@@ -36,8 +36,23 @@ fn local_node_conforms() {
     let mut log = FileWorldLog::open(&dir).expect("node");
     let gate = Gate::load(&dir, repository.as_str()).expect("gate");
     let name = repository.as_str().to_string();
-    thread::spawn(move || serve(&listener, &name, &mut log, &gate, None));
+    // A self-hosted node reads `budget.json` when it starts; this one rereads it before each
+    // connection, as a restart after the owner edits it would.
+    let data = dir.clone();
+    thread::spawn(move || {
+        loop {
+            log.set_budget(budget::stored(&Directory::new(&data)).expect("budget.json"));
+            serve(&listener, &name, &mut log, &gate, Some(1)).expect("serve");
+        }
+    });
     let wire = common::Wire::new(&base, &repository);
     let absent = common::Wire::new(&base, &RepositoryId::parse("repo_absent").expect("id"));
     common::run_wire(&repository, &wire, &absent);
+    common::run_budget(&wire, &|value| {
+        let budget = budget::parse(value.to_string().as_bytes()).expect("budget");
+        budget::store(&Directory::new(&dir), &budget).expect("store budget.json");
+        // The node may have reread the budget before this write and be waiting for its next
+        // connection: one read cycles it, so the request after this one sees the new budget.
+        wire.reply(None, &javelin_protocol::Message::Resolve { version: None });
+    });
 }

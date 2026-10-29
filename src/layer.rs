@@ -232,16 +232,39 @@ impl Repository {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        validate_format(&tx)?;
-        let frozen = checkpoint_in(&tx, checkpoint.0)?;
-        let source = Candidate {
-            id: checkpoint,
-            changes: frozen.changes,
-            provenance: frozen.provenance,
-        };
-        let head = create_in(&tx, layer, &source)?;
+        let head = clone_in(&tx, layer, checkpoint)?;
         tx.commit()?;
         Ok(head)
+    }
+
+    /// What [`Repository::clone_layer`] and then a Publish of the clone as `operation` would
+    /// write, whatever its outcome, measured in a transaction that is rolled back, so nothing
+    /// is written. A node bounds the write by it first.
+    pub fn clone_publish_write(
+        &mut self,
+        layer: &LayerId,
+        checkpoint: CheckpointId,
+        operation: &OperationId,
+        attribution: &crate::PublishAttribution,
+    ) -> Result<crate::PublishWrite> {
+        // A page spilled from the cache mid-transaction is written to storage, and again by
+        // the rollback. The probe keeps every page in memory instead: it is bounded by the
+        // checkpoint's changes, which the protocol limits.
+        let spill: i64 = self
+            .conn
+            .pragma_query_value(None, "cache_spill", |r| r.get(0))?;
+        self.conn.pragma_update(None, "cache_spill", false)?;
+        let write = (|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let write =
+                crate::publish::clone_write_in(&tx, layer, checkpoint, operation, attribution)?;
+            tx.rollback()?;
+            Ok(write)
+        })();
+        self.conn.pragma_update(None, "cache_spill", spill)?;
+        write
     }
 
     pub fn layer_state(&self, layer: &LayerId) -> Result<LayerState> {
@@ -689,6 +712,23 @@ pub(crate) fn create_on_version_in(
     };
     let empty = prepare_checkpoint(conn, &base, &SparseChanges::new([])?, &[], None, None)?;
     create_in(conn, layer, &empty)
+}
+
+/// Creates `layer` at `checkpoint`, as [`Repository::clone_layer`] does, in `conn`'s
+/// transaction.
+pub(crate) fn clone_in(
+    conn: &Connection,
+    layer: &LayerId,
+    checkpoint: CheckpointId,
+) -> Result<LayerHead> {
+    validate_format(conn)?;
+    let frozen = checkpoint_in(conn, checkpoint.0)?;
+    let source = Candidate {
+        id: checkpoint,
+        changes: frozen.changes,
+        provenance: frozen.provenance,
+    };
+    create_in(conn, layer, &source)
 }
 
 fn create_in(conn: &Connection, layer: &LayerId, candidate: &Candidate) -> Result<LayerHead> {
