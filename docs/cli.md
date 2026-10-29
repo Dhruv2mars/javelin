@@ -831,7 +831,20 @@ javelin-node serve ~/javelin-control/nodes/REPOSITORY REPOSITORY 127.0.0.1:7878 
 javelin attach http://127.0.0.1:7878/REPOSITORY ~/app
 ```
 
-`repo create` prints the `javelin-node serve` line with the repository's ID. To bring in a
+`repo create` prints the `javelin-node serve` line with the repository's ID.
+
+On the Cloudflare node (`tools/node-cloudflare/README.md`), the control plane serves with the
+node's URL and admin token, and every repository it creates lives there; nothing is served
+locally, and `repo create` prints the attach URL:
+
+```sh
+JAVELIN_NODE_ADMIN_TOKEN=... javelin control serve 127.0.0.1:7979 \
+  --provider cloudflare --node-url https://NODE.workers.dev &
+javelin repo create acme/app --operation create-app --visibility private --publish requests
+javelin attach https://NODE.workers.dev/REPOSITORY ~/app
+```
+
+To bring in a
 teammate, invite them, and they sign in with the code:
 
 ```sh
@@ -864,8 +877,10 @@ and any member may list.
   named ACCOUNT. `javelin login --invite CODE` makes the account, signs that device in as it
   and grants the role. A name that already has an account is refused (`conflict`): add it
   instead. A new invite for the same name replaces the pending one, and `member remove`
-  cancels it. On a Cloudflare node, which only a maintainer's control plane reaches (with
-  `JAVELIN_NODE_ADMIN_TOKEN`), the invite still makes the account and the membership, and
+  cancels it. A Cloudflare node is reached only by a control plane that holds its
+  `JAVELIN_NODE_ADMIN_TOKEN`: `javelin control serve ... --provider cloudflare --node-url URL`
+  (below), or the maintainer's own in process. When `login --invite` goes through a control
+  plane that cannot reach the node, the invite still makes the account and the membership, and
   `login --invite` says the node has not applied the role yet; the maintainer's next
   `member add` for that account pushes it.
 - `repo settings REPOSITORY --required-approvals N` sets the approvals a Publish Request needs.
