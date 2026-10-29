@@ -600,9 +600,8 @@ fn target_review_loop_over_the_wire() {
     const PUBLISHERS: u64 = 50;
     let maintainer = maintainer.as_str();
     let wire = &wire;
-    let ready = std::sync::Barrier::new(PUBLISHERS as usize);
-    let outcomes: Vec<(u64, Message)> = thread::scope(|scope| {
-        let ready = &ready;
+    // The Layers are made first, so a failure there ends the test before anyone waits.
+    let publishes: Vec<Message> = thread::scope(|scope| {
         let threads: Vec<_> = (0..PUBLISHERS)
             .map(|i| {
                 scope.spawn(move || {
@@ -616,16 +615,28 @@ fn target_review_loop_over_the_wire() {
                         &format!("c/{i}.txt"),
                         name.as_bytes(),
                     );
-                    let publish = Message::PublishLayer {
+                    Message::PublishLayer {
                         operation: op(&format!("publish-{name}")),
                         layer: layer(&name),
                         expected: head,
                         base: v(1),
                         attribution: PublishAttribution::Human,
-                    };
+                    }
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    let ready = std::sync::Barrier::new(publishes.len());
+    let outcomes: Vec<(u64, &Message)> = thread::scope(|scope| {
+        let ready = &ready;
+        let threads: Vec<_> = publishes
+            .iter()
+            .map(|publish| {
+                scope.spawn(move || {
                     ready.wait();
-                    let outcome = wire.call(maintainer, &publish);
-                    assert_eq!(wire.call(maintainer, &publish), outcome, "the replay");
+                    let outcome = wire.call(maintainer, publish);
+                    assert_eq!(wire.call(maintainer, publish), outcome, "the replay");
                     (published(&outcome).0.get(), publish)
                 })
             })
