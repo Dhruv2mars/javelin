@@ -90,7 +90,9 @@ Checks run against it on 2026-10-28:
 | Conformance suite, admin and protocol version 2 (commit path, request loop, embargo) | `JAVELIN_NODE_URL=<url> JAVELIN_NODE_ADMIN_TOKEN=... JAVELIN_NODE_REPOSITORY=repo_conformance_20261028e cargo test -p javelin-node-worker --test workerd -- --ignored --test-threads=1` | 3 passed |
 | A repository the TypeScript node provisioned | `GET /admin/r/repo_conformance_20261026/state` before and after the deploy | identical genesis and epoch-2 permissions |
 | Conformance with the budget (version `c17e6ce3`, 2026-10-29) | the same command with `JAVELIN_NODE_REPOSITORY=repo_conformance_20261029budget` | 3 passed; `GET /admin/r/repo_conformance_20261029budget_wire/budget` after the run: 4,456,448 bytes stored and 260 rows written that day, against the Free-plan defaults |
-| The TypeScript-era repository on 2026-10-29 | `GET /admin/r/repo_conformance_20261026/state` | `500 storage_error`, `unsupported repository format 10`: it was provisioned at format 10, and format 11 (2026-10-28) shipped without a migration, before `d0499fbb` |
+| The TypeScript-era repository on 2026-10-29 | `GET /admin/r/repo_conformance_20261026/state` | `500 storage_error`, `unsupported repository format 10`: it was provisioned at format 10, and format 11 (2026-10-28) shipped without a migration, before `d0499fbb`. Retired: format 10 never reached a release, so there is no migration |
+| The daily workflow (version `ddc99de2`, 2026-10-29) | `javelin control serve 127.0.0.1:7979 --provider cloudflare --node-url <url>`, then `tools/acceptance/daily-workflow.sh <url>/REPOSITORY` with `INVITE`, `COLLAB_HOME` and `DESKTOP_HOME` | PASS, every clone at World 5 with identical files; the restart step through a local relay `NODE_STOP`/`NODE_START` kill and restart |
+| Hosted acceptance (version `ddc99de2`) | `JAVELIN_ACCEPTANCE_NODE_URL=<url> JAVELIN_ACCEPTANCE_NODE_ADMIN_TOKEN=... bun run tools/acceptance/run.ts` | 0 failed; the review loop, a lost reply and 50 concurrent publishers verified on the deployed object |
 
 ## Measured on Workers Free
 
@@ -189,9 +191,9 @@ deploys a short-lived `javelin-free-probe` Worker, measures, deletes everything,
 
 ## Known gaps
 
-- The hosted acceptance `target_*` checks that need Layers on a remote node are still marked
-  not verified: the conformance suite drives those paths through the Worker, but the
-  acceptance suite has not been rerun against it.
+- The hosted acceptance `target_*` rows for fork, restricted traces and distinct outage
+  outcomes stay NOT VERIFIED on the Worker (no fork, no trace wire message, no outage hooks on a
+  remote node). The review loop, a lost reply and 50 concurrent publishers are verified there.
 - Fork is not served: `NodeLink::fork` needs two repositories' objects to stream between.
 - Stack on the object merges without the volume alias probe the self-hosted node runs on its
   own disk (`javelin-stack`'s `fs` feature): the object has no volume. The client's refresh

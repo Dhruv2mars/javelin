@@ -275,11 +275,7 @@ fn plane_on(cloudflare: bool, node_url: Option<&str>) -> Result<ControlPlane, Co
         ControlError::Unauthorized("set JAVELIN_NODE_ADMIN_TOKEN to the node's admin token")
     })?;
     let node = CloudflareNode::new(url, &token)?;
-    ControlPlane::with_node(
-        &control_dir()?,
-        Box::new(node),
-        NodeTarget::cloudflare(url),
-    )
+    ControlPlane::with_node(&control_dir()?, Box::new(node), NodeTarget::cloudflare(url))
 }
 
 fn repo_create(slug: &str, flags: &[&str]) -> Result<Output, ControlError> {

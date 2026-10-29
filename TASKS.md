@@ -54,9 +54,13 @@ CI left open. Work from it, in roughly this order:
   - [ ] A CLI for the owner to change the budget (today: the admin route, or `budget.json`
     and a restart on a self-hosted node).
   - [x] Deployed as version `c17e6ce3` on Workers Free; conformance 3 passed against it.
-- [ ] The deployed `repo_conformance_20261026` (provisioned at repository format 10) no longer
+- [x] The deployed `repo_conformance_20261026` (provisioned at repository format 10) no longer
   opens: format 11 shipped without a migration, so its `state` is `unsupported repository format
-  10`. Migrate format 10 stores, or retire that test repository.
+  10`. Retired, not migrated (2026-10-29): format 10 lived on development builds for under a
+  day (c4d040e 2026-10-27 to f15cc25 2026-10-28), the only release (`v0.1.0-alpha.1`) writes
+  format 8, the Worker holds only the owner's test repositories, and `docs/build-contract.md`
+  keeps migration bridges out of scope. Its object stays on the Worker (about 4 MB of the 5 GB);
+  no admin route deletes an object.
 - [x] Layer writer lease and `javelin layer take` (replaces D21).
 - [x] The pull request loop from the CLI: `javelin request open|revise|comment|approve|show|
   list|publish` over the wire with operation IDs, and D7 queueing (revise and publish queue,
@@ -94,7 +98,14 @@ CI left open. Work from it, in roughly this order:
     request reads, delay, embargo and release, frontier filtering and `LayerCreate` run in
     the Durable Object; parity and the wire conformance cover a request loop and a held
     version.
-  - [ ] Rerun the hosted acceptance `target_*` now that `LayerCreate` reaches a remote node.
+  - [x] Rerun the hosted acceptance `target_*` now that `LayerCreate` reaches a remote node.
+    `target_review_loop_over_the_wire` drives Gate 4's request loop through the target with
+    `LayerCreate`, uploads and `LayerAppend`; on the deployed Worker it also retries a Publish
+    whose reply was discarded and releases 50 concurrent publishers (Worlds 2 to 51, one per
+    version). `bun run tools/acceptance/run.ts` against the deployed Worker (2026-10-29,
+    version `ddc99de2`): 0 failed; still NOT VERIFIED there: fork (the Worker does not fork),
+    restricted traces (no wire message), distinct outage outcomes (no outage hooks on a remote
+    node).
   - [ ] Fork on the Cloudflare node (`NodeLink::fork` across two objects).
 - [ ] Forge connects a provider account through OAuth and provisions the node there.
 - [ ] Forge on javelin.codes once the domain is bought.
@@ -212,6 +223,37 @@ fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 4
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
   upload's completion instead of a clock.
 - [ ] The `closed_url()` port reuse above.
+
+## Daily workflow on the Cloudflare node (2026-10-29)
+
+- [x] `tools/acceptance/daily-workflow.sh` passes end to end against the deployed Worker
+  (version `ddc99de2`, from main `d8afcb6`): a local `javelin control serve --provider
+  cloudflare`, a fresh repository per run, the collaborator invited (`INVITE`) on two devices.
+  Run 1 attaches to the Worker URL directly (restart step skipped: a Worker cannot be killed);
+  run 2 attaches through a local relay to the Worker that `NODE_STOP`/`NODE_START` kill and
+  restart, so the queued Publish, `node_unavailable` and the replay run too. macOS only.
+- [x] `javelin control serve` could not manage a Cloudflare repository: `member invite`,
+  `repo settings` and `repo create` over `JAVELIN_CONTROL_URL` were refused (`...'s node is
+  cloudflare ...; change its members from a control plane that reaches that node`). It now
+  takes `--provider cloudflare --node-url URL` with `JAVELIN_NODE_ADMIN_TOKEN`
+  (`crates/javelin-cli/tests/cli_control.rs`).
+- [x] `repo create` on Cloudflare printed no attach URL, and over `JAVELIN_CONTROL_URL` it
+  printed the self-hosted `javelin-node serve` line. The reply carries `node_url`, and the text
+  says `javelin attach URL/REPOSITORY DIR`.
+- [ ] An attached clone's `history` lists Worlds 0, 1, 2, 4, 5 after the daily loop (no 3), and
+  each clone's `sync` reports a different `local_head` number for the same node head. Same on a
+  self-hosted node; not Cloudflare-specific. Look at whether that is intended.
+- [ ] Hosted acceptance reasons gone stale since members and the request CLI landed:
+  self-hosted `flow.membership` ("no membership API") and `outage.review-node-down` ("no client
+  sends them yet").
+- [ ] `bun run tools/acceptance/run.ts` on workerd failed once (2026-10-29): right after a cold
+  wasm build, a fresh object's `GET /admin/r/.../state` took 11.5 s under `wrangler dev`, past
+  `CloudflareNode`'s 10 s timeout. It passed on the next two runs and the full rerun. Local
+  workerd only; the deployed Worker answers in milliseconds.
+- [x] The macOS loopback flakes below (`ConnectionReset`, a duplicated forward): the T3 Code
+  app probes every new 127.0.0.1 listener with a `GET /` and then a TLS ClientHello within
+  seconds (seen with `lsof` on 2026-10-29). Servers that accept a fixed number of connections or
+  give up on bytes they cannot parse lose to it. Fix the tests to ignore foreign connections.
 
 ## Daily workflow acceptance (2026-10-28)
 
