@@ -295,8 +295,10 @@ Open:
   read from `request show` before the outage. The clone remembers each revision's base from
   `request show`, `request list` (`RequestSummary` now carries `base` on the wire) and `sync`.
   (trail: layer lifecycle)
-- [ ] `layer take` works only for a Layer the node has seen, which today means one a request was
-  opened from (see "Checkpoint upload on capture" above).
+- [x] `layer take` works only for a Layer the node has seen, which today means one a request was
+  opened from (see "Checkpoint upload on capture" above). Stale: every capture uploads the
+  Layer, and `capture_upload.rs::captures_upload_and_another_device_takes_the_latest_one`
+  takes a Layer no request was opened from.
 - [ ] The attach URL names the repository by its opaque ID (`repo_…`), not `acme/app`.
 - [ ] A stale append stays listed under `outbox status` `stale` after its work was kept with
   `layer clone`; nothing clears it.

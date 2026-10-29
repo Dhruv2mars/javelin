@@ -106,23 +106,26 @@ repo=repo_...                             # the ID it printed
 javelin attach https://NODE.workers.dev/$repo ~/app
 ```
 
-Only a control plane that holds the node's admin token can change members on a Cloudflare node,
-so run `member` commands the same way. An invite does not reach the node by itself. Once the
-teammate has signed in with it in step 5, add them again. That `member add` says nothing changed,
-and it still pushes the role to the node:
+Two things change in the rest of this guide on a Cloudflare node. Every attach URL is the
+Worker's, `https://NODE.workers.dev/$repo`, including Cora's in steps 5 and 8. And only a
+control plane that holds the node's admin token can change members or settings there, so run
+the `member` and `repo settings` commands of step 5 the same way. An invite does not reach the
+node by itself. Once the teammate has signed in with it, add them again. That `member add` says
+nothing changed, and it still pushes the role to the node:
 
 ```sh
 env -u JAVELIN_CONTROL_URL javelin member invite acme/app cora --role review
+env -u JAVELIN_CONTROL_URL javelin repo settings acme/app --required-approvals 1
 env -u JAVELIN_CONTROL_URL javelin member add acme/app cora --role review   # after cora's login --invite
 ```
-
-The rest of this guide is the same on either node.
 
 ## 3. Bring in your Git checkout
 
 `javelin adopt` imports a project directory's files as one Publish. It never reads `.git`, and
-it never writes to the project. It does not read `.gitignore` either, so copy the rules you need
-into `.javelinignore` first:
+it never writes to the project. It does not read `.gitignore` either. `.javelinignore` takes
+only literal paths from the project root, such as `target/`, with no globs or negation, so
+translate the rules you need first ([ignore rules](cli.md#ignore-rules)). The examples below use
+a small Rust crate with `README.md` and `src/lib.rs`; change the paths to fit your project.
 
 ```sh
 printf 'target/\n' > ~/code/app/.javelinignore
@@ -270,7 +273,8 @@ javelin request publish hi --revision 2 --operation owner-publish-hi-2
 
 ## 8. A second device
 
-Cora starts notes on her laptop and opens a request, so the node has the Layer:
+Cora starts notes on her laptop. Each checkpoint uploads to the node, which lets another of her
+devices take the Layer. She opens a request for it too:
 
 ```sh
 javelin sync
@@ -335,8 +339,6 @@ Not there yet:
   Cloudflare account from the browser are not built.
 - An invited account has no passkey. It signs in only through an invite or another of its own
   devices.
-- `layer take` works only for a Layer the node has seen, which today means one a request was
-  opened from.
 - Attach URLs name the repository by its ID, `repo_...`, not by `acme/app`.
 - `javelin history` in a clone lists only the Worlds that clone holds, one per attach or sync,
   not the node's whole history. `blame` in an attached clone has no origins from the node yet.
