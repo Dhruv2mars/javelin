@@ -6,7 +6,9 @@ lives on a node that runs on infrastructure its owner connects; Javelin runs no 
 hosting. The core is immutable World versions, isolated Layers and an atomic Publish, and
 nothing in it invokes Git. Read [the direction](docs/direction.md) first.
 
-Start with the [developer quickstart](docs/quickstart.md) to build from source.
+Coming from Git and GitHub? [Switching from Git](docs/switching-from-git.md) walks through
+install, a first repository on your own node, daily work, review and teammates. Start with the
+[developer quickstart](docs/quickstart.md) to build from source.
 Clone-backed Layers pass the filesystem checks on APFS, btrfs, XFS and ReFS, and the copy
 fallback passes on ext4 and NTFS ([workspace approach](docs/workspace-approach.md)).
 

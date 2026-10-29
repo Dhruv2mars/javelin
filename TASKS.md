@@ -301,6 +301,25 @@ Open:
 - [ ] A stale append stays listed under `outbox status` `stale` after its work was kept with
   `layer clone`; nothing clears it.
 
+## Switching-from-Git guide (2026-10-29)
+
+- [x] `docs/switching-from-git.md`: a Git/GitHub to Javelin concept map, then install, a
+  self-hosted node, `adopt` of a Git checkout, members and invites, Layers, requests and
+  review, `layer update` after a conflict, and `layer take` and sync on a second device.
+  Linked from README and `docs/cli.md`. Every command ran from the guide's own text on macOS
+  arm64, one fresh `HOME` per machine, against `javelin-node serve`; the Cloudflare commands
+  ran against `wrangler dev`, not the deployed Worker. The npm line was not run (no release).
+  No forge landing link: Entire has no file URL to point at.
+
+Rough edges the guide's runs hit:
+
+- [ ] On Cloudflare, `login --invite` leaves the role unapplied on the node, and the
+  maintainer's `member add` for it prints "nothing changed" while it pushes the role. The
+  guide documents the extra `member add`; make the push say what it did, or push on invite.
+- [ ] After `layer take` moved a Layer to another device, the first device's `sync` says the
+  retired Layer "held work after the published checkpoint" though it had no edits after the
+  revision it opened.
+
 ## Working rules
 
 Working rules live in `AGENTS.md` (`CLAUDE.md` imports it). They supersede the older

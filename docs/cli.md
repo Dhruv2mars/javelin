@@ -3,6 +3,8 @@
 The CLI runs the same way on macOS, Linux and Windows. A Layer's writable
 workspace is a plain directory cloned from its World base, captured into
 checkpoints without a daemon, and published whole onto the World.
+[Switching from Git](switching-from-git.md) walks through these commands as a Git and GitHub
+user's first week.
 
 ## Build and install
 
