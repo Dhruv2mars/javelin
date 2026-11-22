@@ -114,10 +114,11 @@ jobs:
           llvm-ar --version | head -1
           v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/[^0-9.]/, ""); print; exit }' ../../Cargo.lock)
           d="$RUNNER_TEMP/wasm-bindgen"; mkdir -p "$d"
-          curl -fsSL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz -C "$d" --strip-components=1 \
-            || cargo install --locked --root "$d" --bin wasm-bindgen wasm-bindgen-cli --version "$v"
-          [ -x "$d/wasm-bindgen" ] || mv "$d/bin/wasm-bindgen" "$d/"
+          if ! curl -fsSL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C "$d" --strip-components=1; then
+            cargo install --locked --root "$d" --bin wasm-bindgen wasm-bindgen-cli --version "$v"
+            mv -f "$d/bin/wasm-bindgen" "$d/wasm-bindgen"
+          fi
           "$d/wasm-bindgen" --version | grep -qx "wasm-bindgen $v"
           echo "$d" >> "$GITHUB_PATH"
 
@@ -139,6 +140,11 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+      # Without the git shim on PATH: a dependency's build script (wasm-bindgen-shared) runs
+      # `git rev-parse HEAD`. wrangler's own build in the next steps is then a no-op rebuild.
+      - name: Build the node core to wasm
+        run: bun run build
 
       - name: Test on workerd with the git shim first on PATH
         run: |
