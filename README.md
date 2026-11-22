@@ -1,5 +1,7 @@
 # Javelin
 
+<sub>Developed on <a href="https://entire.com/et/dhruv2mars/javelin">Entire</a>. The GitHub copy is a read-only mirror for CI; open issues and changes on Entire.</sub>
+
 Javelin is third-generation version control, built from scratch for agentic development.
 The `javelin` CLI replaces Git, and the javelin.codes forge replaces GitHub. Each repository
 lives on a node that runs on infrastructure its owner connects; Javelin runs no managed

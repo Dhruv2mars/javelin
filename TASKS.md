@@ -199,6 +199,12 @@ every push (`.buildkite/pipeline.yml`).
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
 - [ ] Delete the temporary `diag/windows-layer-busy` branch from origin once the parked
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
+- [x] GitHub mirror onboarding (github-mirror skill, 2026-11-22): trails 77 (mirror CI +
+  `report.yml`), 78 (Windows lint, workerd wasm tools), 79 (Windows tests advisory) merged;
+  GitHub PRs 99/101/103 closed (their commits were already on main); repo settings set and read
+  back; `~/dev/github/javelin` enrolled; javelin added to the `dhruv2mars-github-actions`
+  installation; plugin gate requires `github-actions`; throwaway trail 80 (failing CI) was
+  refused by the gate and closed.
 - [x] `.github/workflows/` runs again on the GitHub mirror (2026-11-22): `CI` on every
   mirrored branch push (except `archive/**`) (Linux, macOS, Windows, forge, node, workspace probes), reported to the
   trail gate as `github-actions`. `Licenses` (cargo deny) runs on the same pushes, outside the gate.
@@ -224,7 +230,9 @@ fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 4
   An established connection was aborted by the software in your host machine. (os error
   10053)` and the first capture stays `queued` instead of `uploaded` (lines 184, 302, 331).
   Until it is fixed, the Windows test step in `ci.yml` is `continue-on-error`; remove that
-  with the fix.
+  with the fix. Lead (Sol, unconfirmed): the 2-second upload budget (`cli_stream.rs`); print
+  the CLI's upload detail in the assertions and rerun on Windows with a larger
+  `JAVELIN_UPLOAD_BUDGET_MS`.
 - [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
   `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
