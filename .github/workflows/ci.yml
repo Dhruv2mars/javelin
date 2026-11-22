@@ -104,7 +104,22 @@ jobs:
           bun-version: 1.4.3
 
       - name: Install Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+
+      # build.sh (run by wrangler) compiles the node core to wasm: SQLite needs clang and
+      # llvm-ar, and the glue needs wasm-bindgen-cli at the version Cargo.lock pins.
+      - name: Install wasm build tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq clang llvm > /dev/null
+          llvm-ar --version | head -1
+          v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/[^0-9.]/, ""); print; exit }' ../../Cargo.lock)
+          d="$RUNNER_TEMP/wasm-bindgen"; mkdir -p "$d"
+          curl -fsSL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C "$d" --strip-components=1 \
+            || cargo install --locked --root "$d" --bin wasm-bindgen wasm-bindgen-cli --version "$v"
+          [ -x "$d/wasm-bindgen" ] || mv "$d/bin/wasm-bindgen" "$d/"
+          "$d/wasm-bindgen" --version | grep -qx "wasm-bindgen $v"
+          echo "$d" >> "$GITHUB_PATH"
 
       # Same Git guard as the Rust job: the managed-node test drives the javelin CLI.
       - name: Install failing git shim
