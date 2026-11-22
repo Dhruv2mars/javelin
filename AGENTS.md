@@ -19,9 +19,9 @@ changing product behavior.
 The repository lives on Entire (`origin` is `entire://.../et/dhruv2mars/javelin`). The
 `github` remote is a one-way, read-only mirror for CI: never push, merge or edit there.
 Enrolled clones push with `git ship` (push to Entire, then `git mirror`). Every mirrored
-push runs GitHub Actions `CI` (`.github/workflows/ci.yml`: Linux, macOS and Windows, the
-forge, the node and the workspace probes); `report.yml` posts it to the trail as the
-`github-actions` check, which the trail gate requires. Buildkite also runs the Linux subset
+branch push (except `archive/**`) runs GitHub Actions `CI` (`.github/workflows/ci.yml`:
+Linux, macOS and Windows, the forge, the node and the workspace probes); `report.yml` posts
+it to the trail as the `github-actions` check, which the trail gate requires. Buildkite also runs the Linux subset
 (`.buildkite/pipeline.yml`, free `linux-small` queue). The owner also runs these locally on
 macOS before handing off:
 

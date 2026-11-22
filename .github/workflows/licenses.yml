@@ -2,7 +2,7 @@ name: Licenses
 
 # Checks dependency licenses, RustSec advisories, banned crates and sources
 # against deny.toml. Runs only the cargo-deny check; it does not build Javelin.
-# Runs on every mirrored push but is not part of CI, so the trail gate doesn't require it:
+# Runs on every mirrored branch push but is not part of CI, so the trail gate doesn't require it:
 # a new RustSec advisory shows up here without blocking unrelated trails.
 on:
   push:
