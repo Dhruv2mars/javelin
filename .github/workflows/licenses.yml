@@ -2,10 +2,11 @@ name: Licenses
 
 # Checks dependency licenses, RustSec advisories, banned crates and sources
 # against deny.toml. Runs only the cargo-deny check; it does not build Javelin.
+# Runs on every mirrored push but is not part of CI, so the trail gate doesn't require it:
+# a new RustSec advisory shows up here without blocking unrelated trails.
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches-ignore: ['archive/**']
   workflow_dispatch:
 
 permissions:
@@ -13,7 +14,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   cargo-deny:

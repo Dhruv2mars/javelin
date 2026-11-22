@@ -4,8 +4,10 @@ name: Native development packages
 # archive on three hosted operating systems. It publishes nothing: no release, tag,
 # registry, secret, or PATH change. Git appears only to check out source and read the
 # commit time for SOURCE_DATE_EPOCH; every command under test is Git-free.
+# GitHub mirror: no PRs, so it runs on landings on main that touch these paths, and on demand.
 on:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - tools/native-packaging/**
       - .github/workflows/native-packaging.yml
@@ -51,7 +53,7 @@ jobs:
         id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install Rust toolchain
@@ -153,7 +155,7 @@ jobs:
       - name: Check out committed source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Install Rust toolchain

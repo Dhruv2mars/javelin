@@ -197,8 +197,12 @@ every push (`.buildkite/pipeline.yml`).
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
 - [ ] Delete the temporary `diag/windows-layer-busy` branch from origin once the parked
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
-- [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
-  drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+- [x] `.github/workflows/` runs again on the GitHub mirror (2026-11-22): `CI` on every
+  mirrored push (Linux, macOS, Windows, forge, node, workspace probes), reported to the
+  trail gate as `github-actions`. `Licenses` (cargo deny) runs on every push, outside the gate.
+- [ ] `cargo deny` fails on main: RUSTSEC-2026-0459 (C SQLite < 3.54.0, uninitialized
+  page-cache memory with a mismatched `-wal`), libsqlite3-sys 0.38.2 via rusqlite 0.40.2.
+  Fix: a rusqlite that takes libsqlite3-sys >= 0.39. Found 2026-11-22.
 
 ## Merge rule for flaky tests (2026-10-28)
 
