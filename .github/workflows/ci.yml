@@ -63,10 +63,15 @@ jobs:
           rm "$shim/invoked"
           echo "GIT_SHIM=$shim" >> "$GITHUB_ENV"
 
+      # Windows is experimental (GA decision 2026-10-28) and capture_upload.rs flakes there
+      # (TASKS.md), so Windows test failures show on the step without failing the job.
+      # Format, lint and the Git guard below still fail it.
       - name: Test with the git shim first on PATH
-        run: |
-          PATH="$GIT_SHIM:$PATH" cargo test --locked --workspace --all-targets --all-features
-          test ! -e "$GIT_SHIM/invoked"
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: PATH="$GIT_SHIM:$PATH" cargo test --locked --workspace --all-targets --all-features
+
+      - name: No test invoked Git
+        run: test ! -e "$GIT_SHIM/invoked"
 
       # CI workflow validator (docs/ci-execution.md §10) runs on every OS in this matrix.
       - name: Set up bun

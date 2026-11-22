@@ -202,6 +202,10 @@ every push (`.buildkite/pipeline.yml`).
 - [x] `.github/workflows/` runs again on the GitHub mirror (2026-11-22): `CI` on every
   mirrored branch push (except `archive/**`) (Linux, macOS, Windows, forge, node, workspace probes), reported to the
   trail gate as `github-actions`. `Licenses` (cargo deny) runs on the same pushes, outside the gate.
+- [ ] `Native development packages` fails on main on all 3 OSes (2026-11-22, run
+  44990370735): the packaging tests' source copy lacks the workspace member
+  `crates/javelin-node-cloudflare` (`failed to load manifest for workspace member`). It runs
+  outside the trail gate.
 - [ ] Trail branches cut before the mirror CI (trails 44 to 49) carry the old main-only `CI`
   trigger, so they get no `github-actions` check until rebased onto main.
 - [ ] `cargo deny` fails on main: RUSTSEC-2026-0459 (C SQLite < 3.54.0, uninitialized
@@ -215,6 +219,12 @@ reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopb
 `wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
 fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
 
+- [ ] `crates/javelin-cli/tests/capture_upload.rs` fails on Windows in 2 of 3 GitHub runs
+  (2026-11-22, CI 44991865369 attempt 1 and 44995108497): the node logs `connection dropped:
+  An established connection was aborted by the software in your host machine. (os error
+  10053)` and the first capture stays `queued` instead of `uploaded` (lines 184, 302, 331).
+  Until it is fixed, the Windows test step in `ci.yml` is `continue-on-error`; remove that
+  with the fix.
 - [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
   `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the
