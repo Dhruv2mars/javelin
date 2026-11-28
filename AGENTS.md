@@ -17,9 +17,13 @@ changing product behavior.
 ## Checks
 
 The repository lives on Entire (`origin` is `entire://.../et/dhruv2mars/javelin`). The
-`github` remote is a frozen archive: never push to it. Buildkite runs these on Linux for
-every push (`.buildkite/pipeline.yml`, free `linux-small` queue) and reports to the trail as
-a gate. The owner also runs them locally on macOS before handing off:
+`github` remote is a one-way, read-only mirror for CI: never push, merge or edit there.
+Enrolled clones push with `git ship` (push to Entire, then `git mirror`). Every mirrored
+branch push (except `archive/**`) runs GitHub Actions `CI` (`.github/workflows/ci.yml`:
+Linux, macOS and Windows, the forge, the node and the workspace probes); `report.yml` posts
+it to the trail as the `github-actions` check, which the trail gate requires. Buildkite also
+runs the Linux subset (`.buildkite/pipeline.yml`, free `linux-small` queue). The owner also
+runs these locally on macOS before handing off:
 
     cargo fmt --all -- --check
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -37,11 +41,13 @@ a gate. The owner also runs them locally on macOS before handing off:
 - Never push to another thread's branch or edit another thread's worktree.
 - The hub thread coordinates and owns `TASKS.md`. Update `TASKS.md` in your own worktree;
   the hub consolidates.
-- The hub merges a trail once its Buildkite build is green, the local macOS checks pass on
-  the merge result, and `entire trail merge --dry-run` passes: `entire trail approve`, then
-  `entire trail merge`. Never `--force`. Builds: `bk api /pipelines/javelin/builds`.
-- Windows has no runner, and Gate 2 and the workspace probes run nowhere automatically.
-  Say so in every hand-off that touches platform behavior.
+- The hub merges a trail once its `github-actions` check is green, the local macOS checks
+  pass on the merge result, and `entire trail merge --dry-run` passes: `entire trail approve`,
+  then `entire trail merge`, then `git mirror`. Never `--force`. Runs: `gh run list -R
+  Dhruv2mars/javelin`; Buildkite builds: `bk api /pipelines/javelin/builds`.
+- Gate 2 runs on GitHub only after landings on main that touch its paths, or on demand
+  (`gh workflow run "Gate 2" -R Dhruv2mars/javelin --ref <branch>`). Say whether it ran in
+  every hand-off that touches platform behavior.
 - An explicit user pause overrides autonomy and scheduled continuations until the user resumes.
 - Reuse existing T3 threads; settle finished ones.
 

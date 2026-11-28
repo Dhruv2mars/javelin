@@ -22,11 +22,12 @@
 //! `tools/acceptance/daily-workflow.sh` is the same loop for a human against any node URL;
 //! the last test here runs it against this node on Unix.
 
+#[cfg(unix)]
+use std::process::Command;
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use javelin::Repository;
@@ -34,9 +35,9 @@ use serde_json::Value;
 
 mod daily_support;
 
-use daily_support::{
-    JAVELIN, Person, Site, describe, exit3, files, node_binary, ok, owner_site, refused, step,
-};
+#[cfg(unix)]
+use daily_support::{JAVELIN, node_binary};
+use daily_support::{Person, Site, describe, exit3, files, ok, owner_site, refused, step};
 
 fn write(dir: &Path, path: &str, text: &str) {
     let path = dir.join(path);

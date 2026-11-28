@@ -1,12 +1,9 @@
 name: Storage bench
 
 # Measurements only: no performance threshold gates CI.
+# On demand only (gh workflow run); the GitHub mirror has no PRs to trigger it.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "tools/storage-bench/**"
-      - ".github/workflows/storage-bench.yml"
 
 permissions:
   contents: read

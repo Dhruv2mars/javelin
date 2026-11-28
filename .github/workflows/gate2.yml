@@ -5,9 +5,11 @@ name: Gate 2
 # failing git/sudo/mount stand-ins first on PATH: first against the reference model
 # (proves the harness itself passes there), then against javelin. Negative controls
 # run once per OS on a clone-capable filesystem. See tools/workspace-probe/README.md.
+# GitHub mirror: no PRs, so it runs on landings on main that touch these paths, and on demand.
 on:
   workflow_dispatch:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - src/**
       - crates/**

@@ -197,22 +197,48 @@ every push (`.buildkite/pipeline.yml`).
     OTP (it pipes npm's output), so this one ran through a one-off driver.
 - [x] GA platforms are macOS and Linux; Windows ships as experimental and untested until a
   runner exists. Decided 2026-10-28.
-- [ ] Windows has no runner. Buildkite runs Gate 2's crash clause on Linux (trail 14); the rest
-  of Gate 2 and the workspace probes run nowhere automatically. The Windows `database is locked` flake under
+- [ ] Windows runs again (2026-11-22): GitHub `CI` runs Rust on Windows and the workspace
+  probes on every mirrored branch push (except `archive/**`); Gate 2 runs on GitHub after
+  landings on main that touch its paths, or on demand. Buildkite still runs Gate 2's crash
+  clause on Linux (trail 14). The Windows `database is locked` flake under
   concurrent Layer creates is parked: its traced run `40442668503` is unreadable, and
   the cause is unconfirmed (lead: slow journal create/delete on a loaded Windows disk).
 - [ ] Delete the temporary `diag/windows-layer-busy` branch from origin once the parked
   Windows flake no longer needs its tracing. Merged branches were deleted on 2026-10-28.
-- [ ] `.github/workflows/` no longer runs. Buildkite covers the Linux Rust job; port or
-  drop the rest (forge, node, workspace probes, cargo deny) and then delete it.
+- [x] GitHub mirror onboarding (github-mirror skill, 2026-11-22): trails 77 (mirror CI +
+  `report.yml`), 78 (Windows lint, workerd wasm tools), 79 (Windows tests advisory) merged;
+  GitHub PRs 99/101/103 closed (their commits were already on main); repo settings set and read
+  back; `~/dev/github/javelin` enrolled; javelin added to the `dhruv2mars-github-actions`
+  installation; plugin gate requires `github-actions`; throwaway trail 80 (failing CI) was
+  refused by the gate and closed.
+- [x] `.github/workflows/` runs again on the GitHub mirror (2026-11-22): `CI` on every
+  mirrored branch push (except `archive/**`) (Linux, macOS, Windows, forge, node, workspace probes), reported to the
+  trail gate as `github-actions`. `Licenses` (cargo deny) runs on the same pushes, outside the gate.
+- [ ] `Native development packages` fails on main on all 3 OSes (2026-11-22, run
+  44990370735): the packaging tests' source copy lacks the workspace member
+  `crates/javelin-node-cloudflare` (`failed to load manifest for workspace member`). It runs
+  outside the trail gate.
+- [ ] Trail branches cut before the mirror CI (trails 44 to 49) carry the old main-only `CI`
+  trigger, so they get no `github-actions` check until rebased onto main.
+- [ ] `cargo deny` fails on main: RUSTSEC-2026-0459 (C SQLite < 3.54.0, uninitialized
+  page-cache memory with a mismatched `-wal`), libsqlite3-sys 0.38.2 via rusqlite 0.40.2.
+  Fix: a rusqlite that takes libsqlite3-sys >= 0.39. Found 2026-11-22.
 
 ## Merge rule for flaky tests (2026-10-28)
 
-A trail may merge when its Buildkite build is green and every local macOS failure also
+A trail may merge when its `github-actions` check is green and every local macOS failure also
 reproduces on main. The flakes listed on 2026-10-28 (connection resets in `loopback.rs`,
 `wire_auth.rs` and `wire_hidden.rs`, duplicate forwards in `outbox_replay.rs`, `attach.rs`'s
 fake node, `Busy` in `native_object_access.rs`) were test bugs, fixed by trail 42. Still known:
 
+- [ ] `crates/javelin-cli/tests/capture_upload.rs` fails on Windows in 2 of 3 GitHub runs
+  (2026-11-22, CI 44991865369 attempt 1 and 44995108497): the node logs `connection dropped:
+  An established connection was aborted by the software in your host machine. (os error
+  10053)` and the first capture stays `queued` instead of `uploaded` (lines 184, 302, 331).
+  Until it is fixed, the Windows test step in `ci.yml` is `continue-on-error`; remove that
+  with the fix. Lead (Sol, unconfirmed): the 2-second upload budget (`cli_stream.rs`); print
+  the CLI's upload detail in the assertions and rerun on Windows with a larger
+  `JAVELIN_UPLOAD_BUDGET_MS`.
 - [ ] `crates/javelin-cli/tests/capture_upload.rs` failed once on Linux (Buildkite build 86 on
   `35f0905`, `feat/attached-publish`): an upload ran past the test's 2-second limit on the
   loaded runner. Give the wait a margin that holds on a loaded runner, or wait on the

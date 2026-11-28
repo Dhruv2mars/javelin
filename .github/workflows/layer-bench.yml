@@ -2,12 +2,9 @@ name: Layer bench
 
 # Measurement only: no threshold gates the job. Hosted runners are shared VMs, so
 # numbers show relative cost between strategies on one filesystem, not absolute speed.
+# On demand only (gh workflow run); the GitHub mirror has no PRs to trigger it.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - "tools/layer-bench/**"
-      - ".github/workflows/layer-bench.yml"
 
 permissions:
   contents: read
